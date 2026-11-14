@@ -1,0 +1,174 @@
+"""The two `Check` tables' display vocabulary must cover exactly the checks that
+reach them -- no more, no fewer.
+
+I7-4 moved the check NAME into its own column and made the `Check` cell a description
+of what is looked for, both sourced from `errors_and_warnings._CHECK_VOCABULARY`. That
+map lives in the renderer while the checks live in `analysis_validation.py`, so nothing
+structural stops the two from drifting. This is the thing that stops it.
+
+Both directions are covered and both were falsified before this file was committed:
+removing a vocabulary key goes red, and adding a new `level="system"` check to the
+producer without a vocabulary entry goes red.
+
+AST rather than import-and-run: `validate_analysis` needs a whole analysis tree, and a
+test that needs a fixture that big does not get run. The declarations are static, so
+reading them statically is the honest instrument.
+"""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+import hhemt.analysis_validation as av
+from hhemt.report_renderers.errors_and_warnings import _CHECK_VOCABULARY
+
+#: Every level `by_level` routes to a table that now carries a `Check` column -- which,
+#: after [Q154], is all three. `provenance_completeness` is excluded WITHOUT being listed:
+#: its CheckResult call passes no `level=` at all, so it cannot be routed to any table and
+#: cannot render. The moment that defect is repaired it gains a level and this guard starts
+#: demanding an entry for it, which is the behaviour we want from an exclusion.
+_CHECK_TABLE_LEVELS = {"system", "resource", "aggregate"}
+
+#: Every module that mints a CheckResult. eda/ is included because its verdicts are
+#: persisted as eda/*.verdict.json and read back by `_read_persisted_eda_verdicts`, so they
+#: reach the same tables as the analysis_validation ones.
+_MINTING_MODULES = (
+    "analysis_validation.py",
+    "eda/compute_sensitivity.py",
+    "eda/cross_sim_identity.py",
+    "eda/raw_byte_identity.py",
+)
+
+
+def _string_bindings(scope_node) -> dict[str, str]:
+    """Simple `x = "literal"` bindings visible inside one scope."""
+    out: dict[str, str] = {}
+    for node in ast.walk(scope_node):
+        if isinstance(node, ast.Assign | ast.AnnAssign):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                for t in targets:
+                    if isinstance(t, ast.Name):
+                        out[t.id] = node.value.value
+    return out
+
+
+def _declared_check_table_names() -> set[str]:
+    """Every renderable check name minted anywhere under src/hhemt/.
+
+    PER-FUNCTION binding resolution, and that is not incidental. Five names are bound to a
+    local before use (`_name = "Known resume defects"`, `name = "EDA calc ran"`, and three in
+    compute_sensitivity.py), so a literal-only scan misses them. Worse, those three siblings
+    bind DIFFERENT strings to the SAME identifier `name`, so a module-scope map with
+    first-wins keeps one and silently drops two -- a census that under-reports without
+    erroring, which is the failure mode this guard exists to prevent.
+    """
+    import hhemt
+
+    src_root = Path(hhemt.__file__).parent
+    names: set[str] = set()
+    for rel in _MINTING_MODULES:
+        tree = ast.parse((src_root / rel).read_text())
+        module_bindings = _string_bindings_module_level(tree)
+        scopes = [(tree, module_bindings)]
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                scopes.append((node, {**module_bindings, **_string_bindings(node)}))
+        for scope_node, bindings in scopes:
+            for node in ast.walk(scope_node):
+                if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "CheckResult"):
+                    continue
+                kw = {k.arg: k.value for k in node.keywords}
+                lvl, nm = kw.get("level"), kw.get("name")
+                if not (isinstance(lvl, ast.Constant) and lvl.value in _CHECK_TABLE_LEVELS):
+                    continue
+                if isinstance(nm, ast.Constant):
+                    names.add(nm.value)
+                elif isinstance(nm, ast.Name) and nm.id in bindings:
+                    names.add(bindings[nm.id])
+    return names
+
+
+def _string_bindings_module_level(tree) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for n in tree.body:
+        if isinstance(n, ast.Assign | ast.AnnAssign):
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            if isinstance(n.value, ast.Constant) and isinstance(n.value.value, str):
+                for t in targets:
+                    if isinstance(t, ast.Name):
+                        out[t.id] = n.value.value
+    return out
+
+
+def _all_check_levels() -> dict[str, str]:
+    """{literal check name -> level} across EVERY level, not only the table levels.
+
+    Used only to DIAGNOSE a failing equality above. Deliberately not asserted on:
+    `src/hhemt/eda/` mints eight further checks with `name=name` (a variable), so any
+    exact-cover over all levels would silently under-cover and pass vacuously -- the
+    failure mode the first assertion in the test below exists to prevent.
+    """
+    src = Path(av.__file__)
+    out: dict[str, str] = {}
+    for node in ast.walk(ast.parse(src.read_text())):
+        if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "CheckResult"):
+            continue
+        kw = {k.arg: k.value for k in node.keywords}
+        lvl, nm = kw.get("level"), kw.get("name")
+        if isinstance(lvl, ast.Constant) and isinstance(nm, ast.Constant):
+            out[nm.value] = lvl.value
+    return out
+
+
+def test_vocabulary_covers_exactly_the_check_table_checks():
+    declared = _declared_check_table_names()
+    assert declared, (
+        "AST scan found no literal-named system/resource CheckResult constructions. "
+        "The scan itself has broken -- an empty set would make every assertion below "
+        "pass vacuously, which is the failure mode this guard exists to avoid."
+    )
+    # The equality is the contract. The two branches below only DIAGNOSE a failure of
+    # it -- a key that names a real check at an out-of-scope level is a different
+    # mistake from a key that names nothing, and the undifferentiated message
+    # ("absent from producer") reads as the second when it is usually the first.
+    # That misreading is what shipped `Data availability` into this map.
+    extra = set(_CHECK_VOCABULARY) - declared
+    out_of_scope = {k: lvl for k, lvl in _all_check_levels().items() if k in extra}
+    assert declared == set(_CHECK_VOCABULARY), (
+        f"_CHECK_VOCABULARY and the producer's Check-table checks disagree.\n"
+        f"  in producer, missing from vocabulary: {sorted(declared - set(_CHECK_VOCABULARY))}\n"
+        f"  in vocabulary, naming a check at an OUT-OF-SCOPE level: "
+        f"{sorted(f'{k} (level={lvl})' for k, lvl in out_of_scope.items())}\n"
+        f"    -> this map is scoped to {sorted(_CHECK_TABLE_LEVELS)} BY RULING "
+        f"(errors_and_warnings.py:46-48). Remove the key; the Stage table renders "
+        f"c.name raw and needs no entry.\n"
+        f"  in vocabulary, naming NO check at all: {sorted(extra - set(out_of_scope))}\n"
+        f"    -> a renamed or deleted check left a stale entry."
+    )
+
+
+def test_display_names_follow_the_sentence_case_no_identifier_convention():
+    for key, (display, description) in _CHECK_VOCABULARY.items():
+        assert display[:1].isupper(), f"{key!r}: display name {display!r} is not Sentence case"
+        assert "_" not in display and "." not in display, (
+            f"{key!r}: display name {display!r} carries a raw identifier or filename token; "
+            "the convention is a Sentence-case noun phrase naming the subject under test"
+        )
+        assert description.endswith("."), f"{key!r}: description is not a sentence"
+        assert len(description) > 40, f"{key!r}: description {description!r} is too terse to describe a predicate"
+
+
+def test_display_names_are_unique():
+    """Two checks sharing a display name are indistinguishable as matrix ROW LABELS.
+
+    `cross_experiment_errors_and_warnings.py` renders one row per raw check name but
+    labels it with the display name, so a duplicate label produces two rows a reader
+    cannot tell apart -- and the per-analysis tables would not reveal it, because there
+    the two rows sit in different tables. This is the only place the collision is
+    checkable before it ships.
+    """
+    displays = [d for d, _ in _CHECK_VOCABULARY.values()]
+    dupes = {d for d in displays if displays.count(d) > 1}
+    assert not dupes, f"display names must be unique across the vocabulary; duplicated: {sorted(dupes)}"

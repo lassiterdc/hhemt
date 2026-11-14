@@ -1,0 +1,7 @@
+extends: existence
+message: 'Name the referent instead of ''%s''.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '(?<![-\w])things?(?![-\w])'

@@ -308,7 +308,6 @@ dependencies:
   - pyshp=3.0.12=pyhcf101f3_0
   - pyside6=6.11.1=py311hf27b23e_1
   - pysocks=1.7.1=pyha55dd90_7
-  - pyswmm=2.0.1=pyhd8ed1ab_0
   - pytest=9.1.0=pyhc364b38_1
   - pytest-xdist=3.8.0=pyhd8ed1ab_0
   - python=3.11.15=h7508c33_1_cpython
@@ -347,7 +346,6 @@ dependencies:
   - sqlite=3.53.2=hbc0de68_0
   - stack_data=0.6.3=pyhd8ed1ab_1
   - statsmodels=0.14.6=py311h0372a8f_0
-  - swmm-toolkit=0.15.2=py311h1ddb823_2
   - sysroot_linux-64=2.39=hc4b9eeb_6
   - tblib=3.2.2=pyhcf101f3_0
   - threadpoolctl=3.6.0=pyhecae5ae_0

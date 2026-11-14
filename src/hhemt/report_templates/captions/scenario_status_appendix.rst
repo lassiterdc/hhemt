@@ -1,6 +1,6 @@
-Full per-scenario status table for **{{ snakemake.config.analysis_id }}**.
+Full status table for **{{ snakemake.config.analysis_id }}**.
 
-Each row reports a single scenario × model_type combination's exit status (success / pending / failed), runtime, continuity error, and any per-row notes captured by ``export_scenario_status.py`` at workflow close.
+Each row is one model run, with its completion status. When ``scenario_status.csv`` is missing, the page says so and shows no rows.
 
 **Sources:**
 

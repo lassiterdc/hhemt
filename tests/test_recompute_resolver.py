@@ -71,14 +71,8 @@ def test_scope_clear_raw_action_table_all_8_cells(key, expected):
 def test_load_bearing_cell_scenario_processing_raw_cleared_escalates_to_re_run():
     # When raw outputs are cleared, reprocess-from-raw is impossible, so a
     # scenario-processing bug must escalate to a full RE_RUN (encoded IN the table).
-    assert (
-        resolve_recompute_action(RecomputeScope.SCENARIO_PROCESSING, True)
-        is RecomputeAction.RE_RUN
-    )
-    assert (
-        resolve_recompute_action(RecomputeScope.SCENARIO_PROCESSING, False)
-        is RecomputeAction.REPROCESS_SCENARIO
-    )
+    assert resolve_recompute_action(RecomputeScope.SCENARIO_PROCESSING, True) is RecomputeAction.RE_RUN
+    assert resolve_recompute_action(RecomputeScope.SCENARIO_PROCESSING, False) is RecomputeAction.REPROCESS_SCENARIO
 
 
 # --------------------------------------------------------------------------- #
@@ -180,9 +174,7 @@ def test_semver_fallback_invalid_specifier_is_none():
 # Scoped override_force_rerun emission shape (D4 — surgical, never from_scratch).
 # --------------------------------------------------------------------------- #
 def _fake_analysis(*, sensitivity: bool):
-    return SimpleNamespace(
-        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity)
-    )
+    return SimpleNamespace(cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity))
 
 
 def test_emit_re_run_non_sensitivity_uses_event_iloc_ints():
@@ -194,7 +186,7 @@ def test_emit_re_run_non_sensitivity_uses_event_iloc_ints():
     assert "from_scratch" not in instr["kwargs"]
 
 
-def test_emit_re_run_sensitivity_uses_sa_id_strings():
+def test_emit_re_run_sensitivity_uses_member_id_strings():
     instr = _emit_re_run_instruction(_fake_analysis(sensitivity=True), {5, 22, 0})
     assert instr["kwargs"]["override_force_rerun"] == {"sa_id": ["0", "22", "5"]}
 
@@ -208,12 +200,12 @@ def test_emit_re_run_targets_only_the_given_prefix_scopes():
 # D6 unstamped-scope INFO — a non-blocking record with NO verdict.
 # --------------------------------------------------------------------------- #
 def test_classify_unstamped_scope_is_info_with_no_action():
-    match = _classify_unstamped_scope("sa_5")
+    match = _classify_unstamped_scope("member_5")
     assert isinstance(match, RegistryMatch)
     assert match.severity == "info"
     assert match.recommended_action is None  # the AttributeError-avoidance property
     assert match.commit_id is None
-    assert match.affected_scope == "sa_5"
+    assert match.affected_scope == "member_5"
     assert "unknown" in match.summary.lower()
 
 

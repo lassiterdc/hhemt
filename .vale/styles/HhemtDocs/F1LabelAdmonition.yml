@@ -1,0 +1,8 @@
+# F1_label, admonition title position; the negative lookahead is the '??? question' exemption (OI-2).
+extends: existence
+message: 'Question-form admonition title ''%s''. A ''??? question'' entry is exempt.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '(?m)^\s*(?:\?\?\?\+?|!!!)\s+(?!question\b)[\w-]+(?:\s+[\w-]+)*?\s+["“”](?:[^"“”]*(?<![-\w])(?:what|how|why|when|where|who|whether)(?![-\w])[^"“”]*|[^"“”]*\?\s*)["“”]'

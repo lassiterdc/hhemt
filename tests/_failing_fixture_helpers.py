@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
 
 
-def prepare_clone_dir(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) -> dict:
+def prepare_clone_dir(cached_analysis: TRITONSWMM_analysis, tmp_path: Path) -> dict:
     """Copy the cached analysis's system_directory to tmp_path; write modified
     YAML configs that point at the copy. Does NOT construct the analysis.
 
@@ -45,12 +45,52 @@ def prepare_clone_dir(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) ->
         )
 
     dst_system_dir = tmp_path / "system"
-    shutil.copytree(src_system_dir, dst_system_dir)
+    # symlinks=True: copy links AS links instead of following them -- the same remedy,
+    # for the same reason, as the two `copytree` sites in `tests/conftest.py`. Each
+    # scenario dir carries `build -> {_software}/triton/build_tritonswmm_cpu`, a link
+    # into the SHARED compile tier that another chunk rebuilds as routine setup: the
+    # reconfigure-from-clean `rm -rf`s the build dir's contents, and a follow-symlinks
+    # copytree landing inside that window raises `shutil.Error ... [Errno 2]` on the
+    # SOURCE. Measured on Rivanna run 20260824T021951Z: `build_tritonswmm_cpu` was
+    # rebuilt at 23:41 mid-run (666 files under it, 4037 under `_software`), and the 3
+    # `test_synth_static_plots` errors are exactly that read. The clone does not own the
+    # compile tier and has no business dereferencing it; copying the link preserves the
+    # scenario's structure and is insensitive to whether the target currently exists.
+    shutil.copytree(src_system_dir, dst_system_dir, symlinks=True)
+
+    # Drop inherited ORCHESTRATOR sentinels. A clone is a NEW run by definition, so it
+    # can never legitimately inherit another driver's claim -- orchestration state is
+    # per-run, and copying it in is what turns one leaked file into a whole-family
+    # failure.
+    #
+    # The failure this closes, measured on Rivanna run 20260827T043319Z: a suite array
+    # was `scancel`led, SIGKILL bypassed the `try/finally` in workflow.py that removes
+    # the driver sentinel, and ONE file leaked into the SHARED synth cache
+    # (`.../synth_multi_sim/_status/_orchestrator/310203-udc-ba05-24c0-004dab8b.json`,
+    # written 00:32:17, killed 00:32:41 -- 24 s later). Every subsequent clone copied
+    # it in, so the reprocess family failed with ONE byte-identical driver_id across
+    # many distinct tmp dirs -- which is the tell, since new_driver_id() embeds uuid4
+    # and cannot collide.
+    #
+    # The gate was RIGHT to refuse. It could not probe a `mode=local` pid whose
+    # recorded host was a DIFFERENT node from the one now running, so its tri-state
+    # logic held UNKNOWN rather than assuming dead -- correct, and bounded by a
+    # 7-DAY max-plausible-driver-lifetime cap that is sized for a real batch_job
+    # driver and is three orders of magnitude too long for a fixture. The same run
+    # passed locally precisely BECAUSE the probe could answer on the writing host.
+    #
+    # Fix at the FIXTURE boundary, not in the gate: the production gate exists to
+    # prevent an unarbitrated concurrent consolidate-zarr write and must stay
+    # conservative. No test relies on an inherited sentinel -- the one test that needs
+    # a live driver (`test_reprocess_refuses_fast_with_live_orchestrator`) constructs
+    # that condition itself, post-clone, via monkeypatch.
+    for _stale in dst_system_dir.rglob("_status/_orchestrator/*.json"):
+        _stale.unlink()
 
     # Write the modified master configs INSIDE dst_system_dir (NOT at tmp_path
     # root). The source layout has system_config.yaml + analysis_config.yaml
     # living inside system_directory; a sensitivity sub derives its analysis-level
-    # model-log dir as master_analysis_cfg_yaml.parent / "logs" / "sims"
+    # model-log dir as experiment_cfg_yaml.parent / "logs" / "sims"
     # (run_simulation.py:_analysis_level_model_logfile). Hoisting the master config
     # one level out of system_directory makes model_run_completed() look in
     # tmp_path/logs/sims/ while the cloned logs live in tmp_path/system/logs/sims/,
@@ -74,7 +114,7 @@ def prepare_clone_dir(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) ->
     }
 
 
-def construct_analysis_from_paths(paths: dict) -> "TRITONSWMM_analysis":
+def construct_analysis_from_paths(paths: dict) -> TRITONSWMM_analysis:
     """Construct fresh TRITONSWMM_system + TRITONSWMM_analysis from cloned configs."""
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.system import TRITONSWMM_system
@@ -84,7 +124,7 @@ def construct_analysis_from_paths(paths: dict) -> "TRITONSWMM_analysis":
     return analysis
 
 
-def clone_analysis_to_tmp(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) -> "TRITONSWMM_analysis":
+def clone_analysis_to_tmp(cached_analysis: TRITONSWMM_analysis, tmp_path: Path) -> TRITONSWMM_analysis:
     """Convenience: clone + construct in one shot (no on-disk mutation between).
 
     For tests that need pre-construction mutation, use ``prepare_clone_dir``
@@ -175,8 +215,14 @@ def inject_compilation_failure(system, model_type: str) -> None:
     if not sys_log.exists():
         return
     key = {
-        "tritonswmm": "compilation_successful",
-        "triton": "compilation_triton_only_successful",
+        # LOG FIELDS ONLY. `compilation_successful` and
+        # `compilation_triton_only_successful` are PROPERTIES on TRITONSWMM_system
+        # (system.py:2310 and :1964), not declared log fields -- the canonical five are
+        # at log.py:728-736. Targeting a property wrote a top-level key nothing reads,
+        # which log.py's write() then DROPS as undeclared, while the property re-derived
+        # True from the build log: a silent no-op injection.
+        "tritonswmm": "compilation_tritonswmm_cpu_successful",
+        "triton": "compilation_triton_cpu_successful",
         "swmm": "compilation_swmm_successful",
     }[model_type]
     _mutate_log_field(sys_log, key, False)
@@ -240,59 +286,84 @@ def inject_multi_sim_failures_at_paths(paths: dict) -> None:
     # System log mutation (compilation flag)
     sys_log = system_dir / "system_log.json"
     if sys_log.exists():
-        _mutate_log_field(sys_log, "compilation_successful", False)
+        _mutate_log_field(sys_log, "compilation_tritonswmm_cpu_successful", False)
     # Delete the master DataTree (Option B's canonical artifact). Under
     # the legacy two-tier consolidation this helper deleted per-mode
     # flat zarrs; those no longer exist post-Option-B.
+    # The literal is CORRECT and must not be routed through resolve_experiment_tree:
+    # analysis.py:383 sets `analysis_paths_kwargs["analysis_datatree_zarr"] = analysis_dir /
+    # "analysis_datatree.zarr"`, and that same field is what processing_analysis.py:207
+    # WRITES and analysis_validation.py:334 CHECKS. The name reads as a retired alias against
+    # the V0021 vocabulary, but producer and check agree on it, so the multisim tree really
+    # does carry it. Resolving here would pick experiment_datatree.zarr when present and
+    # delete a store the check never looks at.
+    # Only the SKIP is wrong: `if ... .exists()` made a missing store a silent no-op.
     target = analysis_dir / "analysis_datatree.zarr"
-    if target.exists():
-        inject_summary_file_missing(target)
+    assert target.exists(), (
+        f"expected {target.name} under {analysis_dir} (the store analysis.py:383 names, "
+        f"processing_analysis.py:207 writes and analysis_validation.py:334 checks); tree "
+        f"carries {sorted(p.name for p in analysis_dir.glob('*datatree.zarr')) or 'no root store'}"
+    )
+    inject_summary_file_missing(target)
 
 
 def inject_sensitivity_failures_at_paths(paths: dict) -> None:
-    """Inject failures across sub-analyses of a synth_sensitivity clone.
+    """Inject failures across members of a synth_sensitivity clone.
 
     Coverage:
-    - sa_<first> / event_*: scenario setup failure (A1)
-    - sa_<second> / event_*: simulation run failure (A2)
-    - sa_<third> / event_*: timeseries processing failure (A3)
+    - member_<first> / event_*: scenario setup failure (A1)
+    - member_<second> / event_*: simulation run failure (A2)
+    - member_<third> / event_*: timeseries processing failure (A3)
     - System: SWMM compilation marked failed (S1)
-    - System: sensitivity_datatree.zarr deleted (S2)
+    - System: experiment_datatree.zarr deleted (S2)
     """
     analysis_dir = paths["analysis_dir"]
     system_dir = paths["system_dir"]
-    sub_root = analysis_dir / "subanalyses"
+    sub_root = analysis_dir / "members"
     if not sub_root.exists():
         # Some sensitivity layouts use a different root; try common alternatives.
-        for alt in ["sub_analyses", "sa", "ensemble"]:
+        for alt in ["members", "member", "ensemble"]:
             if (analysis_dir / alt).exists():
                 sub_root = analysis_dir / alt
                 break
-    sa_dirs = sorted([d for d in sub_root.iterdir() if d.is_dir()])
-    assert len(sa_dirs) >= 3, f"expected ≥3 sub-analysis dirs in {sub_root}, found {len(sa_dirs)}"
+    member_dirs = sorted([d for d in sub_root.iterdir() if d.is_dir()])
+    assert len(member_dirs) >= 3, f"expected ≥3 member dirs in {sub_root}, found {len(member_dirs)}"
 
-    def _first_scenario_in_sa(sa_dir):
-        sims = sa_dir / "sims"
+    def _first_scenario_in_member(member_dir):
+        sims = member_dir / "sims"
         return next(iter(sorted(d for d in sims.iterdir() if d.is_dir())))
 
-    inject_scenario_setup_failure(_first_scenario_in_sa(sa_dirs[0]))
-    inject_simulation_run_failure(_first_scenario_in_sa(sa_dirs[1]), model_type="triton")
-    if len(sa_dirs) >= 3:
-        inject_timeseries_failure(_first_scenario_in_sa(sa_dirs[2]))
-    # Flip per-sub-analysis log flags so the validators see them as failed
-    for i, sa_dir in enumerate(sa_dirs[:3]):
+    inject_scenario_setup_failure(_first_scenario_in_member(member_dirs[0]))
+    inject_simulation_run_failure(_first_scenario_in_member(member_dirs[1]), model_type="triton")
+    if len(member_dirs) >= 3:
+        inject_timeseries_failure(_first_scenario_in_member(member_dirs[2]))
+    # Flip per-member log flags so the validators see them as failed
+    for i, member_dir in enumerate(member_dirs[:3]):
         if i == 0:
-            inject_analysis_log_flag_false(sa_dir, "all_scenarios_created")
+            inject_analysis_log_flag_false(member_dir, "all_scenarios_created")
         elif i == 1:
-            inject_analysis_log_flag_false(sa_dir, "all_sims_run")
+            inject_analysis_log_flag_false(member_dir, "all_sims_run")
         elif i == 2:
-            inject_analysis_log_flag_false(sa_dir, "all_TRITONSWMM_performance_timeseries_processed")
-            inject_analysis_log_flag_false(sa_dir, "all_TRITON_timeseries_processed")
-            inject_analysis_log_flag_false(sa_dir, "all_SWMM_timeseries_processed")
+            inject_analysis_log_flag_false(member_dir, "all_TRITONSWMM_performance_timeseries_processed")
+            inject_analysis_log_flag_false(member_dir, "all_TRITON_timeseries_processed")
+            inject_analysis_log_flag_false(member_dir, "all_SWMM_timeseries_processed")
     sys_log = system_dir / "system_log.json"
     if sys_log.exists():
         _mutate_log_field(sys_log, "compilation_swmm_successful", False)
-    # Delete sensitivity_datatree.zarr if present
-    sens_zarr = analysis_dir / "sensitivity_datatree.zarr"
-    if sens_zarr.exists():
-        inject_summary_file_missing(sens_zarr)
+    # Delete the master store the CHECK reads. The name mirrors
+    # analysis.py:387 (`analysis_paths_kwargs["experiment_datatree_zarr"] =
+    # analysis_dir / "experiment_datatree.zarr"`), which is the SAME field
+    # sensitivity_analysis.py:1625 writes and analysis_validation.py:340 reads. Mirror the
+    # FIELD, never resolve_experiment_tree: the resolver's priority order can select a
+    # different store than the one the check looks at, which would delete the wrong tree
+    # and let the check report missing on a store that never existed.
+    # The old literal `sensitivity_datatree.zarr` is the pre-V0021 name, so this mutation
+    # had become a silent NO-OP; FAIL LOUD instead, because a skipped injection and a
+    # working one are indistinguishable at every downstream assertion.
+    sens_zarr = analysis_dir / "experiment_datatree.zarr"
+    assert sens_zarr.exists(), (
+        f"expected {sens_zarr.name} under {analysis_dir} (the store analysis.py:387 names "
+        f"and analysis_validation.py:340 checks); tree carries "
+        f"{sorted(p.name for p in analysis_dir.glob('*datatree.zarr')) or 'no root store'}"
+    )
+    inject_summary_file_missing(sens_zarr)

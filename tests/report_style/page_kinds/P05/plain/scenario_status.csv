@@ -1,0 +1,10 @@
+event_iloc,model_type,run_completed,scenario_setup
+0,triton,True,True
+0,tritonswmm,True,True
+0,swmm,True,True
+1,triton,True,True
+1,tritonswmm,True,True
+1,swmm,True,True
+2,triton,False,True
+2,tritonswmm,False,True
+2,swmm,False,True

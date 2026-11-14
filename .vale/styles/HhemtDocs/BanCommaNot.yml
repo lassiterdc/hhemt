@@ -1,0 +1,7 @@
+extends: existence
+message: 'Cut '', not''.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - ',\s+not(?![-\w])'

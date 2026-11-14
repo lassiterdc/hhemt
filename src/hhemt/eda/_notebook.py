@@ -75,11 +75,13 @@ def emit_eda_notebook(
     cells.append(
         _tagged(
             new_markdown_cell(
-                f"# EDA — {cfg_analysis.analysis_id}\n\n"
-                "This notebook is **toolkit-seeded** and explore-ready. Seed cells are "
-                "regenerated on every `eda()` run; cells you add are yours to keep. "
+                f"# EDA: {cfg_analysis.analysis_id}\n\n"
+                "This notebook is **toolkit-seeded** and explore-ready. Every `eda()` run writes a "
+                "new notebook (`eda.ipynb`, then `eda_1.ipynb`, ...) and never modifies an existing "
+                "one, so anything you author here is safe; open the newest file to pick up refreshed "
+                "seed cells. "
                 "Run the loader cell first to bind the experiment variables, then "
-                "edit/add cells freely — your EDA never modifies git-tracked `hhemt` source."
+                "edit/add cells freely; your EDA never modifies git-tracked `hhemt` source."
             )
         )
     )
@@ -103,7 +105,7 @@ def emit_eda_notebook(
                 "`ctx` exposes: `datatree`, `sensitivity_datatree`, `cfg_analysis`, "
                 "`cfg_system`, `scenario_status`, `swmm_features`, `triton_dem`, "
                 "`performance`, `is_bundle`. Fields are `None` when the experiment "
-                "shape or this root does not carry that artifact."
+                "or this root does not carry that artifact."
             )
         )
     )
@@ -119,17 +121,30 @@ def emit_eda_notebook(
         _tagged(
             new_code_cell(
                 "# Seed figures: re-rendered on execution from the carried EDA datasets and\n"
-                "# DISPLAYED INLINE (the notebook is the primary explore surface, ADR-14).\n"
-                "# Guarded on the EDA data-prep zarr(s) being present at root (absent on a\n"
+                "# displayed inline (the notebook is the main explore surface).\n"
+                "# Guarded on the EDA data-prep zarr stores being present at root (absent on a\n"
                 "# figureless non-sensitivity analysis or a bundle whose eda/ zarr was not\n"
                 "# harvested) so this cell never errors.\n"
-                "from hhemt.eda import config_diff_maps_figure_from_root\n"
+                "from hhemt.eda import _report as _eda_report\n"
+                "from hhemt.eda._plotting import _RENDERER_BACKING_ARTIFACT\n"
+                "# One builder per enabled plot kind, gated per kind on that kind's own backing\n"
+                "# zarr. A root-level any('*.zarr') guard passes whenever any eda artifact exists\n"
+                "# (byte identity always writes one), so it would still run a builder against an absent\n"
+                "# store whenever its own calc member legitimately skipped.\n"
+                "_BUILDERS = {\n"
+                "    'config_diff_maps': _eda_report.config_diff_maps_figure_from_root,\n"
+                "    'dem_resolution_cost_error': _eda_report.dem_resolution_cost_error_figure_from_root,\n"
+                "    'dem_resolution_error_ecdf': lambda r: _eda_report.dem_resolution_error_ecdf_figure_from_root(\n"
+                "        r, eda_cfg=ctx.cfg_analysis.eda\n"
+                "    ),\n"
+                "    'dem_resolution_diff_maps': _eda_report.dem_resolution_diff_maps_figure_from_root,\n"
+                "    'dem_resolution_coupling_table': _eda_report.dem_resolution_coupling_table_figure_from_root,\n"
+                "}\n"
                 "_eda_dir = root / 'eda'\n"
-                "_figs = (\n"
-                "    [config_diff_maps_figure_from_root(root)]\n"
-                "    if _eda_dir.is_dir() and any(_eda_dir.glob('*.zarr'))\n"
-                "    else []\n"
-                ")\n"
+                "def _backed(k):\n"
+                '    return (_eda_dir / f"{_RENDERER_BACKING_ARTIFACT.get(k, k)}.zarr").is_dir()\n'
+                "_kinds = [k for k in ctx.cfg_analysis.eda.enabled_plots if k in _BUILDERS and _backed(k)]\n"
+                "_figs = [_BUILDERS[k](root) for k in _kinds]\n"
                 "# also persist the standalone plots/eda/*.html artifacts (re-render to disk)\n"
                 "plot_paths = (\n"
                 "    render_eda_plots(root, cfg_analysis=ctx.cfg_analysis, eda_cfg=ctx.cfg_analysis.eda)\n"
@@ -138,14 +153,14 @@ def emit_eda_notebook(
                 ")\n"
                 "for _f in _figs:\n"
                 "    _f.show()\n"
-                "# Final expression is a SUMMARY STRING, not a figure: a bare trailing\n"
-                "# `_figs[0]` re-displays the figure a SECOND time (nbconvert emits output\n"
+                "# The final expression is a summary string, not a figure: a bare trailing\n"
+                "# `_figs[0]` re-displays the figure a second time (nbconvert emits output\n"
                 "# from both `.show()` and the cell's last expression), doubling every\n"
                 "# figure in eda_report.html.\n"
                 "(\n"
-                "    f'{len(_figs)} EDA figure(s) rendered inline above.'\n"
+                '    f\'{len(_figs)} EDA {"figure" if len(_figs) == 1 else "figures"} rendered inline above.\'\n'
                 "    if _figs\n"
-                "    else 'no EDA figures for this experiment shape'\n"
+                "    else 'no EDA figures for this experiment'\n"
                 ")"
             )
         )
@@ -157,7 +172,7 @@ def emit_eda_notebook(
         cells.append(
             _tagged(
                 new_markdown_cell(
-                    "## Cross-sim byte-identity (source-analysis only)\n\n"
+                    "## Byte identity across compute configurations (source-analysis only)\n\n"
                     "Available only on a live analysis directory (a transported bundle "
                     "carries no source per-scenario summaries)."
                 )

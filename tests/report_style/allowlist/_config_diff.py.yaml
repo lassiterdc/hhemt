@@ -1,0 +1,11 @@
+source: src/hhemt/eda/_config_diff.py
+entries:
+- rule: retired_word
+  string: members/*/sims/*/swmm/hydraulics.inp
+  status: permitted
+  reason: glob over the on-disk layout the toolkit writes, used as a path; not printed on a page
+  count: 2
+- rule: retired_word
+  string: sa_id
+  status: permitted
+  reason: 'dictionary key and coordinate name of the stored verdict and datatree layout (renaming it is a layout migration); not printed: the page prints the key''s value under its own column header'

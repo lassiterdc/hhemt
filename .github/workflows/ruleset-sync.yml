@@ -1,0 +1,62 @@
+# Ruleset sync guard (static half): every required status check in
+# .github/rulesets/main.json must be the check-run name of some job in
+# .github/workflows/. A required check nothing reports leaves the PR stuck at
+# "Expected -- Waiting for status to be reported" with nothing red to read.
+#
+# This workflow is deliberately NOT a required check: it guards the ruleset file,
+# it is not a gate on a release. The LIVE half (file vs the ruleset GitHub enforces)
+# is not run on push or pull_request: a pull request that edits main.json is drifted from live until
+# scripts/apply_main_ruleset.sh runs after the merge, so a live comparison would be
+# red by design. It runs only from the manual `ruleset-live` job. `just ruleset-check` runs both halves, and `just tag` calls it.
+name: Ruleset sync
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "develop" ]
+    paths:
+      - ".github/rulesets/**"
+      - ".github/workflows/**"
+      - "scripts/check_ruleset_sync.py"
+  pull_request:
+    branches: [ "main", "develop" ]
+    paths:
+      - ".github/rulesets/**"
+      - ".github/workflows/**"
+      - "scripts/check_ruleset_sync.py"
+
+permissions:
+  contents: read
+
+jobs:
+  ruleset-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML (the only dependency; the guard reads workflow YAML with it)
+        run: python -m pip install pyyaml
+      - name: Every required context has a producing job
+        run: python scripts/check_ruleset_sync.py --static
+
+  # Manual only: never on pull_request or push, because a PR that edits main.json is
+  # drifted from the live ruleset until apply_main_ruleset.sh runs after the merge.
+  # `gh api` needs a token, so the workflow token is exported as GH_TOKEN.
+  ruleset-live:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml
+      - name: The live ruleset equals the file
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/check_ruleset_sync.py --static --live

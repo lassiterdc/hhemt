@@ -1,8 +1,10 @@
 import warnings
-from pydantic import Field, model_validator
-from typing import Optional
 from pathlib import Path
-from hhemt.config.base import cfgBaseModel
+from typing import Literal
+
+from pydantic import Field, model_validator
+
+from hhemt.config.base import cfgBaseModel, field_meta, when
 
 
 class CRSConfig(cfgBaseModel):
@@ -32,10 +34,9 @@ class CRSConfig(cfgBaseModel):
     vertical_epsg: int = Field(
         5703,
         description=(
-            "EPSG code for the vertical CRS / datum of DEM elevations. "
-            "Defaults to 5703 (NAVD88 height, m). Drives elevation/WSE/"
-            "depth colorbar labels in renderers and CF-1.13 "
-            "vertical_datum stamping on consolidated outputs."
+            "EPSG code for the vertical CRS or datum of DEM elevations. Defaults to 5703, NAVD88 height in "
+            "m. Drives elevation, WSE, and depth colorbar labels in renderers and CF-1.13 vertical_datum "
+            "stamping on consolidated outputs."
         ),
     )
 
@@ -46,8 +47,7 @@ class CRSConfig(cfgBaseModel):
         horiz = pyproj.CRS.from_epsg(self.horizontal_epsg)
         if not (horiz.is_projected or horiz.is_geographic):
             raise ValueError(
-                f"horizontal_epsg {self.horizontal_epsg} is neither projected "
-                f"nor geographic; check the EPSG code."
+                f"horizontal_epsg {self.horizontal_epsg} is neither projected nor geographic; check the EPSG code."
             )
         vert = pyproj.CRS.from_epsg(self.vertical_epsg)
         if not vert.is_vertical:
@@ -62,10 +62,10 @@ class CRSConfig(cfgBaseModel):
 class system_config(cfgBaseModel):
     """Pydantic model for TRITON-SWMM system configuration.
 
-    Per-sub-analysis variation via prefixed sensitivity-CSV columns
+    Per-member variation via prefixed sensitivity-CSV columns
     ----------------------------------------------------------------
     When used with hhemt's sensitivity-analysis workflow,
-    every field of this SystemConfig may be varied per sub-analysis via
+    every field of this SystemConfig may be varied per member via
     sensitivity-CSV/XLSX columns of the form ``system.{field}``. The
     column is mutually exclusive with the ``system_config_yaml`` full-file
     column on a per-row basis. Overlay cells are synthesized into a
@@ -86,61 +86,121 @@ class system_config(cfgBaseModel):
     system_directory: Path = Field(
         ...,
         description="Path where TRITON-SWMM system outputs will be stored.",
+        # A toolkit-owned OUTPUT: from_case_study mkdirs it AFTER the pre-download
+        # validation, and for the shipped Norfolk case it is ${PACKAGE_DIR}/system,
+        # ignored by .gitignore:243 and absent on a fresh clone. Exempt from the
+        # load-time existence check for the same reason the two software dirs are.
+        json_schema_extra={"toolkit_owned_output": True},
     )
-    watershed_gis_polygon: Path = Field(
-        ..., description="Watershed or subcatchment gis used for plotting."
-    )
-    DEM_fullres: Path = Field(
-        ..., description="DEM to be formatted and, if desired, coarsened, for TRITON"
-    )
-    landuse_lookup_file: Optional[Path] = Field(
+    watershed_gis_polygon: Path = Field(..., description="Watershed or subcatchment gis used for plotting.")
+    DEM_fullres: Path = Field(..., description="DEM to be formatted and, if desired, coarsened, for TRITON")
+    landuse_lookup_file: Path | None = Field(
         None,
         description="CSV file containing lookup table relating landuse categories to manning's roughness coefficients",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
     SWMM_hydraulics: Path = Field(
         ...,
-        description="Hydraulics-only SWMM model (.inp) template with fillable fields based on input weather data. An event-specific scenario of this model will be input to TRITON-SWMM.",
+        description="Hydraulics-only SWMM model template, a .inp file, with fillable fields based on input "
+        "weather data. An event-specific scenario of the model will be input to TRITON-SWMM.",
     )
-    SWMM_hydrology: Optional[Path] = Field(
+    SWMM_hydrology: Path | None = Field(
         None,
-        description="Hydrology-only SWMM model (.inp) template with fillable fields based on input weather data. This will be run prior to TRITON-SWMM to generate runoff time series in grid cells that overlap with subcatchment outlet nodes.",
+        description="Hydrology-only SWMM model template, a .inp file, with fillable fields based on input "
+        "weather data. The model will be run prior to TRITON-SWMM to generate runoff time "
+        "series in grid cells that overlap with subcatchment outlet nodes.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_swmm_for_hydrology", True)]),
     )
-    SWMM_full: Optional[Path] = Field(
+    SWMM_full: Path | None = Field(
         None,
-        description="Full SWMM model (.inp) template with fillable fields based on input weather data. Scenarios based on this can be run in addition to TRITON-SWMM to compare SWMM hydraulics results.",
+        description="Full SWMM model template, a .inp file, with fillable fields based on input weather "
+        "data. Scenarios based on the template can be run in addition to TRITON-SWMM to "
+        "compare SWMM hydraulics results.",
+        json_schema_extra=field_meta(required_when=[when("toggle_swmm_model", True)]),
     )
-    landuse_raster: Optional[Path] = Field(
+    swmm_coupling_mode: Literal["all_junctions", "list", "legacy"] = Field(
+        "all_junctions",
+        description=(
+            "The SWMM nodes where the coupled TRITON-SWMM model may exchange water. The toolkit always "
+            "gives TRITON an explicit list that the toolkit writes for each scenario, and this setting "
+            "chooses the candidates that the list is selected from. The default, all_junctions, couples "
+            "every junction that has a [COORDINATES] row. The list choice takes the nodes named in "
+            "swmm_coupling_nodes_file. The third choice selects every node that carries a FLOW [INFLOWS] "
+            "line."
+        ),
+        json_schema_extra=field_meta(
+            applies_when=[when("toggle_tritonswmm_model", True)],
+            options={
+                "all_junctions": (
+                    "The default. Every [JUNCTIONS] node of SWMM_hydraulics that has a [COORDINATES] row."
+                ),
+                "list": (
+                    "The nodes named in swmm_coupling_nodes_file. Each node must be a junction with a "
+                    "[COORDINATES] row."
+                ),
+                "legacy": (
+                    "An explicit opt-in that selects every node of SWMM_hydraulics that carries an "
+                    "[INFLOWS] line with constituent FLOW, read by SWMM's own rule."
+                ),
+            },
+        ),
+    )
+    swmm_coupling_nodes_file: Path | None = Field(
+        None,
+        description=(
+            "A one-column file of coupling-node names, read when swmm_coupling_mode is 'list'. The file "
+            "holds one name per line, with surrounding whitespace stripped, blank lines skipped, lines "
+            "starting with `;` skipped, and no header."
+        ),
+        json_schema_extra=field_meta(
+            applies_when=[when("swmm_coupling_mode", "list")],
+            required_when=[when("swmm_coupling_mode", "list")],
+        ),
+    )
+    landuse_raster: Path | None = Field(
         None,
         description="Landuse raster used for creating manning's roughness input.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
-    SWMM_software_directory: Optional[Path] = Field(
+    SWMM_software_directory: Path | None = Field(
         None,
-        json_schema_extra={"toolkit_owned_output": True},
-        description="Folder containing the SWMM model software (created by the clone/build gate at run/setup).",
+        json_schema_extra={"toolkit_owned_output": True, "toolkit_clones_into": True},
+        description="Folder containing the SWMM model software, created by the clone/build gate at run/setup.",
     )
     # Optional[Path] (not required) ONLY so a portability-scrubbed render bundle's
     # cfg_system.yaml (which nulls this per bundle/_path_policy.py IS_NONE_ACCEPTABLE)
     # loads for bundle-local EDA/render; requiredness is enforced at the
     # TRITONSWMM_system constructor chokepoint, not at load time. Mirrors the
     # SWMM_software_directory sibling above.
-    TRITONSWMM_software_directory: Optional[Path] = Field(
+    TRITONSWMM_software_directory: Path | None = Field(
         None,
-        json_schema_extra={"toolkit_owned_output": True},
-        description="Folder containing the TRITONSWMM model software (created by the clone/build gate at run/setup). May be null in a reconstituted reprex bundle's synthesized system_config.yaml -- the round-trip re-derives it from the by-reference software.",
+        json_schema_extra={"toolkit_owned_output": True, "toolkit_clones_into": True},
+        description="Folder containing the TRITONSWMM model software, created by the clone/build gate at "
+        "run/setup. May be null in the synthesized system_config.yaml of a reconstituted "
+        "reprex bundle, because the round-trip re-derives the value from the by-reference "
+        "software.",
     )
     TRITONSWMM_git_URL: str = Field(
         ...,
         description="Git repository with TRITONSWMM",
     )
-    TRITONSWMM_branch_key: Optional[str] = Field(
+    TRITONSWMM_branch_key: str | None = Field(
         None,
-        description="TRITONSWMM branch to checkout. Known working branches: 02438b60613a7d913d884e7b836f9f5ff421fe7d",
+        description=(
+            "Git ref the TRITONSWMM clone is pinned to. In native mode the value may be a branch, a tag, "
+            "or a commit sha. In container mode the value MUST be a full commit sha, because a container "
+            "skips the compile and no clone exists to resolve a branch name against. The pin is re-checked "
+            "on every run, and a run is refused when an existing clone sits at a different commit. The "
+            "check is the only protection against stale numerics, because an existing clone is never "
+            "re-checked-out and the cached build of the clone is never invalidated. Leave unset to build "
+            "whatever the default branch of the clone resolves to."
+        ),
     )
     SWMM_git_URL: str = Field(
         "https://github.com/USEPA/Stormwater-Management-Model.git",
         description="Git repository with SWMM",
     )
-    SWMM_tag_key: Optional[str] = Field(
+    SWMM_tag_key: str | None = Field(
         "v5.2.4",
         description="SWMM tag to checkout.",
     )
@@ -153,43 +213,49 @@ class system_config(cfgBaseModel):
     # hpc_system_config.additional_modules (joined via resolve_additional_modules).
     # A one-cycle pop-and-warn shim in validate_toggle_dependencies (below) lets
     # un-migrated YAMLs still load. REMOVE the shim after <release>.
-    subcatchment_raingage_mapping: Optional[Path] = Field(
+    subcatchment_raingage_mapping: Path | None = Field(
         None,
         description="Lookup table relating spatially indexed rainfall time series to SWMM subcatchment IDs.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_swmm_for_hydrology", True)]),
     )
     triton_swmm_configuration_template: Path = Field(
         ...,
         description="Path to the template TRITON-SWMM cfg file that defines the variables and inputs per simulation.",
     )
     # ATTRIBUTES
-    landuse_description_colname: Optional[str] = Field(
-        None,
-        description="column name in the landuse_lookup_file corresponding to landuse description.",
-    )
-    landuse_lookup_class_id_colname: Optional[str] = Field(
+    landuse_lookup_class_id_colname: str | None = Field(
         None,
         description="column name in the landuse_lookup_file corresponding to landuse classification.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
-    landuse_lookup_mannings_colname: Optional[str] = Field(
+    landuse_lookup_mannings_colname: str | None = Field(
         None,
         description="column name in the landuse_lookup_file corresponding to manning's coefficient.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
-    landuse_plot_color_colname: Optional[str] = Field(
-        None,
-        description="column name in the landuse_lookup_file corresponding to target plot colors by landuse.",
-    )
-    subcatchment_raingage_mapping_gage_id_colname: Optional[str] = Field(
+    subcatchment_raingage_mapping_gage_id_colname: str | None = Field(
         None,
         description="Column name in subcatchment_raingage_mapping_gage corresponding to the rain gage ids.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_swmm_for_hydrology", True)]),
     )
     # CONSTANTS
-    dem_outside_watershed_height: Optional[float] = Field(
+    dem_outside_watershed_height: float | None = Field(
         None,
-        description="DEM height applied to grid cells outside of the watershed boundary. Used for scaling DEM plot colorbars.",
+        description="Elevation burned into the DEM outside the watershed boundary. Report figures never "
+        "test cells against the threshold directly. Cells at or above the smaller of this "
+        "value and dem_building_height, less wall_threshold_buffer_m, are painted as walls. "
+        "When dem_building_height is unset, this value acts alone. A value below the real "
+        "terrain of the raster paints terrain as wall and reports no error. Leave unset when "
+        "the DEM carries no such sentinel.",
     )
-    dem_building_height: Optional[float] = Field(
+    dem_building_height: float | None = Field(
         None,
-        description="DEM height applied to DEM gridcells overlapping buildings. Used for scaling DEM plot colorbars.",
+        description="Elevation burned into DEM cells overlapping buildings. Report figures drop cells "
+        "whose value equals this number from the DEM colorbar range, and paint cells at or "
+        "above the smaller of this value and dem_outside_watershed_height, less "
+        "wall_threshold_buffer_m, as walls. When dem_outside_watershed_height is unset, this "
+        "value acts alone. A value that mismatches the raster leaves rooftops in the colorbar "
+        "and reports no error. Leave unset when the DEM carries no such sentinel.",
     )
     # TOGGLES
     toggle_use_swmm_for_hydrology: bool = Field(
@@ -202,57 +268,63 @@ class system_config(cfgBaseModel):
     )
     toggle_triton_model: bool = Field(
         ...,
-        description="Determines whether or not a TRITON-only model will be compiled and run",
+        description=(
+            "Determines whether a TRITON-only model is enabled. The build is not performed here. In native "
+            "mode the setup rule asserts that an enabled model already has a successful build."
+        ),
     )
     toggle_tritonswmm_model: bool = Field(
         ...,
-        description="Determines whether or not a TRITON-SWMM coupled model will be compiled and run",
+        description=(
+            "Determines whether a TRITON-SWMM coupled model is enabled. The build is not performed here. "
+            "In native mode the setup rule asserts that an enabled model already has a successful build."
+        ),
     )
     toggle_swmm_model: bool = Field(
         ...,
-        description="Determines whether or not a standalone SWMM model will be compiled and run",
+        description=(
+            "Determines whether a standalone SWMM model is enabled. The build is not performed here. In "
+            "native mode the setup rule asserts that an enabled model already has a successful build."
+        ),
     )
     # PARAMETERS
     target_dem_resolution: float = Field(
         ...,
         description="Target DEM resolution for TRITON-SWMM in the native resolution of the provided DEM.",
     )
-    constant_mannings: Optional[float] = Field(
+    constant_mannings: float | None = Field(
         None,
-        description="Constant manning's coefficient to use. Only applies if toggle_use_constant_mannings is set to True.",
+        description="Constant manning's coefficient to use. Only applies if toggle_use_constant_mannings is set to "
+        "True.",
+        json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", True)]),
     )
-    processed_xllcorner: Optional[float] = Field(
+    processed_xllcorner: float | None = Field(
         None,
         description=(
-            "Optional lower-left x-coordinate to anchor processed DEM/Manning outputs "
-            "(in DEM CRS units). When set, processed rasters are aligned to this origin."
+            "Optional lower-left x-coordinate to anchor processed DEM/Manning outputs, in DEM CRS units. "
+            "When set, processed rasters are aligned to this origin."
         ),
     )
-    processed_yllcorner: Optional[float] = Field(
+    processed_yllcorner: float | None = Field(
         None,
         description=(
-            "Optional lower-left y-coordinate to anchor processed DEM/Manning outputs "
-            "(in DEM CRS units). When set, processed rasters are aligned to this origin."
+            "Optional lower-left y-coordinate to anchor processed DEM/Manning outputs, in DEM CRS units. "
+            "When set, processed rasters are aligned to this origin."
         ),
     )
-    ncols: Optional[int] = Field(
+    ncols: int | None = Field(
         None,
-        description=(
-            "Target number of columns in the processed DEM, mannings, and TRITON results"
-        ),
+        description=("Target number of columns in the processed DEM, mannings, and TRITON results"),
     )
-    nrows: Optional[int] = Field(
+    nrows: int | None = Field(
         None,
-        description=(
-            "Target number of rows in the processed DEM, mannings, and TRITON results"
-        ),
+        description=("Target number of rows in the processed DEM, mannings, and TRITON results"),
     )
     crs: CRSConfig = Field(
         ...,
         description=(
-            "Composite horizontal + vertical CRS for the modeled system. "
-            "horizontal_epsg is required; vertical_epsg defaults to 5703 "
-            "(NAVD88 m). See CRSConfig for full semantics."
+            "Composite horizontal + vertical CRS for the modeled system. horizontal_epsg is required, and "
+            "vertical_epsg defaults to 5703, NAVD88 m. See CRSConfig for full semantics."
         ),
     )
 
@@ -291,52 +363,131 @@ class system_config(cfgBaseModel):
                     )
         errors = []
 
-        _, additional_errors = cls.validate_from_toggle(
-            values,
-            toggle_varname="toggle_use_constant_mannings",
-            lst_rqrd_if_true=["constant_mannings"],
-            lst_rqrd_if_false=[
-                "landuse_lookup_file",
-                "landuse_raster",
-                "landuse_description_colname",
-                "landuse_lookup_class_id_colname",
-                "landuse_lookup_mannings_colname",
-            ],
-        )
-        errors.extend(additional_errors)
-
-        _, additional_errors = cls.validate_from_toggle(
-            values,
-            toggle_varname="toggle_use_swmm_for_hydrology",
-            lst_rqrd_if_true=[
-                "SWMM_hydrology",
-                "subcatchment_raingage_mapping",
-                "subcatchment_raingage_mapping_gage_id_colname",
-            ],
-            lst_rqrd_if_false=[],
-        )
-        errors.extend(additional_errors)
-
-        _, additional_errors = cls.validate_from_toggle(
-            values,
-            toggle_varname="toggle_swmm_model",
-            lst_rqrd_if_true=["SWMM_full"],
-            lst_rqrd_if_false=[],
-        )
-        errors.extend(additional_errors)
+        # Conditional requiredness for these ten fields is DECLARED on the fields
+        # themselves via `field_meta(required_when=...)` and enforced generically by
+        # `cfgBaseModel._enforce_required_when`. The hand-written `validate_from_toggle`
+        # calls that used to live here were a SECOND enforcement site the Reproduction
+        # Guide's Required cell could not see, so all ten rendered as "Optional" while
+        # the config refused to load without them. Do not reintroduce them; see the
+        # stipulation "config field descriptions options and conditional requiredness
+        # are declared once on the field". Path existence is unaffected -- the base
+        # `_check_paths_exist` field validator already covers every Path field.
 
         processed_xllcorner = values.get("processed_xllcorner")
         processed_yllcorner = values.get("processed_yllcorner")
         ncols = values.get("ncols")
         nrows = values.get("nrows")
         processed_fields = [processed_xllcorner, processed_yllcorner, ncols, nrows]
-        if any(val is not None for val in processed_fields) and not all(
-            val is not None for val in processed_fields
-        ):
-            errors.append(
-                "processed_xllcorner, processed_yllcorner, ncols, and nrows must be provided together."
-            )
+        if any(val is not None for val in processed_fields) and not all(val is not None for val in processed_fields):
+            errors.append("processed_xllcorner, processed_yllcorner, ncols, and nrows must be provided together.")
 
         if errors:
             raise ValueError("; ".join(errors))
         return values
+
+    @model_validator(mode="after")
+    def validate_coupling_declaration(self):
+        """Refuse a coupling-node file given under a mode that does not read it.
+
+        The file is read only under ``swmm_coupling_mode: list``. A file set under ``legacy``
+        or ``all_junctions`` would be silently ignored, so a user who meant to restrict the
+        coupled set would run with a different one and no error. The opposite case, ``list``
+        with no file, is NOT checked here: it is the ``required_when`` declaration on
+        ``swmm_coupling_nodes_file``, enforced by ``cfgBaseModel._enforce_required_when``, which
+        is the one place a conditional requirement is enforced. A second check here would be a
+        second enforcement site that the rendered "Required" cell cannot see.
+        """
+        if self.swmm_coupling_nodes_file is not None and self.swmm_coupling_mode != "list":
+            raise ValueError(
+                f"system_config.swmm_coupling_nodes_file is set ({self.swmm_coupling_nodes_file}) but "
+                f"swmm_coupling_mode is '{self.swmm_coupling_mode}'; the file is read only when "
+                "swmm_coupling_mode is 'list'. Set swmm_coupling_mode: list to use the file, or remove "
+                "swmm_coupling_nodes_file."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_swmm_templates_are_si(self):
+        """Refuse, at config load, a SWMM template whose FLOW_UNITS the toolkit cannot read correctly.
+
+        PER-FIELD ACCEPTED UNITS. SWMM_hydraulics and SWMM_full must use CMS, because the
+        toolkit reads the coupled report's and the standalone output's flows as m3/s with no
+        conversion, so an LPS model would be read 1000 times too large and an MLD model 86.4
+        times. SWMM_hydrology may use CMS, LPS or MLD, because its hydrographs are converted to
+        m3/s. Scenario preparation refuses the same units, so this check admits exactly what
+        preparation admits.
+
+        ONE READING RULE, SHARED. The unit is read by
+        `swmm_runoff_modeling.flow_units_from_inp_text`, the same rule preparation applies --
+        the LAST FLOW_UNITS line with a value across every [OPTION... section, key and value
+        matched by prefix as SWMM matches them. Deliberately NOT a local regex over the first
+        matching line, which is what this check did before: a template declaring CFS and then
+        CMS runs as CMS in SWMM and passes preparation, and was refused here. The import is
+        function-local; loading this package already imports that module through
+        `hhemt/__init__.py`, so it adds no module to a config load.
+
+        WHY THIS IS REACHABLE AT LOAD, stated because the .inp looks like a runtime
+        artifact. The three fields below are Path fields that `_check_paths_exist`
+        already validated, so the TEMPLATES are on disk here; the per-scenario .inp
+        inherits FLOW_UNITS from its template because `utils.fill_template` is a
+        `string.Template.safe_substitute` placeholder pass that cannot alter a
+        literal line. So the template's value predicts the runtime unit system.
+
+        ABSENT IS A FAILURE *within a real model*, not a neutral state: SWMM defaults
+        FLOW_UNITS to CFS, which is US, so an omitted line produces exactly the run
+        this refuses. But absence is only EVIDENCE of that in a file that is a SWMM
+        model at all, so a file carrying no [OPTION... SECTION is skipped rather than
+        judged -- the check's premise is "this .inp's OPTIONS declare its units", and
+        a file with no OPTIONS section does not meet the premise. That is what keeps
+        placeholder templates (an empty `_touch`ed stub, a partial fragment) out of
+        the finding set without weakening the rule for a real model, which always
+        carries [OPTIONS]. Measured: without this gate, two existing tests in
+        tests/test_config_validation.py go red on empty stub .inp files.
+
+        UNREADABLE IS NOT A FAILURE. A template this cannot decode is SKIPPED rather
+        than rejected -- manufacturing a config-load refusal out of an encoding quirk
+        would block routine work to catch a case the runtime guard still backstops.
+        Both encodings are tried for the reason the .rpt reader tries both.
+        """
+        import re as _re
+
+        from hhemt.swmm_runoff_modeling import flow_units_from_inp_text
+
+        # LOCAL, not a class attribute. A bare underscore-prefixed class attribute on a
+        # pydantic v2 model is private-attribute territory and its instance-time
+        # readability is a question this check does not need to answer.
+        _accepted_by_field = {
+            "SWMM_hydraulics": ("CMS",),
+            "SWMM_hydrology": ("CMS", "LPS", "MLD"),
+            "SWMM_full": ("CMS",),
+        }
+        _bad = []
+        for _field in ("SWMM_hydraulics", "SWMM_hydrology", "SWMM_full"):
+            _p = getattr(self, _field, None)
+            if _p is None:
+                continue
+            _text = None
+            for _enc in ("utf-8", "latin-1"):
+                try:
+                    _text = Path(_p).read_text(encoding=_enc)
+                    break
+                except (OSError, UnicodeDecodeError):
+                    continue
+            if _text is None:
+                continue
+            if not _re.search(r"^\s*\[OPTION", _text, _re.IGNORECASE | _re.MULTILINE):
+                continue  # not a SWMM model file -- premise unmet, see docstring
+            _found = flow_units_from_inp_text(_text, default=None)
+            _units = _accepted_by_field[_field]
+            _accepted = "CMS" if _units == ("CMS",) else "CMS, LPS or MLD"
+            if _found is None:
+                _bad.append(f"{_field} ({_p}) declares no FLOW_UNITS; SWMM defaults to CFS (US)")
+            elif _found not in _units:
+                _bad.append(f"{_field} ({_p}) declares FLOW_UNITS {_found}; {_field} accepts {_accepted}")
+        if _bad:
+            raise ValueError(
+                "SWMM templates must declare their flow units: SWMM_hydraulics and SWMM_full must use "
+                "CMS, because the toolkit reads their flows as m3/s without conversion; SWMM_hydrology "
+                "must use an SI unit (CMS, LPS or MLD), because its flows are converted. Offending: " + "; ".join(_bad)
+            )
+        return self

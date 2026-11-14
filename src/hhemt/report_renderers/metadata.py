@@ -1,30 +1,46 @@
 """Metadata report renderer (ADR-14 / C10).
 
-Renders ONE self-contained static HTML page under the "Metadata" ReportingSet
-category, with three sub-sections:
+Renders ONE mostly-static HTML page under the "Metadata" ReportingSet category,
+with three sub-sections. It IS fully self-contained and renders with no network at view
+time. That was briefly untrue -- [Q148] traded it away when the Reproduction Guide tables
+adopted CDN Tabulator -- and [Q160](7) bought it back by vendoring Tabulator and bundling
+it inline, so the retraction that used to stand here is retired rather than left behind a
+later correction ([Q149]).
 
   (1) Provenance summary  -- projected from the persisted RO-Crate sidecar
       {analysis_dir}/ro-crate-metadata.json (the read-model persisted at
       consolidation; Decision D1). Excludes the volatile startTime/agent
       (producer hostname + wall-clock) graph fields.
-  (2) Reproduction guide  -- every config field grouped USER=Supply /
+  (2) Data availability   -- whether the post-processing reclaim was recorded
+      and is consistent, projected from the `Data availability` check in the
+      SAME {analysis_dir}/validation_report.json the Errors-and-Warnings
+      renderer reads (ADR-14 D1: no second read-model). Graceful-absent on a
+      tree consolidated before the reclaim shipped.
+  (3) Reproduction guide  -- every config field grouped USER=Supply /
       HPC=Amend / EXPERIMENT=Keep via reprex_taxonomy.all_field_bucket
       (pure config-SCHEMA introspection; placeholders only, zero-user-info).
-  (3) SLURM efficiency    -- latest globbed slurm_efficiency_report_*.csv
-      (Decision D2). EMPTY on the producing run (the CSV is written at
-      Snakemake teardown, AFTER render_report); populates on a later
-      re-render / reprocess. This is inherent, not a defect.
 
-All-static inline-CSS HTML (data-viz research): this page is itself a
-portability/provenance artifact -- it is read detached from a live network
-(inside a render bundle, archived at a DOI, emailed to a reviewer) -- so a
-CDN-Tabulator dependency would contradict its own thesis, and inline-Tabulator
-bundling is unimplemented (Gotcha 51). Mirrors errors_and_warnings.py.
+  The run-timeline and SLURM-efficiency tables are NOT on this page. `[Q160]`(7)
+  moved them to `workflow_performance.py`, which imports `_build_slurm_efficiency_html`
+  and the page chrome from here; the section-title tuple for that page is declared
+  beside `_SECTION_TITLES` below for the single-declaration reason stated there.
+
+Mostly-static inline-CSS HTML with NO network dependency. The Reproduction Guide
+tables are Tabulator data grids so their columns are user-resizable ([Q146]/[Q148]),
+and Tabulator itself is VENDORED and bundled inline ([Q160](7)) rather than fetched
+from a CDN -- so the whole page renders in an archived, emailed, or bundle-local copy.
+The cost is size: the bundle is ~462 KB of asset bytes, emitted ONCE per document (the
+Plotly precedent), which on a page of this kind is the large majority of its bytes and
+a low-single-digit percentage of a delivered report. Mirrors errors_and_warnings.py
+elsewhere. NOTE for a maintainer reading `hhemt architecture.md`: its Gotcha 51 records
+inline bundling as unimplemented and is STALE as of this change.
 
 Renderer-IO audit (Gotcha 53): the ONLY files opened during render() are the
-declared sources -- the RO-Crate sidecar and (when present) the one globbed
-SLURM efficiency CSV. Globbing fires os.scandir, not open, so it is
-audit-invisible. The reprex taxonomy is pure in-memory introspection.
+declared sources -- the RO-Crate sidecar, the consolidated store (metadata only,
+for the group hierarchy), and validation_report.json. The SLURM efficiency CSV is
+NO LONGER among them: `[Q160]`(7) moved that read to workflow_performance.py, which
+declares it in its own source_paths. The reprex taxonomy is pure in-memory
+introspection.
 """
 
 from __future__ import annotations
@@ -33,10 +49,17 @@ import csv
 import html as _html
 import io
 import json
+import logging
+import os
+import re
+from collections.abc import Callable, Collection, Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.config.report import report_config
 
@@ -49,11 +72,129 @@ if TYPE_CHECKING:
 # leak into the bundle-shippable render. `metadata._VOLATILE_GRAPH_KEYS` is
 # empty, so the sidecar DOES carry these volatile keys; the projection simply
 # never reaches for them, and `_prop` raises if a maintainer tries.
+from hhemt.member_identity import member_id_from, member_id_from_mapping, resolve_member_id_column
+from hhemt.report_renderers._tabulator_defaults import (
+    TableFragment,
+    build_columns_spec,
+    build_options_dict,
+    build_table_fragment,
+    tabulator_head_assets,
+    tabulator_shared_js,
+)
+from hhemt.utils import open_store
+
 _VOLATILE_EXCLUDED_KEYS: frozenset[str] = frozenset({"startTime", "endTime", "agent"})
 
 _SIDECAR_FILENAME = "ro-crate-metadata.json"
+# HOST, NOT CALLER. This module DEFINES the SLURM-efficiency reader -- these three globs plus
+# `_load_job_recovery`, `_build_slurm_efficiency_html` and `_resolve_all_efficiency_csvs` -- but
+# since `[Q160]`(7) its ONLY caller is `report_renderers/workflow_performance.py`.
+# `metadata.render()` reaches none of them; the SLURM table renders on the Workflow Performance
+# page. They stayed here rather than moving because moving them would have been a ~390-line
+# relocation that changes no behaviour and breaks `tests/test_job_purpose_map_tiering.py`'s
+# import; `workflow_performance.py` imports them instead.
+#
+# Stated at the definition because its absence has a measured cost: a `grep` for
+# `slurm_efficiency_report` returns this file, and two readers independently took that
+# LOCATION for the renderer's BEHAVIOUR and reached opposite conclusions from correct greps.
 _SLURM_EFF_RELDIR = ("logs", "slurm_efficiency_report")
 _SLURM_EFF_GLOB = "slurm_efficiency_report_*.csv"
+_SLURM_EFF_INNER_GLOB = "efficiency_report_*.csv"  # plugin nests the real CSV inside the .csv-named dir
+
+# Toolkit-owned enrichment sources for the SLURM table. Both are already carried in every
+# render bundle (`_status/` via _copy_supporting_files' copytree, scenario_status.csv via
+# its named-root-file list), so the join works bundle-locally with no cluster access.
+_STATUS_RELDIR = "_status"
+_STATUS_FLAG_JSON_GLOB = "*.flag.json"
+_SCENARIO_STATUS_FILENAME = "scenario_status.csv"
+
+# rule_name prefix -> human-readable purpose. Deterministic, not heuristic: these are the
+# rule-name stems `workflow.py` emits, and `status_flags.write_status_flag` records the stem
+# verbatim. Ordered longest-prefix-first so `experiment_consolidation` is not eaten by
+# `consolidate`. An unmatched rule_name renders its raw stem rather than a guessed verb.
+# The retired `master_consolidation` entry is RETAINED, and it is NOT transitional.
+# (CORRECTED: an earlier draft justified this by render bundles carrying `_status/`. That is
+#  FALSE -- `bundle/_emit.py:735` carries ONLY the DU sentinel, measured on a real Norfolk
+#  emit. The real mechanism is below.)
+# `_purpose_for_rule` is fed by `status_flags.harvest_slurm_job_index`, which derives rule
+# identity from `.snakemake/slurm_logs/rule_{name}/` DIRECTORY NAMES, and by
+# `_status/_job_index.json`, which MERGES without eviction so an entry is permanent once
+# written. V0020 renames neither. The Tier-2 log path is NOT inert here: the generated
+# profile sets `slurm-keep-successful-logs: True` (workflow.py:3811), which resolves the
+# caveat at metadata.py:678-683. So a migrated tree keeps yielding `master_consolidation`
+# indefinitely, and dropping this entry renders a raw identifier into a PUBLISHED report's
+# SLURM-efficiency table.
+# It goes only if the render path gains a layout-version gate that refuses an un-migrated
+# tree -- NOT by renaming the log directories, which cannot reach a tree that never migrated
+# and which the executor's own log pruning would undo regardless.
+_RULE_PREFIX_TO_PURPOSE: tuple[tuple[str, str], ...] = (
+    ("experiment_consolidation", "consolidate (experiment)"),
+    ("master_consolidation", "consolidate (experiment)"),
+    ("consolidate", "consolidate"),
+    ("simulation", "simulate"),
+    ("run_", "simulate"),
+    ("prepare", "prepare scenario"),
+    ("process", "process outputs"),
+    ("setup_target", "compile / setup"),
+    ("render_report", "render report"),
+    ("plot_", "render plot"),
+    ("bundle", "bundle"),
+    ("combine", "combine"),
+    ("delete", "delete / cleanup"),
+    ("reprocess", "reprocess"),
+)
+
+#: Recover member_id / event_id from a rule NAME, for jobs that survive only in the executor's
+#: log tree (Tier 2 of `_job_purpose_map`) and therefore carry no sidecar record.
+_RULE_EVENT_ID_RE = re.compile(r"_evt_(.+)$")
+
+#: The rule families whose NAME carries a member id, each anchored at the start of the name.
+#: `workflow.py` mints these as `{prepare,simulation,process}_member_{member}_evt_{event}`,
+#: `consolidate_member_{member}` and `delete_member_{member}`; `delete_member_reprocess_*` is a
+#: different rule that names no single member. The member token is the member id with `.` and
+#: `-` replaced by `_`, and the capture is non-greedy so an id containing underscores
+#: (`gpu_0_r1`) stops at `_evt_` rather than swallowing it. Any other rule name, such as the
+#: figure rule `plot_per_sim_per_member_conduit_flow` that runs once per member under one name,
+#: yields no member.
+_MEMBER_RULE_FAMILIES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^(?:prepare|simulation|process)_member_(?P<m>.+?)_evt_"),
+    re.compile(r"^consolidate_member_(?P<m>.+)$"),
+    re.compile(r"^delete_member_(?!reprocess_)(?P<m>.+)$"),
+)
+
+
+def _member_token(member_id: object) -> str:
+    """A member id as it appears inside a rule name."""
+    return str(member_id).replace(".", "_").replace("-", "_")
+
+
+def _resolve_member(payload: Mapping[str, object], rule_name: str, member_ids: Collection[str] | None) -> str:
+    """The member a status record or rule name belongs to, or "" when it names none.
+
+    A member id the record itself carries (`member_id_from_mapping`) wins. Failing that, a rule
+    in one of `_MEMBER_RULE_FAMILIES` names its member: the token is compared with each id in
+    `member_ids` after the `.` and `-` replacement and the matching id is returned; a token
+    matching none is returned as parsed, which is how a record of a member no longer in the
+    analysis is recognised. With `member_ids` None the parsed token is returned.
+    """
+    recorded = member_id_from_mapping(payload)
+    if recorded:
+        return recorded
+    for pattern in _MEMBER_RULE_FAMILIES:
+        found = pattern.search(rule_name)
+        if found:
+            token = found.group("m")
+            for member_id in member_ids or ():
+                if _member_token(member_id) == token:
+                    return str(member_id)
+            return token
+    return ""
+
+
+def _count(n: int, noun: str) -> str:
+    """`1 job`, `3 jobs`: the numeral beside its unit, in the number's own form."""
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
 
 _ROOT_ID = "./"
 _APP_ID = "#hhemt-app"
@@ -73,9 +214,9 @@ _BUCKET_COLOR: dict[str, str] = {
     "experiment": "#009E73",  # bluish green
 }
 _BUCKET_HEADING: dict[str, str] = {
-    "user": "Supply — you provide these (USER)",
-    "hpc": "Amend — bundled, but revise for your machine (HPC)",
-    "experiment": "Keep — these define the experiment (EXPERIMENT)",
+    "user": "you provide these",
+    "hpc": "bundled, but revise for your machine (HPC)",
+    "experiment": "these define the experiment",
 }
 _BUCKET_INSTRUCTION: dict[str, str] = {
     "user": (
@@ -84,18 +225,20 @@ _BUCKET_INSTRUCTION: dict[str, str] = {
     ),
     "hpc": (
         "These ride along in the bundle but are specific to the producing cluster. "
-        "Revise them for your target system. Bundle.reprex(reprex_config, "
-        "target_hpc_profile) emits the concrete per-(sa_id, column) problem pairs and "
-        "validated-vs-advisory amendments for your target."
+        "Revise them for your target system, except any row marked as varied by the "
+        "sweep: a varied setting is a measured axis of this experiment and is reproduced "
+        "as swept. Bundle.reprex(reprex_config, target_hpc_profile) lists the "
+        "(member_id, column) problems and the validated and advisory amendments for "
+        "your target."
     ),
     "experiment": (
-        "Do NOT change these. They define the scientific experiment; changing one "
+        "Do not change these. They define the scientific experiment; changing one "
         "changes what is being measured, not merely where it runs."
     ),
 }
 _BUCKET_PLACEHOLDER: dict[str, str] = {
     "hpc": "{amend for your target system}",
-    "experiment": "{inherit — carried by the bundle}",
+    "experiment": "{inherited from the bundle}",
 }
 
 # `reprex_config` mixes two buckets, per its own docstring: four host-local USER
@@ -117,6 +260,17 @@ h4 { margin-top: 18px; margin-bottom: 6px; }
    than force horizontal scroll inside the report engine's iframe. The mirrored
    errors_and_warnings CSS lacks this because its cell values are short. */
 td, td code { word-break: break-all; overflow-wrap: anywhere; }
+/* ...but `break-all` sets a cell's min-content width to ONE character, so under
+   auto table-layout the first column is treated as infinitely compressible and
+   collapses to a one-character-per-line ribbon once the table gains columns.
+   Harmless at 3 columns; the reproduction guide's 5-column form made it
+   unreadable. A min-width floor keeps the identifier column legible while
+   leaving `break-all` in force for the sha256 / URI columns that need it.
+   The floor is STILL the fix after Iter-11 item 24 gave every table a
+   `div.table-scroll` wrapper: the wrapper lets an over-wide table scroll instead
+   of overflowing the iframe, but it does nothing about a column that COLLAPSES,
+   which is what `break-all` causes and what this rule prevents. */
+table td:first-child { min-width: 18ch; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 nav.jump-nav { margin: 8px 0 16px; font-size: 13px; }
 nav.jump-nav a { text-decoration: none; }
@@ -124,6 +278,52 @@ p.instruction { font-weight: 600; margin: 4px 0 8px; }
 p.note { font-size: 12px; color: #555; margin: 4px 0 10px; }
 span.badge { display: inline-block; padding: 1px 7px; border-radius: 8px;
              color: white; font-size: 11px; font-weight: 700; }
+/* Sortable / per-column-filter table affordances. Layout-only -- no brand hex literal
+   (brand_theme stipulation); the sort indicator is a glyph, not a color, and NOTHING
+   here restates the `th` background/color, which stays sourced from
+   render_inline_css() (white on dark blue). The sort target is the label SPAN, not the
+   whole `th`: the header cell now also contains that column's filter input, and binding
+   sort to the cell would sort the table on every click into the input. */
+input.col-filter { width: 100%; box-sizing: border-box; margin-top: 3px;
+                   padding: 2px 4px; font-size: 11px; font-weight: 400; }
+/* Iter-11 item 24. EVERY table on this page is wrapped in div.table-scroll, so every
+   table is height-bounded and scrolls in BOTH axes rather than pushing the page down.
+   max-height engages only when the content exceeds it, so a two-row identity table
+   renders exactly as it did. The sticky header keeps the column names -- and, on the
+   interactive tables, their filter inputs -- on screen while the body scrolls. */
+div.table-scroll { overflow: auto; max-height: min(70vh, 640px);
+                   overscroll-behavior: contain; }
+div.table-scroll thead th { position: sticky; top: 0; z-index: 2; }
+/* Iter-12 item {32}. Two changes, two distinct causes.
+   (a) `overscroll-behavior: contain` stops scroll CHAINING. Without it, a wheel event
+       that reaches this container's top or bottom is handed to the ancestor scroller,
+       then to the iframe document, then to the shell's `overflow-auto` content wrapper
+       -- four nested scrollers reacting to one gesture, which is what reads as extra
+       scrollbars appearing as the reader scrolls around.
+   (b) `min(70vh, 640px)` removes the RESIZE. `vh` inside an iframe resolves against the
+       IFRAME's height, and the report stylesheet lets that height float
+       (`.result iframe { height: auto }`, report.css.j2). So a scroll that reflowed the
+       shell changed the iframe height, which re-resolved `70vh`, which resized this box
+       -- the "scrolling at the extremes made the table taller or shorter" report. The
+       fixed ceiling means a re-resolved `vh` cannot move the box past it. */
+aside.col-panel { overscroll-behavior: contain; }
+/* Iter-11 item 11. Column-selector panel at the LEFT of the table, not above it, so it
+   does not consume vertical space the table needs. Emitted only where the call site
+   asks for one -- the reproduction-guide tables explicitly do not (item 16). */
+div.table-tools { display: flex; gap: 10px; align-items: flex-start; }
+div.table-tools > div.table-scroll { flex: 1 1 auto; min-width: 0; }
+aside.col-panel { flex: 0 0 190px; max-height: 70vh; overflow-y: auto;
+                  border: 1px solid #DADADA; padding: 6px; font-size: 11px; }
+aside.col-panel strong { display: block; margin-bottom: 4px; }
+aside.col-panel label { display: block; padding: 1px 0; cursor: pointer;
+                        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Typeset units and symbolic operations (Iter-11, item 15). `line-height: 0` is not
+   cosmetic: without it every superscripted exponent inflates its table row's height, so
+   the data-dictionary rows stop aligning with the rest of the page. No math engine --
+   see `_expr_html` for why a bundled KaTeX/MathJax was rejected. */
+sub, sup { line-height: 0; font-size: 0.75em; }
+span.units { white-space: nowrap; }
+span.expr { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 """
 
 
@@ -144,6 +344,16 @@ def _esc(value: Any) -> str:
 
 def _code(value: Any) -> str:
     return f"<code>{_esc(value)}</code>"
+
+
+def _strip_code(cell: str) -> str:
+    """Recover the plain label from a ``_code(...)``-wrapped cell.
+
+    Used only to key the config-value lookup off a row whose first cell was already
+    rendered. Field labels are dotted ASCII identifiers, so `_esc` is a no-op on them
+    and unwrapping the tags is lossless.
+    """
+    return cell.removeprefix("<code>").removesuffix("</code>")
 
 
 def _prop(entity: dict, key: str) -> Any:
@@ -174,30 +384,59 @@ def _banner(message: str) -> str:
     return f'<div class="banner info">{_esc(message)}</div>'
 
 
+def _banner_html(message_html: str) -> str:
+    """A banner whose message is already escaped HTML, for a message that carries `<code>`."""
+    return f'<div class="banner info">{message_html}</div>'
+
+
 def _absent_banner(section_title: str, message: str) -> str:
     """Always-present <h3 id> heading + a .banner.info placeholder body (R7)."""
     return f"{_heading(section_title)}\n{_banner(message)}"
 
 
+def _omitted(section_title: str, reason_html: str) -> str:
+    """Heading plus the one-sentence notice "{Element} is not shown: {reason}." (brief rule 6).
+
+    `reason_html` is already escaped HTML, so it can name the file the reader opens in `<code>`.
+    """
+    return f"{_heading(section_title)}\n" + _banner_html(f"{_esc(section_title)} is not shown: {reason_html}.")
+
+
 def _kv_table(rows: list[tuple[str, str]]) -> str:
-    """Static 2-column Field/Value table. Values are PRE-ESCAPED HTML fragments."""
+    """Static 2-column Field/Value table. Values are PRE-ESCAPED HTML fragments.
+
+    Iter-11 item 24: wrapped in `div.table-scroll`, so this table is height-bounded and
+    scrolls in both axes like every other table on the page. `max-height` engages only
+    when the content exceeds it, so a short identity table renders as it did -- the one
+    that actually needed this is the Outputs table, whose hasPart cell carries a
+    29-path `<pre>` folder tree.
+    """
     if not rows:
         return ""
     body = "\n    ".join(f"<tr><td>{_esc(k)}</td><td>{v}</td></tr>" for k, v in rows)
     return (
-        "<table>\n"
+        '<div class="table-scroll">\n<table>\n'
         "  <thead><tr><th>Field</th><th>Value</th></tr></thead>\n"
-        "  <tbody>\n    " + body + "\n  </tbody>\n</table>"
+        "  <tbody>\n    " + body + "\n  </tbody>\n</table>\n</div>"
     )
 
 
 def _grid_table(headers: list[str], rows: list[list[str]]) -> str:
-    """Static n-column table. Row cells are PRE-ESCAPED HTML fragments."""
+    """Static n-column table. Row cells are PRE-ESCAPED HTML fragments.
+
+    Iter-11 item 24: wrapped in `div.table-scroll` -- height-bounded, scrolling in both
+    axes, sticky header. The 7-column CF data dictionary and the Inputs digest table are
+    the two that reach the bound today.
+    """
     if not rows:
         return ""
     head = "".join(f"<th>{_esc(h)}</th>" for h in headers)
     body = "\n    ".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
-    return f"<table>\n  <thead><tr>{head}</tr></thead>\n  <tbody>\n    " + body + "\n  </tbody>\n</table>"
+    return (
+        '<div class="table-scroll">\n<table>\n'
+        f"  <thead><tr>{head}</tr></thead>\n"
+        "  <tbody>\n    " + body + "\n  </tbody>\n</table>\n</div>"
+    )
 
 
 # --- RO-Crate @graph navigation helpers --------------------------------------
@@ -288,13 +527,17 @@ def _provenance_bluf(app: dict, sif: dict | None, inputs: list[dict]) -> str:
     """The verifiability anchors, up top: what makes this run CHECKABLE, not merely disclosed."""
     git_sha = _prop(app, "softwareVersion")
     parts: list[str] = []
-    parts.append(f"code git-SHA {_code(git_sha)}" if git_sha else "code git-SHA <em>not captured</em>")
+    parts.append(
+        f"consolidation code git-SHA {_code(git_sha)}"
+        if git_sha
+        else "consolidation code git-SHA <em>not captured</em>"
+    )
     if sif is not None and _prop(sif, "sha256"):
         parts.append(f"environment SIF sha256 {_code(_prop(sif, 'sha256'))}")
     else:
         parts.append("no container digest (native run)")
     n_digests = sum(1 for e in inputs if _prop(e, "sha256"))
-    parts.append(f"{n_digests} input digest(s)")
+    parts.append(_count(n_digests, "input digest") if n_digests else "input digests <em>not captured</em>")
     return (
         '<div class="banner info"><strong>Verifiability anchors:</strong> '
         + " &middot; ".join(parts)
@@ -331,21 +574,289 @@ def _provenance_identity(graph: list[dict], root: dict) -> str:
 def _provenance_software(app: dict, src: dict) -> str:
     rows: list[tuple[str, str]] = []
     if _prop(src, "name"):
-        rows.append(("Toolkit", _esc(_prop(src, "name"))))
+        # Label is the product IDENTIFIER, value is its expansion -- the pairing the
+        # RO-Crate already models (`#hhemt-app` name "hhemt" alongside
+        # `#hhemt-toolkit-src` name "H&H Ensemble Modeling Toolkit"). Was labelled
+        # "Toolkit", which rendered a word and its own expansion side by side and
+        # named the product nowhere.
+        rows.append(("hhemt", _esc(_prop(src, "name"))))
     if _prop(src, "codeRepository"):
         rows.append(("Code repository", _code(_prop(src, "codeRepository"))))
     git_sha = _prop(app, "softwareVersion") or _prop(src, "version")
     if git_sha:
-        rows.append(("Git SHA (exact code that produced this)", _code(git_sha)))
+        # This SHA is the CONSOLIDATION-time toolkit version, not the version that ran
+        # the simulations and not the version rendering this page. Measured on one real
+        # bundle: crate c74f46412e2d, tree hhemt_producing_sha 01655abb60c2, render
+        # manifest e229023ab83d -- three real and different values. The old caption
+        # ("exact code that produced this") asserted the first was the third.
+        rows.append(("Git SHA (consolidation)", _code(git_sha)))
     if not rows:
-        return "<h4>2. Software</h4>\n" + _banner("No software provenance captured in this crate.")
+        return "<h4>2. Software</h4>\n" + _banner("No software provenance is recorded for this analysis.")
     return "<h4>2. Software</h4>\n" + _kv_table(rows)
+
+
+#: The `AnalysisPaths` attribute names `_resolve_consolidated_tree` looks up REFLECTIVELY,
+#: in RESOLUTION PRIORITY order -- the sensitivity-master name FIRST, which is the INVERSE
+#: of their declaration order on `AnalysisPaths`. Named rather than inline so a test can
+#: import it and assert both that every entry is still a real field AND that the first
+#: entry is still the sensitivity name. That guard is not optional hygiene: `getattr(...,
+#: None)` below carries a DEFAULT, so a renamed or split field yields None, is dropped by
+#: the `is not None` filter, and the ROOT_TREE_NAMES fallback answers anyway. Measured in
+#: one configuration -- a declared path EQUAL to the analysis-dir fallback -- the renamed
+#: call returns the IDENTICAL path the healthy call returns. Where the declared path
+#: instead points at a RELOCATED store, or where nothing sits at the fallback, the renamed
+#: call returns a DIFFERENT path or None. So the failure is masked in the first case and
+#: wrong in the others, and in none of them does anything raise. It cannot be detected
+#: after the rename that arms it, so this guard has value only while added BEFORE one.
+_DECLARED_TREE_PATH_ATTRS = ("experiment_datatree_zarr", "analysis_datatree_zarr")
+
+
+def _resolve_consolidated_tree(analysis_dir: Path, analysis: TRITONSWMM_analysis | None) -> Path | None:
+    """Locate the consolidated DataTree store, by existence, HPC- and bundle-alike.
+
+    Returns the first EXISTING candidate, or None when none exists.
+    Candidates, in this order:
+
+    1. the paths the analysis declares on ``analysis_paths``, looked up by the names in
+       ``_DECLARED_TREE_PATH_ATTRS`` (the sensitivity-master attribute first);
+    2. the store ``hhemt.utils.resolve_experiment_tree`` picks under ``analysis_dir``, with the
+       analysis' own ``toggle_sensitivity_analysis`` as the arm when an analysis is given and
+       otherwise the arm that resolver discovers from the root.
+
+    Relation to ``_combine_merge._resolve_root_tree``: both take their pick from the same
+    ``resolve_experiment_tree`` call, so on a bundle root they resolve to the same store. They
+    differ in two ways only: this function tries the paths an ``analysis`` object declares
+    first, and it returns None when no store exists where that one raises
+    ``FileNotFoundError``.
+    """
+    candidates: list[Path] = []
+    paths = getattr(analysis, "analysis_paths", None) if analysis is not None else None
+    for attr in _DECLARED_TREE_PATH_ATTRS:
+        declared = getattr(paths, attr, None) if paths is not None else None
+        if declared is not None:
+            candidates.append(Path(declared))
+    from hhemt.utils import resolve_experiment_tree
+
+    # The remaining candidate is the canonical resolver's pick under analysis_dir. A supplied arm
+    # (the analysis' own toggle) wins over a discovered one, because the resolver reads the arm
+    # only to separate a regular root from a sensitivity master that both carry two stores.
+    # With no analysis object the resolver discovers the arm from the root's cfg_analysis.yaml
+    # and then from a members/ directory.
+    _supplied = getattr(getattr(analysis, "cfg_analysis", None), "toggle_sensitivity_analysis", None)
+    candidates.append(resolve_experiment_tree(analysis_dir, arm=_supplied if isinstance(_supplied, bool) else None))
+    return next((c for c in candidates if c.exists()), None)
+
+
+def _read_producing_shas(tree_path: Path | None) -> tuple[str | None, str | None]:
+    """Return (producing_sha, producing_version) off the consolidated tree ROOT attrs.
+
+    Reads only the tree's metadata (no chunk is materialized). Returns the
+    ``*_divergent`` JSON breadcrumb when producers differ across events, because
+    `apply_producing_stamp` leaves the scalar ABSENT in that case and the
+    breadcrumb is then the only honest answer -- collapsing it to one value would
+    reintroduce exactly the single-SHA overclaim this section exists to repair.
+    Never raises: a legacy or unstamped tree yields (None, None).
+    """
+    if tree_path is None or not tree_path.exists():
+        return (None, None)
+    try:
+        tree = open_store(tree_path, chunks=None)
+    except Exception:  # noqa: BLE001 -- provenance display must never break the render
+        return (None, None)
+    attrs = dict(tree.attrs)
+    out: list[str | None] = []
+    for key in ("hhemt_producing_sha", "hhemt_producing_version"):
+        value = attrs.get(key)
+        if value is None:
+            divergent = attrs.get(f"{key}_divergent")
+            value = f"divergent across events: {divergent}" if divergent else None
+        out.append(str(value) if value is not None else None)
+    return (out[0], out[1])
+
+
+def _stage_stamps(analysis: TRITONSWMM_analysis | None) -> dict[str, dict | None]:
+    """Per-stage producing stamps, or an empty mapping when there is no analysis to read."""
+    if analysis is None:
+        return {}
+    from hhemt.analysis_validation import _collect_stage_stamps
+
+    try:
+        return _collect_stage_stamps(analysis)
+    except Exception:  # noqa: BLE001 -- provenance display must never break the render
+        return {}
+
+
+def _provenance_chain(analysis_dir: Path, analysis: TRITONSWMM_analysis | None, crate_sha: str | None) -> str:
+    """Four-row recreation chain: who SIMULATED, PROCESSED, CONSOLIDATED and RENDERED.
+
+    ADR-14 D1 compliant: no second read-model is introduced. The four values are
+    projected from records that already exist: the simulation stage's stamp from
+    `_collect_stage_stamps` ("Simulated by"), the ADR-15 per-event producing-stamp
+    coordinates on the consolidated tree ("Processed by"), the RO-Crate sidecar
+    ("Consolidated by") and the running build ("Rendered by"). They are disambiguated
+    rather than merged, because collapsing them is what produced a caption asserting the
+    consolidation SHA was the code that generated the data.
+
+    On two renders of unchanged data on the same route, the only row that varies is
+    "Rendered by" -- precisely the entry that SHOULD change.
+    """
+    tree_path = _resolve_consolidated_tree(analysis_dir, analysis)
+    produced_sha, produced_version = _read_producing_shas(tree_path)
+
+    from hhemt import provenance as _prov
+
+    try:
+        render_stamp = _prov.producing_stamp()
+    except Exception:  # noqa: BLE001 -- a detached/dirty checkout must not break the render
+        render_stamp = {}
+
+    rows: list[tuple[str, str]] = []
+    # "Simulated by" is the simulation stage's own stamp; it is never inferred from the
+    # processing stage's (`_collect_stage_stamps` keeps them apart for that reason).
+    sim_stamp = _stage_stamps(analysis).get("sim")
+    sim_sha = (sim_stamp or {}).get("hhemt_sha")
+    simulated = _code(sim_sha) if sim_sha else "<em>not captured</em>"
+    if sim_sha and (sim_stamp or {}).get("hhemt_version"):
+        simulated = f"{simulated} ({_esc(sim_stamp['hhemt_version'])})"
+    rows.append(("Simulated by", simulated))
+    if produced_sha:
+        label = _code(produced_sha)
+        if produced_version:
+            label = f"{label} ({_esc(produced_version)})"
+        rows.append(("Processed by", label))
+    else:
+        rows.append(("Processed by", "<em>not captured</em>"))
+    rows.append(("Consolidated by", _code(crate_sha) if crate_sha else "<em>not captured</em>"))
+    render_sha = render_stamp.get("hhemt_sha") or render_stamp.get("sha")
+    render_version = render_stamp.get("hhemt_version") or render_stamp.get("version")
+    rendered = _code(render_sha) if render_sha else "<em>not captured</em>"
+    if render_version:
+        rendered = f"{rendered} ({_esc(render_version)})"
+    rows.append(("Rendered by", rendered))
+
+    return "<h4>2b. Provenance chain</h4>\n" + _kv_table(rows)
+
+
+def _read_status_flag_payloads(analysis_dir: Path) -> tuple[list[dict], list[Path]]:
+    """Read every `_status/*.flag.json` sidecar; return (payloads, files actually opened).
+
+    The file list is returned so `render()` can DECLARE every sidecar it opened
+    (ADR-6 Gate-A / the declared-subset-of-actual invariant). Globbing is
+    audit-invisible (os.scandir), but `read_text()` is not.
+
+    `_copy_supporting_files` copies ONLY `_status/_du.json` into a bundle, never the
+    tree, so each sidecar declared from this list is a payload file the harvest carries.
+    """
+    status_dir = analysis_dir / _STATUS_RELDIR
+    if not status_dir.is_dir():
+        return ([], [])
+    payloads: list[dict] = []
+    opened: list[Path] = []
+    for sidecar in sorted(status_dir.glob(_STATUS_FLAG_JSON_GLOB)):
+        try:
+            payload = json.loads(sidecar.read_text())
+        except (OSError, ValueError):
+            continue
+        opened.append(sidecar)
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    return (payloads, opened)
+
+
+def _purpose_for_rule(rule_name: str) -> str:
+    """Deterministic rule_name -> human-readable purpose. Never guesses."""
+    for prefix, purpose in _RULE_PREFIX_TO_PURPOSE:
+        if rule_name.startswith(prefix):
+            return purpose
+    return rule_name
+
+
+def _job_purpose_map(
+    payloads: list[dict],
+    job_index: dict[str, str] | None = None,
+    member_ids: Collection[str] | None = None,
+) -> dict[str, dict[str, str]]:
+    """`{slurm_job_id: {purpose, rule_name, member_id, event_id, model_type, written_at}}`.
+
+    TWO sources in stated precedence, because neither alone covers the table.
+
+    Tier 1 -- `status_flags.write_status_flag` records `slurm_job_id` from the
+    ``SLURM_JOB_ID`` environment variable, which is the PARENT job id, exactly the
+    efficiency CSV's `MainJobID`, so the join is direct. It is the RICHER source (it
+    alone carries member_id/event_id/model_type as RECORDED values rather than parsed
+    ones) and therefore wins any collision. But it is keyed on the flag PATH and
+    rewritten every run, so it retains only the LAST job per rule: measured 60 distinct
+    ids for 116 rule instances against 570 allocations.
+
+    Tier 2 -- `_status/_job_index.json`, harvested by
+    `status_flags.harvest_slurm_job_index` from the executor's own per-job log tree:
+    `{jobid: rule_name}` for every job ever submitted, including the ones whose sidecar
+    a later submission overwrote. It carries no member_id/event_id directly; those are
+    parsed back out of the rule name, which is lossless because `workflow.py` mints
+    rule names as `{phase}_member_{member_id}_evt_{event_id}`.
+
+    Tier 2 does NOT raise the join's match rate -- that is already 99% of the keys the
+    sidecars retain. It raises the KEY CEILING, by keeping log files the executor would
+    otherwise delete. It is therefore INERT until the generated profile sets
+    `slurm-keep-successful-logs`, and even then it only covers runs submitted AFTER
+    that lands; an absent or empty index means "not retained", never "did not run", and
+    degrades to exactly the Tier-1 result.
+
+    Locally-executed rules carry a null job id and are skipped rather than keyed on the
+    empty string.
+
+    `member_ids`, when given, is the analysis's member ids. Tier 1 then reads a member from the
+    rule name of a sidecar that records none, and Tier 2 matches the parsed token against them
+    (`_resolve_member`). Only the rule families in `_MEMBER_RULE_FAMILIES` name a member, so a
+    figure rule such as `plot_per_sim_per_member_conduit_flow` has none. With `member_ids` None
+    Tier 1 reads the sidecar's own member field only and Tier 2 returns the parsed token.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for payload in payloads:
+        job_id = payload.get("slurm_job_id")
+        if not job_id:
+            continue
+        rule_name = str(payload.get("rule_name") or "")
+        out[str(job_id)] = {
+            "purpose": _purpose_for_rule(rule_name),
+            "rule_name": rule_name,
+            # A sidecar's rule name is read only when the member ids are known: without them a
+            # name cannot be told from a member-less rule, so the record's own field is all there is.
+            "sa_id": (
+                _resolve_member(payload, rule_name, member_ids)
+                if member_ids is not None
+                else member_id_from_mapping(payload)
+            ),
+            "event_id": str(payload.get("event_id") or ""),
+            "model_type": str(payload.get("model_type") or ""),
+            "written_at": str(payload.get("written_at") or ""),
+        }
+    # Tier 2. `not in out` is what preserves Tier-1 precedence: a job the sidecar still
+    # retains keeps its RECORDED member_id/event_id/model_type rather than the parsed ones.
+    for job_id, rule_name in (job_index or {}).items():
+        job_id = str(job_id)
+        if not job_id or job_id in out:
+            continue
+        rule_name = str(rule_name or "")
+        evt_match = _RULE_EVENT_ID_RE.search(rule_name)
+        out[job_id] = {
+            "purpose": _purpose_for_rule(rule_name),
+            "rule_name": rule_name,
+            "sa_id": _resolve_member({}, rule_name, member_ids),
+            "event_id": evt_match.group(1) if evt_match else "",
+            # Not parseable from a rule name: the model type is a per-scenario property,
+            # not a naming component. Left empty rather than guessed -- an em-dash here
+            # means "not recovered", which is true, whereas a guess would be false.
+            "model_type": "",
+            "written_at": "",
+        }
+    return out
 
 
 def _provenance_environment(sif: dict | None) -> str:
     if sif is None:
         return "<h4>3. Environment</h4>\n" + _banner(
-            "Native run — no container environment captured. The software environment "
+            "Native run: no container environment is recorded. The software environment "
             "is not pinned, so recreation has reduced verifiability: a reproducer must "
             "reconstruct the toolchain from the module stack and conda environment."
         )
@@ -364,9 +875,7 @@ def _provenance_environment(sif: dict | None) -> str:
 def _provenance_inputs(inputs: list[dict]) -> str:
     if not inputs:
         return "<h4>4. Inputs</h4>\n" + _banner(
-            "Input digests not captured for this analysis. (This does not mean there "
-            "were no inputs — the case manifest was not wired at consolidation, so no "
-            "by-reference File parts were recorded.)"
+            "Input digests not captured for this analysis. That does not mean the analysis had no inputs."
         )
     rows = [
         [
@@ -390,9 +899,7 @@ def _provenance_process(runs: list[dict]) -> str:
     """
     if not runs:
         return "<h4>5. Process</h4>\n" + _banner(
-            "Run units not captured — this is a consolidation-level crate "
-            "(a sensitivity master aggregates its sub-analyses, each of which "
-            "carries its own per-run provenance)."
+            "Model runs are not listed here: this is a sweep, and each member records its own."
         )
     rows: list[list[str]] = []
     for action in runs:
@@ -407,15 +914,389 @@ def _provenance_process(runs: list[dict]) -> str:
                 " ".join(_code(r) for r in results) or "—",
             ]
         )
-    summary = f"<p class='note'>{_esc(len(runs))} run unit(s) recorded.</p>"
-    return "<h4>5. Process</h4>\n" + summary + _grid_table(["Run", "Instrument(s)", "Inputs", "Result(s)"], rows)
+    return "<h4>5. Process</h4>\n" + _grid_table(["Run", "Instrument(s)", "Inputs", "Result(s)"], rows)
 
 
-def _provenance_outputs(graph: list[dict], root: dict) -> str:
+# Iter-11, item 14. A run of TWO identical siblings collapses to a sentinel line plus a
+# shared subtree -- three lines where two stood, which is worse. Three is the smallest
+# run where the collapse pays for itself.
+_TREE_SENTINEL_MIN_SIBLINGS = 3
+
+
+def _common_prefix(names: list[str]) -> str:
+    """Longest shared leading substring across `names` (may be "")."""
+    if not names:
+        return ""
+    head = names[0]
+    for other in names[1:]:
+        i = 0
+        while i < len(head) and i < len(other) and head[i] == other[i]:
+            i += 1
+        head = head[:i]
+        if not head:
+            break
+    return head
+
+
+def _name_skeleton(name: str) -> tuple[str | None, ...]:
+    """The name's token sequence with every digit run blanked.
+
+    Two names share a skeleton iff they are identical except at digit runs. This is the
+    LEAF analogue of the subtree signature `_sibling_runs` uses for directories: a leaf
+    has no subtree (every leaf serializes to "{}"), so without this five unrelated files
+    would form one run and collapse behind an empty-stemmed sentinel.
+    """
+    return tuple(None if tok.isdigit() else tok for tok in re.findall(r"\d+|\D+", name))
+
+
+def _index_template(names: list[str]) -> tuple[str, str] | None:
+    """`(template, spans)` for a run whose names differ ONLY at integer indices, else None.
+
+    Returned as a PAIR rather than one string so the caller places the span clause. It sits
+    OUTSIDE the braces: the user ruled on 2026-08-17 that a trailing count reads as a
+    quantity applied to the placeholder while a nested one reads as part of the parameter's
+    NAME, and a range clause is equally not part of the template.
+
+    Parameterises only digit positions that actually VARY. A position that is a digit run
+    but identical across the run (`epsg4326_tile_0.tif`, `..._1`, `..._2`) is kept literal --
+    rendering it as `{i1}` would tell the reader that position varies, which is a false
+    claim in user-facing text.
+
+    Each varying position also reports its span. Values are DEDUPLICATED before the
+    contiguity test: a two-index sweep repeats each outer index once per inner value, so
+    testing the raw list would mark every contiguous run as gappy. The `(n of m)` qualifier
+    therefore appears only where an index genuinely skips -- which is the audit fact the
+    expanded listing showed and a bare sentinel would hide.
+
+    KNOWN LIMIT: variance is tested on token STRINGS while the span is computed on
+    `int()`, so distinct-width spellings of one integer ('01', '1', '001') read as
+    varying yet collapse to a single-value span. Self-announcing rather than silently
+    wrong -- the label shows `x 3` beside `i = 1...1` -- and unreachable from this
+    project's writer, so it is recorded rather than designed around.
+    """
+    if len(names) < 2 or len({_name_skeleton(n) for n in names}) != 1:
+        return None
+    toks = [re.findall(r"\d+|\D+", n) for n in names]
+    varying = [i for i in range(len(toks[0])) if len({t[i] for t in toks}) > 1]
+    if not varying or not all(all(t[i].isdigit() for t in toks) for i in varying):
+        return None
+    out = list(toks[0])
+    spans = []
+    for k, i in enumerate(varying):
+        nm = "i" if len(varying) == 1 else f"i{k + 1}"
+        out[i] = f"{{{nm}}}"
+        vals = sorted({int(t[i]) for t in toks})
+        spans.append(f"{nm} = {_id_ranges(vals)}")
+    return "".join(out), ", ".join(spans)
+
+
+def _id_ranges(vals: list[int]) -> str:
+    """The sorted distinct ids as ranges: `4…9, 22…29, 32`. One unbroken run is `a…b`.
+
+    A gapped set lists a run of three or more as `a…b` and shorter runs as single ids, so
+    the label names exactly the ids present and never a count of how many are missing.
+    """
+    runs: list[list[int]] = [[vals[0]]]
+    for v in vals[1:]:
+        if v == runs[-1][-1] + 1:
+            runs[-1].append(v)
+        else:
+            runs.append([v])
+    if len(runs) == 1:
+        return f"{vals[0]}…{vals[-1]}"
+    parts = [f"{run[0]}…{run[-1]}" if len(run) >= 3 else ", ".join(str(v) for v in run) for run in runs]
+    return ", ".join(parts)
+
+
+def _sentinel_label(names: list[str]) -> str:
+    """`{stem…} × N` -- the parameterised stand-in for a run of N identical siblings.
+
+    BOTH halves are DERIVED: the placeholder stem is the longest common prefix of the
+    run's actual names, and N is the run length. Nothing here is authored per experiment,
+    so the label cannot drift from the data.
+
+    The count sits OUTSIDE the braces on purpose (Iter-11, item 14a). `{member id
+    (28)}` nests a parenthesis inside a brace, which reads as though the count were part
+    of the parameter's NAME; a trailing multiplier reads as a quantity applied to the
+    placeholder, which is what it is. The user ruled for this form on 2026-08-17.
+    """
+    indexed = _index_template(names)
+    if indexed is not None:
+        tmpl, spans = indexed
+        return f"{{{tmpl}}} × {len(names)}, {spans}"
+    stem = _common_prefix(names)
+    return f"{{{stem}…}} × {len(names)}" if stem else f"{{…}} × {len(names)}"
+
+
+def _sibling_runs(node: dict) -> list[tuple[list[str], dict]]:
+    """Split `node`'s sorted children into CONTIGUOUS runs of identical subtrees.
+
+    Identity is DECIDED, never assumed. The writer builds every member path from
+    one f-string (`sensitivity_analysis.py`, `_sub_relpaths`), so structural identity is
+    guaranteed at WRITE time -- but this function's input is a persisted crate that
+    outlives the writer, and the RO-Crate contract is that the on-disk JSON-LD IS the
+    object. So the subtrees are compared by canonical sorted-key serialization, and THAT
+    COMPARISON IS THE DIVERGENCE DETECTOR: a member whose structure legitimately
+    differs breaks the run and renders under its own name. The collapse can never hide a
+    real structural difference.
+
+    Contiguous runs rather than global equivalence classes: global grouping would REORDER
+    the listing whenever two identical siblings straddle a third that differs, and a
+    reordered directory listing is a new readability problem in place of the old one.
+    """
+    runs: list[tuple[list[str], dict]] = []
+    last_sig: str | None = None
+    for name, child in sorted(node.items()):
+        # A directory run is grouped by its SUBTREE; a leaf run has no subtree to compare
+        # (every leaf serializes to "{}"), so it is grouped by its NAME SKELETON. `child`
+        # used to do both jobs; lifting the leaf refusal removes the second one, and
+        # without this replacement five unrelated files form one run above threshold.
+        sig = json.dumps(child, sort_keys=True) if child else repr(_name_skeleton(name))
+        if runs and sig == last_sig:
+            runs[-1][0].append(name)
+        else:
+            runs.append(([name], child))
+            last_sig = sig
+    return runs
+
+
+def _path_tree_html(paths: list[str]) -> str:
+    """Render `paths` as a folder tree, the way a directory listing is normally shown.
+
+    Iter-10 H. The user: 'the presentation of sub datasets is unreadable; it's just a
+    massive list of filepaths which is impossible to read in this block of text; i think a
+    branch structure like people use to display folder structure could be good for this.'
+
+    Measured on the delivered bundle: 29 paths in ONE table cell, space-separated, over two
+    distinct prefixes (`sensitivity_datatree.zarr/` and `members/`).
+
+    Single-child chains are COLLAPSED onto one line (`member_gpu_0_r1/analysis_datatree.zarr`
+    rather than a directory line plus an indented leaf). Without that, 28 identically
+    shaped members render as 56 lines whose every other line is the same filename —
+    which trades one unreadable shape for another rather than fixing the readability the
+    user asked about.
+    """
+    tree: dict = {}
+    for p in paths:
+        segs = [s for s in p.split("/") if s]
+        if not segs:
+            continue
+        node = tree
+        for s in segs:
+            node = node.setdefault(s, {})
+
+    def _collapse(name: str, node: dict) -> tuple[str, dict]:
+        # Fold a chain of single children into one label; stop at a branch or a leaf.
+        while len(node) == 1:
+            (child,) = node
+            if not node[child]:
+                name, node = f"{name}/{child}", {}
+                break
+            name, node = f"{name}/{child}", node[child]
+        return name, node
+
+    lines: list[str] = []
+    collapsed: list[tuple[str, list[str]]] = []  # (sentinel label, member names)
+
+    def _walk(node: dict, prefix: str) -> None:
+        runs = _sibling_runs(node)
+        for i, (names, child) in enumerate(runs):
+            last = i == len(runs) - 1
+            # Collapse a run only when there is shared structure to show ONCE (`child`
+            # non-empty) and enough members to pay for the extra sentinel line. A run of
+            # leaves has no subtree, so collapsing it would replace N names with a
+            # sentinel and nothing beneath -- pure information loss.
+            if len(names) >= _TREE_SENTINEL_MIN_SIBLINGS:
+                label = _sentinel_label(names)
+                collapsed.append((label, names))
+                lines.append(f"{prefix}{'└── ' if last else '├── '}{_esc(label)}")
+                _walk(child, prefix + ("    " if last else "│   "))
+                continue
+            for j, name in enumerate(names):
+                sub_last = last and j == len(names) - 1
+                label, sub = _collapse(name, child)
+                lines.append(f"{prefix}{'└── ' if sub_last else '├── '}{_esc(label)}")
+                if sub:
+                    _walk(sub, prefix + ("    " if sub_last else "│   "))
+
+    _walk(tree, "")
+    _style = "margin:0;font-size:11px;line-height:1.45"
+    tree_html = f"<pre class='hhemt-path-tree' style='{_style}'>" + "\n".join(lines) + "</pre>"
+    if not collapsed:
+        return tree_html
+    members = "; ".join(
+        f"<strong>{_esc(label)}</strong> = " + ", ".join(_code(n) for n in names) for label, names in collapsed
+    )
+    total = sum(len(names) for _, names in collapsed)
+    return (
+        tree_html + f"<details><summary class='note'>Collapsed runs: show the {_esc(_count(total, 'member name'))}"
+        "</summary><p class='note'>" + members + "</p></details>"
+    )
+
+
+def _consolidated_group_paths(
+    analysis_dir: Path | None,
+    analysis: TRITONSWMM_analysis | None,
+) -> tuple[list[str], bool]:
+    """Return (group paths, is_realized) for the consolidated store's node hierarchy.
+
+    The Outputs section's other tree is the crate's `hasPart` FILE-PATH list, which stops
+    AT `analysis_datatree.zarr` and never descends into it. This supplies the missing half:
+    the DataTree GROUP hierarchy INSIDE the store.
+
+    `is_realized` is True when the paths were read off the store on disk, False when they
+    are the code-declared vocabulary from `processing_analysis`. The caller MUST label the
+    two differently -- a provenance page presenting the toolkit's schema as this dataset's
+    structure asserts nodes the run may not have produced.
+
+    No new declared source: `_resolve_consolidated_tree` is already called in `render()`
+    and the store it resolves is already in `source_paths`, so this opens nothing the
+    renderer-IO provenance audit (Gotcha 53) has not already been told about. Only the
+    tree's metadata is read; no chunk is materialized. Both arguments are forwarded because
+    the resolver PREFERS the paths the analysis declares -- passing None for `analysis`
+    would silently degrade resolution to the filename fallback on the sensitivity-master
+    path, which is the shape this section is most often rendered for.
+    """
+    tree_path = _resolve_consolidated_tree(analysis_dir, analysis) if analysis_dir else None
+    if tree_path is not None and tree_path.exists():
+        try:
+            tree = open_store(tree_path, chunks=None)
+        except Exception:
+            tree = None
+        if tree is not None:
+            groups = sorted(g.lstrip("/") for g in tree.groups if g.strip("/"))
+            if groups:
+                return [f"{tree_path.name}/{g}" for g in groups], True
+    from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing as _pp
+
+    declared = sorted(set(_pp._MODE_TO_TREE_PATH.values()) | set(_pp._TIMESERIES_MODE_TO_TREE_PATH.values()))
+    return [f"analysis_datatree.zarr/{g}" for g in declared], False
+
+
+_MINUS = "−"  # U+2212 MINUS SIGN -- a hyphen is not a minus in a typeset exponent.
+
+
+def _sup(text: str) -> str:
+    return f"<sup>{_esc(text).replace('-', _MINUS)}</sup>"
+
+
+def _unit_factor_html(tok: str) -> str:
+    """One whitespace-delimited UDUNITS factor -> HTML with a real superscript.
+
+    Two branches, both load-bearing against real entries in `_CF_VARIABLE_MAP`:
+
+    * The caret branch exists for `10^6 L` (`total_inflow_vol`). Without it, a
+      trailing-digit rule renders `1` raised to `0`.
+    * The alphabetic-base guard exists for `1`, CF's dimensionless unit. Without it, the
+      same rule produces an empty base carrying a superscript.
+    """
+    if "^" in tok:
+        base, _, exp = tok.partition("^")
+        return _esc(base) + _sup(exp) if base and exp else _esc(tok)
+    i = len(tok)
+    while i > 0 and tok[i - 1].isdigit():
+        i -= 1
+    if i > 1 and tok[i - 1] == "-":
+        i -= 1
+    base, exp = tok[:i], tok[i:]
+    if base and exp and base[-1].isalpha():
+        return _esc(base) + _sup(exp)
+    return _esc(tok)
+
+
+def _units_html(units: Any) -> str:
+    """Render a UDUNITS string with true superscripts WITHOUT altering it at rest.
+
+    `m s-1` renders as `m s` with a superscript minus-one; the CF `units` attribute on the
+    data and the crate's `unitText` stay BYTE-IDENTICAL UDUNITS, which is what a CF-aware
+    reader parses. This is a presentation transform in the renderer only -- it never calls
+    into `cf_conventions`, so the `cf conventions canonical source` stipulation (which
+    governs attribute APPLICATION, not rendering) is untouched.
+
+    Do NOT "simplify" this by adding a `display_units` key to `_CF_VARIABLE_MAP`:
+    `cf_conventions._set_attrs` stamps EVERY non-None key of an entry onto the DataArray,
+    so a presentation key added there is published as a non-CF attribute on the data.
+
+    The canonical string is preserved verbatim in `title` because superscripts and U+2212
+    are not copy-pasteable back into a UDUNITS parser -- the machine form has to remain
+    recoverable from the page.
+    """
+    text = str(units or "").strip()
+    if not text:
+        return "—"
+    body = " ".join(_unit_factor_html(t) for t in text.split())
+    return f'<span class="units" title="{_esc(text)}">{body}</span>'
+
+
+def _expr_html(expr: str) -> str:
+    """Render a compact symbolic expression with real sub/superscripts.
+
+    Grammar is deliberately two characters wide -- `_` for a subscript and `^` for a
+    superscript, each binding to the alphanumeric run that follows, or to a `{...}` group
+    -- so the STORED value stays a short ASCII-ish string a human can read and grep.
+    Operators are literal Unicode (√ Σ ∫ · Δ), not markup.
+
+    No math engine. This page carries none. ([Q148]/[Q149]: this passage used to argue
+    from "the module already refuses a CDN dependency", which stopped being true when the
+    Reproduction Guide tables adopted CDN Tabulator. Corrected in place; the argument
+    below never depended on it.) A BUNDLED engine would clear the self-containment bar but would
+    vendor a third-party asset with its own license and provenance onto a page whose whole
+    thesis is that it is self-describing, and would render math that is neither selectable
+    nor greppable in an archived copy. Eight of the eleven descriptors are prose with no
+    equation in them, so the engine would buy nothing for most rows.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(expr):
+        ch = expr[i]
+        if ch in "_^" and i + 1 < len(expr):
+            j = i + 1
+            if expr[j] == "{":
+                k = expr.find("}", j)
+                if k == -1:
+                    out.append(_esc(ch))
+                    i += 1
+                    continue
+                run, i = expr[j + 1 : k], k + 1
+            else:
+                j2 = j
+                while j2 < len(expr) and (expr[j2].isalnum() or expr[j2] == "-"):
+                    j2 += 1
+                run, i = expr[j:j2], j2
+            tag = "sub" if ch == "_" else "sup"
+            out.append(f"<{tag}>{_esc(run).replace('-', _MINUS)}</{tag}>")
+            continue
+        out.append(_esc(ch))
+        i += 1
+    return "".join(out)
+
+
+def _operation_html(descriptor: dict) -> str:
+    """Prose operation, with a typeset symbolic form appended when one is authored.
+
+    The prose stays PRIMARY and unchanged. Most descriptors are genuinely prose ("value
+    selected at the final reported timestep") with no equation to typeset, so a math-first
+    rendering would leave the majority of rows worse. `operation_expr` is optional by
+    design: an entry that has not authored one renders exactly what it renders today,
+    which is what makes this safe to land row by row.
+    """
+    prose = descriptor.get("operation") or "—"
+    expr = descriptor.get("operation_expr")
+    if not expr:
+        return _esc(prose)
+    return f'{_esc(prose)}<br><span class="expr">{_expr_html(str(expr))}</span>'
+
+
+def _provenance_outputs(
+    graph: list[dict],
+    root: dict,
+    analysis_dir: Path | None = None,
+    analysis: TRITONSWMM_analysis | None = None,
+) -> str:
     dataset = _find_consolidated_dataset(graph)
     parts: list[str] = ["<h4>6. Outputs &amp; CF data dictionary</h4>"]
     if dataset is None:
-        parts.append(_banner("No consolidated output dataset recorded in this crate."))
+        parts.append(_banner("No consolidated output dataset is recorded for this analysis."))
         return "\n".join(parts)
 
     rows: list[tuple[str, str]] = [("Output", _code(dataset.get("@id")))]
@@ -428,41 +1309,107 @@ def _provenance_outputs(graph: list[dict], root: dict) -> str:
         rows.append(("Conforms to", _code(conforms)))
     sub_parts = _ref_ids(_prop(root, "hasPart"))
     if sub_parts:
-        rows.append(("Sub-datasets (hasPart)", " ".join(_code(p) for p in sub_parts)))
+        # Iter-10 H: a folder tree, not a space-joined run of <code> spans.
+        rows.append((f"Sub-datasets (hasPart): {len(sub_parts)}", _path_tree_html(list(sub_parts))))
+    # Iter-13 bullet 9. The hasPart tree above is a FILE-PATH listing: it stops at
+    # `analysis_datatree.zarr` and never descends into it, so a reader learns the store
+    # exists and nothing about what is in it. This row supplies the store's own DataTree
+    # GROUP hierarchy, rendered INLINE through the same branch-tree renderer rather than
+    # behind a disclosure widget -- the user asked for the structure shown "rather than
+    # forcing the user to hit the dropdown". The member membership dropdown above is
+    # deliberately left alone; the user called it good and desirable.
+    _group_paths, _realized = _consolidated_group_paths(analysis_dir, analysis)
+    if _group_paths:
+        rows.append(
+            (
+                "Store hierarchy: this run"
+                if _realized
+                else "Store hierarchy: typical (store not carried in this bundle)",
+                _path_tree_html(_group_paths),
+            )
+        )
     parts.append(_kv_table(rows))
+
+    # Descriptor columns come from MODULE introspection (cf_conventions._QUANTITY_PROVENANCE),
+    # intersected with the crate's variableMeasured names. Two reasons, both load-bearing:
+    # the crate is written only at consolidation, so sourcing the descriptors from it would
+    # require a re-consolidation to change them; and the crate's name list is what makes the
+    # table describe THIS dataset rather than this toolkit version. A variable the module
+    # does not cover renders an explicit em-dash, never a guess.
+    from hhemt.cf_conventions import quantity_provenance
 
     var_rows: list[list[str]] = []
     for ref in _ref_ids(_prop(dataset, "variableMeasured")):
         pv = _by_id(graph, ref)
         if pv is None:
             continue
+        var_name = _prop(pv, "name")
+        descriptor = quantity_provenance(str(var_name)) or {}
         var_rows.append(
             [
-                _code(_prop(pv, "name")),
+                _code(var_name),
                 _esc(_prop(pv, "description") or "—"),
-                _esc(_prop(pv, "unitText") or "—"),
+                _units_html(_prop(pv, "unitText")),
                 _code(_prop(pv, "propertyID")) if _prop(pv, "propertyID") else "—",
-                _esc(_prop(pv, "measurementTechnique") or "—"),
+                _esc(descriptor.get("spatial_representation") or "—"),
+                _esc(descriptor.get("source_variables") or "—"),
+                _operation_html(descriptor),
             ]
         )
     if var_rows:
-        parts.append("<p class='note'>CF-conformant data dictionary for the consolidated variables.</p>")
+        parts.append(
+            "<p class='note'><strong>Data dictionary.</strong> One row per variable the output "
+            "advertises. <em>Spatial representation</em> is the geometry each value describes "
+            "(grid cell, point or node, line or conduit, or a whole-domain scalar). "
+            "<em>Source variables</em> are the raw model outputs the value was computed from. "
+            "<em>Operation</em> is the computation applied to them. A dash in the "
+            "<em>Spatial representation</em>, <em>Source variables</em> and <em>Operation</em> "
+            "columns means the toolkit holds no descriptor for the variable. For the "
+            "performance variables, <em>Operation</em> names both reduced axes: the per-rank "
+            "sum over reporting timesteps and the maximum over ranks.</p>"
+        )
         parts.append(
             _grid_table(
-                ["Variable", "Long name", "Units", "CF standard_name", "cell_methods"],
+                [
+                    "Variable",
+                    "Long name",
+                    "Units",
+                    "CF standard_name",
+                    "Spatial representation",
+                    "Source variables",
+                    "Operation",
+                ],
                 var_rows,
             )
         )
     return "\n".join(parts)
 
 
-def _build_provenance_html(doc: dict) -> str:
+def _build_provenance_html(
+    doc: dict,
+    analysis_dir: Path | None = None,
+    analysis: TRITONSWMM_analysis | None = None,
+) -> str:
     """Project the RO-Crate JSON-LD @graph into a static provenance recreation chain.
 
     Ordered disclosed -> verifiable: BLUF verifiability anchors, then
-    Identity -> Software -> Environment -> Inputs -> Process -> Outputs.
-    Allow-list BY CONSTRUCTION: each sub-block reaches only for the named safe
-    fields it enumerates; `_prop` refuses the volatile keys as a backstop.
+    Identity -> Software -> Provenance chain -> Environment -> Inputs -> Process ->
+    Outputs. Allow-list BY CONSTRUCTION: each sub-block reaches only for the named
+    safe fields it enumerates; `_prop` refuses the volatile keys as a backstop.
+
+    The provenance chain is appended only when the caller supplies the analysis
+    context, so the crate-only call path (tests, a bare sidecar read) keeps working
+    unchanged.
+
+    `[Q160]`(7): the `5b. Run timeline` sub-block that used to sit between Process and
+    Outputs is PERFORMANCE data and now renders on the Workflow Performance page
+    (`workflow_performance.py`). Numbering is unaffected -- `5b` was a SUB-label of
+    `5. Process`, so removing it leaves `5` and `6` contiguous rather than opening a
+    hole. The `status_payloads` parameter went with it: measured, the timeline was its
+    ONLY consumer in this function, so retaining it would leave a dead parameter that
+    reads as a live input. Retaining the READ while removing the RENDERER is the
+    specific mistake to avoid here -- it diverges declared from actual and Gotcha 53
+    makes that a fatal render-time ProcessingError, not a warning.
     """
     graph = _graph(doc)
     root = _by_id(graph, _ROOT_ID) or {}
@@ -472,18 +1419,174 @@ def _build_provenance_html(doc: dict) -> str:
     inputs = _find_input_files(graph)
     runs = _of_type(graph, "CreateAction")
 
+    crate_sha = _prop(app, "softwareVersion") or _prop(src, "version")
+    chain_html = (
+        _provenance_chain(analysis_dir, analysis, str(crate_sha) if crate_sha else None)
+        if analysis_dir is not None
+        else ""
+    )
     return "\n".join(
-        [
+        s
+        for s in [
             _heading("Provenance"),
             _provenance_bluf(app, sif, inputs),
             _provenance_identity(graph, root),
             _provenance_software(app, src),
+            chain_html,
             _provenance_environment(sif),
             _provenance_inputs(inputs),
             _provenance_process(runs),
-            _provenance_outputs(graph, root),
+            _provenance_outputs(graph, root, analysis_dir=analysis_dir, analysis=analysis),
         ]
+        if s
     )
+
+
+class _MountedTable(NamedTuple):
+    """A Tabulator table split into page markup and a document-level fragment.
+
+    Same two-part shape as `ReprexGuide` and for the same reason: the ~40 KB shared
+    filter blob and Tabulator's own assets are emitted ONCE per document, so a table
+    contributes a mount point to the body and its styles/script to the document.
+    """
+
+    html: str
+    #: None on a degenerate branch that renders a banner instead of a grid -- the caller
+    #: filters, so an empty table never contributes Tabulator assets to the document.
+    fragment: tuple[str, TableFragment] | None
+
+
+def _mounted_tabulator_table(
+    headers: list[str],
+    rows: list[list[str]],
+    *,
+    container_id: str,
+    header_tooltips: tuple[str, ...] = (),
+) -> _MountedTable:
+    """Build one Tabulator fragment from a (headers, rows) pair — `headers` a list of column
+    titles, `rows` a list of equal-length row lists whose cells are PRE-ESCAPED HTML.
+
+    That shape is inherited from `_sortable_grid_table`, the vanilla-JS shim this page used
+    before [Q160](7); the shim is DELETED, so the name is history rather than a pointer.
+
+    `[Q160]`(7). The run-timeline and SLURM-efficiency tables converge on the appendix's
+    Tabulator data grid, per the user's ruling. `column_panel=True` matches
+    `scenario_status_appendix` and preserves the column-selector both tables already
+    had; the "Copy table" / "Reset all" controls live inside that aside, so they come
+    along for free ([Q152] wanted them here and the decoupled `column_panel=False`
+    toolbar already existed for tables that have no aside).
+
+    `resizableColumns` is an EXPLICIT per-call override ([Q146]/[Q148]) and MUST NOT be
+    promoted to `build_options_dict`'s shared default: at `fitDataStretch` with 39
+    columns the 3px resize handle sits adjacent to the next column's left edge, which is
+    why the appendix keeps it off. These tables carry 7-13 columns, so the handles are
+    far apart.
+
+    Cells are pre-escaped HTML fragments (`<code>`, badges), hence `formatter: "html"`
+    on every column — the same treatment the reproduction-guide tables use.
+    """
+    df = _df_for(headers, rows, {})
+    columns_spec = build_columns_spec(df[headers], visible_columns_default=None, header_filter=True)
+    for i, col_spec in enumerate(columns_spec):
+        col_spec["formatter"] = "html"
+        if i < len(header_tooltips) and header_tooltips[i]:
+            col_spec["headerTooltip"] = header_tooltips[i]
+    fragment = build_table_fragment(
+        container_id=container_id,
+        options=build_options_dict(
+            df,
+            columns_spec=columns_spec,
+            # Bounded exactly as the reproduction-guide tables are, and for the reason
+            # recorded there: `vh` resolves against the IFRAME height, which the combined
+            # report sets imperatively once from the arm frame's onload handler, while
+            # Tabulator reads options.height ONCE at construction. A fixed ceiling makes
+            # that divergence unreachable.
+            table_height="min(70vh, 640px)",
+            pagination_size=0,
+            persistence_id=container_id,
+            extra_options={"resizableColumns": True},
+        ),
+        js_mode=_TABULATOR_JS_MODE,
+        renderer_name="workflow_performance",
+        column_panel=True,
+    )
+    return _MountedTable(f'<div id="{container_id}-mount"></div>', (container_id, fragment))
+
+
+def _provenance_timeline(payloads: list[dict], member_ids: Collection[str] | None = None) -> _MountedTable | None:
+    """Whole-experiment run timeline, projected from `_status/*.flag.json`.
+
+    This is the record the Process section cannot supply on a sensitivity master
+    (whose crate is emitted with ``with_run_units=False`` and therefore carries no
+    CreateAction nodes at all). The sidecars are append-only per completed rule, so
+    this table covers setup -> prepare -> simulate -> process -> consolidate for the
+    WHOLE experiment and does not shrink when the report is regenerated.
+
+    `member_ids`, when given, is the analysis's member ids. A record whose member (the one it
+    records, else the one its rule name carries) is not among them belongs to a member no longer
+    in the analysis and is left out; the note gives how many. A record that names no member
+    (setup, a figure rule) is kept with an empty Member cell. With `member_ids` None nothing is
+    left out and the note says why.
+    """
+    n_left_out = 0
+    members: list[str] = []
+    kept: list[dict] = []
+    for p in payloads:
+        owner = _resolve_member(p, str(p.get("rule_name") or ""), member_ids)
+        if member_ids is not None and owner and owner not in member_ids:
+            n_left_out += 1
+            continue
+        kept.append(p)
+        members.append(owner)
+    left_out_note = (
+        f" {_esc(_count(n_left_out, 'record'))} left out: they belong to members no longer in this analysis."
+        if member_ids is not None
+        else " The count of records left out is not shown: this analysis has no members."
+    )
+    rows = [
+        [
+            _esc(str(p.get("written_at") or "")),
+            _esc(_purpose_for_rule(str(p.get("rule_name") or ""))),
+            _code(p.get("rule_name") or "—"),
+            _esc(owner),
+            _esc(str(p.get("event_id") or "—")),
+            _esc(str(p.get("model_type") or "—")),
+            _code(p.get("slurm_job_id")) if p.get("slurm_job_id") else "—",
+        ]
+        for p, owner in zip(kept, members, strict=True)
+    ]
+    if not rows:
+        if not n_left_out:
+            return None
+        return _MountedTable(
+            _heading("Run timeline")
+            + "\n"
+            + _banner(
+                f"All {_count(n_left_out, 'record')} belong to members no longer in this analysis, so none are shown."
+            ),
+            None,
+        )
+    rows.sort(key=lambda r: r[0])
+    note = (
+        f"<p class='note'><strong>Run timeline.</strong> {_esc(_count(len(rows), 'completed rule'))}, "
+        f"from setup through consolidation, across every workflow run.{left_out_note} "
+        f"{_TABLE_INTERACTION_NOTE}</p>"
+    )
+    # `[Q160]`(7): the container id MUST NOT equal the section anchor. `_heading` below
+    # derives the <h3> id from the title via `_anchor` ("Run timeline" -> "run-timeline"),
+    # so an equal table id would put the attribute on TWO elements -- invalid HTML, and
+    # the jump-nav's data-jump="run-timeline" would resolve to whichever the parser
+    # reached first. Same collision the SLURM table dodges; the pattern is to suffix the
+    # TABLE id, never to rename the section.
+    mounted = _mounted_tabulator_table(
+        ["Completed at", "Job desc", "Rule", "Member", "Event", "Model", "SLURM job"],
+        rows,
+        container_id="run-timeline-table",
+    )
+    # `[Q160]`(7): promoted from a `<h4>5b.` sub-block of `5. Process` on the Metadata
+    # page to a top-level section of the Workflow Performance page, so the jump-nav
+    # anchor resolves. `_heading` is what mints that anchor.
+    return _MountedTable(_heading("Run timeline") + "\n" + note + mounted.html, mounted.fragment)
 
 
 # --- (2) Reproduction guide --------------------------------------------------
@@ -530,15 +1633,20 @@ def _config_field_rows() -> tuple[dict[str, list[list[str]]], list[str]]:
     rows_by_bucket: dict[str, list[list[str]]] = {b: [] for b in _BUCKET_ORDER}
     unclassified: list[str] = []
 
-    def _row(label: str, note: str | None, bucket: str, field_name: str) -> list[str]:
+    def _row(label: str, field_info: Any, bucket: str, field_name: str) -> list[str]:
         placeholder = _BUCKET_PLACEHOLDER.get(bucket, f"{{your-{field_name}}}")
-        return [_code(label), _esc(note or "—"), _code(placeholder)]
+        return [
+            _code(label),
+            _description_cell(field_info),
+            _requiredness_cell(field_info),
+            _code(placeholder),
+        ]
 
     # (b) the target user's supply set. Listed FIRST inside each bucket so the
     # Supply block opens with what the reproducer literally types.
     for field_name, field_info in reprex_config.model_fields.items():
         bucket = "hpc" if field_name in _REPREX_SELECTOR_FIELDS else "user"
-        rows_by_bucket[bucket].append(_row(f"reprex_config.{field_name}", field_info.description, bucket, field_name))
+        rows_by_bucket[bucket].append(_row(f"reprex_config.{field_name}", field_info, bucket, field_name))
 
     # (a) every field of the two experiment configs.
     for config_label, model in (("system_config", system_config), ("analysis_config", analysis_config)):
@@ -552,10 +1660,252 @@ def _config_field_rows() -> tuple[dict[str, list[list[str]]], list[str]]:
                 # from a reproduction guide.
                 unclassified.append(f"{config_label}.{field_name}")
                 continue
-            rows_by_bucket[bucket].append(
-                _row(f"{config_label}.{field_name}", field_info.description, bucket, field_name)
-            )
+            rows_by_bucket[bucket].append(_row(f"{config_label}.{field_name}", field_info, bucket, field_name))
     return rows_by_bucket, unclassified
+
+
+def _toolkit_clones_into(field_info: Any) -> bool:
+    """True when the field is marked `json_schema_extra={"toolkit_clones_into": True}`.
+
+    DELIBERATELY NOT `toolkit_owned_output`, and the distinction is the point. That
+    sentinel means one thing -- skip the load-time existence check -- and is carried by
+    FOUR fields: the two software directories plus `system_directory` and `analysis_dir`.
+    This predicate answers a different question: does the user name a directory the
+    clone/build gate BUILDS INTO? True for the two software directories only. Keying the
+    Reproduction Guide's requiredness cell on the existence-skip sentinel would render
+    `system_directory` as "the toolkit clones/builds into it" (it does not -- outputs are
+    written there) and `analysis_dir` as Required (it is `Path | None`, default None, and
+    the config's own description says the run places it for you) -- the OPPOSITE of the
+    truth, on the page whose entire purpose is telling a reproducer what to supply.
+    One flag must not carry two unrelated meanings.
+
+    NOTE WHAT THIS DOES AND DOES NOT MEAN: it exempts nothing by itself -- the
+    existence skip is `toolkit_owned_output`'s job, on a superset of these fields.
+    It is NOT a statement that the user does not supply
+    the path -- the user names the directory the clone/build gate builds into, and
+    `system.py` raises ConfigurationError when it is None. These fields are schema-
+    Optional only so a portability-scrubbed bundle's cfg_system.yaml loads for
+    bundle-local EDA; they are required for any real run.
+    """
+    extra = getattr(field_info, "json_schema_extra", None)
+    return isinstance(extra, dict) and bool(extra.get("toolkit_clones_into"))
+
+
+def _options_tooltip(field_info: Any) -> str:
+    """`key — definition` lines for a field's option glossary, or "" when undeclared.
+
+    The SAME `declared(field_info, "options")` read `_description_cell` uses; the
+    glossary is declared once on the field and rendered from that one declaration in
+    both places. Plain text, newline-separated: Tabulator's tooltip renders a text
+    node, and the cell keeps only the affordance count.
+    """
+    from hhemt.config.base import declared
+
+    options = declared(field_info, "options")
+    if not options:
+        return ""
+    return "\n".join(f"{k}: {v}" for k, v in options.items())
+
+
+def _config_field_tooltips() -> dict[str, str]:
+    """`{"{config_label}.{field_name}": option-glossary tooltip}` for every field.
+
+    A SEPARATE walk from `_config_field_rows`, deliberately, for the same reason
+    `_config_field_values` is separate: `_config_field_rows` returns row CELLS and its
+    arity is depended on by six tests, so the tooltip payload rides beside it rather
+    than widening it. Both walk `model_fields` + `declared(...)`, which IS the single
+    declaration -- reading one source twice is not a second source.
+
+    Takes NO analysis argument, preserving `_config_field_rows`'s zero-user-info
+    property: a glossary is schema, never a producer value.
+    """
+    from hhemt.config.analysis import analysis_config
+    from hhemt.config.reprex_config import reprex_config
+    from hhemt.config.system import system_config
+
+    out: dict[str, str] = {}
+    for label, model in (
+        ("reprex_config", reprex_config),
+        ("system_config", system_config),
+        ("analysis_config", analysis_config),
+    ):
+        for name, fi in model.model_fields.items():
+            tip = _options_tooltip(fi)
+            if tip:
+                out[f"{label}.{name}"] = tip
+    return out
+
+
+def _df_for(headers: list[str], rows: list[list[str]], tips: dict[str, list[str]]) -> pd.DataFrame:
+    """Reshape a (headers, rows) pair into Tabulator's row-dict model.
+
+    The (headers, rows) shape is inherited from the deleted `_sortable_grid_table` shim; the
+    name is retained as history and no longer resolves to a symbol in this file.
+
+    Cells are PRE-ESCAPED HTML fragments (badges, `<code>`, `<strong>`), so every
+    column is rendered with `formatter: "html"` at the call site.
+
+    `tips` maps a header to a per-row list of tooltip strings. Each becomes a
+    `"{header}__tip"` COMPANION column in the returned frame. The companion is
+    deliberately excluded from the columns SPEC by the caller (which builds the spec
+    from `df[headers]`): Tabulator renders only declared columns while
+    `row.getData()` carries every key, so the tip is reachable without occupying a
+    column, a width, or a sidebar toggle.
+    """
+    import pandas as pd
+
+    data: dict[str, list[str]] = {h: [r[i] for r in rows] for i, h in enumerate(headers)}
+    for header, column in tips.items():
+        if header in data:
+            data[f"{header}__tip"] = column
+    return pd.DataFrame(data)
+
+
+def _description_cell(field_info: Any) -> str:
+    """Description prose, plus the applicability note and option glossary when DECLARED.
+
+    GRACEFUL DEGRADATION IS STRUCTURAL. For a field with no declaration this returns
+    exactly `_esc(field_info.description or "—")` -- byte-identical to the pre-
+    declaration renderer -- because both appends are guarded on the presence of a
+    reserved key. 104 of the 107 rendered fields take that path today.
+    """
+    from hhemt.config.base import declared, render_clauses
+
+    parts = [_esc(field_info.description or "—")]
+    applies = declared(field_info, "applies_when")
+    if applies:
+        parts.append(f"<div class='instruction'>Applies when {_esc(render_clauses(applies))}.</div>")
+    options = declared(field_info, "options")
+    if options:
+        # Iter-12 item 18. The glossary moves OUT of the cell and into the column's
+        # Tabulator tooltip ([Q148]), UNIFORMLY -- there is deliberately no length
+        # threshold. A threshold would put one field's definitions in a tooltip and
+        # another's inline, so a reader could not learn one rule for where definitions
+        # live, and two presentations of one concept is what the single-source mandate
+        # forbids. If a glossary reads badly in a tooltip it is too long, and the fix is
+        # to shorten it at its single declared source. The cell keeps only the
+        # affordance; `_options_tooltip` supplies the text from the SAME declaration.
+        parts.append(f" ({len(options)} options)")
+    return "".join(parts)
+
+
+def _requiredness_cell(field_info: Any) -> str:
+    """Derive Required / Conditional / Optional (+default) from the Pydantic FieldInfo.
+
+    Never hand-written. `is_required()` and `default` are the schema's own answer, and
+    the CONDITIONAL branch reads the same `required_when` declaration that
+    `cfgBaseModel._enforce_required_when` enforces -- there is no second source, so this
+    cell cannot state a requirement the validator does not impose, or omit one it does.
+
+    Branch order is load-bearing. Toolkit-owned is checked FIRST because such a field is
+    nominally Optional-with-None but is not something a reproducer supplies at all.
+    Unconditional `is_required()` is checked BEFORE the conditional branch so a field
+    that is always required never renders as merely conditional.
+    """
+    from hhemt.config.base import declared, render_clauses
+
+    if _toolkit_clones_into(field_info):
+        return "<strong>Required</strong>: you choose the location; the toolkit clones or builds into it"
+    try:
+        required = field_info.is_required()
+    except Exception:  # noqa: BLE001 -- schema introspection must not break the render
+        return "—"
+    if required:
+        return "<strong>Required</strong>"
+    clauses = declared(field_info, "required_when")
+    if clauses:
+        cell = f"<strong>Conditional</strong>: required when {_esc(render_clauses(clauses))}"
+        # [Q151]: a conditionally-required field can ALSO carry a meaningful default --
+        # the trigger says when it must be supplied, the default says what applies when
+        # it is not. Today none of the 15 declared fields is both (all default to None),
+        # so this branch is inert; it exists so the first one that IS does not silently
+        # lose its default. `None` is deliberately NOT shown -- it is an absence, and
+        # `_render_config_value` already rules that one absence gets one spelling per row.
+        _default = getattr(field_info, "default", None)
+        if _default is not None and type(_default).__name__ != "PydanticUndefined":
+            cell += f" (default: {_esc(repr(_default))})"
+        return cell
+    default = getattr(field_info, "default", None)
+    if getattr(default, "__class__", type(None)).__name__ == "PydanticUndefined":
+        return "Optional"
+    if callable(getattr(field_info, "default_factory", None)) and default is None:
+        return "Optional (default: computed)"
+    return f"Optional (default: {_esc(repr(default))})"
+
+
+def _config_field_values(analysis: TRITONSWMM_analysis) -> dict[str, str]:
+    """`{"{config_label}.{field_name}": rendered value}` for the HPC/EXPERIMENT buckets.
+
+    A SEPARATE function from `_config_field_rows` on purpose. `_config_field_rows`
+    takes no analysis argument by design: its zero-user-info guarantee (R3,
+    C-ZERO-USER-INFO) is true BY CONSTRUCTION because it cannot leak a value it never
+    sees. Adding an analysis parameter there would downgrade a structural guarantee to
+    a discipline. So the value lookup lives here, and the caller applies it only to the
+    two buckets whose values the bundle ALREADY ships in cfg_system.yaml /
+    cfg_analysis.yaml after `_scrub_user_bucket_fields` has nulled the USER-bucket
+    entries. Showing those discloses nothing the bundle does not already carry;
+    USER-bucket values are never passed through here at all.
+
+    Paths render relative to the analysis directory (with `..` segments when they live
+    outside it), which is what makes them meaningful to a reader holding the bundle
+    rather than the producer's filesystem.
+
+    GRACEFUL-ABSENT by contract. A caller may hand over a config object that is not a
+    Pydantic model at all (a lightweight stand-in, a partially reconstituted bundle
+    config); such an object is SKIPPED and its bucket simply renders without a value
+    column. A value column is an enhancement to the reproduction guide -- it must never
+    be the reason a metadata page fails to render.
+    """
+    analysis_dir = Path(analysis.analysis_paths.analysis_dir)
+    out: dict[str, str] = {}
+    # `cfg_system` hangs off the SYSTEM, never off the analysis -- `analysis._system`
+    # is the accessor every other renderer uses (per_sim_peak_flood_depth.py:186,
+    # system_overview.py:111). Reading `analysis.cfg_system` directly always returned
+    # None, and the graceful-absent `continue` below turned that into 33 silently
+    # blank EXPERIMENT rows rather than an error.
+    for config_label, cfg in (
+        ("system_config", getattr(getattr(analysis, "_system", None), "cfg_system", None)),
+        ("analysis_config", getattr(analysis, "cfg_analysis", None)),
+    ):
+        if cfg is None:
+            continue
+        model_fields = getattr(type(cfg), "model_fields", None)
+        if not model_fields:
+            continue
+        for field_name in model_fields:
+            try:
+                value = getattr(cfg, field_name)
+            except Exception:  # noqa: BLE001
+                continue
+            out[f"{config_label}.{field_name}"] = _render_config_value(value, analysis_dir)
+    return out
+
+
+def _render_config_value(value: Any, analysis_dir: Path) -> str:
+    """Render one config value for display: paths analysis-dir-relative, others repr-ish.
+
+    Iter-11 item 20. An absent value renders `None`, in code voice, NOT italic `null`.
+    `null` is the YAML/JSON spelling of the serialised file; the reader of this table is
+    holding a Python config object whose value IS `None`, and the Required column
+    immediately to the left already says so -- `_requiredness_cell` renders
+    `Optional (default: {repr(default)})`, and `repr(None)` is `None`. Two spellings of
+    one absence, two cells apart in one row, is the inconsistency the item names.
+    """
+    if value is None:
+        return _code("None")
+    if isinstance(value, Path):
+        try:
+            return _code(os.path.relpath(value, analysis_dir))
+        except ValueError:
+            # Different drive/root -- relpath is undefined, so show the absolute path.
+            return _code(value)
+    if isinstance(value, list | tuple):
+        if not value:
+            return "<em>empty</em>"
+        return ", ".join(_render_config_value(v, analysis_dir) for v in value)
+    if isinstance(value, bool | int | float | str):
+        return _esc(value)
+    return _esc(str(value))
 
 
 def _bucket_badge(bucket: str) -> str:
@@ -563,22 +1913,156 @@ def _bucket_badge(bucket: str) -> str:
     return f'<span class="badge" style="background-color:{color}">{_esc(_BUCKET_VERB[bucket])}</span>'
 
 
-def _build_reprex_guide_html() -> str:
+#: How many distinct swept values a `Value used` cell shows before eliding. A
+#: continuous sweep over 40 rows must not render 40 values inside one table cell.
+_VARIED_VALUE_PREVIEW: int = 6
+
+
+def _sensitivity_varied_values(analysis: TRITONSWMM_analysis) -> dict[str, tuple[str, str]]:
+    """`{"{config_label}.{field_name}": (cell, tooltip)}` for every parameter in the sweep table.
+
+    The value is ALWAYS a 2-tuple, for a varied parameter and a constant one alike.
+    A constant column has no hover payload, so its tooltip is the empty string -- the
+    same `(cell, "")` pair the consumer already builds for a non-swept field. The two
+    shapes this function used to return (a bare string here, a tuple there) crashed
+    `_build_reprex_guide_html`'s unconditional `_cell, _tip = _v` unpack on the first
+    real sweep table carrying a constant column, and the declared `dict[str, str]`
+    described the crashing branch while contradicting the working one -- which is why
+    neither a reader nor a type-checker caught it. Keep this return uniform.
+
+    DERIVED, never hand-listed. The sensitivity CSV's own column names ARE the
+    declaration of what varies, and `sensitivity_analysis` already owns that
+    grammar (`system.{field}` / `analysis.{field}` / `hpc.{alias}` / the deprecated
+    bare analysis-field name). Reading the frame's columns therefore yields exactly
+    this experiment's swept set, and adding a sweep axis to the CSV changes this map
+    with no renderer edit.
+
+    Why the cell is REPLACED and not annotated: for a varied parameter the master's
+    config value is one arm's setting. Rendering it as "Value used" presents one
+    member's configuration as though it were the experiment's, which is
+    affirmatively misleading rather than merely incomplete. An appended "(varied)"
+    tag does not undo a number the reader has already read as the answer.
+
+    GRACEFUL-ABSENT, mirroring `_config_field_values`: a non-sensitivity analysis, a
+    scrubbed bundle whose sensitivity CSV is not on disk, or any frame-access failure
+    yields `{}` and the guide renders exactly as it did before.
+    """
+    sensitivity = getattr(analysis, "sensitivity", None)
+    if sensitivity is None:
+        return {}
+    try:
+        from hhemt.config.analysis import analysis_config
+        from hhemt.sensitivity_analysis import (
+            _is_analysis_overlay_column,
+            _is_hpc_overlay_column,
+            _is_system_overlay_column,
+            _resolve_hpc_alias_to_analysis_field,
+            _strip_analysis_prefix,
+            _strip_system_prefix,
+        )
+
+        columns = list(sensitivity._df_setup_full.columns)
+    except Exception:  # noqa: BLE001 -- a display column must never break the render
+        return {}
+
+    out: dict[str, tuple[str, str]] = {}
+    for col in columns:
+        if col == "system_config_yaml":
+            continue
+        if _is_system_overlay_column(col):
+            label = f"system_config.{_strip_system_prefix(col)}"
+        elif _is_hpc_overlay_column(col):
+            label = f"analysis_config.{_resolve_hpc_alias_to_analysis_field(col)}"
+        elif _is_analysis_overlay_column(col):
+            label = f"analysis_config.{_strip_analysis_prefix(col)}"
+        elif col in analysis_config.model_fields:
+            label = f"analysis_config.{col}"  # deprecated bare-name form
+        else:
+            continue
+        try:
+            distinct = sorted({str(v) for v in sensitivity._df_setup_full[col].dropna().tolist()})
+        except Exception:  # noqa: BLE001
+            distinct = []
+        # Iter-12 item 21: a column that takes exactly ONE value across every row is not
+        # a varied parameter -- it is a constant that happens to be spelled in the sweep
+        # table. Rendering the varied marker there withholds a value the reader can and
+        # should be given, and misdescribes the experiment's axes.
+        if len(distinct) == 1:
+            # The 2-tuple is UNIFORM with the varied branch below: cell, then hover
+            # payload. A constant column has nothing to hover, so the tooltip is empty
+            # -- matching what the consumer already builds for a non-swept field.
+            out[label] = (_code(distinct[0]), "")
+            continue
+        # Iter-12 item 17. The marker and its value list are returned SEPARATELY: the
+        # marker is the cell, the list is the tooltip payload. Listing values inline
+        # competed with the marker and blew out the column on a continuous sweep -- the
+        # marker answers "what value was used", the value set is the follow-up question.
+        # Splitting them here is also what lets the tooltip ENGINE change without
+        # touching this function again.
+        shown = ", ".join(str(v) for v in distinct[:_VARIED_VALUE_PREVIEW])
+        if len(distinct) > _VARIED_VALUE_PREVIEW:
+            shown += f", … ({len(distinct)} values)"
+        out[label] = (
+            '<strong class="tip-affordance">Varied by the sensitivity analysis</strong>',
+            shown,
+        )
+    return out
+
+
+class ReprexGuide(NamedTuple):
+    """The guide's markup plus the Tabulator fragments its three tables need.
+
+    Two-part return because the tables are Tabulator fragments now ([Q148]): the
+    markup carries only mount points, and the caller emits the fragments' styles and
+    scripts at DOCUMENT level so the ~40 KB shared filter blob lands once for three
+    tables rather than three times.
+    """
+
+    html: str
+    fragments: list[tuple[str, TableFragment]]
+
+
+def _build_reprex_guide_html(
+    values_by_field: dict[str, str] | None = None,
+    varied_by_field: dict[str, tuple[str, str]] | None = None,
+) -> ReprexGuide:
     """Static grouped table: every config field -> USER=Supply / HPC=Amend / EXPERIMENT=Keep.
 
     Grouped (not a flat sortable grid) because the primary task a reproducer
     performs is "what do I DO with this field?" -- answered pre-attentively by
     the bucket. Each group is redundant-coded with an Okabe-Ito badge AND the
     instruction verb, so it survives grayscale and CVD.
+
+    Every column is DERIVED from the Pydantic schema -- description from
+    `Field(description=...)`, requiredness and default from `FieldInfo` -- so none of
+    it is restated by hand and none of it can drift from the model.
+
+    ``values_by_field`` (from `_config_field_values`) and ``varied_by_field`` (from
+    `_sensitivity_varied_values`) are applied to the HPC and EXPERIMENT buckets only.
+    The USER bucket never receives either, so its cells stay placeholder-only and the
+    zero-user-info property of the shipped page is preserved.
     """
     rows_by_bucket, unclassified = _config_field_rows()
+    _field_tooltips = _config_field_tooltips()
+    # (bucket, fragment) pairs, NOT a bare list: a bucket with no rows `continue`s
+    # without appending a fragment, so zipping a bare list against _BUCKET_ORDER would
+    # pair the wrong bucket's mount with the wrong table the moment any bucket is empty.
+    fragments: list[tuple[str, TableFragment]] = []
 
     parts: list[str] = [_heading("Reproduction Guide")]
     parts.append(
         "<p class='note'>Every configuration field below is grouped by what a reproducer must "
-        "do with it. Value cells are placeholders and schema descriptions only — this page "
-        "never carries the producing user's configuration values, so it is safe to ship "
-        "inside a bundle.</p>"
+        "do with it. <strong>Description</strong>, <strong>Required</strong>, the permissible "
+        "options listed beneath a description and the default shown beside <em>Optional</em> "
+        "come from the configuration schema. A <strong>Conditional</strong> requirement names "
+        "the setting that triggers it. A field the sweep varied shows that instead of a "
+        "value, because it has no single value. Values are shown only for the bundled HPC "
+        "and experiment settings; the bundle carries them in <code>cfg_system.yaml</code> and "
+        "<code>cfg_analysis.yaml</code>. The <em>Supply</em> block holds placeholders only, so "
+        "the page is safe to ship inside a bundle. File paths are relative to the analysis "
+        "directory. To supply the <code>report</code> block as a standalone YAML file, pass "
+        "<code>report_config=&lt;path&gt;</code> to <code>analysis.run()</code>; an explicit "
+        "path takes precedence over the inline block.</p>"
     )
 
     if unclassified:
@@ -596,60 +2080,1727 @@ def _build_reprex_guide_html() -> str:
         if not rows:
             parts.append(_banner("No configuration fields fall in this bucket."))
             continue
-        parts.append(_grid_table(["Field", "What it is", "Placeholder"], rows))
+        # Iter-12 item 20. `Placeholder` survives in the SUPPLY bucket only. There it is
+        # the block's one per-row instruction and the block has no `Value used` column to
+        # carry one (zero-user-info: `_config_field_rows` takes no analysis argument by
+        # design). In `hpc` and `experiment` it carried a single bucket-CONSTANT across 27
+        # and 74 rows -- a string already printed once in _BUCKET_HEADING and again in
+        # _BUCKET_INSTRUCTION directly above the table -- and on any row with no producer
+        # value the `Value used` fallback rendered that SAME constant a second time, two
+        # cells apart. `_BUCKET_PLACEHOLDER` is RETAINED: it is still that fallback, which
+        # is the cell that survives.
+        _values = values_by_field or {}
+        _varied = varied_by_field or {}
+        value_tips: list[str] = []
+        # DEVIATION FROM THE APPROVED item-20 SPEC, surfaced at apply time. The spec
+        # dropped `Placeholder` from `hpc`/`experiment` unconditionally. That is correct
+        # only when the `Value used` column REPLACES it -- and `Value used` is added just
+        # below ONLY when producer values exist. On the no-values path (a scrubbed bundle,
+        # or any render without an analysis) those two blocks would then carry NO per-row
+        # instruction at all, and `_BUCKET_PLACEHOLDER`'s text would never appear. The
+        # item-20 rationale was DUPLICATION, so the column is dropped exactly where a
+        # duplicate exists and kept where none does.
+        _has_value_col = bucket in ("hpc", "experiment") and bool(_values or _varied)
+        headers = ["Field", "Description", "Required"]
+        if _has_value_col:
+            rows = [row[:3] for row in rows]
+        else:
+            headers.append("Placeholder")
+        if _has_value_col:
+            # Value disclosure is bucket-scoped. USER-bucket values are host-local and are
+            # already nulled out of the bundle's cfg_*.yaml by _scrub_user_bucket_fields, so
+            # rendering them here would disclose what the bundle deliberately withholds.
+            # HPC/EXPERIMENT values ARE carried in the bundle already, so showing them
+            # discloses nothing new.
+            #
+            # Precedence: a SWEPT parameter's cell is replaced outright, because the
+            # master's stored value is one arm's setting and rendering it here would
+            # present one member's configuration as the experiment's. A field with
+            # neither a swept marker nor a producer value falls back to the bucket
+            # placeholder rather than a bare em-dash -- the reprex_config.target_*
+            # rows have no producer value BY DESIGN (they describe the reproducer's
+            # target system), and a dash there reads as "the value was empty".
+            headers.append("Value used")
+            _fallback = _code(_BUCKET_PLACEHOLDER.get(bucket, "—"))
+            _new_rows = []
+            for row in rows:
+                _label = _strip_code(row[0])
+                _v = _varied.get(_label)
+                if _v is None:
+                    # Not a swept parameter: the producer value, else the bucket
+                    # placeholder. No tooltip.
+                    _cell, _tip = _values.get(_label, _fallback), ""
+                else:
+                    # `_sensitivity_varied_values` returns a uniform (cell, tooltip)
+                    # 2-tuple for BOTH branches: a varied parameter's cell is the
+                    # marker and its tooltip is the value list; a constant one's cell
+                    # is the value and its tooltip is empty.
+                    _cell, _tip = _v
+                _new_rows.append(row[:3] + [_cell])
+                value_tips.append(_tip)
+            rows = _new_rows
+        # {16}: default the guide's row order -- required fields first, then
+        # alphabetical within each tier. DATA-side deliberately: Tabulator's
+        # `initialSort` sorts the RENDERED `Required` cell as TEXT, where ascending
+        # puts `<strong>Required</strong>` LAST and descending happens to work only
+        # by the accident that `R` > `O` > `C` -- so it would invert the moment a
+        # fourth requiredness label is added. Sorting the data states the intent
+        # directly. Placed at 8-space indent so it covers BOTH the value-column and
+        # placeholder-column branches, in each of which `row[0]` is the `_code`-wrapped
+        # field label and `row[2]` is the `_requiredness_cell` output. Both Required
+        # forms (`_requiredness_cell` early-returns at two sites) begin with the same
+        # `<strong>Required</strong>` literal, so the prefix test catches each.
+        # SCOPE GUARD: this is a per-call-site sort and must NOT migrate into
+        # `build_options_dict` / `_tabulator_defaults`, which are shared with the
+        # 39-column `scenario_status_appendix`.
+        rows = sorted(
+            rows,
+            key=lambda _r: (
+                0 if _r[2].startswith("<strong>Required</strong>") else 1,
+                _strip_code(_r[0]).lower(),
+            ),
+        )
+        # [Q148]: these three tables render through Tabulator so their columns are
+        # user-resizable. The CDN dependency that trade originally accepted is GONE as of
+        # [Q160](7) -- Tabulator is vendored and bundled inline for this page, and the
+        # run-timeline and SLURM tables became Tabulator grids too, so there is no longer
+        # a self-contained/CDN split within the page to scope this comment against.
+        #
+        # `resizableColumns: True` is an EXPLICIT per-call override of the shared
+        # default, which is False (`build_options_dict`, iter 9.1). WITHOUT it, adoption
+        # buys the network dependency and NOT the resizing the ruling asked for. The
+        # iter-9.1 rationale is keyed on 39 columns at `fitDataStretch`, where the 3px
+        # resize handle sits adjacent to the next column's left edge; these tables carry
+        # 3-4 columns, so the handles are far apart. Do NOT promote this to the shared
+        # default -- that regresses the 39-column scenario_status appendix.
+        #
+        # `column_panel=False` preserves Iter-11 item 16: these tables get no
+        # column-selector, because one would offer a way to hide the very columns the
+        # block exists to deliver.
+        tip_columns: dict[str, list[str]] = {}
+        _desc_tips = [_field_tooltips.get(_strip_code(r[0]), "") for r in rows]
+        if any(_desc_tips):
+            tip_columns["Description"] = _desc_tips
+        if "Value used" in headers:
+            _vi = headers.index("Value used")
+            tip_columns["Value used"] = [value_tips[i] for i in range(len(rows))]
+        df_full = _df_for(headers, rows, tip_columns)
+        columns_spec = build_columns_spec(df_full[headers], visible_columns_default=None, header_filter=True)
+        for col_spec in columns_spec:
+            # Cells are pre-escaped HTML fragments, not plain text.
+            col_spec["formatter"] = "html"
+            if col_spec["title"] in tip_columns:
+                col_spec["tooltip"] = "__TRF_TOOLTIP__"
+                # File 4's `.tabulator-cell.trf-has-tip` rule. Tabulator's `tooltip`
+                # option renders its own popup and sets no DOM `title`, so the
+                # attribute selectors cannot reach these cells; the class can.
+                col_spec["cssClass"] = "trf-has-tip"
+        fragments.append(
+            (
+                f"reprex-{bucket}",
+                build_table_fragment(
+                    container_id=f"reprex-{bucket}",
+                    options=build_options_dict(
+                        df_full,
+                        columns_spec=columns_spec,
+                        # Iter-13. Bounded exactly as `div.table-scroll` is bounded by the
+                        # `max-height: min(70vh, 640px)` rule above, and for the same reason
+                        # recorded there: `vh` resolves against the IFRAME's height, and the
+                        # combined report sets that height IMPERATIVELY ONCE, from the arm
+                        # frame's own onload handler (`scrollHeight + 24`). Tabulator reads
+                        # options.height ONCE at construction (config/report.py, table_height
+                        # field description), so a post-construction frame grow re-resolves the
+                        # CSS box while the render window stays fixed at its pre-grow size --
+                        # two one-shot measurements that cannot agree. A fixed ceiling makes
+                        # that divergence unreachable, because a re-resolved `vh` cannot move
+                        # the box past it. The Iter-11 item-24 height bound is preserved: 70vh
+                        # still governs wherever it is the smaller of the two.
+                        table_height="min(70vh, 640px)",
+                        pagination_size=0,
+                        persistence_id=f"reprex-{bucket}",
+                        extra_options={"resizableColumns": True},
+                    ),
+                    # Inert here by contract (see build_table_fragment): the cdn/inline
+                    # switch is applied once per document in `_wrap_html_doc`. Passed for
+                    # symmetry with the page's actual mode rather than a stale literal.
+                    js_mode=_TABULATOR_JS_MODE,
+                    renderer_name="metadata",
+                    column_panel=False,
+                ),
+            )
+        )
+        parts.append(f'<div id="reprex-{bucket}-mount"></div>')
 
-    return "\n".join(parts)
+    return ReprexGuide("\n".join(parts), fragments)
 
 
 # --- (3) SLURM efficiency ----------------------------------------------------
 
 
-def _build_slurm_efficiency_html(csv_text: str) -> str:
-    """Parse the efficiency CSV text into a static HTML table.
+#: Columns carried through from the plugin's CSV, in display order. The plugin's unnamed
+#: index column and its intermediate unit-conversion columns are dropped -- they are
+#: restatements of neighbours (MaxRSS vs MaxRSS_MB) and add width without adding meaning.
+@dataclass(frozen=True)
+class _Reduction:
+    """ONE declaration of a reduction: its symbol, its sentence, and the code that DOES it.
 
-    Parsed from an in-memory string (the caller already read the declared file),
+    [Q153]'s single-source condition is met structurally rather than by discipline. `rule` is
+    the ONLY place the reduction is stated in prose -- the header tooltip renders it and the
+    caption renders it, which is two renderings of one declaration rather than two statements.
+    `tag` is a symbol, not a restatement: it is meaningless without the tooltip that expands it,
+    so it cannot drift into a second definition. And `apply` is the reduction, so a right label
+    over a wrong sum is unreachable -- swapping the callable moves the number AND the sentence.
+    """
+
+    #: The caption's TERM for this reduction. REQUIRED (enforced below) and unique across
+    #: `_EFF_COLUMNS` (enforced at import, beside the tuple). Split from `tag` because the two
+    #: answer different questions, and conflating them produced the defect this closes: `tag`
+    #: is a header SUFFIX and is legitimately empty for a value that was looked up rather than
+    #: reduced, so the caption fell back to `r.tag or "joined"` and manufactured ONE term for
+    #: THREE different operations -- the only term on the page with no declaration, inside the
+    #: system whose premise is that every term has exactly one.
+    #:
+    #: Defaulted to "" rather than left required-positional so that adding the field does not
+    #: have to be one atomic rewrite of all six construction sites. The default is NOT a
+    #: permitted value: `__post_init__` rejects it, so the module still fails at IMPORT until
+    #: every site declares one. Smaller diff, identical loudness.
+    name: str = ""
+    tag: str = ""
+    #: WHY this reduction was chosen, as its own sentence. Separate from `rule` because `rule`
+    #: had been carrying both what-the-reduction-is and why-it-was-picked in one run of prose,
+    #: which is why the rationale could not be found as its own thing.
+    why: str = ""
+    rule: str = ""
+    apply: Callable[[list[dict], dict], tuple[str, str]] | None = None
+
+    def __post_init__(self) -> None:
+        """Reject a reduction that cannot be rendered. Construction-time, because a frozen
+        dataclass makes this a construction-time fact and there is no later moment at which
+        it becomes false.
+
+        Only PER-INSTANCE properties are checked here. Uniqueness is deliberately NOT: it is a
+        property of a SET, not of an instance, so enforcing it via a module-level registry in
+        `__post_init__` would be wrong-scoped -- it would false-trip on a test constructing a
+        standalone reduction that reuses a name, and it would make import order significant.
+        The set-level check lives beside `_EFF_COLUMNS`, which is the only place the set exists.
+        """
+        for field_name in ("name", "why", "rule"):
+            if not getattr(self, field_name).strip():
+                raise ValueError(
+                    f"_Reduction declared with an empty {field_name!r}. Every reduction must "
+                    f"name itself, say why it was chosen, and state its rule -- the caption, "
+                    f"the header tooltip and the per-value provenance are all renderings of "
+                    f"these, and a blank one is what let the term 'joined' be invented at "
+                    f"render time for three different operations."
+                )
+
+
+def _slurm_seconds(text: str) -> float:
+    """Parse a SLURM duration (`[DD-]HH:MM:SS[.mmm]`, `MM:SS.mmm`) to seconds; 0.0 if unparsable."""
+    raw = (text or "").strip()
+    if not raw:
+        return 0.0
+    days = 0.0
+    if "-" in raw:
+        d, _, raw = raw.partition("-")
+        try:
+            days = float(d)
+        except ValueError:
+            return 0.0
+    parts = raw.split(":")
+    try:
+        nums = [float(p) for p in parts]
+    except ValueError:
+        return 0.0
+    while len(nums) < 3:
+        nums.insert(0, 0.0)
+    return days * 86400 + nums[0] * 3600 + nums[1] * 60 + nums[2]
+
+
+def _slurm_rss_mb(text: str) -> float | None:
+    """Parse a SLURM MaxRSS (`491288K`, `1.2G`, `900M`) to MB; None when absent/unparsable."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    unit, digits = raw[-1].upper(), raw[:-1]
+    scale = {"K": 1 / 1024, "M": 1.0, "G": 1024.0, "T": 1024.0 * 1024}.get(unit)
+    if scale is None:
+        digits, scale = raw, 1 / 1024  # bare number: sacct's default unit is K
+    try:
+        return float(digits) * scale
+    except ValueError:
+        return None
+
+
+def _step_suffix(job_id: str) -> str:
+    return job_id.split(".", 1)[1] if "." in job_id else "job"
+
+
+def _attempt_label(n: int) -> str:
+    """An attempt's reader-facing name — the SINGLE declaration of it ([Q153]).
+
+    The purpose column's suffix and the per-attempt roster are two RENDERINGS of this one
+    function, never two hand-authored statements of the same rule. Attempt 0 is the initial
+    run rather than "resume 0", which would imply a resume that did not happen.
+    """
+    return "initial run" if n == 0 else f"resume {n}"
+
+
+def _tres_cpu_seconds(tres: str) -> float | None:
+    """Seconds from the `cpu=` key of a `TRESUsageIn*` field, or None if it carries none.
+
+    The field is a flat comma-separated `key=value` list, e.g.
+    ``cpu=00:00:13,energy=0,fs/disk=0,gres/gpumem=0,gres/gpuutil=0,mem=49524K``.
+    None (not 0.0) on an absent key, so a missing measurement stays distinguishable from a
+    measured zero -- the distinction the whole efficiency column turns on.
+    """
+    for item in (tres or "").split(","):
+        key, sep, value = item.strip().partition("=")
+        if sep and key.strip() == "cpu":
+            value = value.strip()
+            return _slurm_seconds(value) if value else None
+    return None
+
+
+def _reduce_cpu_sum(steps: list[dict], job_row: dict) -> tuple[str, str]:
+    """CPU seconds SUMMED over every step including `.batch` -- `seff`'s own reduction.
+
+    Sourced from `TRESUsageInTot`'s `cpu=` key, NOT from `TotalCPU`. That is the recovery
+    module's own stated contract (`slurm_job_recovery.py`): `TotalCPU` "MUST NOT be the
+    source of a CPU-efficiency figure" because it reads `00:00:00` for any work performed
+    in an `srun` step, so on a simulation job it carries the batch wrapper's CPU only.
+    Reading it here produced a FALSE SMALL number rather than an obviously-broken one --
+    on the captured job 18396137 it summed to 3.744 s against 120 s elapsed (~3%) while
+    the steps actually consumed 3 + 17 + 13 s (~27%). A visibly wrong 0.0 invites a second
+    look; a plausible 3% does not.
+
+    A step with no `cpu=` key contributes nothing and is NOT counted as a measured zero;
+    if no step carries one, the cell is blank rather than 0, so an unpopulated recovery CSV
+    renders an em-dash instead of asserting the job used no processor.
+    """
+    per_step = [(_step_suffix(s.get("JobID", "")), _tres_cpu_seconds(s.get("TRESUsageInTot", ""))) for s in steps]
+    measured = [(n, v) for n, v in per_step if v is not None]
+    if not measured:
+        return ("", f"no step reported CPU time across {len(per_step)} step(s)")
+    # FAIL SAFE, not fail plausible. When `.batch` is the only step that reported CPU but
+    # the job HAS solver steps, the recovery CSV is stale or un-rerun and a sum over what
+    # is present measures the Python wrapper alone -- 1.6% against a true 78.8% on job
+    # 18396671. That number is worse than a blank, because a small plausible figure reads
+    # as a wasted allocation and gets believed, while an em-dash invites a second look.
+    # Blank it and say why, so the shortfall is legible rather than rendered.
+    if [n for n, _v in measured] == ["batch"] and any(n.isdigit() for n, _v in per_step):
+        return ("", f"only .batch reported CPU; {len(per_step) - 1} solver step(s) unmeasured")
+    total = sum(v for _n, v in measured)
+    nonzero = [n for n, v in measured if v > 0]
+    detail = f"summed over {len(measured)} of {len(per_step)} step(s)"
+    return (f"{total:.3f}", f"{detail}; nonzero on {', '.join(nonzero)}" if nonzero else f"{detail}; all zero")
+
+
+def _reduce_rss_max(steps: list[dict], job_row: dict) -> tuple[str, str]:
+    """Peak memory MAXED over steps -- `seff`'s reduction, and correct for request-sizing.
+
+    Named per cell because the peak step is NOT constant: on a resumed sim it is the `python`
+    wrapper, not the solver, and a reader comparing two rows needs to know that.
+    """
+    best: tuple[float, str] | None = None
+    for s in steps:
+        value = _slurm_rss_mb(s.get("MaxRSS", ""))
+        if value is not None and (best is None or value > best[0]):
+            best = (value, _step_suffix(s.get("JobID", "")))
+    if best is None:
+        return ("", f"no step reported memory across {len(steps)} step(s)")
+    return (f"{best[0]:.1f}", f"peak of {len(steps)} step(s), from step {best[1]}")
+
+
+def _reduce_job_field(field: str):
+    """Read `field` off the JOB row. Not a step reduction -- the value has no step to name."""
+
+    def _apply(steps: list[dict], job_row: dict) -> tuple[str, str]:
+        value = (job_row or {}).get(field, "")
+        if not value:
+            return ("", "the job's accounting record was not recovered for this job")
+        return (value, "read from the job's own accounting record")
+
+    return _apply
+
+
+def _reduce_joined(field: str):
+    """Carry a value joined from hhemt's own records; no SLURM reduction is involved."""
+
+    def _apply(steps: list[dict], job_row: dict) -> tuple[str, str]:
+        return ((job_row or {}).get(field, ""), "")
+
+    return _apply
+
+
+_SUM_STEPS = _Reduction(
+    name="Summed across steps",
+    why=(
+        "CPU time adds across the steps of a job, so the job total is their sum. This is the "
+        "total that the cluster's seff command reports."
+    ),
+    tag="\u03a3 steps",
+    rule=(
+        "Sum of the CPU time of every step of the job, including the batch step. A step that "
+        "recorded no CPU time is left out of the sum, so a job with no usable measurement shows "
+        "a dash. The percentage divides this sum by the CPU time billed for the allocation: its "
+        "CPU count times its wall time. It measures how much of the billed time the steps used "
+        "and not how busy the solver kept its cores. Solver steps run one after another with the "
+        "allocation idle between them, so the figure follows how much of the allocation had a "
+        "solver running."
+    ),
+    apply=_reduce_cpu_sum,
+)
+_MAX_STEPS = _Reduction(
+    name="Maximum across steps",
+    why="A memory request must fit the largest step, so the peak decides whether the next run fits.",
+    tag="max step",
+    rule=(
+        "Largest value across the steps of the job. Each cell names the step that produced it, "
+        "so a peak from the runner wrapper reads differently from a peak from the solver."
+    ),
+    apply=_reduce_rss_max,
+)
+_JOB_RECORD = _Reduction(
+    name="Read from the job record",
+    why=(
+        "The wall time of a job is neither the sum nor the maximum of the wall times of its "
+        "steps, so the steps cannot rebuild it."
+    ),
+    tag="job record",
+    rule="Read from the accounting record of the job and not reduced from its steps.",
+    apply=None,
+)
+#: `Queue, this job (s)` needs its OWN reduction rather than sharing `_TOOLKIT_JOIN`, because
+#: it has TWO sources and `_TOOLKIT_JOIN`'s rule -- "not from SLURM accounting" -- is false for
+#: the fallback. Sharing it would make the header tooltip lie on exactly the rows the fallback
+#: fills, and the header rule is one of `[Q153]`'s three trackability surfaces.
+#:
+#: The toolkit map stays PREFERRED because it is per-job and exact. The fallback exists because
+#: that map is routinely EMPTY: it is derived from `_walltime` ledgers that a render bundle does
+#: not carry, so an off-cluster re-render has no access to it. Measured on this campaign
+#: (2026-08-20, `synth_cc_clean_tritonswmm`): `queue_seconds_by_jobid` non-empty on **0 of 28**
+#: scenarios and the toolkit's own `queue_seconds_coverage` reading `0/1` on all 28, against
+#: SLURM's `Planned` populated on **963 of 963** job rows in the recovery CSV this module
+#: already reads. So the column rendered an em-dash on every row while an authoritative value
+#: sat in an already-open file. The fallback is ADDITIVE -- it never overwrites a toolkit value.
+_QUEUE_JOIN = _Reduction(
+    name="Queue-wait lookup",
+    why=(
+        "The wait happened to the allocation and not to any step, so there is nothing to reduce. "
+        "The toolkit's own per-job queue record is preferred because it is exact. The SLURM "
+        "accounting record is the fallback, because a render bundle does not carry the "
+        "toolkit's record."
+    ),
+    # EMPTY tag, matching the joined-column family. The tag slot renders as a header SUFFIX
+    # describing a REDUCTION over steps -- `(job record)`, `(Σ steps)`, `(max step)` -- and a
+    # queue wait is neither reduced nor summarised, it is looked up. A non-empty tag here
+    # rendered `Queue, this job (s) (queue)`, which restates the column name and claims a
+    # reduction that does not happen. The two-source disclosure belongs in `rule` (the header
+    # tooltip) and in the per-value provenance, not in the header text.
+    tag="",
+    rule=(
+        "How long this job waited before it started. The value comes from the toolkit's own "
+        "per-job queue record when it has one, and otherwise from the Planned field of the SLURM "
+        "accounting record. Each cell's tooltip names the source."
+    ),
+    apply=None,
+)
+#: `Attempts` is a join like the others, but it carries a SCOPE LIMIT the other joined
+#: columns do not, so it gets its own declaration rather than sharing `_TOOLKIT_JOIN`.
+#: Authored once here and rendered three ways -- header symbol, header/value tooltip, and
+#: the caption -- which is what keeps it from being restated in prose somewhere.
+_ATTEMPTS_JOIN = _Reduction(
+    name="Attempt count",
+    why=(
+        "How many times a model run started is a property of the toolkit's own per-attempt "
+        "records and not of SLURM accounting. SLURM accounting cannot tell an attempt from a "
+        "concurrent model run: the rows are identical in both cases."
+    ),
+    tag="",
+    rule=(
+        "How many times this model run started, taken from the toolkit's own per-attempt "
+        "records. The count is recoverable only when each attempt is its own SLURM job, as under "
+        "batch_job. Under 1_job_many_srun_tasks every attempt is a step of one shared "
+        "allocation and a step cannot be attributed to a model run, so the count is not "
+        "recoverable there and shows 1 for a model run resumed several times. Check the run "
+        "method before reading a 1 as a model run without resumes."
+    ),
+    apply=None,
+)
+
+_TOOLKIT_JOIN = _Reduction(
+    name="Carried from toolkit records",
+    why=(
+        "These columns describe what the toolkit requested and not what SLURM measured, so no "
+        "reduction applies. The value is carried from the record that made the request."
+    ),
+    tag="",
+    rule="Taken from the toolkit's own per-rule records for this job and not from SLURM accounting.",
+    apply=None,
+)
+
+
+_WORKFLOW_RUN_JOIN = _Reduction(
+    name="Read from the workflow run records",
+    why=(
+        "The accounting row of a job does not name the workflow run that submitted it. The "
+        "label is read from the first record that holds it, so a row names its workflow run "
+        "whenever any such record survives."
+    ),
+    tag="",
+    rule=(
+        "The workflow run that submitted this job: the timestamp of its Snakemake log when a "
+        "submit record in that log names the job, otherwise the run id in the name of the "
+        "efficiency report that lists the job, otherwise the job name on the job-recovery record "
+        "(the plugin names every job with the run id of its workflow run). The cell shows a dash "
+        "when no record holds it."
+    ),
+    apply=None,
+)
+
+
+@dataclass(frozen=True)
+class _EffColumn:
+    """One column: its data key, its reader-facing noun, and the reduction that produced it."""
+
+    key: str
+    label: str
+    reduction: _Reduction
+
+    @property
+    def header(self) -> str:
+        """Label plus the reduction's SYMBOL. The symbol's expansion lives only in `rule`."""
+        return f"{self.label} ({self.reduction.tag})" if self.reduction.tag else self.label
+
+
+#: The table's columns, in display order. [Q144]: `Req mem` sits ADJACENT to `Mem used`, and
+#: both are retained on TRUTHFULNESS rather than universality -- a column true on the rows
+#: where it applies is kept even where a whole job class leaves it empty.
+_EFF_COLUMNS: tuple[_EffColumn, ...] = (
+    _EffColumn("JobID", "Job ID", _JOB_RECORD),
+    _EffColumn("Elapsed", "Elapsed", _JOB_RECORD),
+    # SLURM's terminal state for the job, so a job cancelled before it started is visibly not
+    # a job that ran. Empty (an em-dash) where no accounting record was recovered.
+    _EffColumn("State", "State", _JOB_RECORD),
+    _EffColumn("NNodes", "Nodes", _JOB_RECORD),
+    _EffColumn("NCPUS", "CPUs", _JOB_RECORD),
+    # The header names the DENOMINATOR because every available misreading of this cell is a
+    # misreading of the denominator. Measured over 56 multi-attempt campaign jobs: this
+    # column's median is 78.9%, the solver's own per-step CPU utilization is 95.2%, and the
+    # solver's occupancy of the job's wall time is 78.5% -- so the column tracks OCCUPANCY,
+    # not solver efficiency, and "CPU eff" invited exactly the wrong reading.
+    _EffColumn("cpu_eff_pct", "Billed CPU used (%)", _SUM_STEPS),
+    _EffColumn("max_rss_mb", "Max RSS (MB)", _MAX_STEPS),
+    _EffColumn("RequestedMem_MB", "Req mem (MB)", _JOB_RECORD),
+    _EffColumn("mem_used_pct", "Mem used (%)", _MAX_STEPS),
+    _EffColumn("attempts", "Attempts", _ATTEMPTS_JOIN),
+    # Which workflow run submitted the job. The toolkit-record flag that used to follow it is
+    # no longer a column: a dash in a toolkit-joined column already marks a job with no record,
+    # and the blank-cell note counts those jobs from the internal `toolkit_record` key.
+    _EffColumn("record", "Workflow run", _WORKFLOW_RUN_JOIN),
+    _EffColumn("purpose", "Job desc", _TOOLKIT_JOIN),
+    _EffColumn("sa_id", "Member", _TOOLKIT_JOIN),
+    _EffColumn("event_id", "Event", _TOOLKIT_JOIN),
+    _EffColumn("model_type", "Model", _TOOLKIT_JOIN),
+    _EffColumn("partition", "Partition", _TOOLKIT_JOIN),
+    _EffColumn("gpu_hardware", "GPU hardware", _TOOLKIT_JOIN),
+    _EffColumn("n_gpus", "GPUs", _TOOLKIT_JOIN),
+    _EffColumn("n_mpi_procs", "MPI ranks", _TOOLKIT_JOIN),
+    _EffColumn("n_omp_threads", "OMP threads", _TOOLKIT_JOIN),
+    _EffColumn("run_mode", "Run mode", _TOOLKIT_JOIN),
+    _EffColumn("backend_used", "Backend", _TOOLKIT_JOIN),
+    # [Q31]: "Queue, this job (s) and Queue, sim total (s) are too similar. Drop the latter."
+    # The state this arrived in was INVERTED -- `queue_seconds_this_job` was computed and
+    # populated but carried no column, while the sim-total column the user named for dropping
+    # was the one displayed. Keeping the per-job figure is also the truthful one at THIS grain:
+    # one row is one JOB, so the queue this job waited is a property of the row, while the
+    # simulation's accumulated total is a property of a set the row does not span.
+    _EffColumn("queue_seconds_this_job", "Queue, this job (s)", _QUEUE_JOIN),
+)
+
+
+def _assert_reduction_names_unique(columns: tuple[_EffColumn, ...]) -> None:
+    """Two reductions may not share a caption term. Import-time, over the set.
+
+    A REQUIRED `name` closes the empty case but not the COLLISION case, and a collision is the
+    identical defect wearing a different field: two distinct operations rendered under one
+    heading, discovered by reading a shipped report rather than by running the code. That is
+    precisely how the `joined` collapse surfaced -- three operations, one `<dt>`, noticed in a
+    screenshot.
+
+    Keyed on OBJECT IDENTITY, not equality: two separately-declared reductions that happen to
+    be field-identical are still two declarations and still a collision. `_Reduction` is
+    frozen, so `id()` is stable for the lifetime of the module.
+    """
+    by_name: dict[str, int] = {}
+    for col in columns:
+        red = col.reduction
+        prior = by_name.setdefault(red.name, id(red))
+        if prior != id(red):
+            raise ValueError(
+                f"Two distinct reductions both declare the caption term {red.name!r}. "
+                f"One term names one operation: the caption renders each term once, so a "
+                f"shared term silently merges two rules under one heading and the reader "
+                f"cannot tell which column got which. Give each its own term."
+            )
+
+
+_assert_reduction_names_unique(_EFF_COLUMNS)
+
+
+def _eff_label(key: str) -> str:
+    """A live column's reader-facing LABEL, read from its declaration.
+
+    Prose that names a column must not hand-author its label: that makes a second copy of a
+    string the `_EffColumn` table already owns, and the two drift silently at the next rename.
+    They already did -- an earlier blank-cell note called this table's CPU column "CPU
+    efficiency" after it was renamed to "Billed CPU used", so the note named a column the page
+    no longer had.
+
+    Fails LOUD on an unknown key, at import, because the alternative is a note rendering
+    `<em></em>` -- a silently empty reference is the failure this accessor exists to prevent,
+    and returning "" would reintroduce it in a new costume.
+
+    `_uncaptured_note` reads the labels of the columns its sentences name (the queue, CPU
+    efficiency, member, event and model columns) through this accessor, so a rename moves the
+    sentence with it. `CPU model` names a measurement with no column, so that one name is
+    written plainly. Derive where the prose names a COLUMN; write plainly where it names a
+    CONCEPT.
+    """
+    for col in _EFF_COLUMNS:
+        if col.key == key:
+            return col.label
+    raise KeyError(
+        f"No _EffColumn declares key {key!r}, so no label can be derived for prose that "
+        f"names it. Either the column was removed and the prose referencing it is now stale, "
+        f"or the key is misspelled; both are defects this lookup refuses to paper over."
+    )
+
+
+#: The sort/filter/hide affordance sentence, authored ONCE and rendered by every table that
+#: offers those controls. It was previously written out at two call sites and had already
+#: diverged -- one carried the "criteria across columns are combined" clause and the other
+#: did not, so a reader met two different descriptions of one behaviour.
+_TABLE_INTERACTION_NOTE = (
+    "Click a column heading to sort; type in a column's own box to filter on that column "
+    "(criteria across columns are combined); use the panel at left to hide columns."
+)
+
+
+def _reduction_caption() -> str:
+    """The caption. Renders each DISTINCT `rule` exactly once, from the same declaration the
+    headers and tooltips render -- so the page states each reduction in one place, not three."""
+    # Every DISTINCT reduction a displayed column uses, with no filter on how the value was
+    # obtained. The prior filter (`apply is not None or is _JOB_RECORD`) excluded the
+    # join-class reductions, so a caveat carried on one of them reached the reader only on
+    # hover -- which is how a scope limit becomes a true-looking number whose scope is not
+    # stated. A rule worth authoring is worth rendering.
+    seen: list[_Reduction] = []
+    for col in _EFF_COLUMNS:
+        if col.reduction not in seen:
+            seen.append(col.reduction)
+    # One BLOCK per reduction: subheader, then why, then the rule. Every sentence a reader sees
+    # is authored in the `_Reduction` declaration; nothing here is derived from a function's
+    # name or docstring, because a function name is not text for a reader.
+    blocks = [f"<h5>{_esc(r.name)}</h5><p>{_esc(r.why)}</p><p>{_esc(r.rule)}</p>" for r in seen]
+    return (
+        "<h4>How each column was reduced</h4>"
+        "<p class='note'>Each column header carries the symbol of its reduction. Hovering a header "
+        "shows the rule; hovering a value shows where that value came from.</p>" + "".join(blocks)
+    )
+
+
+def _uncaptured_note(rows: list[dict[str, Any]]) -> str:
+    """One sentence per kind of blank cell the rendered rows hold, each with its count.
+
+    A blank cell in this table has one of three causes, and the reader needs to know which: no
+    queue wait was recorded, no CPU efficiency could be computed, or no toolkit record matches
+    the job so its member, event, model and compute configuration are unknown. Each sentence
+    appears only when its count is above zero. The CPU model has no column to blank, so its
+    sentence is constant. Counts are computed from `rows`, never written by hand.
+    """
+    queue = _eff_label("queue_seconds_this_job").removesuffix(" (s)")
+    cpu = _eff_label("cpu_eff_pct").removesuffix(" (%)")
+    toolkit_columns = f"{_eff_label('sa_id')}, {_eff_label('event_id')}, {_eff_label('model_type')}"
+    n_queue = sum(1 for r in rows if not r.get("queue_seconds_this_job"))
+    n_cpu = sum(1 for r in rows if not r.get("cpu_eff_pct"))
+    n_unmatched = sum(1 for r in rows if r.get("toolkit_record") == _NO_TOOLKIT_RECORD)
+    sentences = ["CPU model is not shown."]
+    if n_queue:
+        sentences.append(
+            f"{_esc(queue)} shows a dash for {_count(n_queue, 'job')} where neither the toolkit "
+            "nor SLURM recorded a queue wait."
+        )
+    if n_cpu:
+        sentences.append(
+            f"{_esc(cpu)} shows a dash for {_count(n_cpu, 'job')} where SLURM recorded no CPU "
+            "time, no CPU count or no elapsed time."
+        )
+    if n_unmatched:
+        sentences.append(
+            f"The {_esc(toolkit_columns)} and compute configuration columns show a dash for "
+            f"{_count(n_unmatched, 'job')} without a matching record in {_code('_status/*.flag.json')}."
+        )
+    return "<p class='note'>" + " ".join(sentences) + "</p>"
+
+
+def _parse_efficiency_csvs(csv_texts: list[tuple[str, str]]) -> tuple[list[str], dict[str, dict[str, str]]]:
+    """Merge every efficiency CSV into `{JobID: row}`; return (union header, rows).
+
+    ``csv_texts`` is [(label, text)] in OLDEST-FIRST order, so a later file wins a
+    duplicate ``JobID``. That ordering IS the idempotency guarantee, and it is
+    cheaper than it looks: SLURM never reissues a job id within a cluster's id epoch,
+    so a re-run contributes entirely NEW rows and cannot rewrite the rows of jobs that
+    did not re-run. The user's requirement -- only genuinely-refreshed rows change --
+    therefore holds by construction rather than by comparison.
+
+    Parsed from in-memory strings (the caller already read and declared the files),
     so this adds no file-open audit surface.
     """
-    rows = [r for r in csv.reader(io.StringIO(csv_text)) if r]
-    if not rows:
-        return (
-            _heading("SLURM Efficiency") + "\n" + _banner("The SLURM resource-efficiency report is present but empty.")
+    merged: dict[str, dict[str, str]] = {}
+    header: list[str] = []
+    for _label, text in csv_texts:
+        rows = [r for r in csv.reader(io.StringIO(text)) if r]
+        if len(rows) < 2:
+            continue
+        file_header, body = rows[0], rows[1:]
+        for column in file_header:
+            if column and column not in header:
+                header.append(column)
+        for raw in body:
+            record = dict(zip(file_header, raw, strict=False))
+            job_id = (record.get("JobID") or "").strip()
+            if not job_id:
+                continue
+            record["_report_label"] = _label
+            merged[job_id] = record
+    return header, merged
+
+
+#: The two values of the internal `toolkit_record` key: whether hhemt's own per-rule record of
+#: the job survives (`_status/*.flag.json` keeps one job id per rule, the most recent). It is no
+#: longer a column; the blank-cell note counts the jobs without one.
+_TOOLKIT_RECORD = "toolkit record"
+_NO_TOOLKIT_RECORD = "no toolkit record"
+
+_REPORT_UUID_RE = re.compile(r"efficiency_report_(.+)\.csv$")
+
+
+def _report_uuid(report_label: str) -> str:
+    """The run id in an efficiency report's file name, or "" when the name carries none.
+
+    The plugin writes `efficiency_report_{run_uuid}.csv`; the label is the report's path
+    relative to the analysis directory.
+    """
+    found = _REPORT_UUID_RE.search(report_label.rsplit("/", 1)[-1])
+    return found.group(1) if found else ""
+
+
+def _invocation_for_job(
+    job_id: str,
+    invocation_by_job: Mapping[str, str] | None,
+    report_uuid_by_job: Mapping[str, str],
+    recovery: dict[str, dict[str, dict[str, str]]],
+) -> tuple[str, str]:
+    """`(label, how it was found)` for the invocation that submitted `job_id`; ("", why) if none.
+
+    First the submit records, then the run id in the name of the report that lists the job,
+    then the job name of its recovery row.
+    """
+    label = (invocation_by_job or {}).get(job_id, "")
+    if label:
+        return (label, "read from the Snakemake submit records")
+    label = report_uuid_by_job.get(job_id, "")
+    if label:
+        return (label, "run id in the name of the efficiency report that lists this job")
+    for kind_row in (recovery.get(job_id) or {}).values():
+        label = (kind_row.get("JobName") or "").strip()
+        if label:
+            return (
+                label,
+                "job name on the job-recovery record (the plugin names every job with the run id of its workflow run)",
+            )
+    return ("", "no submit record, report or recovery record names this job's workflow run")
+
+
+def _enrich_efficiency_rows(
+    merged: dict[str, dict[str, str]],
+    purpose_map: dict[str, dict[str, str]],
+    scenario_map: dict[tuple[str, str, str], dict[str, str]],
+    gpu_hardware_for_partition,
+) -> list[dict[str, str]]:
+    """Left-join the merged CSV rows onto the toolkit's own per-job records.
+
+    The join key is ``MainJobID`` (the parent job) against
+    ``_status/*.flag.json``'s ``slurm_job_id``, which `status_flags.write_status_flag`
+    takes from ``SLURM_JOB_ID`` -- the same number. A row with no match keeps every
+    measured column and simply carries no purpose; it is never dropped, because the
+    SLURM record is the authority on what ran and the toolkit record is the
+    authority on why.
+    """
+    out: list[dict[str, str]] = []
+    for job_id, record in merged.items():
+        main_job_id = (record.get("MainJobID") or job_id.split(".")[0]).strip()
+        enriched: dict[str, str] = dict(record)
+        meta = purpose_map.get(main_job_id, {})
+        # A rule name the plugin recovered from SLURM --comment beats nothing, but the
+        # toolkit's own sidecar beats both. `RuleName` is present only on clusters that
+        # store job comments; on UVA Rivanna it is absent, which is why JobName reads
+        # `python` for every row and why the sidecar join is the load-bearing path.
+        enriched["purpose"] = meta.get("purpose") or record.get("RuleName") or ""
+        for key in ("sa_id", "event_id", "model_type"):
+            enriched[key] = meta.get(key, "")
+        scen = scenario_map.get((enriched["sa_id"], enriched["event_id"], enriched["model_type"]), {})
+        # Resume labelling. A resumed simulation occupies several rows here -- they are the
+        # srun STEPS of its one allocation -- and until now nothing on the page said which
+        # row was which attempt, so filtering to a simulation gave an unordered set of
+        # indistinguishable rows. The attempt integer is joined from the same already-read,
+        # already-declared scenario_status.csv (no new read surface), keyed on this row's own
+        # full `JobID`. Attempt 0 is the initial run and is labelled as such rather than as
+        # "resume 0", which would imply a resume that did not happen. A row with no recorded
+        # attempt keeps its bare purpose -- silence is correct where the record is absent.
+        _att_raw = scen.get("attempt_by_jobstep", "")
+        if _att_raw and enriched.get("purpose"):
+            try:
+                _att_map = json.loads(_att_raw)
+            except (ValueError, TypeError):
+                _att_map = {}
+            if isinstance(_att_map, dict):
+                _att = _att_map.get(job_id)
+                if _att is not None:
+                    _n = int(_att)
+                    # Resolved ONCE, here, from the ledger. Carried on the row so the
+                    # per-attempt roster renders the same resolution rather than deriving
+                    # its own from the step suffix -- which would fabricate a number for
+                    # any step the ledger does not record.
+                    enriched["_attempt_n"] = _n
+                    enriched["purpose"] += f" ({_attempt_label(_n)})"
+        # Join marker. A total join FAILURE and legitimately uncaptured data both render as
+        # an em-dash, so a join that matched no job raises a notice. Carried onto the
+        # aggregated JOB row so the notice counts at the grain the table displays ([Q145]).
+        enriched["_scen_joined"] = "1" if scen else ""
+        # Three spellings, not one: `hpc.partition` is a sensitivity-CSV overlay column a
+        # non-sensitivity export never emits, and older sensitivity trees carry
+        # `hpc_ensemble_partition`. Falls back to in-memory config -- no new file read, so
+        # the Gotcha-53 renderer-IO audit is unaffected.
+        partition = _first_nonempty(scen, _PARTITION_COLUMN_SPELLINGS)
+        enriched["partition"] = partition
+        enriched["gpu_hardware"] = gpu_hardware_for_partition(partition) if partition else ""
+        for src, dst in (
+            ("n_gpus", "n_gpus"),
+            ("n_mpi_procs", "n_mpi_procs"),
+            ("n_omp_threads", "n_omp_threads"),
+            ("n_nodes", "n_nodes_cfg"),
+            ("run_mode", "run_mode"),
+            ("backend_used", "backend_used"),
+        ):
+            enriched[dst] = scen.get(src, "")
+        # O21 queue time. Sourced from scenario_status.csv -- the SAME already-declared
+        # file this join already reads -- so no new render-time read surface is added and
+        # the off-cluster bundle re-render works unchanged (the CSV is bundle-carried by
+        # _copy_supporting_files; the _walltime ledgers are NOT, which is why they are not
+        # read here). An absent value stays "" and renders as an em-dash, never as 0 --
+        # a 0 in this column would assert the job did not wait.
+        _q_total_raw = scen.get("queue_seconds_total", "")
+        enriched["queue_seconds_total"] = _q_total_raw
+        enriched["queue_seconds_coverage"] = scen.get("queue_seconds_coverage", "")
+        enriched["queue_seconds_this_job"] = ""
+        _q_map_raw = scen.get("queue_seconds_by_jobid", "")
+        if _q_map_raw:
+            try:
+                _q_map = json.loads(_q_map_raw)
+            except (ValueError, TypeError):
+                _q_map = {}
+            if isinstance(_q_map, dict) and main_job_id in _q_map:
+                # COERCE AT THE BOUNDARY. `_q_map` came out of `json.loads`, so its values are
+                # JSON NUMBERS: `read_queue_ledger_seconds` declares `dict[str, float]` and
+                # assigns `float(rec["queue_s"])`. Assigning one straight into this
+                # `dict[str, str]` put a float on the row, and the sole consumer
+                # (`_build_slurm_efficiency_html`) does `(src.get(...) or "").strip()` -- which
+                # raised `AttributeError: 'float' object has no attribute 'strip'` and failed the
+                # whole `plot_workflow_performance` rule on both arms of the campaign.
+                #
+                # This is the ONE place a non-str enters this dict; every other value on the row
+                # comes from `csv.reader`/`csv.DictReader` and is a str by construction. Coercing
+                # HERE rather than at the read site closes it for every future consumer and makes
+                # the declared `list[dict[str, str]]` return type true again. `_job_purpose_map`
+                # in this same module already does exactly this for its own json-sourced fields.
+                #
+                # `:.0f`, NOT `str()`: this column is whole seconds and its OTHER arm formats
+                # `f"{_slurm_seconds(_planned_raw):.0f}"`, so `str(42.0)` would render "42.0"
+                # beside the fallback arm's "42" in the same column. An unparseable value is
+                # dropped to "" rather than rendered, so that row falls back exactly as it does
+                # today.
+                try:
+                    enriched["queue_seconds_this_job"] = f"{float(_q_map[main_job_id]):.0f}"
+                except (TypeError, ValueError):
+                    enriched["queue_seconds_this_job"] = ""
+        out.append(enriched)
+
+    # Chronological by job id where it parses -- job ids increase monotonically on a
+    # cluster, so this puts setup first and the most recent render last, which is the
+    # order a reader scanning an experiment's history expects.
+    def _sort_key(row: dict[str, str]):
+        raw = (row.get("MainJobID") or row.get("JobID") or "").split(".")[0]
+        return (0, int(raw)) if raw.isdigit() else (1, 0)
+
+    return sorted(out, key=_sort_key)
+
+
+#: CSV columns deliberately not displayed. Each is a RESTATEMENT of a neighbour the table
+#: does show (raw `MaxRSS`/`ReqMem` strings vs their parsed `_MB` forms; `TotalCPU` vs the
+#: CPU-efficiency percentage derived from it), or plumbing (`MainJobID` is the join key,
+#: shown as `Job ID`; `JobName` is the executable name and is NOT always `python` -- the
+#: campaign census recorded at `_is_attempt` returns python 4771 / apptainer 216 /
+#: triton.exe 103 at step `.0` alone, which is exactly why that classifier keys ON it; it is
+#: undisplayed because the reader-facing purpose is joined in, not because it is constant;
+#: `RuleName` appears only on clusters that store job comments and is superseded by the
+#: toolkit's own purpose).
+#: Listing them here is what lets an UNRECOGNISED column be reported instead of dropped.
+_EFF_KNOWN_UNDISPLAYED: frozenset[str] = frozenset(
+    {
+        "",  # the plugin's unnamed DataFrame index column
+        "JobName",  # the executable, NOT always `python`; classified on, purpose joined in
+        "TotalCPU",  # shown as the derived CPU-efficiency percentage
+        "Elapsed_sec",  # parsed restatement of Elapsed
+        "TotalCPU_sec",  # parsed restatement of TotalCPU
+        "MaxRSS",  # raw string form of MaxRSS_MB
+        "MaxRSS_MB",  # the plugin's PER-STEP parse; superseded by the max-over-steps reduction
+        "ReqMem",  # raw string form of RequestedMem_MB
+        # The plugin's own precomputed percentages, both superseded by this table's reductions.
+        # `CPU Efficiency (%)` is the column measured at exactly 0.0 on 664 of 664 delivered
+        # rows: it divides by a numerator the plugin never carries, because `TotalCPU` lives on
+        # the allocation and batch rows it discards. Recomputing it is the point of Stage A.
+        "CPU Efficiency (%)",
+        "Memory Usage (%)",
+        "MainJobID",  # the join key; the step id is shown as Job ID
+        "RuleName",  # present only where SLURM stores job comments; superseded
+        "Comment",
+    }
+)
+
+#: Per-step fields that exist ONLY in the Stage-A recovery CSV, never in the Snakemake
+#: plugin's efficiency CSV, and are therefore joined onto the plugin's step rows in
+#: `_aggregate_jobs`. Declared once because two consumers depend on the same join and a
+#: second inline list would be a second place this knowledge lives.
+#:
+#: `TRESUsageInTot` feeds `_reduce_cpu_sum` -- a solver step reports `TotalCPU=00:00:00`
+#: while its `cpu=` key carries the real time (`slurm_job_recovery.py` states this at its
+#: field-set declaration), so the reduction is wrong without it.
+#:
+#: `State` feeds the per-attempt roster (`_attempt_details_html`) and is read by no step
+#: reducer; the JOB row's own `State` is read separately, by `_aggregate_jobs` into the
+#: table's State column and the cancelled-before-starting count. The step-level copy is
+#: what makes the CANCELLED/COMPLETED breakdown legible, which
+#: `_build_efficiency_rows` names as this campaign's subject: the solver steps ARE the resume
+#: attempts. Without the join the roster renders every attempt as "state not recorded", which
+#: is a disclosure that discloses nothing -- the failure `[Q153]`'s trackability condition
+#: exists to prevent.
+_RECOVERED_ONLY_STEP_FIELDS: tuple[str, ...] = ("TRESUsageInTot", "State")
+
+
+def _load_job_recovery(analysis_dir: Path) -> tuple[dict[str, dict[str, dict[str, str]]], Path | None]:
+    """Read `slurm_job_recovery`'s Stage-A artifact; return the map and the file actually read.
+
+    Graceful-absent by contract: an analysis whose back-fill has not run yields `({}, None)`
+    and the table renders with em-dashes in the job-record columns rather than failing. The
+    path is returned so `render()` can DECLARE it (ADR-6 Gate-A / Gotcha 53).
+    """
+    from hhemt.slurm_job_recovery import RECOVERY_FILENAME
+
+    path = analysis_dir / "logs" / "slurm_efficiency_report" / RECOVERY_FILENAME
+    if not path.is_file():
+        return ({}, None)
+    try:
+        text = path.read_text()
+    except OSError:
+        return ({}, None)
+    out: dict[str, dict[str, dict[str, str]]] = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        main = (row.get("MainJobID") or "").strip()
+        kind = (row.get("StepKind") or "").strip()
+        if main and kind:
+            out.setdefault(main, {})[kind] = row
+    return (out, path)
+
+
+def _is_never_started(state: str, start: str) -> bool:
+    """True when a job was cancelled before it started.
+
+    `State` BEGINS WITH `CANCELLED` and `Start` is `None`, `Unknown` or empty. The prefix test
+    is deliberate: sacct appends the cancelling uid to a cancellation (`CANCELLED by 554635`),
+    so equality with the bare word would count every such job as one that ran. A job cancelled
+    AFTER it started carries a real `Start` and is therefore not matched.
+    """
+    return (state or "").strip().upper().startswith("CANCELLED") and (start or "").strip().lower() in (
+        "",
+        "none",
+        "unknown",
+    )
+
+
+def _aggregate_jobs(
+    merged: dict[str, dict[str, str]],
+    recovery: dict[str, dict[str, dict[str, str]]],
+    universe: frozenset[str] | set[str] | None = None,
+    exclude: frozenset[str] | set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Collapse step rows to ONE row per job ([Q145]), applying each column's declared reducer.
+
+    `merged` is the plugin's step-grained population keyed on step `JobID`; `recovery` is the
+    Stage-A `slurm_job_recovery` output, `{main_job_id: {"job": row, "batch": row}}`, supplying
+    the two row classes the plugin's parsing drops. The `.batch` row is folded into the step
+    list because `seff` reduces over it and SLURM records CPU time nowhere else.
+
+    `universe` is an optional set of main job ids that get a row even when `merged` holds no
+    step row for them: such a job takes its fields from its recovery job row, or is an id-only
+    row when the store holds none. `exclude` removes main job ids from the result wherever they
+    came from. Both default to None, which reproduces the report-only population exactly.
+
+    Each row carries `_provenance`, a per-column map of where its value came from. That is the
+    per-value half of [Q153]'s trackability, and it is PRODUCED BY the reducer rather than
+    written beside it, so it cannot describe a reduction that did not happen.
+    """
+    by_job: dict[str, list[dict[str, str]]] = {}
+    for record in merged.values():
+        main = (record.get("MainJobID") or record.get("JobID", "").split(".", 1)[0]).strip()
+        if main:
+            by_job.setdefault(main, []).append(record)
+    for extra_id in universe or ():
+        by_job.setdefault(extra_id, [])
+    for dropped_id in exclude or ():
+        by_job.pop(dropped_id, None)
+
+    out: list[dict[str, Any]] = []
+    for main_job_id, steps in by_job.items():
+        recovered = recovery.get(main_job_id, {})
+        job_row = dict(recovered.get("job", {}))
+        batch_row = recovered.get("batch")
+        # The plugin's step rows carry MaxRSS but NEITHER of the fields in
+        # `_RECOVERED_ONLY_STEP_FIELDS`, so a solver step's CPU time and its terminal state
+        # are both absent from them. Measured on this campaign's own plugin output: the
+        # emitted columns are JobID/JobName/Elapsed/TotalCPU/NNodes/NCPUS/MaxRSS/ReqMem plus
+        # the parsed `_sec`/`_MB` restatements, `MainJobID` and two precomputed percentages
+        # -- no `TRESUsageInTot` and no `State` at any step kind. Where the recovery CSV holds
+        # the same step, those fields are copied ONTO the plugin row rather than added as a
+        # second row: `all_steps` keeps its membership, so the max-shaped reducer is untouched
+        # and the sum-shaped one cannot count a step twice.
+        for _s in steps:
+            _suffix = _s.get("JobID", "").split(".", 1)[1] if "." in _s.get("JobID", "") else ""
+            _rec = recovered.get(_suffix)
+            if _rec:
+                for _field in _RECOVERED_ONLY_STEP_FIELDS:
+                    if not _s.get(_field):
+                        _s[_field] = _rec.get(_field, "")
+        # seff reduces over the batch step; excluding it is what zeroes the CPU column.
+        all_steps = [*steps, batch_row] if batch_row else list(steps)
+
+        row: dict[str, Any] = {"JobID": main_job_id}
+        prov: dict[str, str] = {}
+        job_row.setdefault("JobID", main_job_id)
+        # RequestedMem_MB is inherited onto the steps by the plugin, so it survives there.
+        job_row.setdefault("RequestedMem_MB", steps[0].get("RequestedMem_MB", "") if steps else "")
+
+        cpu_value, cpu_prov = _reduce_cpu_sum(all_steps, job_row)
+        row["cpu_seconds"], prov["cpu_seconds"] = cpu_value, cpu_prov
+        rss_value, rss_prov = _reduce_rss_max(all_steps, job_row)
+        row["max_rss_mb"], prov["max_rss_mb"] = rss_value, rss_prov
+
+        for field in ("Elapsed", "State", "NNodes", "NCPUS", "RequestedMem_MB"):
+            value, why = _reduce_job_field(field)(all_steps, job_row)
+            row[field], prov[field] = value, why
+        row["_never_started"] = _is_never_started(row.get("State", ""), job_row.get("Start", ""))
+
+        # Queue-wait FALLBACK, staged here because `job_row` is in scope only inside this
+        # function; the caller applies it after the toolkit join so the toolkit value wins.
+        # Stored under a private key so it can never be mistaken for the column's own value
+        # by anything that iterates `_EFF_COLUMNS`.
+        # `00:00:00` is KEPT, and excluding it was a real defect measured on the artifact:
+        # exactly 1 of `synth_cc_clean_triton`'s 672 job rows carries it, and it rendered an
+        # em-dash where the truth is a queue wait under one second. SLURM reports an
+        # unavailable field as empty or `Unknown`, never as a zero DURATION, so `00:00:00`
+        # here is a MEASUREMENT rather than an absence -- and `[Q130]` is explicit that an
+        # examined-zero and a not-measured must not render alike. The sibling comment about
+        # never rendering 0 governs an ABSENT toolkit value, which is a different case.
+        _planned_raw = (job_row.get("Planned") or "").strip()
+        if _planned_raw:
+            row["_planned_seconds"] = f"{_slurm_seconds(_planned_raw):.0f}"
+
+        # CPU efficiency is `seff`'s own headline number, and [Q144] names it by name. It is
+        # DERIVED from values already reduced above -- the summed CPU-time numerator and the
+        # job record's own CPU count and wall time -- so it inherits their provenance instead
+        # of asserting a fourth reduction. The numerator stays visible in that provenance
+        # string, which is what lets the column be dropped without losing the CPU-seconds
+        # figure: the number a reader would check against `seff` is still on the page.
+        # An absent numerator yields an ABSENT cell, never 0.0 -- a zero here would assert the
+        # job used no processor, and [Q130] rules that an examined-zero and a not-measured
+        # must not render alike.
+        elapsed_seconds = _slurm_seconds(row.get("Elapsed", ""))
+        try:
+            n_cpus = float(row.get("NCPUS") or 0)
+        except (TypeError, ValueError):
+            n_cpus = 0.0
+        cpu_denominator = n_cpus * elapsed_seconds
+        if cpu_value and cpu_denominator:
+            row["cpu_eff_pct"] = f"{float(cpu_value) / cpu_denominator * 100:.2f}"
+            prov["cpu_eff_pct"] = (
+                f"{cpu_value} CPU-seconds ({cpu_prov}), against {n_cpus:g} CPU(s) x "
+                f"{elapsed_seconds:g}s elapsed read from the job's own accounting record"
+            )
+        else:
+            row["cpu_eff_pct"] = ""
+            prov["cpu_eff_pct"] = (
+                cpu_prov
+                if not cpu_value
+                else "the job's CPU count or elapsed time was not recovered, so the denominator is unknown"
+            )
+
+        # Memory-used % is derived from the two columns beside it, so it inherits their
+        # provenance rather than asserting one of its own ([Q144] keeps it on truthfulness).
+        try:
+            req = float(row.get("RequestedMem_MB") or 0)
+            row["mem_used_pct"] = f"{float(rss_value) / req * 100:.1f}" if (rss_value and req) else ""
+        except (TypeError, ValueError):
+            row["mem_used_pct"] = ""
+        prov["mem_used_pct"] = f"{rss_prov}, against the requested memory beside it" if rss_value else ""
+
+        # Per-attempt disclosure: the solver steps ARE the resume attempts, and their
+        # CANCELLED/COMPLETED breakdown is what [Q143] calls this campaign's subject.
+        def _is_attempt(step: dict[str, str]) -> bool:
+            # Solver steps only, classified by NAME. Step INDEX is not step IDENTITY: a
+            # campaign-window census of `JobName` at `.0` returns python 4771, apptainer
+            # 216, triton.exe 103 -- so `.0` is a real solver step on 319 of 5198 jobs,
+            # 283 of which have NO other numeric step and rendered an em-dash for a job
+            # that ran. `_NON_SOLVER_STEP_NAMES` is the toolkit's single declaration of
+            # which names are never the solver; imported locally to keep the renderer
+            # free of a module-level dependency on a runner.
+            from hhemt.run_simulation_runner import _NON_SOLVER_STEP_NAMES
+
+            suffix = _step_suffix(step.get("JobID", ""))
+            if not suffix.isdigit():
+                return False
+            name = (step.get("JobName", "") or "").strip().lower()
+            # A NAMED step is classified by name -- that is what admits a solver sitting at
+            # `.0` and excludes a wrapper wherever it sits. An UNNAMED step cannot be
+            # classified that way at all, and reading "unknown" as "not the solver" silently
+            # DROPS it from the roster, which is the disclosure-that-discloses-nothing this
+            # roster exists to prevent. Absence is not a measurement, so fall back to the
+            # index rule -- the best available discriminator when no name is present.
+            # `_parse_step_ids` keeps the plain `name and ...` conjunct because it reads
+            # `sacct -o JobID,JobName`, where the field is present by construction.
+            if not name:
+                return suffix != "0"
+            return name not in _NON_SOLVER_STEP_NAMES
+
+        attempts = sorted(
+            (s for s in steps if _is_attempt(s)),
+            key=lambda s: int(_step_suffix(s.get("JobID", ""))),
         )
-    header, body = rows[0], rows[1:]
-    if not body:
-        return (
-            _heading("SLURM Efficiency") + "\n" + _banner("The SLURM resource-efficiency report contains no job rows.")
+        row["_attempts"] = attempts
+        row["attempts"] = str(len(attempts)) if attempts else ""
+        row["_steps"] = all_steps
+        row["_provenance"] = prov
+        out.append(row)
+
+    out.sort(key=lambda r: int(r["JobID"]) if str(r["JobID"]).isdigit() else 0)
+    return out
+
+
+def _attempt_details_html(attempts: list[dict[str, str]], attempt_by_step: dict[str, int] | None = None) -> str:
+    """`<details>` roster of a job's resume attempts, in a pre-escaped cell.
+
+    Job grain folds N attempts into one row; without this the CANCELLED/COMPLETED breakdown
+    is lost, which is the cost [Q153] exists to avoid paying. Uses the shim's pre-escaped
+    cell-HTML property -- no cell formatter, no Tabulator, no new mechanism.
+
+    Each entry carries TWO identifiers and they come from different places, which is the whole
+    point. The STEP index is a fact about the artifact and is read off `JobID`. The ATTEMPT
+    number is a fact about the run's history and is read only from the LEDGER
+    (`attempt_by_jobstep`, resolved once during enrichment). Deriving the second from the first
+    fabricates a value for every step the ledger does not record -- which aggregation newly
+    makes possible, because folding N steps into one row puts an ordered list in front of the
+    renderer and invites numbering it. A step the ledger does not record keeps its true step
+    index and is explicitly unnumbered: it ran, and which attempt it was is not known here.
+    """
+    if not attempts:
+        return ""
+    by_step = attempt_by_step or {}
+    items = "".join(
+        "<li>step {step} ({n}): {state}, {el}, {rss}</li>".format(
+            step=_esc(_step_suffix(a.get("JobID", ""))),
+            n=_esc(
+                _attempt_label(by_step[a.get("JobID", "")]) if a.get("JobID", "") in by_step else "attempt not recorded"
+            ),
+            state=_esc(a.get("State", "") or "state not recorded"),
+            el=_esc(a.get("Elapsed", "") or "elapsed not recorded"),
+            rss=_esc(a.get("MaxRSS", "") or "memory not recorded"),
         )
-    grid = [[_code(cell) if "/" in cell else _esc(cell) for cell in row] for row in body]
-    return _heading("SLURM Efficiency") + "\n" + _grid_table(header, grid)
+        for a in attempts
+    )
+    return (
+        f"<details><summary>{len(attempts)}</summary>"
+        f"<ul style='margin:4px 0 0 14px;padding:0;font-size:11px'>{items}</ul></details>"
+    )
+
+
+def _undisplayed_csv_columns(header: list[str]) -> list[str]:
+    """CSV columns the curated table neither displays nor knowingly suppresses.
+
+    The curated column set is what makes this table readable, and widening it to whatever
+    a CSV happens to carry would make the width unpredictable. But dropping a column
+    SILENTLY is the part that would be a defect: a future plugin version that adds a
+    genuinely new measurement would lose it with nothing on the page to say so. So the
+    drop is deliberate and the surprise is disclosed -- the same shape as the
+    not-captured note for GPU utilisation.
+    """
+    displayed = {col.key for col in _EFF_COLUMNS}
+    return sorted(c for c in header if c not in displayed and c not in _EFF_KNOWN_UNDISPLAYED)
+
+
+def _build_slurm_efficiency_html(
+    csv_texts: list[tuple[str, str]],
+    purpose_map: dict[str, dict[str, str]],
+    scenario_map: dict[tuple[str, str, str], dict[str, str]],
+    gpu_hardware_for_partition,
+    recovery: dict[str, dict[str, dict[str, str]]] | None = None,
+    universe: frozenset[str] | set[str] | None = None,
+    exclude_job_ids: frozenset[str] | set[str] | None = None,
+    invocation_by_job: Mapping[str, str] | None = None,
+) -> _MountedTable:
+    """Render the UNION of every efficiency report at JOB grain ([Q145]), reduced per [Q153].
+
+    The union over reports is load-bearing: each CSV comes from one Snakemake invocation's
+    teardown (the plugin builds it from `sacct --name={run_uuid}`), so the former
+    latest-by-mtime selection showed only the most recent invocation's jobs -- on a
+    re-render, the render jobs and nothing else. A report is written at teardown AFTER the
+    report renders, so the invocation producing the page has no report yet. That alone does
+    not empty the table when `universe` is given: the job ids the invocations SUBMITTED (read
+    from their logs by the caller) get rows whether or not any report or step row holds them,
+    and `exclude_job_ids` removes the jobs of the invocation rendering the page. With neither,
+    the table is empty on the producing run and populates on a later re-render or reprocess.
+
+    `invocation_by_job` maps a main job id to the label of the Snakemake invocation that
+    submitted it; each row's Workflow run cell takes that label first, then the run id in the
+    name of the report that lists the job, then the job name on its recovery row, and is
+    blank when none holds it. Without the mapping only the last two sources are reached.
+
+    `[Q160]`(7): returns a `_MountedTable` rather than a bare string, because the table is
+    a Tabulator fragment now. The degenerate branches (no CSV text, no job rows) carry a
+    banner and a `None`-free empty fragment list is NOT possible in that shape, so they
+    return a `_MountedTable` whose fragment is None -- the caller filters.
+    """
+    recovery = recovery or {}
+    heading = _heading("SLURM Efficiency")
+    if not csv_texts and not universe:
+        return _MountedTable(
+            heading + "\n" + _banner("The SLURM resource-efficiency report is present but empty."), None
+        )
+
+    _header, merged = _parse_efficiency_csvs(csv_texts)
+    if not merged and not universe:
+        return _MountedTable(
+            heading + "\n" + _banner("The SLURM resource-efficiency reports contain no job rows."), None
+        )
+
+    step_rows = _enrich_efficiency_rows(merged, purpose_map, scenario_map, gpu_hardware_for_partition)
+    # Carry the toolkit-joined fields onto the job they belong to before collapsing, so the
+    # join survives aggregation. Keyed on MainJobID, which the join already used.
+    joined: dict[str, dict[str, str]] = {}
+    for s in step_rows:
+        main = (s.get("MainJobID") or s.get("JobID", "").split(".", 1)[0]).strip()
+        if main and main not in joined:
+            joined[main] = s
+
+    rows = _aggregate_jobs(merged, recovery, universe, exclude_job_ids)
+    report_uuid_by_job = {
+        (rec.get("MainJobID") or rec.get("JobID", "").split(".", 1)[0]).strip(): _report_uuid(
+            rec.get("_report_label", "")
+        )
+        for rec in merged.values()
+    }
+    for row in rows:
+        src = joined.get(str(row["JobID"]), {})
+        row.setdefault("_scen_joined", src.get("_scen_joined", ""))
+        for col in _EFF_COLUMNS:
+            if col.reduction is _TOOLKIT_JOIN and col.key not in ("attempts",):
+                row.setdefault(col.key, src.get(col.key, ""))
+        # `_QUEUE_JOIN` is deliberately NOT `_TOOLKIT_JOIN`, so the loop above skips it and it
+        # is resolved here against BOTH its sources. Toolkit map first -- it is per-job and
+        # exact -- then SLURM's `Planned`. Each arm writes its own provenance, so the cell
+        # tooltip names the source that actually produced the number rather than restating the
+        # header's general rule ([Q153] trackability; the same shape `_reduce_cpu_sum` uses).
+        _q_toolkit = (src.get("queue_seconds_this_job") or "").strip()
+        _q_prov = row.setdefault("_provenance", {})
+        if _q_toolkit:
+            row["queue_seconds_this_job"] = _q_toolkit
+            _q_prov["queue_seconds_this_job"] = "hhemt's own per-job queue record for this job id"
+        elif row.get("_planned_seconds"):
+            row["queue_seconds_this_job"] = row["_planned_seconds"]
+            _q_prov["queue_seconds_this_job"] = (
+                "Planned field of the SLURM job accounting record: the toolkit's own queue record has "
+                "no entry for this job (a bundle does not carry it)"
+            )
+        else:
+            row.setdefault("queue_seconds_this_job", "")
+
+    # The invocation each job belongs to, and whether hhemt's own per-rule record of it
+    # survives. Set for EVERY row, including a job with no step row, which the join above
+    # cannot reach.
+    for row in rows:
+        job_id = str(row["JobID"])
+        label, how = _invocation_for_job(job_id, invocation_by_job, report_uuid_by_job, recovery)
+        row["record"] = label
+        row.setdefault("_provenance", {})["record"] = how
+        row["toolkit_record"] = _TOOLKIT_RECORD if purpose_map.get(job_id) else _NO_TOOLKIT_RECORD
+
+    undisplayed = _undisplayed_csv_columns(_header)
+    n_recovered = sum(1 for r in rows if r.get("Elapsed"))
+    n_never_started = sum(1 for r in rows if r.get("_never_started"))
+    # Scenario-join counts, over the JOB rows the table displays rather than over the step
+    # rows the enrichment walked -- `[Q145]` fixes the grain at one row per job.
+    joinable_rows = sum(1 for r in rows if r.get("model_type"))
+    scen_joined = sum(1 for r in rows if r.get("_scen_joined"))
+    # The ledger's attempt resolution, read ONCE during enrichment and carried here so the
+    # roster renders that resolution instead of re-deriving one from step suffixes.
+    attempt_by_step: dict[str, int] = {s.get("JobID", ""): s["_attempt_n"] for s in step_rows if "_attempt_n" in s}
+
+    def _cell(row: dict[str, Any], col: _EffColumn) -> str:
+        """One cell, carrying its own provenance as a native `title` tooltip.
+
+        The tooltip TEXT is produced by the reducer (`_provenance`), never authored here --
+        so a cell cannot claim a reduction the code did not perform.
+        """
+        if col.key == "attempts" and row.get("_attempts"):
+            return _attempt_details_html(row["_attempts"], attempt_by_step)
+        value = row.get(col.key, "")
+        if not value:
+            return "—"
+        why = (row.get("_provenance") or {}).get(col.key, "")
+        return f'<span title="{_esc(why)}">{_esc(value)}</span>' if why else _esc(value)
+
+    grid = [[_cell(row, col) for col in _EFF_COLUMNS] for row in rows]
+    excluded_labels = sorted({(invocation_by_job or {}).get(job_id, "") for job_id in (exclude_job_ids or ())} - {""})
+    if exclude_job_ids and excluded_labels:
+        excluded_sentence = (
+            "The workflow run that rendered this page is left out: "
+            + ", ".join(_code(label) for label in excluded_labels)
+            + "."
+        )
+    elif exclude_job_ids:
+        excluded_sentence = "The workflow run that rendered this page is left out."
+    else:
+        excluded_sentence = "No workflow run is left out."
+    n_ran = len(rows) - n_never_started
+    summary = (
+        f"<p class='note'>{_esc(_count(len(rows), 'job'))} submitted, "
+        f"{_esc(_count(n_never_started, 'job'))} cancelled before starting, "
+        f"{_esc(_count(n_ran, 'job'))} ran. One row per job. "
+        f"{_esc(_count(n_recovered, 'job'))} {'has' if n_recovered == 1 else 'have'} an accounting record; "
+        f"a job without one shows a dash in the columns read from it. "
+        f"{excluded_sentence} {_TABLE_INTERACTION_NOTE}</p>"
+    )
+    # A join that matched no job is the one case the dashes alone cannot distinguish from
+    # uncaptured data, so it gets a one-sentence notice. A routine partial join gets none.
+    if joinable_rows and not scen_joined:
+        summary += _banner_html(
+            f"No job matched a record in {_code('scenario_status.csv')}, so the columns read from it are empty."
+        )
+    summary += _reduction_caption()
+    # DISTINCT from the section heading's own anchor -- `_anchor("SLURM Efficiency")` is
+    # "slurm-efficiency", and an equal table id would put it on TWO elements.
+    mounted = _mounted_tabulator_table(
+        [col.header for col in _EFF_COLUMNS],
+        grid,
+        container_id="slurm-efficiency-table",
+        header_tooltips=tuple(col.reduction.rule for col in _EFF_COLUMNS),
+    )
+    parts = [heading, summary, mounted.html]
+    if undisplayed:
+        # A reader cannot act on a column the plugin newly reports, so the page does not carry
+        # it; the maintainer who can add the column reads the log.
+        logging.getLogger(__name__).warning(
+            "Unrecognised column(s) in the SLURM efficiency report, not shown in the table: %s",
+            ", ".join(undisplayed),
+        )
+    parts.append(_uncaptured_note(rows))
+    return _MountedTable("\n".join(parts), mounted.fragment)
+
+
+def _resolve_all_efficiency_csvs(eff_dir: Path) -> list[Path]:
+    """Resolve EVERY SLURM efficiency-report CSV FILE under ``eff_dir``, oldest first.
+
+    The snakemake-executor-plugin-slurm treats ``--slurm-efficiency-report-path``
+    as a DIRECTORY and writes ``efficiency_report_{run_uuid}.csv`` inside it
+    (efficiency_report.py::create_efficiency_report). The toolkit driver passes a
+    ``.csv``-suffixed path, so on disk the glob match
+    ``slurm_efficiency_report_{ts}.csv`` is itself a DIRECTORY that CONTAINS the
+    real CSV -- a bare ``read_text()`` on it raises ``IsADirectoryError``. Return
+    every actual FILE, descending into any directory-shaped match; return ``[]``
+    when no CSV file is present (absent-banner fallback).
+
+    A HISTORY, not a snapshot: reports accumulate across Snakemake invocations, so a
+    job present in an older file and absent from the newest one is RETAINED HISTORY,
+    never a gap. Anything that later prunes these directories for tidiness would
+    silently re-break that, and the rendered table would once again show only the most
+    recent invocation. A report is NOT a complete record of an invocation: the plugin
+    asks sacct with no start time, so a report holds only the jobs that ended on its
+    teardown day, and some invocations write none. The complete record of what an
+    invocation submitted is its Snakemake log (`slurm_job_recovery.
+    submitted_job_ids_by_invocation`), which the caller unions in.
+
+    Glob / is_file / is_dir / stat only (os.scandir + os.stat) -- no file is
+    opened, so this adds no file-open audit surface (Gotcha 53).
+    """
+    if not eff_dir.is_dir():
+        return []
+    candidates: list[Path] = []
+    for match in sorted(eff_dir.glob(_SLURM_EFF_GLOB)):
+        if match.is_file():
+            # Hypothetical future flat-file layout (driver cleanup / other plugin).
+            candidates.append(match)
+        elif match.is_dir():
+            # Current plugin layout: descend to the inner efficiency_report_*.csv.
+            candidates.extend(p for p in sorted(match.glob(_SLURM_EFF_INNER_GLOB)) if p.is_file())
+    # Defensive: a plugin that wrote the inner file directly under eff_dir.
+    candidates.extend(p for p in sorted(eff_dir.glob(_SLURM_EFF_INNER_GLOB)) if p.is_file())
+    if not candidates:
+        return []
+    # UNION, not latest. A report comes from one invocation's teardown (plugin:
+    # `sacct --name={run_uuid}`, with no start time, so it covers only jobs that ended on
+    # that day and some invocations write none), so `max(mtime)` showed the newest
+    # INVOCATION rather than the newest DATA -- on a re-render that is two render jobs and
+    # nothing else. Returned newest-last so the caller's dict-merge
+    # resolves a duplicate JobID in favour of the more recent report. Inner run-uuid
+    # filenames do not sort chronologically, hence mtime rather than name.
+    return sorted(set(candidates), key=lambda p: p.stat().st_mtime)
+
+
+def _read_scenario_status(analysis_dir: Path) -> tuple[dict[tuple[str, str, str], dict[str, str]], Path | None]:
+    """`{(member_id, event_id, model_type): row}` from `scenario_status.csv`; and the file read.
+
+    The file is returned so the caller can DECLARE it (ADR-6 Gate-A). It is already
+    carried in every bundle by `_copy_supporting_files`, so declaring it adds a
+    manifest row and no payload bytes.
+
+    THREE event spellings are registered per row, because the CSV and the
+    `_status/*.flag.json` sidecar do not share one vocabulary:
+
+    * the integer ``event_iloc`` this CSV records;
+    * ``event_index.{iloc}``, which is the scenario slug ONLY when the analysis has a
+      single weather indexer literally named ``event_index`` whose value equals the
+      iloc -- true of the synthetic fixture and of no real analysis;
+    * the basename of ``scenario_directory``, which IS the slug the sidecar carries.
+      That equality is by CONSTRUCTION, not convention: `scenario.py` assigns
+      ``self.event_id = self.sim_id_str`` and ``sim_folder = .../ self.sim_id_str``
+      from one variable in adjacent lines, and `analysis.py` writes that path here.
+
+    This is a key SET, not a guarantee. A sidecar vocabulary outside the set produces
+    a MISS, and a total miss is disclosed by a notice in the rendered efficiency table
+    rather than left to read as absent data.
+    """
+    path = analysis_dir / _SCENARIO_STATUS_FILENAME
+    if not path.is_file():
+        return ({}, None)
+    try:
+        text = path.read_text()
+    except OSError:
+        return ({}, None)
+    out: dict[tuple[str, str, str], dict[str, str]] = {}
+    identity_column = resolve_member_id_column(csv.DictReader(io.StringIO(text)).fieldnames or [])
+    for record in csv.DictReader(io.StringIO(text)):
+        member_id = member_id_from(record, identity_column)
+        model_type = (record.get("model_type") or "").strip()
+        iloc = (record.get("event_iloc") or "").strip()
+        slug = os.path.basename((record.get("scenario_directory") or "").rstrip("/\\"))
+        for event_key in {iloc, f"event_index.{iloc}", slug}:
+            if event_key:
+                out[(member_id, event_key, model_type)] = record
+    return (out, path)
+
+
+#: Column spellings the partition has been written under. `hpc.partition` is the
+#: canonical sensitivity-overlay column; `analysis.hpc_ensemble_partition` is the
+#: accepted legacy overlay spelling; `hpc_ensemble_partition` is the resolved
+#: analysis-config field name, which is what older sensitivity exports carry and
+#: what `_apply_config_fallbacks` writes for a non-sensitivity analysis.
+_PARTITION_COLUMN_SPELLINGS: tuple[str, ...] = (
+    "hpc.partition",
+    "analysis.hpc_ensemble_partition",
+    "hpc_ensemble_partition",
+)
+
+
+def _first_nonempty(row: dict[str, str], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = (row.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _apply_config_fallbacks(scenario_map, analysis) -> None:
+    """Fill partition / node count from IN-MEMORY config where the CSV carries neither.
+
+    `hpc.partition` is a sensitivity CSV overlay column, so a non-sensitivity export
+    has no partition column at all and `n_nodes` is written only under
+    `analysis.in_slurm`. Without this, `Partition`, `GPU hardware` and
+    `Nodes (config)` stay blank even on a perfect join, which is indistinguishable
+    on the page from data that was never captured.
+
+    In-memory config only -- no file is opened, so this adds no render-time read
+    surface (Gotcha 53), exactly like `_gpu_hardware_for_partition`. The CSV always
+    wins where it carries a value, so a sensitivity master's per-row partitions are
+    never overwritten by the master default. Each row dict is shared across the
+    several keys that address it, so it is mutated at most once.
+    """
+    cfg = getattr(analysis, "cfg_analysis", None)
+    if cfg is None:
+        return
+    partition = str(getattr(cfg, "hpc_ensemble_partition", "") or "")
+    n_nodes = str(getattr(cfg, "n_nodes", "") or "")
+    seen: set[int] = set()
+    for row in scenario_map.values():
+        if id(row) in seen:
+            continue
+        seen.add(id(row))
+        if partition and not _first_nonempty(row, _PARTITION_COLUMN_SPELLINGS):
+            row["hpc_ensemble_partition"] = partition
+        if n_nodes and not (row.get("n_nodes") or "").strip():
+            row["n_nodes"] = n_nodes
 
 
 # --- page shell --------------------------------------------------------------
 
 
-def _jump_nav() -> str:
-    links = " &middot; ".join(
-        f'<a href="#{_anchor(t)}">{_esc(t)}</a>' for t in ("Provenance", "Reproduction Guide", "SLURM Efficiency")
+_VALIDATION_REPORT_FILENAME = "validation_report.json"
+_DATA_AVAILABILITY_CHECK = "Data availability"
+
+
+def _build_data_availability_html(report_path: Path) -> str:
+    """Project the persisted `Data availability` CheckResult onto the Metadata page.
+
+    Reads the SAME `{analysis_dir}/validation_report.json` the Errors-and-Warnings
+    renderer reads -- no second read-model. ADR-14 D1 rejected emitting a parallel
+    `metadata_report.json` on the grounds that a second projection of the same record is a
+    FAIR drift anti-pattern, and that reasoning applies unchanged here.
+
+    Every dynamic value is `_esc`-escaped: the detail rows carry scenario ids and
+    filesystem paths, which legitimately contain characters that would otherwise close a
+    tag.
+    """
+    if not report_path.exists():
+        return _omitted("Data Availability", f"{_code(_VALIDATION_REPORT_FILENAME)} is not available")
+    try:
+        payload = json.loads(report_path.read_text())
+    except (OSError, ValueError):
+        return _omitted("Data Availability", f"{_code(_VALIDATION_REPORT_FILENAME)} did not parse")
+    check = next(
+        (c for c in payload.get("checks", []) if c.get("name") == _DATA_AVAILABILITY_CHECK),
+        None,
     )
+    if check is None:
+        return _omitted("Data Availability", f"{_code(_VALIDATION_REPORT_FILENAME)} holds no Data availability check")
+    rows = [
+        ("Status", _esc("reclaim recorded and consistent" if check.get("passed") else "inconsistent")),
+        ("Record", _esc(str(check.get("summary", "")))),
+    ]
+    parts = [_heading("Data Availability"), _kv_table(rows)]
+    parts.append(
+        _banner(
+            "An absent timeseries or raw output is a recorded reclaim, not a failed run. "
+            "Reprocessing those scenarios requires re-running their model runs."
+        )
+    )
+    detail_rows = [
+        [_esc(str(d.get("sa_id", ""))), _esc(str(d.get("scenario", ""))), _esc(str(d.get("detail", "")))]
+        for d in check.get("details", [])
+    ]
+    if detail_rows:
+        parts.append(_grid_table(["Member", "Scenario", "Detail"], detail_rows))
+    return "\n".join(parts)
+
+
+#: The page's sections, in render order. Module-level so the jump-nav and the test's
+#: anchor coverage read ONE declaration -- a literal in each drifted silently when the
+#: Data Availability section landed and only the nav learned about it.
+#: [Q160](7): every Tabulator table on the Metadata page AND on the Workflow Performance
+#: page bundles its assets inline rather than pulling them from a CDN. The user's ruling
+#: was to converge the run-timeline and SLURM tables on the appendix's Tabulator style AND
+#: to land inline bundling, so the convergence does not cost the offline rendering the old
+#: `_sortable_grid_table` shim was kept for. Scoped to these two pages deliberately: the
+#: global `report_config.interactive.tabulator_js_mode` default stays "cdn", so
+#: scenario_status_appendix / per_analysis_summary / the cross-experiment tables are
+#: untouched and their emitted bytes are unchanged.
+_TABULATOR_JS_MODE = "inline"
+
+_SECTION_TITLES = ("Provenance", "Data Availability", "Reproduction Guide")
+
+#: `[Q160]`(7): the run-timeline and SLURM-efficiency tables are PERFORMANCE data and
+#: render on the Workflow Performance page (`workflow_performance.py`), which owns this
+#: title tuple. It is declared HERE rather than there because `_jump_nav` and
+#: `_wrap_html_doc` are shared across both pages, and a second copy of the anchor
+#: vocabulary is exactly the drift the single-declaration comment above forbids.
+_WORKFLOW_PERFORMANCE_SECTION_TITLES = ("Run timeline", "SLURM Efficiency")
+
+
+#: Iter-12 item {23}. The jump-nav links carry `data-jump` as well as `href`, and the
+#: shim below cancels the fragment navigation and scrolls directly.
+#:
+#: This page renders inside an iframe (see `_wrap_html_doc`). A fragment href cannot be
+#: resolved in place against that iframe's base document, so the click is handled as a
+#: NAVIGATION rather than an in-page scroll -- which is what re-enters the report shell's
+#: render path and, per the user's iteration-11 report, appends a heading per click with
+#: increasing indentation instead of scrolling. `preventDefault()` means the fragment is
+#: never resolved and the navigation never happens.
+#:
+#: `scrollIntoView({block: "start"})` is also the better scroll on its own terms: the
+#: section headings sit above `div.table-scroll` containers with sticky `thead`, and a
+#: native fragment jump does not account for a nested scroll container.
+#:
+#: The `href` is RETAINED so the nav degrades to today's behaviour with JavaScript
+#: unavailable -- the state an archived / emailed copy of this page must survive in.
+_JUMP_NAV_JS = """
+(function () {
+  document.querySelectorAll("nav.jump-nav a[data-jump]").forEach(function (a) {
+    a.addEventListener("click", function (ev) {
+      var target = document.getElementById(a.getAttribute("data-jump"));
+      if (!target) { return; }
+      ev.preventDefault();
+      target.scrollIntoView({ block: "start" });
+    });
+  });
+})();
+"""
+
+
+def _jump_nav(section_titles: tuple[str, ...] = _SECTION_TITLES) -> str:
+    links = " &middot; ".join(f'<a href="#{_anchor(t)}" data-jump="{_anchor(t)}">{_esc(t)}</a>' for t in section_titles)
     return f'<nav class="jump-nav">{links}</nav>'
 
 
-def _wrap_html_doc(analysis_id: str, inline_css: str, *sections: str) -> str:
-    """<!DOCTYPE> + inline <style> + <h2> title + 3-anchor jump-nav + the section fragments.
+#: Moves each fragment's markup from its <template> into the mount point the guide
+#: emitted. Runs BEFORE the shared filter blob and the per-table scripts, so the
+#: container div each `new Tabulator("#reprex-{bucket}")` targets is already in the DOM.
+_TRF_MOUNT_JS = """
+(function () {
+  var tpls = document.querySelectorAll("template[data-trf-mount]");
+  for (var i = 0; i < tpls.length; i++) {
+    var t = tpls[i];
+    var host = document.getElementById(t.getAttribute("data-trf-mount") + "-mount");
+    if (host) { host.appendChild(t.content.cloneNode(true)); }
+  }
+})();
+"""
+
+
+def _wrap_html_doc(
+    analysis_id: str,
+    inline_css: str,
+    *sections: str,
+    fragments: list[TableFragment] | None = None,
+    page_title: str = "Metadata",
+    section_titles: tuple[str, ...] = _SECTION_TITLES,
+) -> str:
+    """<!DOCTYPE> + inline <style> + <h2> title + jump-nav (one anchor per
+    `section_titles` entry) + the section fragments.
+
+    `page_title` and `section_titles` are PARAMETERS rather than module constants
+    because `workflow_performance.py` renders a SECOND page through this same wrapper
+    (`[Q160]`(7)). Both default to this page's values, so the metadata call site below
+    is byte-unchanged and no second wrapper was needed. Renderer-to-renderer import is
+    the established pattern here, not a novel reach: `per_sim_event_page` imports from
+    `per_sim_peak_flood_depth`, and `per_sim_conduit_flow` from `system_overview`.
 
     Each renderer .html is shown in an iframe by the Snakemake report engine, so
     inline CSS is mandatory (no shared stylesheet reaches the iframe) and the
     in-page anchors scroll the iframe rather than the parent document.
     """
     body = "\n".join(s for s in sections if s)
+    frags = fragments or []
+    # [Q148] document-level Tabulator wiring. The CDN assets and the ~40 KB shared
+    # filter blob are emitted ONCE for all three reproduction-guide tables -- which is
+    # the entire reason `build_html_document` was split into head-assets + fragment.
+    # Calling it once per table would have produced three <!DOCTYPE html> roots and
+    # three copies of the blob inside one page.
+    #
+    # Each fragment's markup is relocated into its mount point at load time rather than
+    # being interpolated into `body`: the fragments are built inside
+    # `_build_reprex_guide_html`, which returns markup and mount points together, and a
+    # mount keeps the table's DOM adjacent to its own <script> without threading the
+    # fragment list through every section builder.
+    # [Q160](7): this page's tables are INLINE-bundled, so the rendered HTML needs no
+    # network at view time -- in an archived copy, an emailed copy, or a bundle-local
+    # copy. That is the property the run-timeline/SLURM shim used to preserve by
+    # staying non-Tabulator; inline bundling now preserves it for every table on the
+    # page at once, which is what let those two tables converge on the appendix style.
+    tabulator_head = tabulator_head_assets(_TABULATOR_JS_MODE) if frags else ""
+    frag_styles = "".join(f.styles for _, f in frags)
+    # [Q160](7): the tuple key is the FULL container id, not a reprex-scoped suffix.
+    # `_TRF_MOUNT_JS` was already container-id-generic (it reads the attribute and looks
+    # up `{id}-mount`); only this f-string hardcoded the `reprex-` prefix, which meant no
+    # table outside the reproduction guide could mount. Generalising it is what lets the
+    # run-timeline and SLURM tables become fragments on the sibling page.
+    frag_mounts = "".join(
+        f'<template data-trf-mount="{container_id}">{f.markup}</template>' for container_id, f in frags
+    )
+    frag_scripts = (
+        "<script>" + _TRF_MOUNT_JS + tabulator_shared_js() + "".join(f.script for _, f in frags) + "</script>"
+        if frags
+        else ""
+    )
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
-        f"<style>{inline_css}{_SUPPLEMENTAL_CSS}</style></head><body>"
-        f"<h2>Metadata — {_esc(analysis_id)}</h2>"
-        f"{_jump_nav()}"
+        f"{tabulator_head}"
+        f"<style>{inline_css}{_SUPPLEMENTAL_CSS}{frag_styles}</style></head><body>"
+        f"<h2>{_esc(page_title)}: {_esc(analysis_id)}</h2>"
+        f"{_jump_nav(section_titles)}"
         f"{body}"
+        f"{frag_mounts}"
+        f"<script>{_JUMP_NAV_JS}</script>"
+        f"{frag_scripts}"
         "</body></html>"
     )
+
+
+#: Iter-12 item 17. The affordance for a tooltip-bearing cell, emitted from the
+#: RESOLVER rather than from `_SUPPLEMENTAL_CSS`. That placement is the whole point:
+#: `_SUPPLEMENTAL_CSS` is a module-level static built at import time, so a rule living
+#: there cannot read a colour off the runtime `report_cfg` and would have to hardcode
+#: one or fall back to `currentColor` -- either of which re-introduces the second colour
+#: source the brand_theme stipulation exists to prevent, and the latter of which fails
+#: this rule's own paired test (which asserts the colour EQUALS what the resolved style
+#: yields, never a literal). `primary_color` is the theme-driven brand colour the h2/h3
+#: chrome already uses; the config comment beside it names which colours are NOT
+#: theme-driven and this is not among them.
+#:
+#: Scoped to `strong.tip-affordance`, which `_sensitivity_varied_values` emits ONLY on
+#: the varied branch. The single-distinct-value branch returns an EMPTY tooltip, so it
+#: deliberately carries no affordance -- styling it would advertise a hover that shows
+#: nothing.
+_TIP_AFFORDANCE_CSS = (
+    # Attribute selection, not class selection: a class rule reaches only the one
+    # site that remembers to apply it, and the requirement is report-wide. Every
+    # element carrying a native `title` tooltip matches, in every renderer, with no
+    # renderer change. button/a/iframe are excluded deliberately -- a control hint
+    # and a frame label are not tooltip-bearing text.
+    "strong.tip-affordance, td[title], span[title], abbr[title] "
+    "{{ cursor: help; border-bottom: 1px dotted {affordance_color}; color: {affordance_color}; }}\n"
+    # `th` takes the underline only: the header background is {primary_color} navy,
+    # against which #A85000 measures 2.46:1 versus white's 13.56:1.
+    "th[title] {{ cursor: help; border-bottom: 1px dotted currentColor; }}\n"
+    # The hovered row drops the colour: analysis.py's D-5 overlay sets
+    # row_hover_bg_color to the full-saturation accent, against which the affordance
+    # colour measures 1.77:1 -- at exactly the moment the reader hovers to read the
+    # tooltip. The dotted underline is the redundant channel that survives, so the
+    # affordance is never lost, only de-emphasised.
+    "tr:hover td[title] {{ color: inherit; border-bottom-color: currentColor; }}\n"
+    # Tabulator's `tooltip` column option returns a string that Tabulator renders
+    # itself; it sets no DOM `title`, so no attribute selector can reach it. The
+    # cell carries `cssClass: trf-has-tip` instead (see the companion spec).
+    ".tabulator-cell.trf-has-tip "
+    "{{ cursor: help; border-bottom: 1px dotted {affordance_color}; color: {affordance_color}; }}\n"
+)
 
 
 def _resolve_inline_css(report_cfg: report_config) -> str:
@@ -665,7 +3816,10 @@ def _resolve_inline_css(report_cfg: report_config) -> str:
         from hhemt.config.report import ErrorsAndWarningsConfig
 
         style = ErrorsAndWarningsConfig()
-    return style.render_inline_css()
+    return style.render_inline_css() + _TIP_AFFORDANCE_CSS.format(
+        primary_color=style.primary_color,
+        affordance_color=getattr(style, "affordance_color", "#A85000"),
+    )
 
 
 def render(
@@ -673,7 +3827,12 @@ def render(
     report_cfg: report_config,
     output_path: Path,
 ) -> Path:
-    """Render the Metadata page (provenance + reproduction guide + SLURM efficiency)."""
+    """Render the Metadata page (provenance + data availability + reproduction guide).
+
+    `[Q160]`(7): the run timeline and the SLURM-efficiency table are no longer here.
+    They are PERFORMANCE data and render on the Workflow Performance page
+    (`workflow_performance.py`), which owns their reads and their declarations.
+    """
     from hhemt.report_renderers._figure_emission import emit_plot_with_sources
     from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 
@@ -685,63 +3844,86 @@ def render(
     # even when absent. `_validate_source_path` accepts non-existent paths, so the
     # info-icon still names the source the page would have read.
     source_paths: list[Path] = [sidecar_path]
+    metadata_only_sources: list[Path] = []
 
     prov = ProvenanceLog()
     with prov.artist(
         axes_id="html_section",
         kind="table",
-        note="metadata page (RO-Crate provenance sidecar + reprex taxonomy + SLURM efficiency)",
+        # This string is SHIPPED, not a comment: `_provenance.py` serializes it to
+        # `manifest["artists"][i]["note"]` in the emitted `<stem>.manifest.json` and renders
+        # it into the human-readable provenance header. It named "SLURM efficiency", which
+        # `[Q160]`(7) moved to the Workflow Performance page -- a false claim in an artifact
+        # rather than in a comment. It also named the reprex taxonomy, which is built outside
+        # any artist block. Scoped to what THIS block actually declares: the sidecar and the
+        # consolidated tree's producing stamps.
+        note="metadata page, provenance section (provenance record + consolidated-tree producing stamps)",
     ) as artist:
         artist.add_channel("provenance", ProvenanceRef(source_path=_SIDECAR_FILENAME))
+        # `[Q160]`(7): the per-rule `_status/*.flag.json` read that used to sit here is
+        # GONE, with the two things that consumed it -- the run timeline and the
+        # rule-name<->JobID map the SLURM table joins on. Both now live on the Workflow
+        # performance page, which performs the read AND the declaration together.
+        # Keeping the read here after removing its renderers would put a true-but-
+        # purposeless row in the bundle manifest and, worse, diverge declared from
+        # actual in the direction Gotcha 53 punishes. The consolidated tree's ADR-15
+        # producing stamps STAY -- `_provenance_outputs` below still projects them.
+        tree_path = _resolve_consolidated_tree(analysis_dir, analysis)
+        if tree_path is not None:
+            source_paths.append(tree_path)
+            # METADATA-ONLY: both opens of this store (`_read_producing_shas`,
+            # `_consolidated_group_paths`) are `open_store(..., chunks=None)` and read
+            # root attrs + group names, never a chunk. Qualifying it lets the bundle
+            # harvest carry the store's zarr metadata documents without its chunk files
+            # (326,747 of them on a 3,798-event campaign) unless another figure
+            # declares the store in full. The audit still sees the full-store PREFIX.
+            metadata_only_sources.append(tree_path)
+            artist.add_channel(
+                "producing_stamp",
+                ProvenanceRef(source_path=str(tree_path.relative_to(analysis_dir))),
+            )
         # (1) Provenance -- one declared open() on the sidecar -> audit Tier-1 ap == d.
         if sidecar_path.exists():
             doc = json.loads(sidecar_path.read_text())
-            provenance_html = _build_provenance_html(doc)
+            provenance_html = _build_provenance_html(doc, analysis_dir=analysis_dir, analysis=analysis)
         else:
-            provenance_html = _absent_banner(
-                "Provenance",
-                "Provenance metadata not available — the RO-Crate sidecar "
-                "(ro-crate-metadata.json) was not found. It is written at "
-                "consolidation; re-run consolidation to populate.",
-            )
+            provenance_html = _omitted("Provenance", f"no {_code(_SIDECAR_FILENAME)} record was found")
 
-    # (2) Reproduction guide -- pure config-schema introspection, no file read.
-    reprex_html = _build_reprex_guide_html()
+    # (2) Data availability -- reads the SAME persisted validation_report.json the
+    # Errors-and-Warnings renderer reads (ADR-14 D1: no second read-model). Declared
+    # unconditionally per ADR-6 D3, so the info-icon names the source even when absent.
+    validation_report_path = analysis_dir / _VALIDATION_REPORT_FILENAME
+    source_paths.append(validation_report_path)
+    with prov.artist(
+        axes_id="html_section",
+        kind="table",
+        note="data-availability record (post-processing reclaim disclosure)",
+    ) as artist:
+        artist.add_channel("availability", ProvenanceRef(source_path=_VALIDATION_REPORT_FILENAME))
+        data_availability_html = _build_data_availability_html(validation_report_path)
 
-    # (3) SLURM efficiency -- glob (os.scandir; audit-invisible) then declare the
-    # specific FILE. Declaring the directory would raise in _validate_source_path
-    # once the dir exists (directory-as-source is rejected unless zarr).
-    eff_dir = analysis_dir.joinpath(*_SLURM_EFF_RELDIR)
-    csvs = sorted(eff_dir.glob(_SLURM_EFF_GLOB)) if eff_dir.is_dir() else []
-    if csvs:
-        latest = csvs[-1]  # timestamped filenames sort chronologically
-        source_paths.append(latest)
-        with prov.artist(
-            axes_id="html_section",
-            kind="table",
-            note="SLURM resource-efficiency report",
-        ) as artist:
-            artist.add_channel(
-                "data",
-                ProvenanceRef(source_path=str(latest.relative_to(analysis_dir))),
-            )
-            slurm_html = _build_slurm_efficiency_html(latest.read_text())
-    else:
-        slurm_html = _absent_banner(
-            "SLURM Efficiency",
-            "No SLURM resource-efficiency data — this analysis ran in local/native "
-            "mode, or the end-of-workflow efficiency report has not yet been written. "
-            "It is finalized at workflow teardown, AFTER the report is rendered, so it "
-            "is expected to be absent on the run that produces this page; re-render "
-            "after the run completes to populate it.",
-        )
+    # (3) Reproduction guide -- config-schema introspection (no file read) for the
+    # descriptions / requiredness / defaults, plus in-memory config values for the
+    # HPC and EXPERIMENT buckets only. `_config_field_rows` still takes no analysis,
+    # so its zero-user-info guarantee stays structural rather than disciplinary.
+    reprex_guide = _build_reprex_guide_html(
+        _config_field_values(analysis),
+        _sensitivity_varied_values(analysis),
+    )
+
+    # `[Q160]`(7): the SLURM-efficiency block that used to sit here -- CSV resolution,
+    # the Stage-A job recovery read, the scenario_status join, the GPU-hardware
+    # resolver and the whole declaration set they owed -- moved WHOLE to
+    # `workflow_performance.py`. It is PERFORMANCE data, not provenance. Nothing of it
+    # is retained here: a partial retention is what would diverge declared from actual.
 
     html = _wrap_html_doc(
         analysis_id,
         _resolve_inline_css(report_cfg),
         provenance_html,
-        reprex_html,
-        slurm_html,
+        data_availability_html,
+        reprex_guide.html,
+        fragments=reprex_guide.fragments,
     )
     return emit_plot_with_sources(
         html,
@@ -752,7 +3934,8 @@ def render(
         manifest_data={
             "renderer": "metadata",
             "sidecar_present": sidecar_path.exists(),
-            "slurm_csv_present": bool(csvs),
+            "validation_report_present": validation_report_path.exists(),
         },
         provenance=prov,
+        metadata_only_sources=metadata_only_sources,
     )

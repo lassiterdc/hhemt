@@ -1,0 +1,1078 @@
+"""Regression tests for scripts/check_docs_content.py, the docs-content gate.
+
+The gate's findings are the union `main()` builds from five sources: the docs
+markdown (minus the shipped-metadata files), the shipped metadata files themselves
+(`SHIPPED_METADATA`), the docstrings the API reference page renders (minus the line
+citations the citation ledger tolerates), the ledger's orphaned entries, and the
+docs-to-source filename check. These tests pin how the rendered-docstring and
+markdown populations are derived (from the renderer's own configuration, keyed the
+way the page keys it), which findings reach the exit code and which stay advisory,
+what each marker page may exempt itself from, the exit code each failure path
+reaches, the docs-to-source filename agreement rule (class 6), and the path-sense
+``master`` ban.
+
+The central assertion is a FIXTURE, not a count and not a recorded run. A count
+passes when the population shrinks and something else grows; a recorded run
+records a past state and cannot fail later. The pinned qualnames go red on the
+exact symbol a STRICT derivation loses.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.metadata
+import importlib.util
+import os
+import pickle
+import sys
+from pathlib import Path
+
+import pytest
+
+from hhemt._filelock_compat import resolve_filelock
+
+_REPO = Path(__file__).resolve().parent.parent
+_SCRIPT = _REPO / "scripts" / "check_docs_content.py"
+
+
+def _load():
+    spec = importlib.util.spec_from_file_location("check_docs_content", _SCRIPT)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["check_docs_content"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+cdc = _load()
+
+_REAL_RENDERED = cdc.rendered_docstrings
+_REAL_SPANS = cdc.published_source_lines
+#: The helpers a monkeypatching test replaces and that change what ``rendered_docstrings`` returns.
+_GUARDED = ("_passes_filters", "_handler_options", "_handler_paths", "_module_file", "public_modules")
+_ORIGINALS = {name: getattr(cdc, name) for name in _GUARDED}
+_LIVE_KEY = (cdc.SRC_ROOT, cdc.API_PAGE)
+
+
+#: Environment variable naming a file the memo appends one line to per LIVE derivation (the name of the derivation).
+MEMO_LOG_ENV = "HHEMT_DOCS_MEMO_DERIVATION_LOG"
+_MEMO_DIR_NAME = "check_docs_content_memo"
+_MEMO_DISTRIBUTIONS = ("griffe", "griffelib", "mkdocstrings", "mkdocstrings-python")
+_MISS = object()
+#: Derivations whose stored form did not round-trip equal in THIS process, keyed ``(key, name)``. Re-raised on every
+#: later call without deriving again (see ``_memo_fetch``).
+_ROUNDTRIP_FAILURES: dict[tuple[str, str], AssertionError] = {}
+
+
+def _memo_key(root: Path, name: str) -> str:
+    """The digest a stored derivation is valid for: every input the two derivations read, and the derivation's name.
+
+    Inputs: every file under ``src/hhemt`` and ``docs`` (the renderer reads the page and the source), the gate script,
+    each ``SHIPPED_METADATA`` file, ``mkdocs.yml`` (read by the handler-option and handler-path readers), this test
+    file, the installed versions of the renderer libraries, the Python version and the working directory. Bytecode
+    caches are excluded: they change between runs without changing any input, and an unstable key is a silent miss."""
+    files: dict[str, Path] = {}
+    for sub in ("src/hhemt", "docs"):
+        for path in (root / sub).rglob("*"):
+            if path.is_file() and "__pycache__" not in path.parts and path.suffix not in (".pyc", ".pyo"):
+                files[path.relative_to(root).as_posix()] = path
+    for rel in (
+        "scripts/check_docs_content.py",
+        *cdc.SHIPPED_METADATA,
+        "mkdocs.yml",
+        "tests/test_check_docs_content.py",
+    ):
+        if (root / rel).is_file():
+            files[rel] = root / rel
+    digest = hashlib.sha256()
+    for rel in sorted(files):
+        data = files[rel].read_bytes()
+        digest.update(f"{rel}\0{len(data)}\0".encode())
+        digest.update(data)
+    versions = []
+    for dist in _MEMO_DISTRIBUTIONS:
+        try:
+            versions.append(f"{dist}={importlib.metadata.version(dist)}")
+        except importlib.metadata.PackageNotFoundError:
+            versions.append(f"{dist}=absent")
+    digest.update("\0".join([*versions, sys.version, os.getcwd(), name]).encode())
+    return digest.hexdigest()
+
+
+def _memo_fetch(directory: Path, key: str, name: str, derive, shape_ok):
+    """Return the stored value for ``(key, name)``, deriving and publishing it once across processes on a miss.
+
+    A reader sees no entry or a whole one (a temporary file is ``os.replace``d onto the final name). A corrupt or
+    wrong-shaped entry is a miss that is re-derived and republished; it is never an error.
+
+    A derived value whose pickle does not load back EQUAL to it is never published: the failure is recorded for
+    ``(key, name)`` in this process and re-raised on this call and on every later one without deriving again, so a
+    derivation that cannot be stored faithfully fails loudly instead of serving a different value from the memo."""
+    final = directory / f"{key}.{name}.pkl"
+    if (key, name) in _ROUNDTRIP_FAILURES:
+        raise _ROUNDTRIP_FAILURES[(key, name)]
+
+    def read():
+        try:
+            value = pickle.loads(final.read_bytes())
+        except Exception:
+            return _MISS
+        return value if shape_ok(value) else _MISS
+
+    value = read()
+    if value is not _MISS:
+        return value
+    with resolve_filelock(directory / f"{key}.{name}.lock"):
+        value = read()
+        if value is not _MISS:
+            return value
+        value = derive()
+        log = os.environ.get(MEMO_LOG_ENV)
+        if log:
+            with open(log, "a", encoding="utf-8") as fh:
+                fh.write(f"{name}\n")
+        data = pickle.dumps(value)
+        if pickle.loads(data) != value:
+            failure = AssertionError(f"the derivation {name!r} does not pickle-round-trip equal; nothing was published")
+            _ROUNDTRIP_FAILURES[(key, name)] = failure
+            raise failure
+        tmp = directory / f".{key}.{name}.{os.getpid()}.tmp"
+        tmp.write_bytes(data)
+        os.replace(tmp, final)
+        return value
+
+
+def _rendered_shape_ok(value) -> bool:
+    return isinstance(value, list) and all(isinstance(row, tuple) and len(row) == 4 for row in value)
+
+
+def _spans_shape_ok(value) -> bool:
+    return isinstance(value, dict) and all(isinstance(lines, dict) for lines in value.values())
+
+
+def _memo_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One directory per pytest session, shared by its xdist workers (their common parent), removed with the session."""
+    base = tmp_path_factory.getbasetemp()
+    parent = base.parent if os.environ.get("PYTEST_XDIST_WORKER") else base
+    directory = parent / _MEMO_DIR_NAME
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _memoised_live_population(tmp_path_factory):
+    """Derive the LIVE rendered-docstring population once per session instead of once per test or per worker.
+
+    Profiled cost: every call walks the whole ``src/hhemt`` tree with ``griffe`` (about 2,100 modules, 9
+    loads, most of it in ``compile`` and the AST visitor), 22 to 33 s per call. Two derivations do it,
+    ``rendered_docstrings`` and ``published_source_lines`` (its own second walk), and every live test paid one
+    or both. The wrappers answer from the memo ONLY when the call is the live one (``src`` and ``api_page`` are the
+    module's original ``SRC_ROOT`` and ``API_PAGE``), and none of the helpers a test monkeypatches (``_GUARDED``)
+    has been replaced; any other call runs the real derivation. The memo is a per-process dict in front of a
+    cross-process file memo (``_memo_fetch``) keyed on a digest of every input, so under xdist the first worker to
+    need a derivation computes it and the others load it. Each hit returns a fresh copy, so a test cannot mutate
+    another's value. Restored at module teardown.
+    """
+    directory = _memo_directory(tmp_path_factory)
+    cache: dict[str, list] = {}
+
+    def wrapper(src=None, api_page=None):
+        live = (
+            (src, api_page) == _LIVE_KEY
+            and all(getattr(cdc, name) is _ORIGINALS[name] for name in _GUARDED)
+            and cdc.SRC_ROOT == _LIVE_KEY[0]
+            and cdc.API_PAGE == _LIVE_KEY[1]
+        )
+        if not live:
+            return _REAL_RENDERED(src, api_page)
+        key = os.getcwd()
+        if key not in cache:
+            name = "rendered_docstrings"
+            cache[key] = _memo_fetch(
+                directory,
+                _memo_key(_REPO, name),
+                name,
+                lambda: _REAL_RENDERED(src, api_page),
+                _rendered_shape_ok,
+            )
+        return list(cache[key])
+
+    spans_cache: dict[str, dict] = {}
+
+    def spans_wrapper(src=cdc.SRC_ROOT, api_page=cdc.API_PAGE, **kw):
+        live = (
+            not kw
+            and (src, api_page) == _LIVE_KEY
+            and all(getattr(cdc, name) is _ORIGINALS[name] for name in _GUARDED)
+            and cdc.SRC_ROOT == _LIVE_KEY[0]
+            and cdc.API_PAGE == _LIVE_KEY[1]
+        )
+        if not live:
+            return _REAL_SPANS(src, api_page, **kw)
+        key = os.getcwd()
+        if key not in spans_cache:
+            name = "published_source_lines"
+            spans_cache[key] = _memo_fetch(
+                directory,
+                _memo_key(_REPO, name),
+                name,
+                lambda: _REAL_SPANS(src, api_page),
+                _spans_shape_ok,
+            )
+        return {path: dict(lines) for path, lines in spans_cache[key].items()}
+
+    patch = pytest.MonkeyPatch()
+    patch.setattr(cdc, "rendered_docstrings", wrapper)
+    patch.setattr(cdc, "published_source_lines", spans_wrapper)
+    yield
+    patch.undo()
+
+
+#: Symbols whose docstrings carry a bare `path:line` citation.
+#: `assert_coupling_nodes_distinct` is the one a `__all__`-keyed (STRICT) derivation
+#: LOSES -- its module declares no `__all__`. If this list stops being reached, the
+#: population has silently narrowed and the gate is under-reporting, not clean.
+CITATION_BEARING = {
+    "hhemt.synthetic_experiment.assert_coupling_nodes_distinct",
+}
+
+#: Names the PAGE emits as anchors and that only a renderer-derived population
+#: reaches. Each is a defect the `ast` traversal had, pinned as a name rather
+#: than a count: a count passes when one thing shrinks and another grows.
+#:
+#:   `hhemt.bundle`                  -- a MODULE docstring, which the `ast` walk
+#:                                      never read
+#:   `hhemt.analysis.TestSubResult`  -- DEFINED in a module declaring `__all__`
+#:                                      without listing it; the page renders it,
+#:                                      an `__all__`-narrowing walk does not, and
+#:                                      neither does `griffe`'s `is_public`
+#:   `hhemt.Toolkit`                 -- a RE-EXPORT, keyed the way the page keys
+#:                                      it rather than by its origin module
+PAGE_KEYED = {
+    "hhemt.bundle",
+    "hhemt.analysis.TestSubResult",
+    "hhemt.Toolkit",
+}
+
+#: Names the population must NOT contain. The first two are origin-module keys
+#: for symbols the page presents under a shorter name; the third is an imported
+#: alias that its module does not export, so the page renders it nowhere. All
+#: three were in the population before it was derived from `griffe`.
+NOT_THE_PAGE_S_NAMES = {
+    "hhemt.toolkit.Toolkit",
+    "hhemt.bundle._combine.CombinedBundle",
+    "hhemt.config.experiment_definition.ExperimentConfig",
+}
+
+
+def _population():
+    return cdc.rendered_docstrings(cdc.SRC_ROOT, cdc.API_PAGE)
+
+
+def test_population_reaches_the_symbols_a_strict_derivation_loses():
+    """The fixture. Named symbols, not a count."""
+    reached = {q for q, _home, _line, _doc in _population()}
+    missing = CITATION_BEARING - reached
+    assert not missing, (
+        f"population no longer reaches {sorted(missing)}. A `__all__`-keyed derivation "
+        f"loses exactly these; check the population rule, not the symbols."
+    )
+
+
+def test_population_reaches_the_symbols_only_the_renderer_s_own_model_finds():
+    """Each pin is one defect an `ast` traversal had, expressed as a page anchor."""
+    reached = {q for q, _home, _line, _doc in _population()}
+    missing = PAGE_KEYED - reached
+    assert not missing, (
+        f"population no longer reaches {sorted(missing)}. These are names the built page "
+        f"emits as anchors; losing one means the derivation has stopped tracking the "
+        f"renderer -- check the derivation, not the symbols."
+    )
+
+
+def test_population_is_keyed_the_way_the_page_is():
+    """The right bytes under the wrong name are still the wrong name.
+
+    Asserted two ways, because the pinned trio is illustrative and the invariant
+    is general: no name the page can emit contains a private path segment, since
+    `filters: ["!^_"]` keeps private members off the page entirely. A derivation
+    that keys by origin module reintroduces `_combine`, `_emit`, `_context` and,
+    when this was measured, sixteen more.
+    """
+    reached = {q for q, _home, _line, _doc in _population()}
+    intruders = NOT_THE_PAGE_S_NAMES & reached
+    assert not intruders, (
+        f"{sorted(intruders)} are not names the page emits. The population is keyed by "
+        f"origin module rather than by the module the API pages declare the symbol through."
+    )
+    private = sorted(q for q in reached if any(seg.startswith("_") for seg in q.split(".")))
+    assert not private, (
+        f"{len(private)} qualname(s) carry a private path segment, e.g. {private[:3]}. "
+        f"`filters: ['!^_']` keeps those off the page, so no rendered anchor can contain one."
+    )
+
+
+def test_each_docstring_is_reached_under_exactly_one_name():
+    """The only pin here that catches OVER-reach, and it needs no built site.
+
+    Every other pin tests whether a NAME is present or absent, so none of them
+    fires when the population gains names nobody thought to list. That is the
+    failure mode of applying `filters` without also requiring an alias to be
+    exported: a re-exported symbol is then reached under every module that
+    imports it, and `ConfigurationError` alone arrives four times. Measured when
+    this test was written, that rule yielded 438 names over 271 docstring sites;
+    the correct rule is a bijection, one name per site (183 over 183 at that
+    measurement).
+    """
+    per_site: dict[tuple[str, int], list[str]] = {}
+    for qualname, home, line, _doc in _population():
+        per_site.setdefault((str(home), line), []).append(qualname)
+    repeated = {site: names for site, names in per_site.items() if len(names) > 1}
+    assert not repeated, (
+        f"{len(repeated)} docstring(s) are reached under more than one name, e.g. "
+        f"{sorted(repeated.values())[:2]}. An alias is being admitted without checking "
+        f"that its module exports it, so the population carries names the page never emits."
+    )
+
+
+def test_unmodelled_handler_options_raise_rather_than_silently_narrowing(tmp_path):
+    """A membership option this derivation cannot model must stop, not no-op.
+
+    The `ast` traversal's defects were silent for exactly this reason: a rule the
+    renderer applied and the gate did not made no noise.
+    """
+    yml = tmp_path / "mkdocs.yml"
+    yml.write_text(
+        "plugins:\n"
+        "  - mkdocstrings:\n"
+        "      handlers:\n"
+        "        python:\n"
+        "          options:\n"
+        '            filters: ["!^_"]\n'
+        "            show_submodules: true\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(cdc.PopulationDerivationError, match="show_submodules"):
+        cdc._handler_options(yml)
+
+
+def test_an_option_written_at_its_own_default_is_a_no_op(tmp_path):
+    """The defaults are READ from `PythonOptions`, not transcribed.
+
+    `extensions` and `preload_modules` carry `default_factory=list`, so their
+    real default is `[]`. A transcribed `None` made writing the documented
+    default explicitly RAISE -- the harmless value treated as dangerous, which is
+    the shape of the bug this refusal was written to prevent.
+    """
+    for key, value in (
+        ("extensions", "[]"),
+        ("preload_modules", "[]"),
+        ("show_submodules", "false"),
+        ("allow_inspection", "true"),
+    ):
+        yml = tmp_path / f"mkdocs-{key}.yml"
+        yml.write_text(
+            "plugins:\n  - mkdocstrings:\n      handlers:\n        python:\n"
+            '          options:\n            filters: ["!^_"]\n'
+            f"            {key}: {value}\n",
+            encoding="utf-8",
+        )
+        assert cdc._handler_options(yml)["filters"] == ["!^_"], f"{key}: {value} was refused"
+
+
+def test_filters_are_read_from_mkdocs_yml_rather_than_written_here():
+    """The population is a property of `mkdocs.yml` plus the API pages, read not copied."""
+    assert cdc._handler_options()["filters"] == ["!^_"], (
+        "mkdocs.yml's python-handler `filters` is no longer what this gate reads; "
+        "the population and the page have diverged at the configuration surface"
+    )
+
+
+def test_the_search_root_is_the_one_mkdocs_gives_the_renderer():
+    """`handlers.python.paths` is a handler key, not an option, and it is READ.
+
+    A refusal keyed on it could never fire, because it does not appear under
+    `options`. The failure it guards is quieter than the ones the refusal list
+    covers: the gate would scan a tree the page does not render from, and every
+    count would look right.
+    """
+    assert cdc._handler_paths() == [cdc.SRC_ROOT], (
+        f"mkdocs.yml points the python handler at {cdc._handler_paths()} while this gate's "
+        f"default root is {cdc.SRC_ROOT}; the gate and the page are reading different trees"
+    )
+
+
+def test_reading_option_defaults_does_not_broadcast_upstream_deprecations():
+    """Importing the handler emits 350 pydantic deprecations; the gate must not.
+
+    Measured: `griffe` imports at 0 warnings, `mkdocstrings_handlers.python` at
+    350, and an unsilenced module-scope import made this gate exit 1 under
+    `-W error::DeprecationWarning`. The cache is reset first because an earlier
+    test may already have paid the import, which would make this pass vacuously.
+    """
+    import warnings as _warnings
+
+    cdc._PYTHON_OPTION_FIELDS = None
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        assert cdc._option_default("extensions") == []
+    leaked = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert not leaked, f"{len(leaked)} upstream deprecation(s) escaped, e.g. {leaked[0].message}"
+
+
+def test_absent_paths_falls_back_where_the_renderer_looks(tmp_path):
+    """`PythonConfig.paths` defaults to `['.']` -- the CONFIG dir, not `src`.
+
+    The one branch that fires when configuration is absent is the one where a
+    `src` fallback would reintroduce the hardcode `_handler_paths` removes.
+    """
+    yml = tmp_path / "mkdocs.yml"
+    yml.write_text(
+        "plugins:\n  - mkdocstrings:\n      handlers:\n        python:\n"
+        '          options:\n            filters: ["!^_"]\n',
+        encoding="utf-8",
+    )
+    assert cdc._handler_paths(yml) == [tmp_path.resolve()]
+
+
+def test_multiple_declared_roots_are_all_read_in_order(tmp_path):
+    """Multi-root is legal config and is supported, not refused.
+
+    Declaration order is preserved because `search_paths` order is what breaks a
+    tie when two roots hold the same module name.
+    """
+    yml = tmp_path / "mkdocs.yml"
+    yml.write_text(
+        "plugins:\n  - mkdocstrings:\n      handlers:\n        python:\n"
+        "          paths: [src, vendor]\n"
+        '          options:\n            filters: ["!^_"]\n',
+        encoding="utf-8",
+    )
+    assert cdc._handler_paths(yml) == [(tmp_path / "src").resolve(), (tmp_path / "vendor").resolve()]
+
+
+def test_every_manifested_module_contributes_at_least_one_member():
+    """A module contributing zero members IS the STRICT signature.
+
+    Exercised through the product's own guard rather than by re-deriving the
+    owner from a qualname, which is ambiguous at different nesting depths.
+    """
+    import ast as _ast
+
+    real = cdc.rendered_docstrings
+    pop = real(cdc.SRC_ROOT, cdc.API_PAGE)
+    assert pop, "population is empty"
+
+    def strict_names(tree):
+        """True when a top-level plain assignment binds the name ``__all__`` (``__all__ = ...``).
+
+        Annotated (``__all__: list[str] = ...``), augmented (``__all__ += ...``) and
+        tuple-target assignments are not detected.
+        """
+        for node in tree.body:
+            if isinstance(node, _ast.Assign) and any(getattr(t, "id", None) == "__all__" for t in node.targets):
+                return True
+        return False
+
+    modules = cdc.public_modules(cdc.API_PAGE)
+    without_all = [
+        m
+        for m in modules
+        if (p := cdc._module_file(m, cdc.SRC_ROOT)) is not None
+        and not strict_names(_ast.parse(p.read_text(encoding="utf-8")))
+    ]
+    assert without_all, (
+        "no manifested module lacks __all__, so this test can no longer "
+        "discriminate RESOLVED from STRICT — re-pin it against a module that does"
+    )
+    reached = {q.rsplit(".", 1)[0] for q, _h, _l, _d in pop}
+    for m in without_all:
+        assert any(r == m or r.startswith(m + ".") for r in reached), (
+            f"{m} declares no __all__ and contributed nothing. That is the STRICT "
+            f"signature -- check the population derivation, not the module."
+        )
+
+
+def test_empty_population_raises_rather_than_passing_vacuously(tmp_path):
+    """Non-vacuity: an unresolvable population is an error, never a clean scan."""
+    api = tmp_path / "api.md"
+    api.write_text("# API Reference\n\n::: nothing.here\n", encoding="utf-8")
+    with pytest.raises(cdc.PopulationDerivationError, match="nothing to check"):
+        cdc.rendered_docstrings(tmp_path / "src", api)
+
+
+def test_citations_in_docstrings_are_gated_not_advisory():
+    """The binary classes reach the gated population, asserted on ROUTING rather
+    than on a live defect.
+
+    A synthetic docstring is used deliberately: asserting that the real
+    population currently yields a citation is green only until the source is
+    cleaned, which turns a repair into a red build.
+    """
+    synthetic = "See workflow.py:2326 for the call site.\n"
+    codes = {c for c, _p, _l, _e in cdc._binary_findings(Path("<synthetic>"), synthetic)}
+    assert "bare-line-citation" in codes, "the binary-class detector no longer fires"
+    live = {c for c, _p, _l, _e in cdc.scan_rendered_docstrings()}
+    assert live <= {
+        "bare-line-citation",
+        "self-declared-placeholder",
+        "deferred-to-later-task",
+        "deferred-release-content",
+        "coming-soon",
+        "bare-todo-marker",
+        "stub-self-declaration",
+        "unfilled-date-placeholder",
+    }, f"a non-binary class reached the gated population: {sorted(live - {'bare-line-citation'})}"
+
+
+def test_prose_classes_do_not_reach_the_gated_population():
+    """The prose classes (`em-dash`, `banned-word-estate`) stay out of the exit code:
+    `src/` prose is advisory only, never gated."""
+    codes = {c for c, _p, _l, _e in cdc.scan_rendered_docstrings()}
+    assert "em-dash" not in codes and "banned-word-estate" not in codes
+
+
+#: What each marker-carrying page DECLARES exempt, pinned BY NAME rather than
+#: counted. `main()`'s skip line reports HOW MANY marker files exist and never
+#: WHAT they declare, so a page adding `exempt=binary` would exempt itself from
+#: the two classes this project gates on shipped metadata and on rendered
+#: docstrings, and no existing mechanism would say so. A count cannot see it; a
+#: named fixture goes red on the edit that does it.
+DECLARED_EXEMPTIONS = {
+    "docs/reference/config-schema.md": {"prose"},
+    "docs/contributing.md": {"prose"},
+    "ENVIRONMENT_SNAPSHOT.md": {"prose"},
+    "architecture.md": {"prose"},
+    "configs/reports/README.md": {"prose"},
+    "containers/README.md": {"prose"},
+    "scripts/experiments/_report_template.md": {"prose"},
+    "tests/fixtures/examples/README.md": {"prose"},
+    "tests/fixtures/perf_resume_ledger/README.md": {"prose"},
+}
+
+
+def _marker_pages():
+    docs = _REPO / "docs"
+    return {
+        md.relative_to(_REPO).as_posix(): set(cdc._exempt_groups(md.read_text(encoding="utf-8")))
+        for md in cdc.generated_files(docs) + cdc.personal_voice_files(docs) + cdc.repo_internal_files(docs)
+    }
+
+
+def test_both_scanners_walk_the_derived_population(tmp_path, monkeypatch):
+    """`scan` and `scan_advisory` take `_scanned_markdown`, not a `docs_dir` rglob.
+
+    The injected population sits OUTSIDE the docs dir passed in, so a scanner
+    still rglobbing that directory returns nothing and this fails.
+    """
+    outside = tmp_path / "outside.md"
+    outside.write_text("TODO: fix this, not that.\n", encoding="utf-8")
+    monkeypatch.setattr(cdc, "_scanned_markdown", lambda docs_dir: [outside])
+
+    gated = cdc.scan(tmp_path / "docs")
+    assert {p for _c, p, _l, _e in gated} == {outside}
+    assert "bare-todo-marker" in {c for c, _p, _l, _e in gated}
+
+    advisory = cdc.scan_advisory(tmp_path / "docs")
+    assert outside in {p for _c, p, _l, _e in advisory}
+
+
+def test_missing_git_raises_rather_than_yielding_an_empty_corpus(tmp_path):
+    """Fail-closed. An empty population makes every gate green, so it must raise.
+
+    `tmp_path` is not a git repository, so `git rev-parse` exits non-zero and
+    `check=True` raises rather than letting the on-disk half of the union stand
+    in for a population git could not answer for.
+    """
+    (tmp_path / "docs").mkdir()
+    with pytest.raises(RuntimeError, match="git"):
+        cdc._scanned_markdown(tmp_path / "docs")
+
+
+def test_main_returns_2_without_git_rather_than_a_traceback(tmp_path, capsys):
+    """The failure path the gate's CI caller can never reach.
+
+    `docs-build.yml` runs the gate through `scripts/docs_gates.sh`, but always
+    inside a git checkout, where `_repo_root` succeeds and the raise never fires. The path is
+    UNEXERCISED rather than undriven, which is why a handler too narrow to catch
+    it stayed invisible.
+
+    Asserting the exit code alone would NOT discriminate: `main()` already
+    returns 2 for a missing docs dir, so a handler that never fires would pass by
+    borrowing that path's code. The message is what separates them.
+    """
+    (tmp_path / "docs").mkdir()
+
+    rc = cdc.main(["--docs-dir", str(tmp_path / "docs")])
+
+    assert rc == 2, "a derivation failure must reach the documented exit 2"
+    err = capsys.readouterr().err
+    assert "git" in err, f"exit 2 came from a different path: {err!r}"
+    assert "docs dir not found" not in err, "this is the docs-dir path, not the derivation path"
+
+
+_MKDOCS_WITH = (
+    'plugins:\n  - mkdocstrings:\n      handlers:\n        python:\n          options:\n            filters: ["!^_"]\n'
+)
+
+
+def test_an_unmodelled_handler_option_reaches_exit_2_rather_than_escaping(tmp_path, capsys, monkeypatch):
+    """`mkdocs.yml` is read through a DEF-TIME-bound default, so this path is
+    unexercised by every real invocation: `docs-build.yml` runs against the
+    repository's own config, where every declared option is classified and the
+    refusal never fires. Unexercised is not undriven -- the refusal is one
+    configuration edit away, and until this test it escaped `main()` entirely.
+
+    `_handler_options` is re-bound rather than `MKDOCS_YML`, because
+    `_handler_options(mkdocs_yml: Path = MKDOCS_YML)` binds its default at DEF
+    time: re-pointing the module global changes nothing and the arm would pass
+    for free. The wrapper forwards to the REAL function, so the raise fires at
+    its real site and travels the real stack.
+
+    Exit code alone does not discriminate -- `main()` already returns 2 for a
+    missing docs dir and for a git failure -- so the option name is the
+    separator.
+    """
+    yml = tmp_path / "mkdocs.yml"
+    yml.write_text(_MKDOCS_WITH + "            merge_init_into_class: true\n", encoding="utf-8")
+    real = cdc._handler_options
+    monkeypatch.setattr(cdc, "_handler_options", lambda *_a, **_k: real(yml))
+
+    rc = cdc.main(["--docs-dir", str(_REPO / "docs")])
+
+    assert rc == 2, "an unmodelled handler option is a derivation failure and owes the documented exit 2"
+    err = capsys.readouterr().err
+    assert "merge_init_into_class" in err, f"exit 2 came from a different path: {err[:400]!r}"
+    assert "docs dir not found" not in err, "this is the docs-dir path, not the derivation path"
+
+
+def test_a_module_contributing_zero_members_reaches_exit_2_rather_than_escaping(capsys, monkeypatch):
+    """The STRICT signature, driven through the process boundary.
+
+    `test_every_manifested_module_contributes_at_least_one_member` asserts the
+    population is non-empty; nothing asserted what happens when it is not. The
+    guard exists and, before this round, raised a bare `ValueError` that
+    `main()`'s handler did not name -- so the gate reported a derivation failure
+    with the FINDINGS exit code.
+
+    Driven by neutering the filter predicate, which makes every module contribute
+    zero non-module members, and by manifesting one module the test writes itself,
+    `zero_member_probe`, which carries no module docstring; that module then
+    contributes nothing at all and the real guard fires at its real site.
+    """
+    import tempfile
+
+    monkeypatch.setattr(cdc, "_passes_filters", lambda _name, _filters: False)
+
+    # The manifest names one module of the test's own, which carries no module
+    # docstring, so the guard's trigger is this module rather than whichever toolkit
+    # module happens to lack a docstring. Its one function is dropped by the neutered
+    # filter, so the module contributes nothing.
+    with tempfile.TemporaryDirectory() as scratch:
+        src = Path(scratch) / "src"
+        src.mkdir()
+        (src / "zero_member_probe.py").write_text(
+            'def documented():\n    """A member the neutered filter drops."""\n', encoding="utf-8"
+        )
+        api_page = Path(scratch) / "api.md"
+        api_page.write_text("# API Reference\n\n::: zero_member_probe\n", encoding="utf-8")
+        monkeypatch.setattr(cdc, "SRC_ROOT", src)
+        monkeypatch.setattr(cdc, "API_PAGE", api_page)
+        # `published_source_lines` binds both paths as default arguments at import,
+        # so the module globals above do not reach it; it is the call that derives
+        # the population first, and the guard under test sits inside it.
+        real_published = cdc.published_source_lines
+        monkeypatch.setattr(cdc, "published_source_lines", lambda **kw: real_published(src, api_page, **kw))
+
+        rc = cdc.main(["--docs-dir", str(_REPO / "docs")])
+
+    assert rc == 2, "the STRICT signature is a derivation failure and owes the documented exit 2"
+    err = capsys.readouterr().err
+    assert "contributed zero documented members" in err, f"exit 2 came from a different path: {err[:400]!r}"
+    assert "docs dir not found" not in err, "this is the docs-dir path, not the derivation path"
+    assert "zero_member_probe" in err, f"the guard fired on a module other than the test's own: {err[:400]!r}"
+
+
+def test_an_unanticipated_failure_returns_3_with_its_traceback(capsys, monkeypatch):
+    """The backstop, and the ONE test here that must not anchor on wording.
+
+    The message this branch prints cannot exist before the branch does, so an
+    assertion on it is green pre-fix and green post-fix for different reasons.
+    Both operands asserted below exist in both worlds: whether `main()` RETURNS
+    at all rather than letting the exception escape, and whether the traceback
+    survives. Pre-fix the exception escapes `main()` and this test errors; a
+    re-raise implementation would return the process to exit 1, which is the
+    FINDINGS code: an unanticipated failure would then read as findings, the
+    collision exit 3 exists to prevent.
+
+    Unexercised by construction: no real input produces a `KeyError` here, which
+    is exactly why a backstop is what covers it.
+    """
+
+    def _boom(*_a, **_k):
+        raise KeyError("an exception nobody anticipated")
+
+    monkeypatch.setattr(cdc, "_repo_root", _boom)
+
+    rc = cdc.main(["--docs-dir", str(_REPO / "docs")])
+
+    assert rc == 3, "an unanticipated failure must not borrow 1 (findings) or 2 (derivation)"
+    err = capsys.readouterr().err
+    assert "Traceback (most recent call last)" in err, "the backstop must PRESERVE the traceback, not swallow it"
+    assert "KeyError" in err, "the traceback must name the original exception"
+
+
+def test_gitignored_build_output_stays_in_the_population():
+    """The generated page is BUILD OUTPUT and this project gitignores it.
+
+    A tracked-only population drops it, which pins `main()`'s generated-file
+    count at 0 forever and deletes the advisory worklist the marker design keeps.
+    That is why the population is a UNION and not `git ls-files` alone.
+    """
+    docs = _REPO / "docs"
+    gen = docs / "reference" / "config-schema.md"
+    if not gen.is_file():
+        pytest.skip("generated page absent: run `mkdocs build` first")
+    assert gen in set(cdc._scanned_markdown(docs)), "the gitignored generated page fell out of the derived population"
+    assert gen in cdc.generated_files(docs), (
+        "`main()` would print `skipped 0 generated file(s)` and the count that "
+        "makes a future generated page visible would be pinned at zero"
+    )
+
+
+def test_shipped_markdown_is_routed_out_of_the_prose_gate():
+    """`scan()` walks the shipped-metadata markdown; `_run` must route it out.
+
+    `scan_shipped_metadata` gates those files on the two file-type-independent
+    classes ONLY. Without the routing they are gated twice, and the second gate
+    applies the prose contracts the design rules out for them.
+
+    The population must CONTAIN them: narrowing it instead would also remove
+    them from the advisory tier, which is the drop the marker design forbids.
+    """
+    docs = _REPO / "docs"
+    shipped_md = {_REPO / n for n in cdc.SHIPPED_METADATA if n.endswith(".md")}
+    assert shipped_md, "no markdown in SHIPPED_METADATA: this would pass vacuously"
+    assert shipped_md <= set(cdc._scanned_markdown(docs)), (
+        "the derived population must contain the shipped markdown; routing is `_run`'s job, not the population's"
+    )
+    offenders = sorted({p.name for _c, p, _l, _e in cdc.scan(docs) if p in shipped_md})
+    assert offenders, (
+        "no shipped markdown carries a gated finding today, so this test cannot "
+        "discriminate; re-ground it on a file that does, or retire it"
+    )
+    assert cdc.main(["--docs-dir", str(docs)]) == 0, (
+        f"{offenders} reached the gate: `_run` is not routing SHIPPED_METADATA out of `scan()`'s contribution"
+    )
+
+
+def test_a_relative_docs_dir_yields_the_same_population(monkeypatch):
+    """The spelling the help text invites, and the one the union broke.
+
+    `git ls-files` answers in absolute paths and `rglob` inherits the caller's
+    spelling, so without `.resolve()` a relative `--docs-dir` puts BOTH spellings
+    of every docs page in the union -- they do not compare equal, so the set does
+    not merge them. Measured at 88 members instead of 51, every docs page counted
+    twice, and the first `relative_to(repo_root)` raising an uncaught ValueError
+    on an invocation the gate served at exit 0 before its population became a union.
+
+    Every OTHER test in this file passes an absolute docs dir, and every one of
+    them is green under that defect. That is why this arm exists rather than a
+    seventh absolute one.
+    """
+    monkeypatch.chdir(_REPO)
+
+    absolute = set(cdc._scanned_markdown(_REPO / "docs"))
+    relative = set(cdc._scanned_markdown(Path("docs")))
+
+    assert all(p.is_absolute() for p in relative), (
+        "the population must be absolute however the caller spells --docs-dir; "
+        "the relative members are the rglob half carrying that spelling"
+    )
+    assert relative == absolute, (
+        f"a relative --docs-dir changed the population: {len(relative)} members against {len(absolute)}"
+    )
+    assert cdc.main(["--docs-dir", "docs"]) == 0, (
+        "a relative --docs-dir must reach the same exit as an absolute one; the "
+        "pre-A19 gate served this invocation at exit 0"
+    )
+
+
+def test_marker_pages_declare_exactly_the_pinned_exemptions():
+    """A new marker page, or a changed declaration, goes red here.
+
+    The generated page is gitignored build output: ABSENT on a fresh clone and
+    present after `mkdocs build`. Its absence is not a failure; a mismatch is, and
+    so is a marker page this fixture has never heard of.
+    """
+    seen = _marker_pages()
+    assert "docs/contributing.md" in seen, "the tracked personal-voice page is not being detected"
+    assert seen == {k: v for k, v in DECLARED_EXEMPTIONS.items() if k in seen}
+
+
+def test_no_marker_page_exempts_the_binary_classes():
+    """No marker page exempts itself from the binary classes, asserted rather than trusted.
+
+    `binary` stays spellable so the class split lives in the pages rather than in
+    the module -- which means nothing but this test stops a page declaring it.
+    """
+    seen = _marker_pages()
+    assert seen, "no marker pages found: this assertion would pass vacuously"
+    offenders = sorted(page for page, groups in seen.items() if "binary" in groups)
+    assert offenders == [], (
+        f"{offenders} declare `exempt=binary`. Placeholder leakage and bare line "
+        f"citations are gated on shipped metadata and on rendered docstrings; a page "
+        f"exempting them needs its own ruling, not a marker edit."
+    )
+
+
+def test_a_fenced_declaration_grants_nothing_and_aborts_nothing():
+    """The detector is fence-masked PER LINE, so a page may DOCUMENT the mechanism.
+
+    Four positions, and the fourth is the one a join would fail: a fenced correct
+    declaration must not grant, a fenced malformed one must not abort, a real
+    unfenced declaration must still be honoured, and a page naming a marker on one
+    side of a fence while spelling `exempt=` on the other must NOT be spliced into
+    a declaration it never made.
+    """
+    correct = "# Doc\n\n```markdown\n<!-- hhemt:repo-internal exempt=prose -->\n```\n\nprose\n"
+    malformed = "# Doc\n\n```markdown\n<!-- hhemt:repo-internal exempt= -->\n```\n\nprose\n"
+    assert cdc._exempt_groups(correct) == frozenset()
+    assert cdc._exempt_groups(malformed) == frozenset()
+    unfenced = "<!-- hhemt:repo-internal exempt=prose -->\n# Doc\n"
+    assert cdc._exempt_groups(unfenced) == frozenset({"prose"})
+    spliced = (
+        "# Page\nA sentence mentioning hhemt:repo-internal\n"
+        "```python\nx = 1\n```\nexempt=prose is the syntax you write.\n"
+    )
+    with pytest.raises(cdc.MarkerDeclarationError):
+        cdc._exempt_groups(spliced)
+
+
+def test_exempt_on_a_non_exemption_marker_is_refused():
+    """`_MARKER_DECL` spans the whole `hhemt:` namespace; consultation does not.
+
+    Before the refuse branch this returned an empty set with no error, so a
+    declaration copied onto a neighbouring marker granted nothing and said
+    nothing. The inert governance marker carries no `exempt=` and must stay inert,
+    and a fenced example on a neighbouring marker must not trip the branch either.
+    """
+    with pytest.raises(cdc.MarkerDeclarationError):
+        cdc._exempt_groups("<!-- hhemt:marker-governance exempt=prose -->\n# Doc\n")
+    assert cdc._exempt_groups("<!-- hhemt:marker-governance -->\n# Doc\n") == frozenset()
+    fenced = "# Doc\n\n```markdown\n<!-- hhemt:marker-governance exempt=prose -->\n```\n\nprose\n"
+    assert cdc._exempt_groups(fenced) == frozenset()
+
+
+def test_the_skip_line_names_what_each_page_declares(tmp_path):
+    """The invariant: EVERY skipped page's entry carries THAT page's own groups.
+
+    Asserted so a hard-coded literal fails and so a partly-annotated one fails too.
+    Three positions. The count of rendered declarations equals the number of marker
+    pages, which kills an implementation annotating only some entries. One marker
+    KIND carries TWO pages with DIFFERENT declarations, without which that count is
+    blind: `_skip_line` runs once per kind, so an "only the first entry" bug is
+    invisible while every kind has one page. And a page declaring `binary` must
+    render `(exempt=binary)`, which kills a hard-coded `prose`. None of the three is
+    satisfied by the state this repo happens to be in, where all nine live
+    declarations name `prose`.
+    """
+    import io
+    import re
+    import subprocess
+    from contextlib import redirect_stderr, redirect_stdout
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "gen.md").write_text(f"<!-- {cdc.GENERATED_MARKER_NAME} exempt=binary -->\n# G\n", encoding="utf-8")
+    (docs / "a.md").write_text(f"<!-- {cdc.REPO_INTERNAL_MARKER_NAME} exempt=prose -->\n# A\n", encoding="utf-8")
+    (docs / "b.md").write_text(f"<!-- {cdc.REPO_INTERNAL_MARKER_NAME} exempt=binary -->\n# B\n", encoding="utf-8")
+
+    # BOTH streams, then ONLY the skip lines. `_run` prints skip_lines to stdout
+    # on its green branch and to stderr on its red one, and class 6 reddens THIS
+    # fixture: the docs-to-source registry names a page that does not exist under
+    # a tmp_path docs dir, so its rows land as `docs-source-page-absent` findings.
+    # The invariant under test is the skip line's CONTENT, which is
+    # stream-independent -- capturing one stream ties it to an unrelated gate
+    # staying green. Narrowing to `skipped ` lines is what keeps the widening from
+    # also admitting the FINDINGS block, whose excerpts are up to 110 characters of
+    # arbitrary scanned text: an excerpt carrying `(exempt=...)` would be counted
+    # by the assertion below, which both reddens this test for a reason unrelated
+    # to its invariant and lets a `_skip_line` that dropped a whole marker kind
+    # pass on a restored count. Finding lines are indented two spaces, so the
+    # prefix match excludes them.
+    buf, errbuf = io.StringIO(), io.StringIO()
+    with redirect_stdout(buf), redirect_stderr(errbuf):
+        cdc.main(["--docs-dir", str(docs)])
+    out = "\n".join(line for line in (buf.getvalue() + errbuf.getvalue()).splitlines() if line.startswith("skipped "))
+
+    pages = cdc.generated_files(docs) + cdc.personal_voice_files(docs) + cdc.repo_internal_files(docs)
+    rendered = re.findall(r"\(exempt=([a-z,]+)\)", out)
+    assert len(pages) == 3, pages
+    assert len(rendered) == len(pages), out
+    assert "gen.md (exempt=binary)" in out, out
+    assert "a.md (exempt=prose)" in out, out
+    assert "b.md (exempt=binary)" in out, out
+
+
+# ---- Class 6: docs-to-source filename agreement -----------------------------
+#
+# One test per ARM, each pinning the code AND a discriminating substring, per
+# this module's convention: an assertion on the code alone does not say which
+# path produced it. The satisfying arm is last and is the one that catches an
+# assertion firing on a correct page, which is the failure the rule exists to
+# avoid shipping.
+_V0022 = "hhemt.version_migration.versions.V0022__promote_producer_written_experiment_tree"
+_PAGE = "reference/output-data-model.md"
+
+
+def _docs_dir():
+    return _REPO / "docs"
+
+
+def test_a_registered_module_that_is_absent_is_a_finding_not_a_skip():
+    """A row naming a module that does not exist yields `docs-source-module-absent`."""
+    rows = ((_PAGE, "x.zarr", "hhemt.version_migration.versions.V9999__nope", "_X", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-module-absent"], out
+    assert "V9999__nope" in out[0][3], f"the finding names a different row: {out[0][3]!r}"
+
+
+def test_a_registered_attribute_that_is_absent_is_a_finding_not_a_skip():
+    """A row naming a constant its module lacks yields `docs-source-attribute-absent`."""
+    rows = ((_PAGE, "x.zarr", _V0022, "_NO_SUCH_NAME", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-attribute-absent"], out
+    assert "_NO_SUCH_NAME" in out[0][3], f"the finding names a different row: {out[0][3]!r}"
+
+
+def test_a_non_literal_constant_is_its_own_finding_rather_than_a_crash():
+    """`_SCHEMA_VERSION = str(version_to)` is the real shape this arm exists for.
+
+    Under a rendered-string reduction this input raises and reaches the exit-3
+    catch-all, which is a false statement about a constant somebody legitimately
+    made computed. The node discrimination makes it a local, catchable outcome.
+    """
+    rows = ((_PAGE, "22", _V0022, "_SCHEMA_VERSION", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-attribute-not-literal"], out
+    assert "_SCHEMA_VERSION" in out[0][3], f"the finding names a different row: {out[0][3]!r}"
+
+
+def test_a_literal_disagreeing_with_its_constant_is_reported_with_the_bound_value():
+    """A page literal that differs from its constant names the constant's actual value."""
+    rows = ((_PAGE, "WRONG.zarr", _V0022, "_SUPERSEDED", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-literal-disagrees"], out
+    assert "bound=" in out[0][3], f"the finding hides the value it disagreed with: {out[0][3]!r}"
+
+
+def test_a_registered_page_that_is_absent_is_a_finding_not_a_skip():
+    """A row naming a docs page that does not exist yields `docs-source-page-absent`."""
+    rows = (("reference/no-such-page.md", "sensitivity_datatree.zarr", _V0022, "_RETIRED_SENSITIVITY", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-page-absent"], out
+    assert "no-such-page" in out[0][3], f"the finding names a different row: {out[0][3]!r}"
+
+
+def test_a_wrong_occurrence_count_reddens_and_addresses_the_first_occurrence():
+    """The rename-one-of-two case, which presence alone cannot see.
+
+    `experiment_datatree.zarr` occurs twice on the page. Declaring 1 stands in
+    for an editor having renamed one of them: the survivor still matches, so a
+    presence assertion stays green and only the count moves.
+    """
+    rows = ((_PAGE, "experiment_datatree.zarr", _V0022, "_UNIFIED_EXPERIMENT", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-page-count"], out
+    assert "found 2" in out[0][3], f"the finding hides the measured count: {out[0][3]!r}"
+    assert out[0][2] > 1, "the finding must address an occurrence, not default to line 1"
+
+
+def test_a_total_rename_on_the_page_reddens_and_addresses_the_page_head():
+    """Count 0 -- every occurrence on the page renamed while the constant is
+    untouched, which is the defect the count assertion exists for and which a
+    presence assertion cannot see. There is no occurrence to address, so the
+    finding falls back to line 1; pinned here so the fallback is a decision
+    rather than an accident."""
+    rows = (("reference/api.md", "experiment_datatree.zarr.superseded-v0022", _V0022, "_SUPERSEDED", 1),)
+    out = cdc.scan_docs_source_filenames(_docs_dir(), registry=rows)
+    assert [f[0] for f in out] == ["docs-source-page-count"], out
+    assert "found 0" in out[0][3], f"the finding hides the measured count: {out[0][3]!r}"
+    assert out[0][2] == 1, "with no occurrence to address the finding pins the page head"
+
+
+def test_a_malformed_registry_row_is_a_finding_not_a_crash():
+    """A row missing a field is VALID PYTHON: it imports cleanly and fails at the
+    unpack, so without this guard the likeliest hand-edit on a five-field tuple
+    reports as an internal crash at exit 3."""
+    shapes = (
+        (_PAGE, "x.zarr", _V0022, "_X"),
+        (_PAGE, "x.zarr", _V0022, "_X", "1"),
+        (5, "x.zarr", _V0022, "_X", 1),
+        [_PAGE, "x.zarr", _V0022, "_X", 1],
+    )
+    for shape in shapes:
+        out = cdc.scan_docs_source_filenames(_docs_dir(), registry=(shape,))
+        assert [f[0] for f in out] == ["docs-source-registry-malformed"], (shape, out)
+
+
+def test_the_shipped_registry_is_satisfied_by_the_tree_it_ships_with():
+    """The satisfying arm. An assertion that fires on a correct page is the
+    failure this rule exists to avoid shipping, and only this test can catch it.
+    """
+    assert cdc.scan_docs_source_filenames(_docs_dir()) == []
+
+
+def test_the_path_sense_master_ban_reaches_fenced_content_and_spares_the_role_sense():
+    """Both forms of the path-sense `master` ban, pinned inside fences, plus the
+    role-sense population.
+
+    The two forms are `master` as a path delimiter (`.../master/`) and `master` as
+    an artifact noun (`master sidecar`, `master zarr` and the like).
+
+    The entry's reach is the CLASS's property rather than the pattern's: every
+    path-sense site this corpus has carried has been inside a fenced block, so
+    routing word bans through `_unfenced_lines` would take BOTH arms to zero
+    while every other assertion in this module stayed green. That is what the
+    tuple's own header comment warns against. No count is asserted here, for the
+    same reason the entry's own comment states none.
+    """
+    delimiter = "# Page\n\n```bash\nhhemt eda --analysis-dir runs/x/master/\n```\n"
+    artifact = "# Page\n\n```python\npublish()   # deposits experiment_datatree.zarr + master sidecar\n```\n"
+    for label, text in (("delimiter", delimiter), ("artifact-noun", artifact)):
+        codes = {c for c, _p, _l, _e in cdc._gate_findings(Path("<synthetic>"), text)}
+        assert "banned-path-sense-master" in codes, f"the {label} arm no longer reaches fenced content"
+    for keep in (
+        "A sensitivity analysis deposits its **master** tree the same way:",
+        "one sensitivity master per model arm",
+        "toggles match the master system config",
+        "a clean-vs-resume sensitivity-master pair",
+        "Master switch. When False, renderers emit static PNG",
+        "ControlMaster auto",
+    ):
+        codes = {c for c, _p, _l, _e in cdc._gate_findings(Path("<synthetic>"), keep + "\n")}
+        assert "banned-path-sense-master" not in codes, f"the ban fired on role sense: {keep!r}"
+
+
+def test_the_stored_value_of_each_real_derivation_round_trips_equal():
+    """Each real derivation's value is of the shape the memo accepts, is non-empty, and pickles back equal.
+
+    Input class: the live ``rendered_docstrings`` and ``published_source_lines`` results, read through the live
+    wrappers (the memo's own pass-through). ORDER-DEPENDENT cost: in file order this arm derives nothing the
+    module's earlier live tests have not already derived (its call time is below 0.005 s), but run alone, for
+    example with ``-k`` on this test, it pays both real derivations (about 90 s measured with the conda ``hhemt``
+    interpreter), so ``-k`` on this test alone is not cheap. Required because the return types were read as
+    annotations and never run; a value that does not pickle, or comes back unequal, would make the memo error or
+    serve a different value. Where the equality is checked: ``_memo_fetch`` compares
+    ``pickle.loads(pickle.dumps(value)) == value`` before it publishes and raises
+    on a difference, so a derivation that cannot be stored faithfully fails HERE (or in the first live test that
+    needs it). The shape and non-empty assertions below are the only place a freshly derived value is checked: the
+    memo applies ``shape_ok`` to a stored entry on read, never to a value it has just derived. Killed by a
+    derivation returning a non-pickleable or non-equal-after-round-trip object, or an empty one.
+    """
+    rendered = cdc.rendered_docstrings(cdc.SRC_ROOT, cdc.API_PAGE)
+    spans = cdc.published_source_lines(cdc.SRC_ROOT, cdc.API_PAGE)
+    assert _rendered_shape_ok(rendered) and _spans_shape_ok(spans)
+    assert rendered and spans, "an empty derivation proves nothing"

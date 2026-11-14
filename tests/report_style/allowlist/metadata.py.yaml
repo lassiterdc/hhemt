@@ -1,0 +1,15 @@
+source: src/hhemt/report_renderers/metadata.py
+entries:
+- rule: retired_word
+  string: ro-crate-metadata.json
+  status: permitted
+  reason: A file name as the toolkit writes it; the page prints it in code formatting where the reader opens it.
+- rule: retired_word
+  string: sim
+  status: permitted
+  reason: Dictionary key of the stage stamps; the page never prints it.
+- rule: retired_word
+  string: sa_id
+  status: permitted
+  reason: Dictionary key of the job purpose map and the status table; the page never prints it.
+  count: 6

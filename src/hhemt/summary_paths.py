@@ -9,6 +9,56 @@ without an import cycle. PATH-ONLY: MUST NOT instantiate ``TRITONSWMM_scenario``
 
 from __future__ import annotations
 
+import json
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+#: Model-log field recording that a model's per-scenario summary stores were deleted after every slice of the
+#: scenario was read back from the ``summary`` branches of the consolidated tree. Its value is
+#: ``{"state": "pending" | "done", "stems": {stem: {group: [variable names]}}}``: ``pending`` is written before the
+#: stores are deleted and ``done`` after, so a state of either kind means the data is in the branch.
+SUMMARY_CLEARING_FIELD = "consolidated_summaries_cleared"
+SUMMARY_CLEARING_STATES = ("pending", "done")
+
+
+def parse_summary_clearing_record(value) -> dict | None:
+    """The clearing record when ``value`` is a well-formed one (a known state and a stems mapping), else None.
+
+    A record of any other shape reads as absent, so a hand-edited or truncated log never makes a scenario look
+    cleared. Both the log field and the raw JSON payload of a log file pass through here, so the two readers of
+    the record agree on what a record is.
+    """
+    if not isinstance(value, dict):
+        return None
+    if value.get("state") not in SUMMARY_CLEARING_STATES or not isinstance(value.get("stems"), dict):
+        return None
+    return value
+
+
+def summary_clearing_record(sim_folder: Path, model: str) -> dict | None:
+    """The summary-clearing record in ``{sim_folder}/log_{model}.json``, or None when there is none.
+
+    Path-only: the log is read with ``json`` and no scenario is built, which is what lets the completion
+    predicates below consult it. An absent, unreadable or malformed log reads as no record. After the scenario
+    directory was removed (D24 (e)) the same field is read from the analysis-level record
+    (``scenario_records.record_for`` semantics, resolved from the folder path: ``{analysis_dir}/sims/{event_id}``).
+    """
+    from hhemt.scenario_records import REMOVED_STATES, read_scenario_record
+
+    sim_folder = Path(sim_folder)
+    removed = read_scenario_record(sim_folder.parent.parent, sim_folder.name)
+    if removed is not None and removed["state"] in REMOVED_STATES:
+        logged = (removed.get("model_logs") or {}).get(model)
+        return parse_summary_clearing_record(logged.get(SUMMARY_CLEARING_FIELD)) if isinstance(logged, dict) else None
+    try:
+        payload = json.loads((sim_folder / f"log_{model}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return parse_summary_clearing_record(payload.get(SUMMARY_CLEARING_FIELD)) if isinstance(payload, dict) else None
+
+
 # ---------------------------------------------------------------------------
 # Report-target completeness predicate (report-target-predicate unification).
 # ---------------------------------------------------------------------------
@@ -23,6 +73,9 @@ from __future__ import annotations
 # report target on c_run produces an unsatisfiable target when the summary is
 # missing (the render_report failure this predicate closes). Stems mirror
 # scenario.ScenarioPaths' output_*_summary naming (scenario.py:148-224).
+# DELIBERATE INDEPENDENT COPY, do not lift: tests/test_synth_remove_after_processing.py:45
+# hand-maintains this membership as the guard's independent ground truth. Its own :40-44
+# comment states why, and its guards compare it against the name set of PRODUCTION _timeseries_drop_names.
 _SUMMARY_STEMS_BY_MODEL: dict[str, tuple[str, ...]] = {
     "tritonswmm": (
         "TRITONSWMM_TRITON_summary",
@@ -40,52 +93,154 @@ _SUMMARY_STEMS_BY_MODEL: dict[str, tuple[str, ...]] = {
     ),
 }
 
+_SUMMARY_ATTRS_BY_MODEL: dict[str, tuple[str, ...]] = {
+    "tritonswmm": (
+        "output_tritonswmm_triton_summary",
+        "output_tritonswmm_node_summary",
+        "output_tritonswmm_link_summary",
+        "output_tritonswmm_performance_summary",
+    ),
+    "triton": (
+        "output_triton_only_summary",
+        "output_triton_only_performance_summary",
+    ),
+    "swmm": (
+        "output_swmm_only_node_summary",
+        "output_swmm_only_link_summary",
+    ),
+}
+
+
+def summary_artifact_present(path: Path, out_type: str) -> bool:
+    """True iff ``path`` exists AND is the artifact KIND ``out_type`` implies.
+
+    A zarr store is a DIRECTORY and a NetCDF summary is a FILE, so a bare
+    ``.exists()`` is satisfied by either shape under either setting and cannot tell a
+    readable artifact from one the reader raises on. ``is_file()`` ALONE is the wrong
+    repair and is the one this docstring exists to forbid: it returns False on the zarr
+    store that every DEFAULT configuration produces, which would report every healthy
+    analysis incomplete at every consumer of the predicates below.
+
+    Keyed on ``out_type`` rather than on the suffix because every caller here CONSTRUCTS
+    the path from ``out_type`` and therefore knows the expected kind exactly. The
+    suffix-keyed sibling in ``eda/cross_sim_identity._summary_paths`` is the GLOB-side
+    form, written for a helper that discovers paths it did not construct; it is strictly
+    weaker here, because it accepts a plain FILE at ``{stem}.zarr``.
+
+    EXPORTED so this is the single source of the rule rather than its fourth independent
+    statement. Three other sites state it today -- ``process_simulation._open_engine`` as
+    an engine choice, ``process_simulation._summary_usable`` as an open probe, and
+    ``eda/cross_sim_identity._summary_paths`` as a suffix rule -- and none imports
+    another. Adopting this at those three is a one-line import each, deliberately NOT
+    done here: two of the three files belong to no workstream in the current partition.
+    Deliberately NOT an openability probe (the ``_summary_usable`` form): that would need
+    xarray and O(subs x events x stems) I/O, and this module's PATH-ONLY contract exists
+    so ``workflow.py`` and ``analysis_validation.py`` can both import it without a cycle.
+    """
+    return path.is_dir() if out_type == "zarr" else path.is_file()
+
 
 def scenario_summaries_present(analysis, event_id: str, enabled_models: list[str]) -> bool:
-    """True iff every enabled model's per-sim summary file exists for ``event_id``.
+    """True iff every enabled model's per-sim summary is present AND is the KIND
+    ``target_processed_output_type`` implies — a zarr STORE (directory) under
+    ``zarr``, a NetCDF FILE under ``nc``.
 
-    Path-only existence probe mirroring
-    ``processing_analysis._retrieve_combined_output``'s test (the predicate
-    ``consolidate_*_datatree`` skips on). It MUST NOT instantiate
+    Path-only KIND probe. It is NARROWER than a bare existence probe and STRICTLY
+    WEAKER than ``processing_analysis._retrieve_combined_output``'s test, which it no
+    longer mirrors: that test is a CONJUNCTION of existence (``processing_analysis.py``
+    ``:501``) and a per-model processing-log record (``:539-546``) that, in its own
+    words, "is the only signal in the tree that attests RETURN rather than PRESENCE".
+    This predicate closes the KIND axis and leaves the READABILITY axis exactly where it
+    was: a fill-filled partial zarr store satisfies ``is_dir()`` and OPENS, and only the
+    log record screens it out. That is not a gap to close here — the log hangs off the
+    scenario and the PATH-ONLY contract below forbids instantiating one. It remains the
+    predicate ``consolidate_*_datatree`` skips on, and it MUST NOT instantiate
     ``TRITONSWMM_scenario`` — that constructor mkdir's ``processed/``,
     ``swmm/``, and ``out_swmm/`` as a side effect (scenario.py:63/65/82), so a
     generation-time read-only probe would create scenario subdirectories and
     pay the full constructor cost O(subs x events) on every ``analysis.run()``.
+    A model whose log records its per-scenario summary stores as cleared (``SUMMARY_CLEARING_FIELD``, state
+    ``pending`` or ``done``) counts as present: the record is written only after every slice of the scenario was read
+    back from the consolidated tree, so the data is there either way. The log is read with ``json`` and no scenario
+    is built.
     Paths are derived directly from ``ScenarioPaths``' naming convention
     (``sims/{event_id}/processed/{stem}.{out_type}``) using the pure
     ``compute_event_id_slug`` slug the caller already holds. The FULL canonical
     summary set is required (Gotcha 34) — a narrower set marks a sub COMPLETE
     that consolidation SKIPS, re-opening the exact render bug.
     """
+    from hhemt.scenario_records import event_is_removed, recorded_member_event_done
+
+    if getattr(analysis, "is_recorded_member", False):
+        # A removed sensitivity member (read-only view): its scenarios' records were moved into the master, and a
+        # done record there means every summary was read back into the tree.
+        return recorded_member_event_done(analysis.master_dir, analysis.member_id, event_id)
+    # A removed scenario (record pending or done) has every summary in the consolidated tree by construction: the
+    # record is written only after each store was read back (D24 (e)). Read path-only, no scenario constructed.
+    if event_is_removed(analysis.analysis_paths.analysis_dir, event_id):
+        return True
     processed = analysis.analysis_paths.simulation_directory / event_id / "processed"
     out_type = analysis.cfg_analysis.target_processed_output_type
     for model in enabled_models:
         stems = _SUMMARY_STEMS_BY_MODEL.get(model, ())
         if not stems:
             return False
+        # A model whose log records the stores as cleared has its summaries in the consolidated tree: the record
+        # is written only after every slice of the scenario was read back, so it counts as the summary being present.
+        if summary_clearing_record(analysis.analysis_paths.simulation_directory / event_id, model) is not None:
+            continue
         for stem in stems:
-            if not (processed / f"{stem}.{out_type}").exists():
+            candidate = processed / f"{stem}.{out_type}"
+            if not summary_artifact_present(candidate, out_type):
+                # THE WRONG-KIND CASE IS THE ONLY ONE THAT WARNS, and the condition is
+                # exact rather than heuristic: the kind check has just failed, so an
+                # EXISTING path is present-but-wrong-kind and nothing else. Absence --
+                # the ordinary mid-workflow state this predicate reports on constantly --
+                # is silent. Without this line the fix makes its own target population
+                # QUIETER: today a zarr store under a '.nc' name reaches
+                # processing_analysis._retrieve_combined_output and raises an uncaught
+                # IsADirectoryError (measured; it is an OSError, so the four enclosing
+                # (FileNotFoundError, ValueError) handlers do not catch it), and after
+                # this fix both consumers skip it in silence -- consolidate_workflow.py
+                # at its SKIP 2 `continue`, which mis-diagnoses the branch in-comment as
+                # "mid-recovery", and workflow.py, which drops the sub. That population
+                # is FROZEN: _already_written is log-based and no future run regenerates
+                # it, so this predicate is its last detector and a silent skip is not
+                # detection.
+                if candidate.exists():
+                    logger.warning(
+                        "Summary artifact present but of the WRONG KIND, so this scenario "
+                        "is being skipped as incomplete: %s exists but is not a %s. "
+                        "target_processed_output_type is %r, which expects a %s. This is "
+                        "the signature of an analysis written by an earlier toolkit's 'nc' "
+                        "run on a gridded TRITON configuration; no re-run regenerates it, "
+                        "because the completion check is log-based.",
+                        candidate,
+                        "directory (zarr store)" if out_type == "zarr" else "file",
+                        out_type,
+                        "zarr store directory" if out_type == "zarr" else "NetCDF file",
+                    )
                 return False
     return True
 
 
-def sub_analysis_summaries_complete(sub_analysis, enabled_models: list[str]) -> bool:
+def analysis_summaries_complete(analysis, enabled_models: list[str]) -> bool:
     """Whole-sub predicate: True iff EVERY scenario in the sub has all summaries.
 
     Whole-sub (not per-event) because ``consolidate_sensitivity_datatree``'s
-    skip is all-or-nothing per sub-analysis (Gotcha 36 stipulation:
+    skip is all-or-nothing per member (Gotcha 36 stipulation:
     ``_retrieve_combined_output`` concatenates per-scenario summaries along
     ``event_iloc`` and is all-or-nothing per sub). Filtering per-event here
     would be MORE permissive than consolidation and re-introduce a mismatch.
     Path-only via ``compute_event_id_slug`` — no ``TRITONSWMM_scenario``
-    instantiation (Note A). A sub-analysis is a full Analysis instance
-    (Gotcha 11), so ``sub_analysis`` is passed directly as ``analysis``.
+    instantiation (Note A). A member is a full Analysis instance
+    (Gotcha 11), so ``member`` is passed directly as ``analysis``.
     """
     from hhemt.scenario import compute_event_id_slug
 
-    for event_iloc in sub_analysis.df_sims.index:
-        ev = sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+    for event_iloc in analysis.df_sims.index:
+        ev = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
         event_id = compute_event_id_slug(ev)
-        if not scenario_summaries_present(sub_analysis, event_id, enabled_models):
+        if not scenario_summaries_present(analysis, event_id, enabled_models):
             return False
     return True

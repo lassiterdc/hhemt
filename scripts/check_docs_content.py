@@ -1,0 +1,1789 @@
+#!/usr/bin/env python3
+"""CI check: the published docs carry no self-declared placeholder, no bare
+``path:line`` citation into a live source file, and no banned vocabulary.
+
+SIX defect classes across three tiers, and the TIERS are the design. A rule's
+tier is decided by what a finding COSTS a reader and by whether resolving it
+needs judgment — not by how confident the pattern is:
+
+  * FAILING, fence-skipping  — classes 1, 2 and 6 below (placeholder, line
+                               citation, docs-to-source filename agreement)
+  * FAILING, fence-INCLUSIVE — class 3 (banned vocabulary); see WORD_BAN_PATTERNS
+  * FAILING, unfenced        — class 4 (punctuation); see PUNCTUATION_PATTERNS
+  * ADVISORY, never failing  — class 5; see ADVISORY_PATTERNS
+
+Classes 1 and 2, both binary, both cheap, and both observed in this tree:
+
+1. PLACEHOLDER LEAKAGE — a page that tells its own reader its content is
+   unfinished. Measured 2026-08-26 at 2 sites: `docs/tutorials/index.md` said the
+   tutorials "is authored in a later release-content task" while the nav linked
+   to two that existed, and `docs/reference/example-report.md` shipped a
+   `**Placeholder.**` note above an empty 600px iframe.
+
+2. DECAYED LINE CITATION — a ``file.py:NNN`` reference into a live repository.
+   These decay SILENTLY, precisely because the values were correct when written,
+   so nothing about the page's history signals staleness. Measured at 1 site:
+   `installation.md` cited `workflow.py:2326` as a SLURM-executor call site; that
+   line had become a docstring about the report page.
+
+WHY THE PATTERNS ARE NARROW. A naive ``grep -i placeholder`` over this corpus
+returns 7 hits of which 5 are legitimate domain content — ``${VAR}`` templating
+and ``{your-allocation}`` substitution instructions. A gate that fires on those
+gets routed around, which is strictly worse than no gate. So the placeholder
+patterns match SELF-DECLARATIONS about the page's own completeness, never
+mentions of placeholder syntax. Content inside fenced code blocks is skipped for
+the same reason: a fence is where a legitimate ``TODO`` example lives.
+
+Exit 0 = clean. 1 = findings (enumerated with path:line). 2 = usage error, which
+now INCLUDES every population this gate cannot derive. 3 = an unanticipated
+internal error, printed with its traceback -- a distinct code because exit 1 is
+the FINDINGS code, and a crash reported as findings is a false statement about
+the docs. Advisory findings NEVER affect the exit code; pass ``--advisory``.
+
+NOT pure stdlib, and any job that imports this module must install the ``docs``
+extra. ``griffe`` and ``yaml`` are imported at module scope, and
+``mkdocstrings_handlers.python`` lazily, so a bare checkout cannot even import
+this file. This sentence previously read "Pure stdlib", which is what a reader
+consults to decide what a CI job must install -- and ``test.yml`` was written
+against it and could not collect the test module that imports this one.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import os
+import re
+import sys
+import traceback
+from pathlib import Path
+
+# Self-declarations that a page's own content is unfinished. Deliberately not a
+# bare word list: each pattern names a CLAIM about the page, not a topic.
+PLACEHOLDER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("self-declared-placeholder", re.compile(r"\*\*Placeholder\.?\*\*", re.I)),
+    ("deferred-to-later-task", re.compile(r"\b(?:is |are |will be )?authored in a later\b", re.I)),
+    ("deferred-release-content", re.compile(r"\blater release-content task\b", re.I)),
+    ("coming-soon", re.compile(r"\bcoming soon\b", re.I)),
+    ("bare-todo-marker", re.compile(r"(?:^|\s)(?:TODO|TBD|FIXME):", re.I)),
+    ("stub-self-declaration", re.compile(r"\bis a stub\b", re.I)),
+    # An unfilled DATE, which is the placeholder form a release file takes.
+    # `2026-XX-XX` declares the entry unfinished exactly as `**Placeholder.**`
+    # does, and no pattern above matches it: measured 2026-09-07, all six
+    # returned zero on `## v0.1.0 (2026-XX-XX)`. Anchored on a 4-digit year so
+    # an `XX-XX` elsewhere in prose is not matched. The trailing guard is a
+    # NEGATIVE LOOKAHEAD rather than `\b`: `?` is a non-word character, so a
+    # trailing `\b` can never match after `??` and silenced that whole
+    # alternative in final position (`2026-??-XX` fired, `2026-XX-??` did not).
+    # The `-` inside the class is load-bearing too -- it stops `2026-XX-XX-1`,
+    # which a bare `(?!\w)` would still match.
+    ("unfilled-date-placeholder", re.compile(r"\b\d{4}-(?:XX|\?\?)-(?:XX|\?\?)(?![\w-])", re.I)),
+)
+
+# A source-file reference carrying a line number. Anchored on a real source
+# extension so a version string or a time is not matched.
+#
+# `c` and `h` are in the set because this repository CITES vendored C source and
+# publishes one of those citations: `triton.h:2363` renders inside
+# `hhemt.synthetic_experiment.assert_coupling_nodes_distinct`. Measured at HEAD
+# `ec7907a2`, widening the alternation adds ZERO hits on the markdown population
+# (0 extra tokens across 51 tracked `.md` files, 0 on the generated
+# config-reference page) and exactly ONE on the published-source population, so
+# the only consumer it moves is the one it was added for. That matters because
+# `hooks/config_reference.py` also matches on this pattern and RAISES, aborting
+# `mkdocs build`; a widening that reddened the build would not be attributed here.
+LINE_CITATION = re.compile(r"\b[\w./-]+\.(?:py|yaml|yml|toml|cfg|sh|c|h)\s*:\s*\d+\b")
+
+FENCE = re.compile(r"^\s*(?:```|~~~)")
+
+# ---- Vocabulary rules -------------------------------------------------------
+#
+# THESE SCAN EVERY LINE, FENCES INCLUDED, and that asymmetry with the rules
+# above is the whole design decision — do not "fix" it by routing them through
+# `_unfenced_lines`.
+#
+# The rules above skip fences because a fence is where a legitimate `TODO:`
+# example belongs. A banned WORD is different in kind: the sites that matter are
+# COMMENTS inside fences, which are our own prose and are read by the user
+# exactly as body text is. Both measured instances are of that shape:
+#   docs/how-to/synthetic-compute-sensitivity-experiment.md:57
+#       `# Scaffold: validate + build matrix + write the matrix CSV ...`
+#   docs/how-to/running-an-experiment-definition.md:32
+#       `uva: hpc/... # estate-relative (resolved against ... or the estate root)`
+# A fence-skipping word ban reports 3 of 4 `scaffold` sites and 1 of 3 `estate`
+# occurrences while reading as complete, which is the failure mode this comment
+# exists to prevent.
+WORD_BAN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    # User ruling 2026-08-27: "I dont want to use the word 'Scaffold' anywhere in
+    # the docs." Prefer set up / prepare / create / generate.
+    ("banned-word-scaffold", re.compile(r"\bscaffold\w*\b", re.I)),
+    # User ruling: `estate` is undefined and names a private deployment concept a
+    # public reader cannot resolve.
+    ("banned-word-estate", re.compile(r"\bestate\b", re.I)),
+    # Development provenance. A public page must not date itself against the
+    # project's internal history: "under v2 graceful-rerun ..." tells a reader
+    # there was a v1 they cannot see and cannot need.
+    ("development-provenance", re.compile(r"\bunder v\d+\b|\bas of v\d+\b|\bsince v\d+\b", re.I)),
+    # Concurred carrier for the P22 invariant: the PATH sense of `master` is
+    # eliminated and the ROLE sense is retained (three-party concurrence, this
+    # agent's round 17). TWO forms carry the path sense and both are matched
+    # here. A path SEGMENT, delimited by `/` or `\`. And an ARTIFACT NOUN
+    # immediately after the word, which is how the archetypal instance was
+    # written: `experiment_datatree.zarr + master sidecar`. The noun list is
+    # closed and short on purpose, and `tree` is deliberately NOT in it. The
+    # ground is LATENT rather than live, and the counterfactual is what
+    # establishes it: appending `tree` to the list gates ZERO sites. Both
+    # attested `master tree` uses are spared by accidents rather than by this
+    # pattern. `deposits its **master** tree` escapes only because the closing
+    # bold marker sits between the two words, and `a 28-scenario master tree`
+    # only because its page declares `exempt=prose`. Delete the asterisks in an
+    # unrelated copyedit, or move that description off an exempt page, and the
+    # site begins to gate attested role-sense vocabulary. That is the reason the
+    # list has to stay closed under future pressure; "it does not fire today"
+    # is not.
+    # WHAT THIS ENTRY CAN AND CANNOT SAY. It can only ever assert that the path
+    # sense is ABSENT; role-sense RETENTION is asserted per cluster, never here.
+    # No count is stated: a count measured before a landing precondition is
+    # measured on the wrong side of it, and this entry lands after a repair that
+    # changes the corpus it would have counted.
+    # Its reach depends on the class being fence-INCLUSIVE, which the header
+    # comment above warns against "fixing": every path-sense site this corpus
+    # has carried has been inside a fence. It also reaches rendered `src/`
+    # docstrings through the advisory tier, which never gates: four of the five
+    # sites the `tree` counterfactual surfaces are there.
+    (
+        "banned-path-sense-master",
+        re.compile(
+            r"[/\\]master(?:[/\\]|\b)|\bmaster[ _.-](?:sidecar|zarr|store|dir|directory|path|file)\b",
+            re.I,
+        ),
+    ),
+)
+
+# ---- Punctuation rules ------------------------------------------------------
+#
+# OUR PROSE ONLY: every unfenced line, PLUS comment lines inside fences. The
+# discriminator is authorship, not fencing, and the first version of this rule
+# got that wrong.
+#
+# The reason to spare fenced content is that a fence may reproduce external text
+# VERBATIM — real command output, a config file, a log line — where normalizing
+# punctuation would make the page misquote its own source. That reason is sound
+# and still holds. But it does not reach a COMMENT inside a fence, which is our
+# own annotation and is read exactly as body text.
+#
+# Measured 2026-08-28, and the measurement is why this rule changed: the corpus
+# held 7 fenced em dashes and ALL SEVEN were in comments we wrote —
+# `# Plan only — build the DAG, write nothing:`, `# PyPI version — the durable,
+# installable identifier`, and five more of the same shape. Zero were reproduced
+# output. So the unfenced-only rule was justified by a case this corpus does not
+# contain, and it exempted seven sites it should have caught.
+#
+# COMMENT_LINE is deliberately narrow — a leading marker only. A `#` mid-line
+# inside a shell command is an argument or a fragment, not our prose, and a
+# looser pattern would start editing code.
+PUNCTUATION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (("em-dash", re.compile(r"—")),)
+
+# ---- Advisory rules ---------------------------------------------------------
+#
+# Reported, never failing. The user's framing is explicitly probabilistic —
+# "any `, not` is a CANDIDATE for identifying a clause that could be deleted" —
+# so each hit needs a human judgment and a hard gate on 23 sites would be a gate
+# that gets routed around. Surfaced by `--advisory`, excluded from the exit code.
+ADVISORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (("deletable-clause-candidate", re.compile(r",\s+not\b")),)
+
+
+# ---- Docs-to-source filename agreement --------------------------------------
+#
+# DEFECT CLASS 6, and the FIRST rule in this file whose predicate reads a SECOND
+# ARTIFACT. Every class above is a total function of one file's bytes: a pattern
+# runs over a line and the verdict needs nothing else. This one compares a
+# filename a page PUBLISHES against the constant that BINDS it in `src/`.
+#
+# WHY IT EXISTS, in the order the reasons actually bind.
+#
+# 1. DOCS-TO-CODE, which nothing in this repository detects. A prose edit that
+#    introduces a wrong filename -- a typo, a paste from a pre-migration draft,
+#    a paragraph rewrite that drops a suffix -- is invisible to every gate here.
+#    `bare-line-citation` is the near miss that proves it: it bans the citation
+#    FORM and never opens the cited file.
+# 2. CODE-TO-DOCS, and this is NOT redundant with the migration's own test.
+#    `tests/test_version_migration_V0022.py` carries ZERO references to `docs/`.
+#    It re-declares the literal itself and asserts the on-disk directory name,
+#    so it reddens on the CONSTANT and names no page. A renamer who sees red,
+#    updates that test's own constant and sees green has repaired nothing about
+#    the page, and the green now certifies the rename as complete. It is a
+#    tripwire, not a pointer.
+# 3. ITS OWN SCOPE, stated because a green here is narrower than it looks. The
+#    rule checks the REGISTERED rows and nothing else; the page locate is
+#    backtick-delimited, so a filename published INSIDE A FENCED BLOCK is not
+#    covered at all. `_run` prints the unregistered residual on both branches.
+#
+# THE COUNT IS PART OF THE ASSERTION, not a convenience. On
+# `docs/reference/output-data-model.md`, `experiment_datatree.zarr` occurs twice
+# (a tier-table row and prose) and is a PROPER PREFIX of
+# `experiment_datatree.zarr.superseded-v0022`, so a bare substring returns 3
+# where a backticked one returns 2. Presence alone is satisfied by either
+# occurrence: an editor who renames one leaves the other matching and the row
+# green, because the renamed text is a string this rule never searches for --
+# the defect removes its own counterexample from the set it would be found in.
+# Asserting "over every occurrence" does not close that; only a count does.
+#
+# The LITERAL field is not redundant with the constant it is compared against.
+# It is the value a human verified and recorded; the constant is whatever `src/`
+# says today. Comparing the two IS the rule, and collapsing the row to
+# (page, module, attribute) would make it self-satisfying.
+#: (page relative to --docs-dir, published literal, module, attribute, expected
+#: backtick-delimited occurrence count on that page). A LIST rather than a
+#: discovery pass: the filename-to-constant mapping is one-to-many in BOTH
+#: directions in this corpus, so a discovery pass would have to pick a binding
+#: with no ground for the choice. Adding a row is a reviewed data change, the
+#: same posture `--write-citation-ledger` takes for pinned tokens.
+DOCS_SOURCE_FILENAMES: tuple[tuple[str, str, str, str, int], ...] = (
+    (
+        "reference/output-data-model.md",
+        "sensitivity_datatree.zarr",
+        "hhemt.version_migration.versions.V0022__promote_producer_written_experiment_tree",
+        "_RETIRED_SENSITIVITY",
+        1,
+    ),
+    (
+        "reference/output-data-model.md",
+        "experiment_datatree.zarr",
+        "hhemt.version_migration.versions.V0022__promote_producer_written_experiment_tree",
+        "_UNIFIED_EXPERIMENT",
+        2,
+    ),
+    (
+        "reference/output-data-model.md",
+        "experiment_datatree.zarr.superseded-v0022",
+        "hhemt.version_migration.versions.V0022__promote_producer_written_experiment_tree",
+        "_SUPERSEDED",
+        1,
+    ),
+    (
+        "reference/output-data-model.md",
+        "analysis_datatree.zarr.superseded-v0025",
+        "hhemt.version_migration.versions.V0025__retire_stranded_regular_store",
+        "_SUPERSEDED",
+        1,
+    ),
+)
+
+#: Filename-shaped inline literals, for the unregistered residual only -- never
+#: for the assertion, which looks for one known literal rather than discovering
+#: candidates. The extension set is the one this corpus actually publishes.
+_FILENAME_LITERAL = re.compile(r"`([^`\s]+\.(?:zarr|json|csv|nc|done|yaml|yml|toml|cff|parquet)[\w.\-]*)`")
+
+#: Distinct from `None` because a constant may legitimately be bound to `None`,
+#: and distinct from each other because a rename and a computed value are
+#: different findings a reader acts on differently.
+_ABSENT = object()
+_NOT_LITERAL = object()
+
+
+COMMENT_LINE = re.compile(r"^\s*(?:#|//|--|;)\s")
+
+
+# ---- Authored-prose population ---------------------------------------------
+#
+# `rglob("*.md")` has never expressed this gate's actual population. It
+# expressed WHATEVER IS ON DISK, which was accidentally identical to AUTHORED
+# PROSE until a build-time generator began writing a page into `docs/`. That
+# page did not break an invariant; it revealed that the invariant was never
+# stated. It is stated here: the gate scans authored prose, and it says what it
+# skipped.
+#
+# A generated page's cells are Pydantic `description=` strings from `src/`, and
+# D22b rules `src/` prose out of GATE scope. It does not rule it out of
+# VISIBILITY, and the distinction is the whole design: a marker-carrying file is
+# skipped by `scan()` and INCLUDED by `scan_advisory()`, so the findings are
+# routed to the tier that prints and never gates, rather than dropped. Anyone
+# who wants the worklist runs `--advisory` and still gets it.
+#
+# The marker is a property of the FILE ("this is generated"), not of the lint
+# ("this is excused"), which is why it lives in the page rather than in a
+# skip-list here. A path-keyed skip would not generalize, and a second
+# generated page would silently re-open the gap.
+#: The class GROUPS a marker may declare exempt. `prose` is the punctuation and
+#: vocabulary pair `### D22b` rules out of gate scope; `binary` is the
+#: file-type-independent pair (placeholder leakage, bare line citations).
+#: BOTH are spellable on purpose. Hard-coding which group a marker may name
+#: would move the class split into this module, which is the position `### A16`
+#: rejected when it chose a marker-declared exemption over a central one. What
+#: keeps the binary classes enforced is that no live marker declares them, and
+#: `tests/test_check_docs_content.py` pins that BY NAME rather than by a count.
+EXEMPTABLE_CLASS_GROUPS: frozenset[str] = frozenset({"prose", "binary"})
+
+#: The NAME half of each marker, used for detection. The full declared string a
+#: page carries is `GENERATED_MARKER` / `PERSONAL_VOICE_MARKER` below. Detection
+#: must key on the NAME rather than on the full string: a page carrying the name
+#: with a malformed declaration has to RAISE, and a full-string match would
+#: silently fail to detect it and scan the page as if unmarked.
+GENERATED_MARKER_NAME = "hhemt:generated-file"
+
+_MARKER_DECL = re.compile(r"(hhemt:[a-z-]+)\s+exempt=([a-z,]*)")
+
+
+class MarkerDeclarationError(RuntimeError):
+    """A marker is present but its exemption declaration is absent or invalid."""
+
+
+def _declared_exemptions(text: str, marker_name: str) -> frozenset[str] | None:
+    r"""The class groups `marker_name` declares exempt, or None when it is absent.
+
+    FAILS LOUDLY rather than degrading. A marker whose declaration is missing,
+    empty, or names an unknown group raises. A silent fall back to "exempt
+    everything" would rebuild, inside this fix, the whole-file skip the fix
+    exists to remove -- which is the failure shape this gate has produced
+    repeatedly and is the one thing this parser must not do.
+
+    FENCE-MASKED, PER LINE, and the per-line part is not a stylistic choice. A
+    page DOCUMENTING this mechanism carries a fenced example of a correct
+    declaration; over raw text that page silently ACQUIRES the exemption it is
+    describing, and the same masking stops a fenced example whose declaration is
+    malformed from aborting the scan. But `_MARKER_DECL` spans `\s+`, which
+    matches a newline, so JOINING the surviving lines would make non-adjacent
+    lines ADJACENT and match a marker name before a fence against an `exempt=`
+    after it -- turning a loud raise into a silent grant on a page that declared
+    nothing. Iterating keeps the legitimate intra-line span and removes every
+    cross-line one, including a splice the raw-text form already carried.
+
+    THE NARROWING PER-LINE INTRODUCES, stated because it is a real behaviour
+    change and not only a repair. A declaration SPLIT ACROSS LINES -- a
+    multi-line HTML comment naming the marker on one line and spelling `exempt=`
+    on the next -- was HONOURED before, because `\s+` spans the newline, and now
+    RAISES. Measured: it returned `['prose']` and now refuses. That is the same
+    span this function removes to close the fence splice, so the two cannot be
+    separated: a form that accepts the multi-line declaration accepts the splice.
+    The direction is fail-closed, none of the nine live declarations is
+    multi-line, and a page wanting the exemption writes it on one line.
+
+    Two further reaches are deliberately NOT closed. A marker name in UNFENCED
+    prose still raises, which is why the contributor page states the names
+    through a build-time substitution rather than in its own bytes. And an
+    UNTERMINATED fence leaves the toggle open, so a declaration below it is not
+    seen and the page is scanned rather than skipped -- also fail-closed, and
+    stated because it couples this parser to `_unfenced_lines`' toggle semantics.
+    """
+    seen = False
+    for _lineno, line in _unfenced_lines(text):
+        if marker_name not in line:
+            continue
+        seen = True
+        for name, raw in _MARKER_DECL.findall(line):
+            if name != marker_name:
+                continue
+            groups = frozenset(part for part in raw.split(",") if part)
+            if not groups:
+                raise MarkerDeclarationError(f"{marker_name}: `exempt=` declares no class group.")
+            unknown = sorted(groups - EXEMPTABLE_CLASS_GROUPS)
+            if unknown:
+                raise MarkerDeclarationError(
+                    f"{marker_name}: unknown class group(s) {unknown}; "
+                    f"known groups are {sorted(EXEMPTABLE_CLASS_GROUPS)}."
+                )
+            return groups
+    if not seen:
+        return None
+    raise MarkerDeclarationError(
+        f"{marker_name} is present but declares no `exempt=` class list. "
+        f"A marker states what it exempts; known groups are "
+        f"{sorted(EXEMPTABLE_CLASS_GROUPS)}."
+    )
+
+
+def _exempt_groups(text: str) -> frozenset[str]:
+    r"""Every class group any marker on this page declares exempt.
+
+    REFUSES an `exempt=` declaration on any `hhemt:` name that is not an
+    exemption marker. `_MARKER_DECL` matches the whole namespace while this
+    consultation is keyed on three names, so before this branch a declaration
+    written on a neighbouring marker PARSED, was never consulted, and returned
+    silently -- granting nothing while looking exactly like the working form.
+
+    PER LINE for the same reason `_declared_exemptions` is: joining the unfenced
+    lines would let `\s+` span the elided fence and refuse a page whose marker
+    name and `exempt=` merely sit on either side of one.
+    """
+    known = (GENERATED_MARKER_NAME, PERSONAL_VOICE_MARKER_NAME, REPO_INTERNAL_MARKER_NAME)
+    for _lineno, line in _unfenced_lines(text):
+        for name, _raw in _MARKER_DECL.findall(line):
+            if name not in known:
+                raise MarkerDeclarationError(
+                    f"{name} carries `exempt=` but is not an exemption marker. "
+                    f"The exemption markers are {sorted(known)}; known class groups "
+                    f"are {sorted(EXEMPTABLE_CLASS_GROUPS)}. Drop the `exempt=` "
+                    f"declaration, or move it to one of those markers."
+                )
+    groups: set[str] = set()
+    for name in known:
+        declared = _declared_exemptions(text, name)
+        if declared:
+            groups |= declared
+    return frozenset(groups)
+
+
+#: What a generated page CARRIES. `hooks/config_reference.py` interpolates this
+#: constant and never authors the string, so widening it here reaches that page
+#: with no hook edit. A second generated page inherits this declaration until
+#: someone needs otherwise, at which point the hook passes its own list.
+GENERATED_MARKER = "hhemt:generated-file exempt=prose"
+
+
+def _is_generated(text: str) -> bool:
+    """True when a page carries the generated-file marker."""
+    return _declared_exemptions(text, GENERATED_MARKER_NAME) is not None
+
+
+def generated_files(docs_dir: Path) -> list[Path]:
+    """Every marker-carrying page under `docs_dir`, sorted.
+
+    Printed by `main()` in BOTH output branches. The count is what makes a
+    future generated page visible: it goes 1 to 2 on a line somebody reads,
+    with nobody having decided to grant an exemption. A source comment cannot
+    do that -- it is read once, by whoever writes it.
+    """
+    return [md for md in _scanned_markdown(docs_dir) if _is_generated(md.read_text(encoding="utf-8", errors="ignore"))]
+
+
+# A SECOND population that is authored prose but is not PRODUCT prose. The
+# contributor guide is the maintainer's own writing in the maintainer's own
+# voice; its punctuation answers to personal preference, not to the vocabulary
+# and punctuation contract this gate enforces on pages written for a reader of
+# the software.
+#
+# It gets its own marker rather than reusing GENERATED_MARKER for one reason:
+# that marker asserts "this file is generated", and the contributor guide is
+# hand-written. Reusing it would put a false statement in the page to buy a
+# skip, which is the thing a marker-in-the-page design exists to prevent. The
+# rule the existing marker states holds for this one too -- it is a property of
+# the FILE ("this is personal-voice prose"), not of the lint ("this file is
+# excused") -- so it lives in the page and NOT in a path-keyed skip-list here,
+# and a second personal-voice page becomes visible as a count going 1 to 2.
+#
+# Routing is identical to the generated case: skipped by `scan()`, INCLUDED by
+# `scan_advisory()`, and named with a count in BOTH of `main()`'s branches.
+# Nothing is dropped; the findings move to the tier that prints and never gates.
+PERSONAL_VOICE_MARKER_NAME = "hhemt:personal-voice"
+PERSONAL_VOICE_MARKER = "hhemt:personal-voice exempt=prose"
+
+
+def _is_personal_voice(text: str) -> bool:
+    """True when a page carries the personal-voice marker."""
+    return _declared_exemptions(text, PERSONAL_VOICE_MARKER_NAME) is not None
+
+
+def personal_voice_files(docs_dir: Path) -> list[Path]:
+    """Every personal-voice page under `docs_dir`, sorted.
+
+    Printed by `main()` in BOTH output branches, for the same reason
+    `generated_files` is: a skip absent from the output under-reports the
+    gate's scope, which is the defect this script exists to catch.
+    """
+    return [
+        md for md in _scanned_markdown(docs_dir) if _is_personal_voice(md.read_text(encoding="utf-8", errors="ignore"))
+    ]
+
+
+def _prose_lines(text: str):
+    """Yield (lineno, line) for lines we AUTHORED: unfenced prose, plus comment
+    lines inside fences.
+
+    Excludes non-comment fenced content, which may reproduce external text that
+    must not be normalized. See the PUNCTUATION_PATTERNS rationale.
+    """
+    in_fence = False
+    for i, line in enumerate(text.splitlines(), start=1):
+        if FENCE.match(line):
+            in_fence = not in_fence
+            continue
+        if not in_fence or COMMENT_LINE.match(line):
+            yield i, line
+
+
+def _all_lines(text: str):
+    """Yield (lineno, line) for EVERY line, fences included.
+
+    The counterpart to `_unfenced_lines`, for rules whose defect class lives
+    inside fenced comments. See the WORD_BAN_PATTERNS rationale.
+    """
+    for i, line in enumerate(text.splitlines(), start=1):
+        if FENCE.match(line):
+            continue
+        yield i, line
+
+
+def _unfenced_lines(text: str):
+    """Yield (lineno, line) for lines OUTSIDE fenced code blocks.
+
+    A fence is exactly where a legitimate `TODO:` example or an illustrative
+    `path:line` belongs, so scanning inside one manufactures false positives on
+    documentation that is doing its job.
+    """
+    in_fence = False
+    for i, line in enumerate(text.splitlines(), start=1):
+        if FENCE.match(line):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            yield i, line
+
+
+def _binary_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
+    """The two FILE-TYPE-INDEPENDENT tiers: placeholder leakage and line citations.
+
+    Split out of `_gate_findings` so a second population -- shipped package
+    metadata, which is not product prose -- can run THESE classes without also
+    inheriting the vocabulary and punctuation contracts, which are contracts
+    about prose written for a reader of the software and do not bind a TOML
+    comment. Extraction rather than duplication is the point: a pattern added
+    to `PLACEHOLDER_PATTERNS` reaches both populations with no second edit.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
+    for lineno, line in _unfenced_lines(text):
+        for code, pat in PLACEHOLDER_PATTERNS:
+            if pat.search(line):
+                findings.append((code, md, lineno, line.strip()))
+        # Backticked spans are NOT excluded, and that is load-bearing rather
+        # than an oversight. A live line citation is normally WRITTEN in
+        # backticks — the one measured instance in this corpus was
+        # `workflow.py:2326` inside a sentence — so excluding inline code
+        # makes this check blind to the exact form the defect takes.
+        # Measured: with backtick-stripping the gate found 0 of 1 real
+        # citations while still reporting the placeholder findings, so it
+        # read as working. Fenced blocks are still skipped (see
+        # `_unfenced_lines`), which is where an illustrative citation lives.
+        m = LINE_CITATION.search(line)
+        if m:
+            findings.append(("bare-line-citation", md, lineno, m.group(0)))
+    return findings
+
+
+def _gate_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
+    """The four FAILING tiers, for one file.
+
+    Factored out so `scan()` and `scan_advisory()` apply the SAME patterns to
+    the same bytes. Routing a generated page to the advisory tier only means
+    anything if the tier reports the findings the gate would have reported;
+    running a different pattern set there would silently drop them while
+    looking like routing.
+    """
+    return _binary_findings(md, text) + _prose_findings(md, text)
+
+
+def _prose_findings(md: Path, text: str) -> list[tuple[str, Path, int, str]]:
+    """The two PROSE tiers: punctuation and vocabulary.
+
+    The complement of `_binary_findings` within `_gate_findings`, extracted so a
+    marker can exempt one group without the other. `### D22b` names exactly this
+    pair, which is why the split is here and not somewhere finer.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
+    for lineno, line in _prose_lines(text):
+        for code, pat in PUNCTUATION_PATTERNS:
+            if pat.search(line):
+                findings.append((code, md, lineno, line.strip()))
+    for lineno, line in _all_lines(text):
+        for code, pat in WORD_BAN_PATTERNS:
+            if pat.search(line):
+                findings.append((code, md, lineno, line.strip()))
+    return findings
+
+
+class PopulationDerivationError(RuntimeError):
+    """A population this gate scans cannot be derived faithfully.
+
+    THREE causes, and naming only the first is what made three sibling failures
+    raise a bare `ValueError` instead: git could not answer for the tracked-file
+    population, OR `mkdocs.yml` declares a renderer option this derivation does
+    not model, OR the manifested modules yield nothing to check. All three are
+    the same statement -- the population is not the page's -- so all three raise
+    this type and exit 2 with a clean message and no traceback.
+
+    A SIBLING of `MarkerDeclarationError` rather than a use of it: a repository
+    git cannot locate is not a marker-declaration problem, and reusing that type
+    to buy a catch would put a false statement in the code -- the ground `A16`
+    used to give the personal-voice marker its own name.
+    """
+
+
+def _repo_root(start: Path) -> Path:
+    """The repository root git reports for `start`.
+
+    ONE derivation, used by every caller that needs a root. `start.parent` was
+    the earlier form and it is an inference: it is right only when `start` is
+    exactly the repository's `docs` directory, and silently wrong for anything
+    deeper -- which made `SHIPPED_METADATA` resolve nothing and the gate exit 0
+    over an empty shipped population.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=start,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PopulationDerivationError(
+            f"cannot locate the repository root from {start}: `git rev-parse` failed. "
+            f"This gate's populations are derived from git and do not fall back to a "
+            f"path assumption, because a silent narrowing is what they exist to remove."
+        ) from exc
+    return Path(out)
+
+
+def _scanned_markdown(docs_dir: Path) -> list[Path]:
+    """Every markdown file this repository SHIPS or BUILDS, sorted and ABSOLUTE.
+
+    A UNION of two halves, and both are load-bearing:
+
+    * every `.md` git tracks in the repository AND whose file is present in
+      the working tree. `rglob` over a directory expressed "what is on disk
+      under `docs/`", which was never this gate's population: thirteen tracked
+      `.md` files sit outside it, and published pages name two of them. The
+      presence test is what keeps a deleted page out before its deletion is
+      staged: `git ls-files` lists every path the index still records, so a
+      page removed from disk whose deletion is not yet staged stays listed,
+      while a staged deletion is already gone from the list. Without the test,
+      every caller that reads each member's text -- the three marker finders,
+      `scan` and `scan_advisory` -- raised `FileNotFoundError`, and
+      `mkdocs build` reaches the three finders through
+      `hooks/marker_governance_table.py`. An absent page ships nothing, so
+      leaving it out narrows nothing that ships.
+    * every `.md` on disk under `docs_dir`. The generated config-schema page is
+      BUILD OUTPUT and this project gitignores it, so a tracked-only population
+      drops it -- which would pin `main()`'s generated-file count at 0 forever
+      and delete the advisory worklist the marker design deliberately kept.
+
+    `.resolve()` on the second half is NOT cosmetic. `git rev-parse` answers in
+    absolute paths and `rglob` inherits the caller's spelling, so a relative
+    `--docs-dir` would put BOTH spellings of every docs page in the union -- they
+    do not compare equal, so the set does not merge them. Measured: 88 members
+    instead of 51, every docs page counted twice, and the first
+    `relative_to(repo_root)` in `main()` raising an uncaught ValueError on an
+    invocation this gate previously served at exit 0.
+
+    The rglob half is scoped to `docs_dir` and never to the repository root, so
+    it does not sweep `site/`, `.venv/`, `test_data/` or `.pytest_cache/`.
+
+    FAIL-CLOSED, deliberately, and the git half runs FIRST. A tree with no git
+    raises rather than degrading to the on-disk half. A fallback that silently
+    narrows the population is the defect this derivation exists to remove.
+    """
+    import subprocess
+
+    repo_root = _repo_root(docs_dir)
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "-z", "*.md"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PopulationDerivationError(
+            f"cannot derive the markdown population: `git ls-files` failed in {repo_root}. "
+            f"This gate scans what git tracks plus what the docs build writes, and does "
+            f"not fall back to a directory walk, because a silent narrowing is the defect "
+            f"the derivation exists to remove."
+        ) from exc
+    tracked = {repo_root / rel for rel in out.split("\0") if rel}
+    tracked = {path for path in tracked if path.exists()}
+    return sorted(tracked | set(docs_dir.resolve().rglob("*.md")))
+
+
+#: A THIRD marker kind, and it needs its own name for the reason the second one
+#: got its own. `generated-file` asserts a page is machine-written;
+#: `personal-voice` asserts it is the maintainer's own writing. Neither is true
+#: of a repo-internal note like `containers/README.md`, and reusing either would
+#: put a false statement in the page to buy a skip -- which is the thing a
+#: marker-in-the-page design exists to prevent.
+REPO_INTERNAL_MARKER_NAME = "hhemt:repo-internal"
+REPO_INTERNAL_MARKER = "hhemt:repo-internal exempt=prose"
+
+
+def _is_repo_internal(text: str) -> bool:
+    """True when a page carries the repo-internal marker."""
+    return _declared_exemptions(text, REPO_INTERNAL_MARKER_NAME) is not None
+
+
+def repo_internal_files(docs_dir: Path) -> list[Path]:
+    """Every repo-internal page, sorted.
+
+    Printed by `main()` in BOTH output branches, for the same reason
+    `generated_files` is: the count is what makes a future marked page visible,
+    and that virtue exists only inside the population the derivation walks.
+    """
+    return [
+        md for md in _scanned_markdown(docs_dir) if _is_repo_internal(md.read_text(encoding="utf-8", errors="ignore"))
+    ]
+
+
+def scan(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
+    findings: list[tuple[str, Path, int, str]] = []
+    for md in _scanned_markdown(docs_dir):
+        text = md.read_text(encoding="utf-8", errors="ignore")
+        # A marker exempts the class groups it DECLARES and nothing else. What
+        # it declares is skipped here and INCLUDED by `scan_advisory()`, so the
+        # two tiers partition the finding set by construction rather than by a
+        # second edit keeping them disjoint. `main()` prints what was skipped
+        # either way, and the two populations are counted separately.
+        exempt = _exempt_groups(text)
+        if "binary" not in exempt:
+            findings.extend(_binary_findings(md, text))
+        if "prose" not in exempt:
+            findings.extend(_prose_findings(md, text))
+    return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
+
+
+def scan_advisory(docs_dir: Path) -> list[tuple[str, Path, int, str]]:
+    """Advisory findings — surfaced, never failing. See ADVISORY_PATTERNS.
+
+    Marker-carrying pages -- generated OR personal-voice -- are deliberately NOT
+    skipped here. `scan()` skips them so nothing gates on `src/` prose (D22b) or
+    on the maintainer's own voice; this tier keeps them visible so the findings
+    stay enumerable. Dropping them from both would delete the worklist that a
+    later prose sweep would otherwise start from.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
+    for md in _scanned_markdown(docs_dir):
+        text = md.read_text(encoding="utf-8", errors="ignore")
+        for lineno, line in _unfenced_lines(text):
+            for code, pat in ADVISORY_PATTERNS:
+                if pat.search(line):
+                    findings.append((code, md, lineno, line.strip()))
+        # Exactly the groups `scan()` skipped, reported here instead of
+        # nowhere. A declaration of what is exempt is, in the same breath, a
+        # declaration of what this tier reports.
+        exempt = _exempt_groups(text)
+        if "binary" in exempt:
+            findings.extend(_binary_findings(md, text))
+        if "prose" in exempt:
+            findings.extend(_prose_findings(md, text))
+    # The rendered-docstring population's PROSE classes. `### D22b` rules `src/`
+    # prose out of GATE scope and does not rule it out of VISIBILITY, and this is
+    # the visibility half -- the anchors are live `src/...py:line` positions a
+    # fixer can open, not offsets into a built page nobody edits.
+    for _qualname, home, doc_line, doc in rendered_docstrings(SRC_ROOT, API_PAGE):
+        for lineno, line in _prose_lines(doc):
+            for code, pat in PUNCTUATION_PATTERNS:
+                if pat.search(line):
+                    findings.append((code, home, doc_line + lineno - 1, line.strip()))
+        for lineno, line in _all_lines(doc):
+            for code, pat in WORD_BAN_PATTERNS:
+                if pat.search(line):
+                    findings.append((code, home, doc_line + lineno - 1, line.strip()))
+    return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
+
+
+#: Files that ship to PyPI or are rendered on the project page, and are therefore
+#: PUBLIC artifacts, but are not `docs/` prose. `README.md` and `CONTRIBUTING.md`
+#: are rendered by PyPI and GitHub; `HISTORY.md` is what `[project.urls]
+#: changelog` resolves to; `pyproject.toml` and `CITATION.cff` ARE the published
+#: metadata. Only the two file-type-independent classes run here -- see
+#: `_binary_findings` for why the prose contracts do not.
+#:
+#: A LIST rather than a glob, deliberately. A repo-root `rglob("*.md")` would
+#: sweep `site/`, `.venv/`, `.claude/` and every planning artifact, and the
+#: resulting false-positive volume is how a gate gets routed around. The cost of
+#: the list is that a NEW shipped file is not covered until someone adds it, and
+#: `main()` prints the population in both branches so that omission is visible
+#: rather than silent -- the same design `generated_files` already uses.
+SHIPPED_METADATA: tuple[str, ...] = (
+    "README.md",
+    "CONTRIBUTING.md",
+    "HISTORY.md",
+    "pyproject.toml",
+    "CITATION.cff",
+)
+
+
+def scan_shipped_metadata(repo_root: Path) -> list[tuple[str, Path, int, str]]:
+    """Binary-class findings over `SHIPPED_METADATA`, sorted.
+
+    A named entry that does not exist is SKIPPED rather than raising: this list
+    is a superset claim about what a project of this shape ships, and a repo
+    without a `CITATION.cff` is not a failing repo.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
+    for name in SHIPPED_METADATA:
+        path = repo_root / name
+        if not path.is_file():
+            continue
+        findings.extend(_binary_findings(path, path.read_text(encoding="utf-8", errors="ignore")))
+    return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
+
+
+import dataclasses  # noqa: E402
+import warnings  # noqa: E402
+
+import griffe  # noqa: E402
+import yaml  # noqa: E402
+
+# ---- The RENDERED-DOCSTRING population ------------------------------------
+#
+# Every member `mkdocstrings` renders on `docs/reference/api.md` and its `api-*.md`
+# pages, DERIVED FROM
+# `griffe` -- the library `mkdocstrings` itself uses -- under the options this
+# repository's own `mkdocs.yml` declares. Nothing here models the renderer.
+#
+# WHY THERE IS NO `ast` TRAVERSAL HERE ANY MORE. There was one, and it was wrong
+# in three ways at once, each measured against a site built from a tree in which
+# every docstring carried a unique sentinel token:
+#
+#   * It never read a MODULE's own docstring. `mkdocstrings` renders one at the
+#     head of every `:::` block; seven of the nine manifested modules carry one,
+#     and all seven were published and unscanned.
+#   * It applied `__all__` to a module's OWN members. `mkdocstrings` applies
+#     `filters` to those and consults `__all__` only for IMPORTED names, so four
+#     `analysis.py` classes rendered unscanned while `experiment_definition.py`'s
+#     imported `ExperimentConfig` was scanned and rendered nowhere.
+#   * It keyed members by their ORIGIN module. The page keys them by the module
+#     the API pages declare them through, so 52 of 173 names -- every re-exported
+#     symbol, which is to say every name a public API page exists to present --
+#     were names no reader or link ever sees.
+#
+# Patching those three would leave the class that produced them: a derivation at
+# the SOURCE-SYNTAX altitude has to answer which module a name resolves to, how
+# an alias is followed, and what qualname the page will emit, and those three
+# answers are the three defects. `griffe` answers them because it is what the
+# renderer asks. Measured at HEAD `9ab08064`: this derivation returns 183 of the
+# 183 docstrings the built page renders, with no miss and no over-reach, and all
+# 183 of its names are anchors the page emits.
+#
+# THE MEMBER RULE IS A CONJUNCTION, NOT A CHOICE OF PREDICATE, and dropping
+# either half is measurable against the built page:
+#
+#   * `filters` (from `mkdocs.yml`) governs EVERY name, own-definition or alias.
+#     `griffe`'s `is_public` must not stand in for it over a module's OWN
+#     members, because `is_public` honours `__all__` there -- defect 2 re-entering
+#     through a convenience predicate. It drops `TestRepresentative`,
+#     `TestRepresentative.axes`, `TestSubResult` and `TestResult`, one of which
+#     carries a rendered em dash, and misses 4 sites the page renders.
+#   * An ALIAS must ALSO be exported by the module importing it -- named in that
+#     module's `__all__`, which is what `is_public` means FOR AN ALIAS; the two
+#     are measured identical on this corpus. Dropping this half is the larger
+#     error, because `filters` is a NAME test and says nothing about whether an
+#     imported name is re-exported: `filters` alone yields 438 names, of which
+#     only 183 are page anchors and 255 are names the page never emits, and it
+#     raises TWO `bare-line-citation` findings that would redden this gate on
+#     landing.
+#
+# Both halves, and only both, reach 183 names / 183 page anchors / 0 over-reach.
+#
+# Report over-reach on the NAME key, not the docstring-site key. The same 438
+# names collapse to 271 distinct sites, because a re-exported symbol is reached
+# under every module that imports it -- `ConfigurationError` under four. A
+# site-keyed count therefore under-reports this failure by 40% and is the reason
+# an earlier measurement of it read as smaller than it is.
+#
+# `filters` is READ from `mkdocs.yml` rather than written here, because the
+# population is a property of that file plus the API pages, and a second copy of a
+# setting is a second thing to drift. An option this cannot model raises rather
+# than being ignored: a silent no-op on a setting somebody wrote deliberately is
+# the same failure that produced the three defects above, wearing a config file.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import citation_ledger  # noqa: E402
+from check_autodoc_coverage import public_modules  # noqa: E402
+
+_SCRIPT_ROOT = Path(__file__).resolve().parent.parent
+API_PAGE = _SCRIPT_ROOT / "docs" / "reference" / "api.md"
+SRC_ROOT = _SCRIPT_ROOT / "src"
+MKDOCS_YML = _SCRIPT_ROOT / "mkdocs.yml"
+
+
+class _TolerantLoader(yaml.SafeLoader):
+    """`mkdocs.yml` carries `!!python/name:` tags that `SafeLoader` refuses."""
+
+
+_TolerantLoader.add_multi_constructor("", lambda loader, suffix, node: None)
+_TolerantLoader.add_multi_constructor("tag:yaml.org,2002:python/name:", lambda loader, suffix, node: None)
+
+
+def _module_file(module: str, src: Path) -> Path | None:
+    direct = src / (module.replace(".", "/") + ".py")
+    if direct.is_file():
+        return direct
+    pkg = src / module.replace(".", "/") / "__init__.py"
+    return pkg if pkg.is_file() else None
+
+
+# Every python-handler option is CLASSIFIED, and an UNCLASSIFIED one written to a
+# NON-DEFAULT value is a loud ValueError.
+#
+# WHAT "FAILS CLOSED" MEANS HERE, because the phrase invites the wrong reading.
+# The check iterates the options actually WRITTEN INTO `mkdocs.yml`, never the
+# handler's available fields, so a `mkdocstrings` release adding twenty options
+# changes nothing until somebody writes one into the config. **It fires on a
+# configuration edit, never on an upgrade.** A denylist was tried first and is
+# not durable in the other direction: it fails OPEN on any option a release adds,
+# which is the silent-no-op failure this derivation exists to remove -- and that
+# failure was demonstrated here, by an earlier draft of this file that read
+# `show_submodules`, threaded it through, and discarded it two lines later
+# without a sound.
+#
+# An option written at its OWN DEFAULT is a no-op and passes whatever its class,
+# because this derivation already behaves as that default prescribes.
+#
+# MODELLED: read and acted on.
+_MODELLED_OPTIONS = ("filters",)
+
+# NEUTRAL: classified as unable to move WHICH BYTES ARE PUBLISHED, so ignored.
+# All three are presentation or docstring parsing.
+#
+# `show_if_no_docstring` WAS here and is not any more, and the reason is the
+# reason the tuple exists. Its old justification -- "this population is
+# docstring-bearing by construction, so it cannot move it" -- was true of a
+# population of docstring VALUES and is false of the source-span population
+# `published_source_lines` now derives: turning it on admits members that carry
+# no docstring, and those members carry SPANS, so they enter through the span
+# limb whatever the docstring limb does. Measured at HEAD `ec7907a2`: 183
+# docstring-bearing members against 108 docstring-less ones, +38 published lines
+# and +0 citations. The live blast radius is negligible and the CLASSIFICATION
+# is wrong regardless, which is the whole defect this tuple guards against --
+# a declaration the code contradicts.
+_MEMBERSHIP_NEUTRAL_OPTIONS = ("docstring_style", "members_order", "summary")
+
+# MEMBERSHIP-MOVING, RECORDED AS PROSE RATHER THAN AS A TUPLE:
+#
+#   members, inherited_members, show_submodules, preload_modules, extensions,
+#   allow_inspection, force_inspection, merge_init_into_class
+#
+# These eight were adjudicated individually and the ADJUDICATION is what has to
+# survive. The tuple that used to hold them was an ORACLE and an incomplete one:
+# it enumerated 8 of the 62 options this derivation refuses, so its only runtime
+# effect was to decorate the refusal message for those 8 and stay silent for the
+# other 54. Deleting it changes no refusal -- anything unclassified is refused
+# anyway. Deleting the RECORD would let a later author reclassify one by
+# inspection, which is what these paragraphs prevent.
+#
+# `merge_init_into_class` is the one that most needs to be written down, because
+# it READS presentational and is not. It folds `__init__`'s docstring into the
+# class rendering, and `__init__` is excluded by `filters: ["!^_"]` -- so with it
+# on, that prose is published and unscanned, which is defect 1's exact shape in a
+# second place.
+#
+# The last three are the sharpest for a different reason: they are not merely
+# `PythonOptions` fields, they are `GriffeLoader.__init__` parameters UNDER THE
+# SAME NAMES, so `mkdocs.yml` setting one makes the renderer collect with it while
+# the loader below collects without it. Measured here: `force_inspection` does not
+# shift this population, it makes `hhemt` fail to load at all, which the `except`
+# in the load loop would swallow into a silently narrowed scan.
+_UNSET = object()
+
+
+_PYTHON_OPTION_FIELDS: tuple | None = None
+
+
+def _python_option_fields() -> tuple:
+    """`PythonOptions`' dataclass fields -- imported LATE, QUIETLY, and once.
+
+    Importing `mkdocstrings_handlers.python` at module scope emits 350 pydantic
+    deprecation warnings from the handler's own option models. Measured: `griffe`
+    itself imports clean at 0, the handler at 350, and that is enough to make this
+    gate exit 1 under `-W error::DeprecationWarning`, which it did not before.
+    They are upstream's warnings to fix and not this gate's to broadcast, so the
+    import is deferred to the one function that needs it and silenced for the
+    duration of the import alone.
+    """
+    global _PYTHON_OPTION_FIELDS
+    if _PYTHON_OPTION_FIELDS is None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            from mkdocstrings_handlers.python import PythonOptions
+        _PYTHON_OPTION_FIELDS = dataclasses.fields(PythonOptions)
+    return _PYTHON_OPTION_FIELDS
+
+
+def _option_default(name: str) -> object:
+    """The option's own default, READ from `PythonOptions`, never transcribed.
+
+    A transcribed default is a second copy of a value the library owns, and a
+    second copy is the divergence class this whole derivation exists to remove --
+    it has no business reappearing in its own constant table. Two of these are
+    why: `extensions` and `preload_modules` carry `default_factory=list`, so
+    their `.default` is `MISSING` and the real default is `[]`. Transcribed as
+    `None`, a `mkdocs.yml` writing the documented default explicitly would RAISE
+    -- the harmless value treated as dangerous, which is the truthiness bug's own
+    shape surviving inside the fix for it.
+    """
+    for field in _python_option_fields():
+        if field.name != name:
+            continue
+        if field.default is not dataclasses.MISSING:
+            return field.default
+        if field.default_factory is not dataclasses.MISSING:
+            return field.default_factory()
+    return _UNSET
+
+
+def _handler_options(mkdocs_yml: Path = MKDOCS_YML) -> dict:
+    """`filters` as mkdocs.yml declares it, refusing any option not classified.
+
+    Raises ValueError naming every declared python-handler option that is neither
+    modelled nor classified membership-neutral. An option set to its own default
+    is a no-op and is allowed through whatever its class.
+    """
+    opts: dict = {"filters": []}
+    if not mkdocs_yml.is_file():
+        return opts
+    cfg = yaml.load(mkdocs_yml.read_text(encoding="utf-8"), Loader=_TolerantLoader) or {}
+    for plugin in cfg.get("plugins") or []:
+        if not isinstance(plugin, dict) or "mkdocstrings" not in plugin:
+            continue
+        python = ((plugin["mkdocstrings"] or {}).get("handlers") or {}).get("python") or {}
+        declared = python.get("options") or {}
+        unclassified = [
+            k
+            for k, v in declared.items()
+            if k not in _MODELLED_OPTIONS and k not in _MEMBERSHIP_NEUTRAL_OPTIONS and v != _option_default(k)
+        ]
+        if unclassified:
+            raise PopulationDerivationError(
+                f"{mkdocs_yml} declares python-handler option(s) this population derivation does "
+                f"not model: {', '.join(sorted(unclassified))}. "
+                "Classify each as modelled or membership-neutral rather than letting the gate "
+                "scan a population the page no longer has."
+            )
+        if "filters" in declared:
+            opts["filters"] = list(declared["filters"] or [])
+    return opts
+
+
+def _handler_paths(mkdocs_yml: Path = MKDOCS_YML) -> list[Path]:
+    """`handlers.python.paths`, resolved against `mkdocs.yml`'s own directory.
+
+    Returns every declared root, in declaration order; `search_paths` order is
+    what breaks a tie when two roots hold the same module name, so the order is
+    load-bearing and is preserved rather than sorted.
+
+    This is NOT an `options` key -- it sits BESIDE `options` on the handler -- so
+    it belongs here, read, rather than in the classification above, where a check
+    keyed on it could never fire. It is what tells `mkdocstrings` where the
+    package is; a derivation that hardcodes `src` while the page reads this key is
+    the same silent divergence in a second place.
+
+    WHEN `paths` IS ABSENT the fallback is the config directory, NOT `src`.
+    `PythonConfig.paths` carries `default_factory` returning `['.']`, resolved
+    against `mkdocs.yml`, so a `src` fallback would search somewhere the renderer
+    does not -- reintroducing, on the one branch that fires when configuration is
+    absent, exactly the hardcode this function exists to remove.
+
+    This function only READS. It refuses nothing, and it says so because a
+    docstring describing behaviour its function does not contain is the defect
+    class this round exists to close.
+    """
+    if not mkdocs_yml.is_file():
+        return []
+    cfg = yaml.load(mkdocs_yml.read_text(encoding="utf-8"), Loader=_TolerantLoader) or {}
+    for plugin in cfg.get("plugins") or []:
+        if not isinstance(plugin, dict) or "mkdocstrings" not in plugin:
+            continue
+        python = ((plugin["mkdocstrings"] or {}).get("handlers") or {}).get("python") or {}
+        declared = python.get("paths") or ["."]
+        return [(mkdocs_yml.parent / entry).resolve() for entry in declared]
+    return []
+
+
+def _resolve_module_file(module: str, roots: list[Path]) -> Path | None:
+    """First root holding the module, mirroring `search_paths` precedence.
+
+    Multi-root is legal `mkdocstrings` configuration and is SUPPORTED rather than
+    refused. Refusing it would turn a valid config into a hard failure to save
+    two small changes -- this loop, and passing the whole list to
+    `GriffeLoader(search_paths=...)`, which already takes a sequence. The cost of
+    supporting it is that a module name present under two roots resolves to the
+    first, which is what `griffe` does with the same list in the same order.
+    """
+    for root in roots:
+        found = _module_file(module, root)
+        if found is not None:
+            return found
+    return None
+
+
+def _passes_filters(name: str, filters: list[str]) -> bool:
+    """`mkdocstrings` filter semantics: last matching rule wins; `!` negates."""
+    keep = True
+    matched = False
+    for rule in filters:
+        negate = rule.startswith("!")
+        pattern = rule[1:] if negate else rule
+        if re.search(pattern, name):
+            keep = not negate
+            matched = True
+    if not matched and any(not f.startswith("!") for f in filters):
+        return False
+    return keep
+
+
+def _exported(owner) -> set[str]:
+    """Names the module lists in `__all__` -- the alias-rendering rule."""
+    out: set[str] = set()
+    for entry in getattr(owner, "exports", None) or []:
+        out.add(entry if isinstance(entry, str) else getattr(entry, "name", ""))
+    return {n for n in out if n}
+
+
+def rendered_docstrings(src: Path = None, api_page: Path = None) -> list[tuple[str, Path, int, str]]:
+    """(page qualname, defining file, docstring start line, docstring).
+
+    The qualname is the anchor the PAGE emits -- `hhemt.Toolkit`, not
+    `hhemt.toolkit.Toolkit` -- because every downstream assertion over this
+    population is a claim about the page and must be keyed the way the page is.
+
+    Raises ValueError if no manifested module resolves, or if a manifested module
+    contributes zero members -- an empty contribution is the STRICT signature and
+    an empty population would make this gate pass vacuously.
+    """
+    # No explicit root: take the ones `mkdocs.yml` gives the renderer, so the gate
+    # and the page look in the same places by construction rather than by two
+    # copies of `src` agreeing. An explicit `src` still wins, which is what lets a
+    # test point this at a fixture tree.
+    roots = [src] if src is not None else (_handler_paths() or [SRC_ROOT])
+    api_page = API_PAGE if api_page is None else api_page
+    filters = _handler_options()["filters"]
+
+    modules = public_modules(api_page)
+    loader = griffe.GriffeLoader(search_paths=[str(root) for root in roots])
+    resolved: list[str] = []
+    for module in modules:
+        if _resolve_module_file(module, roots) is None:
+            continue
+        try:
+            loader.load(module)
+        except Exception:
+            continue
+        resolved.append(module)
+    if not resolved:
+        roots_text = ", ".join(str(root) for root in roots)
+        raise PopulationDerivationError(
+            f"no module named on {api_page} or its pages resolved under {roots_text} -- nothing to check."
+        )
+    loader.resolve_aliases(external=False)
+
+    out: list[tuple[str, Path, int, str]] = []
+    seen: set[str] = set()
+    per_module: dict[str, int] = {}
+
+    def emit(qualname: str, obj) -> bool:
+        doc = getattr(obj, "docstring", None)
+        if doc is None or not doc.value or qualname in seen:
+            return False
+        seen.add(qualname)
+        out.append((qualname, Path(obj.filepath), doc.lineno, doc.value))
+        return True
+
+    def visit(owner, page_path: str, depth: int) -> int:
+        count = 0
+        if depth > 2:
+            return count
+        exported = _exported(owner)
+        for name, member in list(owner.members.items()):
+            if not _passes_filters(name, filters):
+                continue
+            target = member
+            if member.is_alias:
+                if name not in exported:
+                    continue
+                try:
+                    target = member.final_target
+                except Exception:
+                    continue
+            kind = target.kind.value
+            if kind not in ("class", "function", "attribute"):
+                continue  # `show_submodules` is False and is refused if set
+            qualname = f"{page_path}.{name}"
+            count += emit(qualname, target)
+            if kind == "class":
+                count += visit(target, qualname, depth + 1)
+        return count
+
+    for module in resolved:
+        mod = loader.modules_collection[module]
+        count = int(emit(module, mod))
+        count += visit(mod, module, 0)
+        per_module[module] = count
+
+    empty = [m for m, c in per_module.items() if c == 0]
+    if empty:
+        raise PopulationDerivationError(
+            f"manifested module(s) contributed zero documented members: {', '.join(empty)}. "
+            f"That is the STRICT signature -- check the population derivation, not the modules."
+        )
+    return out
+
+
+def published_source_lines(src: Path = SRC_ROOT, api_page: Path = API_PAGE) -> dict[Path, dict[int, str]]:
+    """Every source line the page PUBLISHES, keyed file -> line -> enclosing member.
+
+    `show_source` defaults TRUE and `mkdocs.yml` never sets it (`### D97` ruled it
+    STAYS ON), so the built page carries 142 `<details class="mkdocstrings-source">`
+    blocks embedding each rendered member's whole source body, inline comments
+    included. Matching the renderer's MEMBER SET is not coverage of its OUTPUT: a
+    presentation option widens the bytes per member without changing a name.
+
+    THE POPULATION IS A UNION OF TWO LIMBS AND BOTH ARE REQUIRED.
+
+      * the SPAN limb, `lineno..endlineno`. 13944 lines over 20 files.
+      * the DOCSTRING limb, each member's docstring line range. A `griffe` Module
+        carries NO `lineno`/`endlineno` -- a module has no def/class header line to
+        anchor to -- so the span limb sees a module's members and never the module
+        itself. Measured at HEAD `ec7907a2`: 7 of the 183 rendered members are
+        modules, and a span-only population DROPS 116 docstring lines across 7
+        files, including `experiments.py`'s 43-line module docstring, which
+        `mkdocstrings` renders FIRST on every `:::` block. That is a REGRESSION
+        against what this gate already covers, not a widening.
+
+    Together: 14060 lines over 23 files, a strict superset of both limbs.
+
+    PER-FILE UNION, NEVER PER-MEMBER ITERATION. Member spans NEST -- a class's
+    span contains every method's -- so iterating members and scanning each span
+    visits inner lines two or three times. Measured: naive per-member sum 20604
+    against a union of 13944, a factor of 1.48, and `scan_rendered_docstrings`
+    appends to a list with no set collapse, so every duplicate would reach the
+    finding list.
+
+    The value is the INNERMOST enclosing rendered qualname for each line, which is
+    what gives a finding an address a developer can open and what supplies the
+    ledger its third key component. Innermost rather than outermost because it is
+    the more specific address and it is stable under adding a sibling member.
+    """
+    roots = [src] if src is not None else (_handler_paths() or [SRC_ROOT])
+    api_page = API_PAGE if api_page is None else api_page
+    filters = _handler_options()["filters"]
+
+    modules = public_modules(api_page)
+    loader = griffe.GriffeLoader(search_paths=[str(root) for root in roots])
+    resolved: list[str] = []
+    for module in modules:
+        if _resolve_module_file(module, roots) is None:
+            continue
+        try:
+            loader.load(module)
+        except Exception:
+            continue
+        resolved.append(module)
+    if not resolved:
+        roots_text = ", ".join(str(root) for root in roots)
+        raise PopulationDerivationError(
+            f"no module named on {api_page} or its pages resolved under {roots_text} -- nothing to check."
+        )
+    loader.resolve_aliases(external=False)
+
+    claimed: dict[Path, dict[int, tuple[int, str]]] = {}
+    seen: set[str] = set()
+    per_module: dict[str, int] = {}
+
+    def claim(path: Path, lines: range, qualname: str) -> None:
+        """Assign each line to the NARROWEST claim made on THAT LINE.
+
+        The width is carried PER LINE, never per qualname, and that is the whole
+        of the rule. A per-qualname width table cannot deliver it: `record` claims
+        twice for one qualname -- span, then docstring -- so a per-qualname `min`
+        stores a class's DOCSTRING width, and every method is then compared against
+        that rather than against the class's span. No method's span is narrower
+        than its class's docstring, so no method ever claims its own body.
+        """
+        per_file = claimed.setdefault(path, {})
+        width = len(lines)
+        for line in lines:
+            prior = per_file.get(line)
+            if prior is None or width < prior[0]:
+                per_file[line] = (width, qualname)
+
+    def record(qualname: str, obj) -> bool:
+        doc = getattr(obj, "docstring", None)
+        if doc is None or not doc.value or qualname in seen:
+            return False
+        seen.add(qualname)
+        path = Path(obj.filepath)
+        if getattr(obj, "lineno", None) and getattr(obj, "endlineno", None):
+            claim(path, range(obj.lineno, obj.endlineno + 1), qualname)
+        if doc.lineno is not None:
+            claim(path, range(doc.lineno, doc.lineno + len(doc.value.splitlines())), qualname)
+        return True
+
+    def visit(owner, page_path: str, depth: int) -> int:
+        if depth > 2:
+            return 0
+        count = 0
+        exported = _exported(owner)
+        for name, member in list(owner.members.items()):
+            if not _passes_filters(name, filters):
+                continue
+            target = member
+            if member.is_alias:
+                if name not in exported:
+                    continue
+                try:
+                    target = member.final_target
+                except Exception:
+                    continue
+            kind = target.kind.value
+            if kind not in ("class", "function", "attribute"):
+                continue
+            qualname = f"{page_path}.{name}"
+            count += int(record(qualname, target))
+            if kind == "class":
+                count += visit(target, qualname, depth + 1)
+
+        return count
+
+    for module in resolved:
+        mod = loader.modules_collection[module]
+        per_module[module] = int(record(module, mod)) + visit(mod, module, 0)
+
+    # THE STRICT SIGNATURE, kept on the GATING path. A manifested module that
+    # contributes zero members yields a silently smaller population and a GREEN
+    # run, which is the vacuous pass this whole derivation exists to remove. It
+    # lived in `rendered_docstrings` and `_run` no longer calls that function, so
+    # without this the guard fires only under `--advisory` and never when gating.
+    empty = [m for m, c in per_module.items() if c == 0]
+    if empty:
+        raise PopulationDerivationError(
+            f"manifested module(s) contributed zero documented members: {', '.join(empty)}. "
+            f"That is the STRICT signature -- check the population derivation, not the modules."
+        )
+    return {path: {line: q for line, (_w, q) in per.items()} for path, per in claimed.items()}
+
+
+def scan_rendered_docstrings(
+    src: Path = SRC_ROOT, api_page: Path = API_PAGE, *, spans: dict | None = None
+) -> list[tuple[str, Path, int, str]]:
+    """Binary-class findings over every PUBLISHED source line, sorted.
+
+    Only `_binary_findings`' two classes. The vocabulary and punctuation contracts
+    are `### D22b` out-of-scope for `src/` prose and are routed to `scan_advisory()`
+    instead.
+
+    FENCES ARE NOT SKIPPED HERE, and the asymmetry with `scan()` is a ruling rather
+    than an oversight. `_unfenced_lines` toggles on a line matching
+    a triple-backtick or triple-tilde run, which is markdown semantics: in a markdown
+    page a fence is where an illustrative citation legitimately lives. A member's
+    source body is not markdown. A backtick run there sits inside a string literal
+    or a docstring example, and a citation inside a docstring example is still
+    published prose a reader sees -- the same argument `WORD_BAN_PATTERNS` already
+    makes one screen
+    up for scanning "COMMENTS inside fences, which are our own prose and are read by
+    the user exactly as body text is". Routing this population through
+    `_unfenced_lines` would also inherit a SILENT-TRUNCATION branch: one stray
+    backtick run flips the toggle and every later line of that file goes unscanned
+    with no diagnostic. Measured at HEAD `ec7907a2`: zero toggling lines in the
+    published union AND zero in the docstring values scanned today, so this ruling
+    changes no current finding and removes the branch rather than scoping it.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
+    if spans is None:
+        spans = published_source_lines(src, api_page)
+    for path, lines in spans.items():
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            continue
+        for lineno in sorted(lines):
+            if lineno - 1 >= len(text):
+                continue
+            line = text[lineno - 1]
+            for code, pat in PLACEHOLDER_PATTERNS:
+                if pat.search(line):
+                    findings.append((code, path, lineno, line.strip()))
+            m = LINE_CITATION.search(line)
+            if m:
+                findings.append(("bare-line-citation", path, lineno, m.group(0)))
+    return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
+
+
+def _module_level_literal(module_file: Path, attribute: str) -> object:
+    """The value bound to `attribute` at module level, from the assignment NODE.
+
+    Returns the value, or `_ABSENT` when no module-level assignment binds the
+    name, or `_NOT_LITERAL` when one does but its right-hand side is not a
+    literal. Three outcomes rather than two, because a rule that cannot tell a
+    RENAME from a COMPUTED VALUE reports them identically and a reader fixes the
+    wrong thing: `_SCHEMA_VERSION = str(version_to)` sits two lines below
+    `_SUPERSEDED` in the module this registry names.
+
+    The value comes from the NODE, never from a rendered string. `griffe` is not
+    used here even though this module imports it: its `Attribute.value` is a
+    display expression whose `str()` happens to re-parse, which is an incidental
+    property of a documentation API rather than a contract -- and `mkdocs.yml`
+    sets `filters: ["!^_"]`, under which every underscore-prefixed constant this
+    registry names is excluded from any griffe-derived surface in this
+    repository anyway.
+    """
+    tree = ast.parse(module_file.read_text(encoding="utf-8"), filename=str(module_file))
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+        else:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id == attribute:
+                try:
+                    return ast.literal_eval(node.value)
+                except (ValueError, TypeError, SyntaxError):
+                    return _NOT_LITERAL
+    return _ABSENT
+
+
+def scan_docs_source_filenames(
+    docs_dir: Path,
+    registry: tuple[tuple[str, str, str, str, int], ...] = DOCS_SOURCE_FILENAMES,
+    src: Path = SRC_ROOT,
+) -> list[tuple[str, Path, int, str]]:
+    """Class-6 findings, sorted: a registered literal must EQUAL the constant
+    that binds it and occur on its page exactly as many times as declared.
+
+    SEVEN arms, every one a FINDING at exit 1. There is deliberately NO exit-2 arm
+    and no `PopulationDerivationError`: a stale registry row is drift discovered
+    by a gate that RAN, which is what exit 1 means here, and exit 2's handler
+    lives in `main()` and returns before `_run` prints a single skip line -- so
+    routing a stale row there would discard the denominator this rule publishes.
+    The registry is a module constant, so no run-time READ or PARSE can fail and
+    exit 2's "population this gate cannot derive" has no instance here. A
+    malformed ROW is a different thing and is NOT an import error: a four-field
+    tuple is valid Python, imports cleanly, and raises `ValueError` at the
+    unpack -- so without the first arm below, the likeliest hand-edit on a
+    five-field row reports as an internal crash at exit 3, which is a false
+    statement about the docs.
+    """
+    findings: list[tuple[str, Path, int, str]] = []
+    for row in registry:
+        if not (
+            isinstance(row, tuple)
+            and len(row) == 5
+            and all(isinstance(field, str) for field in row[:4])
+            and isinstance(row[4], int)
+        ):
+            findings.append(("docs-source-registry-malformed", docs_dir, 1, repr(row)[:110]))
+            continue
+        page_rel, literal, module, attribute, expected = row
+        page = docs_dir / page_rel
+        row = f"{page_rel} `{literal}` <- {module.rsplit('.', 1)[-1]}.{attribute} x{expected}"
+        module_file = _module_file(module, src)
+        if module_file is None:
+            findings.append(("docs-source-module-absent", page, 1, row))
+            continue
+        bound = _module_level_literal(module_file, attribute)
+        if bound is _ABSENT:
+            findings.append(("docs-source-attribute-absent", page, 1, row))
+            continue
+        if bound is _NOT_LITERAL:
+            findings.append(("docs-source-attribute-not-literal", page, 1, row))
+            continue
+        if bound != literal:
+            findings.append(("docs-source-literal-disagrees", page, 1, f"{row}; bound={bound!r}"))
+            continue
+        if not page.is_file():
+            findings.append(("docs-source-page-absent", page, 1, row))
+            continue
+        text = page.read_text(encoding="utf-8", errors="ignore")
+        needle = f"`{literal}`"
+        count = text.count(needle)
+        if count != expected:
+            lineno = next((i for i, ln in enumerate(text.splitlines(), 1) if needle in ln), 1)
+            findings.append(("docs-source-page-count", page, lineno, f"{row}; found {count}"))
+    return sorted(findings, key=lambda f: (str(f[1]), f[2], f[0]))
+
+
+def _docs_source_scope_line(
+    docs_dir: Path,
+    registry: tuple[tuple[str, str, str, str, int], ...] = DOCS_SOURCE_FILENAMES,
+) -> str:
+    """The class-6 denominator, printed on BOTH of `_run`'s branches.
+
+    Per registered page, the filename-shaped literals on it that carry no row;
+    then ONE corpus line for the scanned pages carrying no row at all. Per-page
+    alone would report on the pages it covers and be silent about the rest while
+    reading as a complete account, which is the shape of a green that misleads.
+    The residual is taken over `_scanned_markdown`, which IS this class's whole
+    population. A marker exempts the class GROUPS it declares, not the page: every
+    live marker declares only `prose`, so all 53 pages are scanned for the binary
+    tier today, and `EXEMPTABLE_CLASS_GROUPS` holds no group that could exempt
+    class 6 at any point. Filtering marked pages out here understates the
+    denominator by 9 of 53, in the one line whose job is not to.
+    """
+    registered = {row[0] for row in registry}
+    parts: list[str] = []
+    for page_rel in sorted(registered):
+        page = docs_dir / page_rel
+        if not page.is_file():
+            parts.append(f"{page_rel} (absent)")
+            continue
+        on_page = set(_FILENAME_LITERAL.findall(page.read_text(encoding="utf-8", errors="ignore")))
+        rest = sorted(on_page - {row[1] for row in registry if row[0] == page_rel})
+        parts.append(
+            f"{page_rel}: {len(rest)} unregistered ({', '.join(rest)})" if rest else f"{page_rel}: 0 unregistered"
+        )
+    covered = {(docs_dir / page_rel).resolve() for page_rel in registered}
+    uncovered = sum(1 for md in _scanned_markdown(docs_dir) if md.resolve() not in covered)
+    return (
+        f"docs-to-source filename rows: {len(registry)} checked on {len(registered)} page(s) "
+        f"[{'; '.join(parts)}]; {uncovered} further scanned page(s) carry no registered row "
+        f"and were not checked for filename agreement"
+    )
+
+
+def _apply_citation_ledger(published, repo_root: Path, spans):
+    """Split the published-line findings against the pinned ledger.
+
+    Returns (tolerated_findings, retired, orphaned_findings, pinned_count).
+
+    TOKEN granularity, and the re-scan is why. A finding carries
+    `LINE_CITATION.search(line).group(0)` -- ONE token -- while four published
+    lines hold two. Building the ledger from findings would pin 58 entries and
+    silently ignore the second token of those four, so each finding's line is
+    re-scanned here with `finditer`. The ledger therefore holds 62 entries while a
+    red run prints 58 findings; both numbers are correct and neither serves the
+    other's role.
+    """
+    pinned = citation_ledger.parse()
+    per_finding = _citation_keys_by_finding(published, repo_root, spans)
+    live: set[str] = set()
+    for keys in per_finding.values():
+        live |= keys
+    live_qualnames = {q for per_file in spans.values() for q in per_file.values()}
+    added, retired, orphans = citation_ledger.classify(
+        live, pinned, repo_root=citation_ledger.KEY_ROOT, live_qualnames=live_qualnames
+    )
+    tolerated = {f for f, keys in per_finding.items() if keys and not (keys & added)}
+    orphaned = [("orphaned-citation-ledger-entry", repo_root, 0, entry) for entry in sorted(orphans)]
+    return tolerated, retired, orphaned, len(pinned)
+
+
+def _live_citation_keys(published, repo_root: Path, spans) -> set[str]:
+    """The key set the ledger pins. ONE derivation, shared with the gate."""
+    keys: set[str] = set()
+    for k in _citation_keys_by_finding(published, repo_root, spans).values():
+        keys |= k
+    return keys
+
+
+def _citation_keys_by_finding(published, repo_root: Path, spans) -> dict[tuple, set[str]]:
+    per_finding: dict[tuple, set[str]] = {}
+    for finding in published:
+        code, path, lineno, _excerpt = finding
+        if code != "bare-line-citation":
+            continue
+        qualname = spans.get(path, {}).get(lineno, "")
+        try:
+            line = path.read_text(encoding="utf-8", errors="ignore").splitlines()[lineno - 1]
+        except (OSError, IndexError):
+            continue
+        # KEY_ROOT, never `repo_root`: a ledger key must be relative to the tree the
+        # ledger is COMMITTED in, and `repo_root` follows `--docs-dir`, which the
+        # repository's own suite relocates on every run. os.path.relpath rather than
+        # Path.relative_to because a published file outside the root is reachable
+        # when `handlers.python.paths` points outside the repository, and relative_to
+        # RAISES there -- reported by the exit-3 catch-all as an unanticipated crash.
+        rel = os.path.relpath(path, citation_ledger.KEY_ROOT)
+        per_finding[finding] = {citation_ledger.key(rel, m.group(0), qualname) for m in LINE_CITATION.finditer(line)}
+    return per_finding
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--docs-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent / "docs",
+        help=(
+            "the documentation root (default: ./docs) -- the docs root, NOT the "
+            "repository root. The scanned population is every markdown git tracks "
+            "in the repository, plus every markdown on disk under this directory"
+        ),
+    )
+    ap.add_argument(
+        "--advisory",
+        action="store_true",
+        help="also print advisory findings (never affects the exit code)",
+    )
+    ap.add_argument(
+        "--write-citation-ledger",
+        action="store_true",
+        help=(
+            "pin every currently-published bare `path:line` citation into the "
+            "ledger and exit 0 (review the diff). This is how tolerated debt is "
+            "ADDED, and it is deliberately a separate invocation and a reviewed "
+            "file change rather than an automatic effect of running the gate"
+        ),
+    )
+    args = ap.parse_args(argv)
+    if not args.docs_dir.is_dir():
+        print(f"ERROR: docs dir not found: {args.docs_dir}", file=sys.stderr)
+        return 2
+    if args.write_citation_ledger:
+        repo_root = _repo_root(args.docs_dir)
+        spans = published_source_lines()
+        live = _live_citation_keys(scan_rendered_docstrings(spans=spans), repo_root, spans)
+        print(f"citation ledger rewritten: {citation_ledger.write(live)} token(s) -> {citation_ledger.LEDGER}")
+        return 0
+    try:
+        return _run(args)
+    except (MarkerDeclarationError, PopulationDerivationError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        if isinstance(exc, MarkerDeclarationError):
+            print(
+                "A generated page is rewritten only when `mkdocs build` runs and is "
+                "gitignored, so a stale or absent one is the normal state of a fresh "
+                "clone. Run `mkdocs build` first.",
+                file=sys.stderr,
+            )
+        return 2
+    except Exception:
+        traceback.print_exc()
+        print(
+            "ERROR: unanticipated failure inside this gate. Exit 3, not 1: 1 is the "
+            "FINDINGS code, and a crash reported as findings is a false statement "
+            "about the docs.",
+            file=sys.stderr,
+        )
+        return 3
+
+
+def _address(path: Path, repo_root: Path) -> str:
+    """A finding's address, relative to whichever root CONTAINS it.
+
+    `Path.relative_to` RAISES rather than returning a traversal, and the widened
+    population is the first thing to hand this loop `src/**` paths. Those live
+    under KEY_ROOT, which follows the SCRIPT; `docs/**` findings live under
+    `repo_root`, which follows `--docs-dir`. The two coincide only at the default,
+    and the repository's own suite relocates `--docs-dir` on every run -- so a
+    single-root address crashes the gate at exit 3 after the scan has already
+    found everything. Neither root is wrong; the assumption that one root covers
+    both populations is.
+    """
+    for root in (repo_root, citation_ledger.KEY_ROOT):
+        if root in path.parents:
+            return str(path.relative_to(root))
+    return str(path)
+
+
+def _run(args: argparse.Namespace) -> int:
+    """The body of `main()`, separated so a `MarkerDeclarationError` raised anywhere
+    inside it returns the documented exit 2 rather than a traceback.
+
+    Four call sites below read markers -- `scan`, `scan_advisory`, `generated_files`
+    and `personal_voice_files` -- so a guard around any ONE of them would leave the
+    other three uncovered. This module's docstring contracts three outcomes (0, 1, 2)
+    and a traceback is none of them; `check_autodoc_coverage.py` handles the same
+    build-artifact case the same way.
+    """
+    # The repository root, derived ONCE and bound before every consumer. Two of
+    # the three `relative_to` sites in this prologue run ABOVE the old binding
+    # site, so repairing them without moving the binding is an UnboundLocalError
+    # rather than a fix.
+    repo_root = _repo_root(args.docs_dir)
+    if args.advisory:
+        advisory = scan_advisory(args.docs_dir)
+        print(f"advisory: {len(advisory)} candidate(s) — judgment required, not a gate.")
+        for code, path, lineno, excerpt in advisory:
+            print(f"  {_address(path, repo_root)}:{lineno} [{code}] {excerpt[:110]}")
+
+    # Name every class checked, AND every file not checked. A success line that
+    # under-reports its own scope is the same defect this gate exists to catch,
+    # one level up -- and a skip absent from the output is exactly that
+    # under-reporting. Printed in BOTH branches: a red run that hides its
+    # population is worse than a green one, not better.
+    def _skip_line(label: str, paths: list[Path]) -> str:
+        if not paths:
+            return f"skipped 0 {label} file(s)"
+        rels = ", ".join(
+            f"{m.relative_to(repo_root)} (exempt="
+            f"{','.join(sorted(_exempt_groups(m.read_text(encoding='utf-8', errors='ignore'))))})"
+            for m in paths
+        )
+        return f"skipped {len(paths)} {label} file(s), routed to --advisory: {rels}"
+
+    shipped = [name for name in SHIPPED_METADATA if (repo_root / name).is_file()]
+    spans = published_source_lines()
+    # Compared against KEY_ROOT, never `repo_root`. The guard exists for ONE
+    # configuration -- `handlers.python.paths` pointing outside the repository --
+    # and `repo_root` follows `--docs-dir`, which the repository's own suite
+    # relocates on every run, so comparing against it refused three pre-existing
+    # tests that were using the CLI exactly as its help text documents. KEY_ROOT is
+    # the tree the ledger is committed in, which is the tree a published file must
+    # be addressable within for its key to mean anything on another checkout.
+    #
+    # Without this guard the same disagreement is SILENT: `os.path.relpath` returns
+    # a traversal and the ledger commits machine-specific keys.
+    outside = sorted(p for p in spans if citation_ledger.KEY_ROOT not in p.parents)
+    if outside:
+        raise PopulationDerivationError(
+            f"{len(outside)} published file(s) resolve outside the repository root "
+            f"{citation_ledger.KEY_ROOT}, "
+            f"first is {outside[0]}. `handlers.python.paths` in mkdocs.yml resolves to a tree "
+            f"git does not own, so a finding cannot be given a repository-relative address and a "
+            f"ledger key would be machine-specific. Point `paths` inside the repository."
+        )
+    skip_lines = [
+        _skip_line("generated", generated_files(args.docs_dir)),
+        _skip_line("personal-voice", personal_voice_files(args.docs_dir)),
+        _skip_line("repo-internal", repo_internal_files(args.docs_dir)),
+        f"scanned {len(shipped)} shipped-metadata file(s) for placeholders and line "
+        f"citations only: {', '.join(shipped) if shipped else '(none found)'}",
+        f"scanned {sum(len(v) for v in spans.values())} published source line(s) across "
+        f"{len(spans)} file(s) from {API_PAGE.name} and its api-*.md pages -- every line the pages render for a "
+        f"member, which is its SOURCE BODY as well as its docstring because show_source is "
+        f"on -- for placeholders and line citations only; their vocabulary and punctuation "
+        f"are D22b out-of-scope and are reported under --advisory, never gated",
+    ]
+
+    # `scan()` walks every markdown this repository ships or builds, which
+    # INCLUDES the markdown members of SHIPPED_METADATA. Those are already
+    # scanned by `scan_shipped_metadata` for the two file-type-independent
+    # classes ONLY -- see the SHIPPED_METADATA comment for why the prose
+    # contracts do not run on them. Routed out here rather than out of the
+    # population, because narrowing the population would also drop them from
+    # `scan_advisory`, and full paths rather than names because a nested
+    # `README.md` is a different file with a different ruling.
+    shipped_paths = {repo_root / name for name in SHIPPED_METADATA}
+    published = scan_rendered_docstrings(spans=spans)
+    tolerated, retired, orphaned, ledger_lines = _apply_citation_ledger(published, repo_root, spans)
+    findings = (
+        [f for f in scan(args.docs_dir) if f[1] not in shipped_paths]
+        + scan_shipped_metadata(repo_root)
+        + [f for f in published if f not in tolerated]
+        + orphaned
+        + scan_docs_source_filenames(args.docs_dir)
+    )
+    skip_lines.append(
+        f"citation ledger: {ledger_lines} pinned token(s) tolerated on "
+        f"{len(tolerated)} published line(s); {len(retired)} retired this run; "
+        f"{len(orphaned)} orphaned"
+    )
+    skip_lines.append(_docs_source_scope_line(args.docs_dir))
+    if findings:
+        print("docs content check FAILED:", file=sys.stderr)
+        for code, path, lineno, excerpt in findings:
+            print(f"  {_address(path, repo_root)}:{lineno} [{code}] {excerpt[:110]}", file=sys.stderr)
+        print(
+            f"\n{len(findings)} finding(s). A placeholder tells a reader the page is "
+            f"unfinished; a bare path:line citation decays silently as the source "
+            f"moves. Replace a line citation with a symbol name, which does not decay.",
+            file=sys.stderr,
+        )
+        for line in skip_lines:
+            print(line, file=sys.stderr)
+        return 1
+
+    print(
+        f"docs content OK under {args.docs_dir}, and shipped metadata clean — no "
+        f"placeholder leakage, bare line citation, banned vocabulary, development "
+        f"provenance, or em dash."
+    )
+    for line in skip_lines:
+        print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

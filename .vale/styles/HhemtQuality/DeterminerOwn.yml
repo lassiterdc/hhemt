@@ -1,0 +1,8 @@
+# Converted from tests/docs/test_review_10g1_pass.py.
+extends: existence
+message: "'%s' is not grammatical; use a possessive before 'own'."
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\b(?:the|a|an)\s+own\b'

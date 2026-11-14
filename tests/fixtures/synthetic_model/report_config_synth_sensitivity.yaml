@@ -1,6 +1,15 @@
 # Sensitivity-tier report config for synth_05 / synth_06.
 # Declares the independent variables that the benchmarking renderer wildcards over.
 
+# Pinned explicitly rather than left to the sentinel: with no `reporting_set` key,
+# resolve_reporting_set_names maps "default" -> ("sensitivity",) on a sensitivity
+# analysis, which is not the set this fixture exercises.
+# Pinning it here makes the zero-delta criterion of later golden comparisons a real
+# check. BOTH this file and its mirror are pinned: the byte-identity goldens read the
+# tests/fixtures copy, so pinning only one leaves the golden path unpinned while
+# reading as done.
+reporting_set: benchmarking
+
 figure_defaults:
   font_family: "DejaVu Sans"
   font_size: 10
@@ -10,14 +19,7 @@ figure_defaults:
 system_map:
   target_epsg: null
   figsize_inches: [10.0, 8.0]
-  watershed_color: red
-  dem_extent_color: blue
-  bc_marker: o
   bc_color: orange
-  swmm_node_color: black
-  swmm_node_size: 8.0
-  swmm_link_color: gray
-  swmm_link_width: 0.6
 
 per_sim:
   peak_flood_depth:
@@ -40,10 +42,9 @@ per_analysis_summary:
     - enabled_model_types
 
 sensitivity:
-  mode: benchmarking
   independent_vars:
     - n_devices
   dependent_var: performance.Total
   aggregation: mean
-  group_by_var: run_mode
+  group_by_var: analysis.run_mode
   show_gridlines: true

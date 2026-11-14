@@ -1,0 +1,7 @@
+# A sentence that opens 'There is' or 'There are' hides the subject behind an empty word.
+extends: existence
+message: "Name the subject; do not open with '%s'."
+level: warning
+nonword: true
+raw:
+  - '(?m)(?:^|(?<=[.!?]\s))There\s+(?:is|are|was|were|exists?|remains?)\b'

@@ -1,0 +1,126 @@
+name: Type gate (certified stack)
+
+on:
+  # develop only: the release PR (develop -> main) reads this check from the develop push run
+  # on its head SHA, so a trigger on main would run the same check twice for one SHA.
+  push:
+    branches: [ "develop" ]
+  pull_request:
+    branches: [ "develop" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  type-gate:
+    runs-on: ubuntu-latest
+    # Sized for the cache-MISS run, which is the only slow one: the solve (measured
+    # on a laptop at 14m56s on the file's own channels; the old CI solve ran about
+    # 29m, with `defaults` searched as well, see the setup step) + download and
+    # install of 433 conda packages (counted in the dry-run output) and the pip
+    # block (~10m together, estimated, not measured) + the three gate commands
+    # (~5m, estimated). Worst case (the old 29m solve): 29+10+5 = 44m, x1.5 = 66m,
+    # rounded up to 75. compile-tests.yml provisions the same file and carries 90.
+    # A cache HIT run skips the solve and the install: restore + the gates.
+    timeout-minutes: 75
+    defaults:
+      run:
+        # -l is load-bearing: conda's shell hook runs only in a login shell, and
+        # without it `activate-environment` does not reach subsequent `run:` steps
+        # and $CONDA_PREFIX is empty. Lifted from compile-tests.yml, not guessed.
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up conda (creates only the empty activated env; no solve of environment.yaml)
+        # NO `environment-file:` here, on purpose. Passing it makes setup-miniconda
+        # solve environment.yaml on every run, which is the step that exceeded the
+        # old 30-minute timeout. The solve now happens in the cache-miss step below,
+        # at most once per environment.yaml revision. This is the environment-caching
+        # pattern in setup-miniconda's README ("Caching environments"): set up with
+        # `activate-environment` and no environment file, restore the envs dir, and
+        # run the env update only on a cache miss.
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: hhemt
+          auto-activate-base: false
+          # ROOT CAUSE of the 30-minute cancel: conda appends its implicit `defaults`
+          # channel (anaconda.org/main + r) below the two channels environment.yaml
+          # names, and the solver then searches three channels' repodata. Measured on
+          # a laptop, conda 26.1.1, libmamba, dry-run of this file: file channels
+          # only 14m56s; with `defaults` added 61m17s; the two resolved the same 433
+          # packages. (That CI carries `defaults` is inferred from those timings; the
+          # probe in the solve step below prints it.) environment.yaml names
+          # `conda-forge` and `bioconda` and no `defaults`, so this makes CI honour
+          # the file as written. The README's Example 14 pairs this input with a
+          # conda-forge-only channel list for the same reason.
+          conda-remove-defaults: "true"
+
+      - name: Restore the provisioned conda env
+        id: conda-env-cache
+        # `restore` and `save` are split (rather than one actions/cache step) so
+        # that a red gate does not discard a freshly solved env: a combined step
+        # saves only if the whole job succeeds, and this job's purpose is to fail.
+        # Key = hash of environment.yaml, so the solve is repaid only when that file
+        # changes. Bump `v1` to force a re-solve without editing environment.yaml
+        # (the README notes the same file can resolve differently as channels move).
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CONDA }}/envs
+          key: conda-env-${{ runner.os }}-${{ runner.arch }}-v1-${{ hashFiles('environment.yaml') }}
+
+      - name: Solve and install environment.yaml (cache miss only)
+        if: steps.conda-env-cache.outputs.cache-hit != 'true'
+        run: |
+          # Prints conda's configured channel list (the file's own channels are added
+          # on top of it by `-f`). It must NOT contain `defaults`. First-run probe: if
+          # `defaults` appears here the remove-defaults input did not take effect and
+          # the solve will be slow again.
+          conda config --show channels
+          # Fail fast: an ineffective remove-defaults must cost seconds here, not the
+          # whole timeout in a solve that searches `defaults` (observed in the failing
+          # CI log, which printed `- defaults` in its channel list).
+          if conda config --show channels | grep -qx -- '  - defaults'; then
+            echo "defaults channel still configured; conda-remove-defaults did not take effect"
+            exit 1
+          fi
+          conda env update --name hhemt --file environment.yaml
+
+      - name: Save the provisioned conda env (cache miss only)
+        # Saved straight after the solve, BEFORE the pip --no-deps step below, so the
+        # cached tree is a function of environment.yaml alone. The pip step runs on
+        # every run, so a hit re-asserts the SWMM pins rather than trusting the cache.
+        if: steps.conda-env-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CONDA }}/envs
+          key: ${{ steps.conda-env-cache.outputs.cache-primary-key }}
+
+      - name: Install the SWMM stack (--no-deps)
+        # REQUIRED, not optional. environment.yaml deliberately excludes swmmio /
+        # pyswmm / swmm-toolkit from its pip: block (an invariant enforced by
+        # scripts/check_env_lock_consistency.py), so setup-miniconda alone leaves
+        # them absent. src/hhemt carries 8 unguarded module-level imports of that
+        # stack across 7 files; without this step each becomes an unresolved-import
+        # and the gate measures a different population than the committed overrides
+        # table, failing on entries the table legitimately does not cover.
+        run: pip install --no-deps "swmm-toolkit==0.15.5" "pyswmm==2.1.0" "swmmio==0.8.2"
+
+      - name: Confirm the activated prefix
+        # FIRST-LANDING PROBE. Remove once this has printed a non-empty value once.
+        # It is the observable that confirms $CONDA_PREFIX survives activation into
+        # a run: step; the whole gate's environment selection depends on it.
+        run: echo "CONDA_PREFIX=[$CONDA_PREFIX]"
+
+      - name: Type gate on the certified stack
+        env:
+          HHEMT_TY_ENV: ${{ '' }}
+        run: |
+          export HHEMT_TY_ENV="$CONDA_PREFIX"
+          # JOB-LAYER CONTRACT: the last command in this block is the thing under
+          # test. Do not append an echo, a summary, or a redirect -- the step's
+          # exit status is this gate's verdict and nothing else may carry it.
+          python scripts/generate_ty_overrides.py --check
+          python scripts/check_ty_overrides_in_force.py --gating
+          ty check --error-on-warning

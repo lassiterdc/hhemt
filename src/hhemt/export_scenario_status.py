@@ -8,8 +8,11 @@ debugging by identifying which scenarios failed and why.
 The exported CSV includes performance breakdown columns (perf_Total, perf_Compute,
 perf_SWMM, perf_MPI, etc.) drawn from the processed performance summary dataset.
 These columns are populated only for rows where output processing completed; they
-are NaN for SWMM model type rows (no TRITON performance dataset) and for any scenario
-where processing did not finish.
+are NaN for SWMM model type rows (no TRITON performance dataset), for any scenario
+where processing did not finish, and for any column the producing solver did not
+emit for that member (the column set is a versioned contract with TRITON's
+performance.txt header, and one analysis tree can hold members written by more than
+one solver version — see `analysis._perf_row_from_dataset`).
 
 Additionally writes a workflow_summary.md file with get_workflow_status() output
 and optionally includes HPC partition information for debugging resource allocation issues.
@@ -255,10 +258,10 @@ def write_workflow_summary_md(analysis) -> Path:
         "",
         "## Progress Summary",
         "",
-        f"- **Total Simulations**: {status.total_simulations}",
-        f"- **Completed**: {status.simulations_completed}",
-        f"- **Failed**: {status.simulations_failed}",
-        f"- **Pending**: {status.simulations_pending}",
+        f"- **Total Scenarios**: {status.total_simulations}",
+        f"- **Scenarios with every model run completed**: {status.simulations_completed}",
+        f"- **Scenarios with a model run that started and did not finish**: {status.simulations_failed}",
+        f"- **Scenarios whose unfinished model runs have not started**: {status.simulations_pending}",
         "",
         "---",
         "",
@@ -286,7 +289,7 @@ def write_workflow_summary_md(analysis) -> Path:
         )
 
         if phase.failed_items:
-            md_lines.append(f"- **Failed Items**: {len(phase.failed_items)}")
+            md_lines.append(f"- **Incomplete Items**: {len(phase.failed_items)}")
             md_lines.append("  ```")
             for item in phase.failed_items[:10]:  # Show first 10
                 md_lines.append(f"  {item}")
@@ -315,7 +318,7 @@ def write_workflow_summary_md(analysis) -> Path:
     return summary_path
 
 
-def export_scenario_status_to_csv(analysis, output_path: Path | None = None) -> Path:
+def export_scenario_status_to_csv(analysis, output_path: Path | None = None, *, df_status=None) -> Path:
     """
     Export the scenario status DataFrame to a CSV file.
 
@@ -347,7 +350,8 @@ def export_scenario_status_to_csv(analysis, output_path: Path | None = None) -> 
     # Ensure parent directory exists
     output_path_final.parent.mkdir(parents=True, exist_ok=True)
 
-    df_status = analysis.df_status
+    if df_status is None:
+        df_status = analysis.df_status
 
     # Write to CSV
     df_status.to_csv(output_path_final, index=False)
@@ -429,10 +433,100 @@ def main():
         if args.verbose:
             print("Exporting scenario status...", flush=True)
 
-        csv_path = export_scenario_status_to_csv(analysis, args.output_path)
+        # ONE snapshot for the whole rule: the CSV write and the validation-report
+        # persist below both consume it, so this rule performs one whole-population
+        # build rather than one per consumer.
+        _df_status = analysis.df_status
+        csv_path = export_scenario_status_to_csv(analysis, args.output_path, df_status=_df_status)
         logger.info(f"Scenario status exported to: {csv_path}")
 
+        # F3: re-persist validation_report.json now that scenario_status.csv exists, so the
+        # `scenario_status.csv created` check (which runs at consolidation, BEFORE this rule
+        # writes the CSV) no longer bakes a false "missing" failure into the read-model the
+        # errors_and_warnings figure reads. The E&W plot rule declares scenario_status.csv as
+        # an input, so it runs after this rule -> it reads the corrected (passing) report.
+        # Non-fatal: a persist failure must never fail the CSV export.
+        try:
+            from hhemt.analysis_validation import persist_validation_report
+
+            persist_validation_report(analysis, df_status=_df_status)
+            logger.info("Re-persisted validation_report.json (post-CSV) so the CSV-created check passes")
+        except Exception:
+            # Traceback, not a one-line repr: this rule DECLARES validation_report.json as an
+            # output, so Snakemake already fails the job. What the operator loses to a bare
+            # `{e}` is the diagnosis -- a master-blind check raising KeyError renders as the
+            # single character `1`. Non-fatal is retained so scenario_status.csv and
+            # workflow_summary.md still land; the output declaration is the hard stop.
+            logger.exception(
+                "post-export validation_report.json re-persist failed (rule will fail on the declared output)"
+            )
+
         # Write workflow summary markdown
+        # Persist the jobid -> rule index into _status/. It reaches a render bundle only
+        # because report_renderers/workflow_performance.py declares it as a source (the
+        # bundle copies _status/_du.json alone, never the tree). Harvested from the SLURM
+        # executor's own per-job log tree, which is
+        # the ONLY retroactive record of jobs whose flag sidecar a later submission
+        # overwrote (measured: 511 such allocations on the delivered experiment). Merged
+        # into any existing index rather than replacing it, because the plugin prunes its
+        # logs by age and a later harvest can legitimately see FEWER jobs than an earlier
+        # one -- a straight overwrite would discard history exactly as the sidecar does.
+        # Non-fatal, matching the two validation_report re-persists: a reporting nicety must
+        # never fail the status export.
+        try:
+            import json as _json_idx
+
+            from hhemt.status_flags import harvest_slurm_job_index
+
+            _idx_path = analysis.analysis_paths.analysis_dir / "_status" / "_job_index.json"
+            _merged: dict[str, str] = {}
+            if _idx_path.exists():
+                try:
+                    _prior = _json_idx.loads(_idx_path.read_text())
+                    if isinstance(_prior, dict):
+                        _merged.update({str(k): str(v) for k, v in _prior.items()})
+                except (OSError, ValueError):
+                    pass
+            _merged.update(harvest_slurm_job_index(analysis.analysis_paths.analysis_dir))
+            if _merged:
+                _idx_path.parent.mkdir(parents=True, exist_ok=True)
+                _idx_path.write_text(_json_idx.dumps(_merged, indent=2, sort_keys=True))
+                logger.info(f"Persisted SLURM job index for {len(_merged)} job(s)")
+        except Exception as e:
+            logger.warning(f"SLURM job-index harvest failed (non-fatal): {e}")
+
+        # Make job efficiency data a PRODUCT rather than an operator errand. The capture
+        # existed already but had no caller anywhere in src/, scripts/ or the Snakefile
+        # generators -- it ran only when a human typed `python -m hhemt.slurm_job_recovery`,
+        # which is why the store is empty on trees nobody remembered to back-fill. This rule
+        # is the right home: it already runs on the cluster where `sacct` resolves, it already
+        # re-persists two other read-models here, and it runs after consolidation, so the jobs
+        # it captures are finished and their accounting rows are final.
+        #
+        # `run_method` is passed from here because this is the one place it is authoritatively
+        # known; the capture module is stdlib-only and must not read a toolkit config.
+        #
+        # Non-fatal by the same rule as its neighbours. `backfill` degrades internally to
+        # "recovered nothing" on a missing sacct, a timeout, or a non-zero exit, so the local
+        # and off-cluster cases cost one no-op call rather than an error path.
+        try:
+            from hhemt.slurm_job_recovery import backfill
+
+            _rep = backfill(
+                analysis.analysis_paths.analysis_dir,
+                run_method=str(analysis.cfg_analysis.multi_sim_run_method or ""),
+            )
+            logger.info(
+                "SLURM job store: ids=%s rows=%s job_rows=%s batch_rows=%s missing=%s",
+                _rep["ids_in_csv"],
+                _rep["rows_recovered"],
+                _rep["ids_with_job_row"],
+                _rep["ids_with_batch_row"],
+                _rep["ids_missing"],
+            )
+        except Exception as e:
+            logger.warning(f"SLURM job-store capture failed (non-fatal): {e}")
+
         logger.info("Writing workflow summary markdown...")
         if args.verbose:
             print("Writing workflow summary...", flush=True)

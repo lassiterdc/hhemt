@@ -1,33 +1,45 @@
 """Sensitivity benchmarking renderer.
 
-Dual-panel figure (left: Wall-clock hours, right: Compute-hours = wallclock × n_devices)
-with a shared x-axis given by ``independent_var`` (typical: ``n_devices``). One
-line+marker series per ``group_by_var`` value (typical: ``run_mode``).
+SCOPE. Accuracy and aesthetics ARE grounds for QC and feedback here. Benchmarking
+CONCLUSIONS are not this experiment's business — its subject is byte-for-byteness
+across compute configs and clean-vs-hotstart-resume.
+
+Four stacked panels: Wall-clock | Compute-cost (= wallclock × n_devices) | Strong-scaling
+speedup | Strong-scaling efficiency. TWO x-axis groups, not one shared axis: the top pair
+is keyed on ``independent_var`` (typical: ``n_devices``) and the bottom pair on
+``n_devices`` always, each labelled from its own group so a label cannot describe a
+column its panel did not plot (see ``resolve_axis_groups``). One line+marker series per
+``group_by_var`` value (typical: ``analysis.run_mode``).
 
 Special line-drawing rules per the user-locked Phase 6 iter-2 spec:
 
 - ``hybrid`` (or any group with multiple points sharing the same x-value): the line
   passes through the **minimum** y-value at each x; remaining points are still drawn
-  as markers and (for hybrid) annotated with their ``n_mpi_procs`` value to highlight
-  the most computationally efficient configuration when several share the same
-  resource budget.
+  as markers and (for hybrid) annotated with their ``n_omp_threads`` value -- threads
+  per rank -- to highlight the most computationally efficient configuration when
+  several share the same resource budget. Ranks stay recoverable as
+  ``n_devices / n_omp_threads``, so one number identifies the decomposition.
 - ``serial`` / single-CPU group (always one point on the curve): rendered as a single
   larger distinguished marker, no connecting line.
 - GPU runs (``n_gpus > 0``): distinct marker shape from CPU runs.
 - All non-hybrid lines: dashed, thin.
 
 DataTree-aware read pattern: ``performance.Total`` lives at
-``/sa_{id}/tritonswmm/performance`` in the master ``sensitivity_datatree.zarr``,
-dimensioned by ``event_iloc``. SWMM-only sub-analyses fall back to per-scenario
+``/member_{id}/tritonswmm/performance/summary`` in the master ``sensitivity_datatree.zarr``,
+dimensioned by ``event_iloc``. SWMM-only members fall back to per-scenario
 ``.rpt`` parsing via :func:`hhemt.swmm_output_parser.parse_total_elapsed`.
 
 Derived columns: when ``independent_var`` is ``n_devices`` and the column is absent
 from the sensitivity CSV, the renderer computes it as
-``n_gpus if run_mode == "gpu" else n_mpi_procs * n_omp_threads * n_nodes``.
+``n_gpus if run_mode == "gpu" else n_mpi_procs * n_omp_threads``. There is deliberately
+NO ``n_nodes`` factor: ``n_mpi_procs`` is TOTAL ranks per simulation, so ranks times
+threads-per-rank is already the full parallel width.
 """
 
 from __future__ import annotations
 
+import math
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,9 +52,108 @@ import plotly.io as pio
 import xarray as xr
 from plotly.subplots import make_subplots
 
+from hhemt.config.viz_vocabulary import ValueEncodingPolicy
+from hhemt.exceptions import ProcessingError
+from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
+from hhemt.scenario_records import (
+    REMOVED_STATES,
+    RecordedSimRun,
+    all_members_for_reading_of,
+    read_scenario_record,
+    scenario_record_path,
+)
 from hhemt.swmm_output_parser import parse_total_elapsed
+from hhemt.utils import EXPERIMENT_TREE_NAME, open_store
+
+# COLOUR IS THE DECOMPOSITION AXIS. Hardware is carried by the COLUMN FACET and by
+# nothing else; colour and marker symbol are LOCKED one-to-one and both key the
+# decomposition (see `_DECOMPOSITION_STYLE`). A GPU MPI run therefore draws the SAME
+# colour and the SAME symbol as a CPU MPI run and is told apart by its column.
+#
+# SUPERSEDED DOCTRINE, recorded because the retired code argued for it at length: colour
+# used to be the RUN-MODE axis, under which "each GPU hardware behaves as its own run
+# mode" and every GPU token took a palette slot of its own. That is no longer the design.
+# The machinery it needed -- `_stable_run_mode_color`, `_run_mode_color_order`,
+# `_CANONICAL_RUN_MODES`, and the `all_groups`/`color_groups` plumbing that existed to
+# keep an OPEN vocabulary's derived tail from renumbering under a filtered frame -- is
+# retired with it. The vocabulary colour indexes is now CLOSED at four literal slots, so
+# set-dependence is not fixed but IMPOSSIBLE.
+#: Recognized group SPELLINGS. Retained as the alias source only; it is not, and must not
+#: become, a palette-index ordering.
+_CANONICAL_GROUP_ORDER = ("serial", "single_cpu", "single-cpu", "cpu", "gpu", "hybrid")
+
+
+#: Hardware FAMILIES, de-aliased -- still the axis for scaling-panel COLUMN layout
+#: (`_hw_cols`) and baseline anchoring (`_resolve_family_baselines`), both keyed on
+#: `_hardware_family`. Hardware's ONLY remaining visual channel is the column.
+_CANONICAL_FAMILIES = ("serial", "cpu", "gpu", "hybrid")
+_FAMILY_ALIASES = {"single_cpu": "serial", "single-cpu": "serial"}
+
+#: Columns a renderer may plot as WALLCLOCK, and the only gate between a config value and a
+#: mislabelled axis. Lifted to module scope from inside `render()` so the sole gate on the
+#: toolkit's headline benchmarking figure is importable and therefore testable; the membership
+#: rationale -- the two admission conjuncts, the `SWMM_STEP` near-miss that is still refused, and
+#: why no `_min` column is admitted -- is stated at the use site in `render()`, which is where a
+#: reader hits the `raise`.
+_WALLCLOCK_SAFE_COLS = frozenset(
+    {
+        "performance.Total",
+        "performance.Simulation",
+        "performance.Init",
+        "performance.Total_coherent",
+        "performance.Simulation_coherent",
+        "performance.Init_coherent",
+    }
+)
+
+#: Palette slots that are poor LINE colours on white. Okabe-Ito's yellow and black are
+#: fine as fills and bad as thin series lines. This guard became MORE load-bearing, not
+#: less, when the user ruled that point colour IS line colour: every decomposition colour
+#: is now drawn as a connector, so a weak line slot degrades the primary encoding rather
+#: than one incidental fill.
+_WEAK_LINE_SLOTS = frozenset({"#F0E442", "#000000"})
+
+#: EVERY marker is hollow. The user ruled it for OCCLUSION -- "i think id rather just go
+#: to all the hollow fill since sometimes multiple configs kinda overlap" -- and it holds
+#: unconditionally, with no data-dependent branch anywhere.
+#:
+#: This RETIRES the replicate-count fill encoding. Fill used to mean "this compute config
+#: was run more than once" (hollow) versus once (solid); that clause is superseded, and the
+#: `n_replicates` column it read is now surfaced nowhere in the figure. The caption's
+#: surviving clause -- every replicate is plotted -- is the whole of what the reader is
+#: told about replicates.
+#:
+#: `rgba(0,0,0,0)` rather than `"white"`: a white fill is opaque and hides whatever a
+#: marker lands on, which is the occlusion this exists to remove. Transparent lets an
+#: overlapped marker, a gridline and the ideal-reference line all read through.
+_HOLLOW_FILL = "rgba(0,0,0,0)"
+
+#: The SAME hollow, spelled for matplotlib. Two constants because the two renderers do not
+#: share a colour vocabulary: `rgba(0,0,0,0)` is a plotly/CSS string and matplotlib's colour
+#: parser rejects it outright -- `ValueError: 'c' argument must be a color, a sequence of
+#: colors, or a sequence of numbers, not 'rgba(0,0,0,0)'`. Measured, not anticipated: the
+#: first pass used the plotly spelling at all six sites, the plotly report rendered
+#: perfectly, and the matplotlib PUBLICATION path raised. `"none"` is matplotlib's
+#: transparent-face spelling and is not the string `"None"` nor the object `None`.
+_HOLLOW_FILL_MPL = "none"
+
+#: Hover labels for the per-point config columns. ONE map, not two: this text was
+#: duplicated inline at both hover-emission sites, which is the repeated-definition
+#: shape the single-source mandate forbids -- two hand-maintained copies of one list
+#: drift, and adding a column meant remembering to edit both.
+#:
+#: `n_replicates` is worded as a COUNT OF RUNS, deliberately. A bare "Replicates: 2"
+#: reads equally as "this config ran twice" and "this is replicate 2 of N", and only
+#: the first is true -- every replicate is drawn as its own marker.
+_CFG_HOVER_LABELS: dict[str, str] = {
+    "n_mpi_procs": "MPI ranks",
+    "n_omp_threads": "OMP threads",
+    "n_gpus": "GPUs",
+    "n_nodes": "Nodes",
+    "n_replicates": "Runs of this compute configuration",
+}
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -54,13 +165,17 @@ if TYPE_CHECKING:
 class FacetConfig:
     """Configuration for multi-facet sensitivity-benchmarking layouts.
 
-    Architectural scaffold (F4 of the kickoff figure-review) for future experiments
+    Architectural groundwork (F4 of the kickoff figure-review) for future experiments
     that compare benchmark metrics across an additional categorical axis — typically
     DEM resolution (e.g., 1m vs 3.5m vs 10m) or GPU hardware (a6000 vs a100 vs h100).
 
-    When ``facet=None`` (current default) the renderer emits the canonical
-    ``rows=4, cols=1, shared_xaxes=True`` layout. When ``facet`` is provided, the
-    renderer arranges the 4 metric panels per facet value across the grid shape
+    When ``facet=None`` (current default) the renderer emits a ``rows=4,
+    cols=_n_hw`` layout with ``shared_xaxes=False`` and TWO explicitly-linked x-axis
+    groups: panels 1+2 (wall-clock, compute-cost) share an axis keyed on the
+    configured ``independent_var``, and panels 3+4 (speedup, efficiency) share a
+    separate axis keyed on ``n_devices``. See ``_apply_plotly_axis_groups``. When
+    ``facet`` is provided, the renderer arranges the 4 metric panels per facet value
+    across the grid shape
     declared by ``cols`` × ``rows`` (rows is implicit: ``len(facet_values) // cols``,
     rounded up — and the panel-row count multiplies by 4).
 
@@ -75,11 +190,443 @@ class FacetConfig:
     label_format: str = "{facet_var}={facet_value}"
 
 
+#: The column the SCALING panels (speedup, efficiency) are keyed on. It is a DERIVED
+#: column (`_ensure_n_devices_column`) and is named in
+#: `config/report.py::validate_sensitivity_independent_vars`'s `derived_columns`
+#: carve-out. It is deliberately NOT the configured independent_var: strong-scaling
+#: speedup S(N) and efficiency E_s(N) are defined against device count and nothing else.
+_SCALING_AXIS_VAR = "n_devices"
+
+#: Rows whose per-column y-axes share ONE ruler, linked to column 1. See the linking
+#: block in `_apply_plotly_axis_groups`. All four rows are linked: rows 1-2 so the
+#: absolute wall-clock and cost panels can be read across hardware, and rows 3-4 per the
+#: standing D3 ruling, which permits a shared ruler on the scaling panels because a
+#: comparable AXIS is not a claim -- the directive on scaling conclusions binds what the
+#: figure ASSERTS (titles, captions, annotations), not its axis ranges.
+#:
+#: Scoping the link is a one-line change to this tuple; the reasoning travels with it.
+_Y_LINKED_ROWS: tuple[int, ...] = (1, 2, 3, 4)
+
+#: The DataFrame column holding the configured independent_var's values. Assigned
+#: exactly once, at `df["indep_value"] = df["sa_id"].map(df_setup[independent_var])`.
+#: Single-writer by construction, which is why it is a constant here rather than a
+#: threaded parameter -- see the AxisGroup docstring.
+_INDEP_AXIS_COL = "indep_value"
+
+
+@dataclass(frozen=True)
+class AxisGroup:
+    """One shared-x group: the column plotted, the variable it came from, its label.
+
+    THE INVARIANT THIS TYPE EXISTS TO ENFORCE: `label` is DERIVED from `source_var`
+    inside `for_var`, never supplied alongside it. A caller therefore cannot build a
+    group whose label describes a different quantity than the group plots. That
+    divergence is exactly the shipped defect this replaced: one label was derived from
+    `independent_var` and applied, under `sharex=True`, to the whole four-panel figure
+    -- including the two panels keyed on `n_devices`. With independent_var =
+    'analysis.n_mpi_procs' on the live CPU matrix, member_16 (mpi=8, omp=8) rendered at
+    x=8 in the top pair and x=64 in the bottom pair of one vertically-aligned figure,
+    under a single label naming MPI ranks.
+
+    The defect was INVISIBLE whenever independent_var == 'n_devices', because both
+    halves then plot the same quantity. Any test that asserts a label STRING inherits
+    that blind spot; see tests/test_sensitivity_benchmarking_math.py, which pins
+    DISJOINT top/bottom value ranges so the coincidence cannot mask a regression.
+
+    `source_var` is NOT redundant with `x_col`. The top group's DataFrame column is
+    literally 'indep_value' while its label must be looked up under the configured
+    `independent_var`; a two-field group would look up 'indep_value', miss, and fall
+    through to the raw string on every render.
+
+    Construct via `for_var`. The positional constructor still admits a hand-written
+    label; `test_axis_group_label_is_always_derived_from_its_own_variable` is what
+    holds the factory as the only used path.
+    """
+
+    x_col: str
+    source_var: str
+    label: str
+
+    @classmethod
+    def for_var(cls, x_col: str, source_var: str, labels, qualifier: str | None = None) -> AxisGroup:
+        """Build a group whose label is looked up under `source_var`, never passed in.
+
+        `qualifier` widens the lookup KEY without breaking the derivation invariant: the
+        label is still looked up, never supplied by the caller. It exists because one
+        variable can denote different units per column -- `n_devices` counts cores on a
+        CPU column and GPUs on a GPU column -- and the axis should say which.
+
+        The chain is `{source_var}.{qualifier}` then bare `source_var` then the variable
+        name. The fallback is what makes an absent qualified key degrade to exactly
+        today's behaviour rather than to a blank or a silent no-op.
+        """
+        if qualifier is None:
+            return cls(x_col=x_col, source_var=source_var, label=labels.get(source_var, source_var))
+        return cls(
+            x_col=x_col,
+            source_var=source_var,
+            label=labels.get(f"{source_var}.{qualifier}", labels.get(source_var, source_var)),
+        )
+
+
+def resolve_axis_groups(independent_var: str, sens_cfg) -> tuple[AxisGroup, AxisGroup]:
+    """Resolve the (top, bottom) shared-x groups for one benchmarking figure.
+
+    THE single resolution. Both backends call this and hand the SAME two objects to
+    their draw calls and their label calls, so a panel's label and the quantity it
+    plots come out of one place.
+
+    top    -> wall-clock + compute-cost, keyed on the configured independent_var.
+    bottom -> speedup + efficiency, keyed on n_devices (see _SCALING_AXIS_VAR).
+
+    When independent_var == 'n_devices' the two groups carry the same column and the
+    same label, which is correct: that is the one configuration in which all four
+    panels legitimately READ as one axis. They remain two structurally independent
+    linked groups even then -- the wiring never collapses to a single shared axis --
+    so the top pair's range is always its own.
+    """
+    labels = sens_cfg.independent_var_labels
+    top = AxisGroup.for_var(_INDEP_AXIS_COL, independent_var, labels)
+    bottom = AxisGroup.for_var(_SCALING_AXIS_VAR, _SCALING_AXIS_VAR, labels)
+    return top, bottom
+
+
+def _apply_matplotlib_axis_groups(ax_wall, ax_cost, ax_speedup, ax_eff, *, top, bottom) -> None:
+    """Wire the four matplotlib panels into TWO independent shared-x groups and label
+    each group's boundary axis from that group's own AxisGroup.
+
+    Sharing is post-construction (`plt.subplots(..., sharex=False)` above) because
+    `sharex=True` is all-four-or-nothing. `Axes.sharex()` does NOT call `label_outer`,
+    so the non-boundary rows' tick labels are suppressed explicitly here -- omitting
+    that produces a visibly duplicated tick band, not a silent wrong answer.
+    """
+    ax_wall.sharex(ax_cost)
+    ax_speedup.sharex(ax_eff)
+    ax_wall.tick_params(labelbottom=False)
+    ax_speedup.tick_params(labelbottom=False)
+    ax_wall.set_xlabel("")
+    ax_speedup.set_xlabel("")
+    ax_cost.set_xlabel(top.label)
+    ax_eff.set_xlabel(bottom.label)
+
+
+def _apply_plotly_axis_groups(fig, *, n_hw: int, top, bottom, hw_cols=None, labels=None) -> None:
+    """Plotly counterpart of `_apply_matplotlib_axis_groups`.
+
+    Axis refs are DERIVED from the figure (`xaxis.plotly_name`), never hardcoded. Every
+    row is now `n_hw` columns wide, so the numbering is regular -- but deriving stays
+    correct under any future spec change, and the colspan this note used to describe
+    (rows 1-2 spanning the full width, which made the numbering skip) was removed when
+    those rows were faceted by hardware. Derive rather than count.
+
+    `hw_cols` and `labels` are consumed by the per-column x-axis titles below, and are
+    also what a row-scoped y-axis link would need; they are parameters rather than
+    recomputed here so the helper has one source for both.
+    """
+
+    def _xref(row: int, col: int) -> str:
+        return fig.get_subplot(row, col).xaxis.plotly_name.replace("axis", "")
+
+    def _plotted_xs(row: int, col: int) -> list[float]:
+        """The x values MARKERS occupy in this panel, ascending.
+
+        Derived from the figure rather than passed in, for the same reason the axis refs
+        above are: this helper runs after every trace is added, so the figure already
+        carries the answer and a fourth parameter would be a second source that can
+        disagree with the first. It is also automatically right for BOTH pairs -- the top
+        pair plots the configured independent_var and the bottom pair plots `n_devices`,
+        and neither this helper nor its caller has to know which.
+
+        MARKER-BEARING traces only, and that restriction is load-bearing rather than
+        tidy. The ideal-reference line is drawn at `x = [1.0, x_max]`; `x_max` is a real
+        per-column data max, but the `1.0` is a CONSTANT. On any column whose smallest
+        device count is 2 an all-traces union would emit a tick at N=1 that no run
+        occupies -- reintroducing, from the other direction, exactly the phantom tick
+        this replaces. `mode` is checked with `in` because the hybrid series is
+        `markers+text`.
+        """
+        ref = _xref(row, col)
+        vals: set[float] = set()
+        for tr in fig.data:
+            if (getattr(tr, "xaxis", None) or "x") != ref:
+                continue
+            if "markers" not in (getattr(tr, "mode", "") or ""):
+                continue
+            # `is None`, never `or ()`: plotly normalizes `x` to a numpy array, and
+            # `array or ()` raises `ValueError: The truth value of an array with more
+            # than one element is ambiguous`. Measured -- the falsy-default idiom
+            # crashed every plotly render of this figure on first run.
+            xs = getattr(tr, "x", None)
+            if xs is None:
+                continue
+            for v in xs:
+                try:
+                    vals.add(float(v))
+                except (TypeError, ValueError):
+                    continue
+        return sorted(vals)
+
+    def _yref(row: int, col: int) -> str:
+        return fig.get_subplot(row, col).yaxis.plotly_name.replace("axis", "")
+
+    # Y-LINKING. Each listed row's columns share ONE ruler, linked to column 1. Without
+    # it every column autoranges to its own data -- including its own ideal reference
+    # line, whose extent is that column's max N -- so side-by-side panels carry
+    # different rulers and are not comparable, which is the benefit the faceting exists
+    # to deliver. Refs are DERIVED for the same reason the x-refs are.
+    #
+    # `matches=` rather than a computed common range: it is this file's own idiom for
+    # the x-axes, it UNIONS ranges instead of imposing one, and so it does not also
+    # decide the separate question of whether the speedup panel should be clipped.
+    #
+    # An explicit `range=` OVERRIDES `matches=`; see the note at the empirical-clipped
+    # branch below, which is the one place a per-column `range=` is set.
+    for _row in _Y_LINKED_ROWS:
+        for _ci in range(2, n_hw + 1):
+            fig.update_yaxes(matches=_yref(_row, 1), row=_row, col=_ci)
+
+    # Rows 1-2 are faceted now, so these must loop over columns exactly as the bottom
+    # pair does. Pinned at col=1 they were correct only under the former colspan, where
+    # each row WAS one cell; after faceting, columns 2..n silently lost both the row-1
+    # match and the row-2 title. No test could see it: the axis fixture carries one
+    # hardware family, so col=1 is the only column that exists there.
+    def _qualified(group, col: int) -> str:
+        """This column's label for `group`, device-class-qualified WHERE THAT APPLIES.
+
+        The qualifier is passed UNCONDITIONALLY and `for_var`'s fallback chain decides:
+        `{source_var}.{cpu|gpu}` if the map defines it, else the unqualified label. The
+        MAP is therefore the declaration of which variables admit qualification --
+        `n_devices` does (its count means cores on a CPU column and GPUs on a GPU one),
+        `analysis.n_mpi_procs` does not (ranks are ranks in every column). No identity
+        test against `_SCALING_AXIS_VAR` is needed or wanted FOR LABEL QUALIFICATION:
+        that would be a second place this knowledge lives, and it could drift from the
+        map.
+
+        That prohibition is scoped to QUALIFICATION and does not reach every question
+        about the axis variable. The integer-tick gate a few lines below DOES test
+        `== _SCALING_AXIS_VAR`, deliberately, because it asks a different question: which
+        variables admit a device-class LABEL is something the map can express, whereas
+        which variables are INTEGER-VALUED is a property of the variable that no map
+        entry could carry. Different question, different mechanism -- not a drift of
+        this one.
+
+        This is what stops a rank-count axis being titled `cores` -- the error the
+        derived-label invariant exists to prevent -- without the caller deciding.
+        """
+        if hw_cols is None or labels is None or col > len(hw_cols):
+            return group.label
+        qual = "cpu" if hw_cols[col - 1] == "cpu" else "gpu"
+        return AxisGroup.for_var(group.x_col, group.source_var, labels, qualifier=qual).label
+
+    for _ci in range(1, n_hw + 1):
+        fig.update_xaxes(matches=_xref(2, _ci), showticklabels=False, title_text="", row=1, col=_ci)
+        fig.update_xaxes(title_text=_qualified(top, _ci), row=2, col=_ci)
+        # Ticks at the device counts this column ACTUALLY RAN. The predecessor set
+        # `dtick=1`, which fixed the fractional-GPU axis (the GPU columns' [1,3] range
+        # autoticked to 1, 1.5, 2, 2.5, 3) but replaced it with a phantom-tick axis: a
+        # CPU sweep of {1, 2, 4, 8} drew ticks at 3, 5, 6 and 7, advertising four
+        # resource levels the experiment never ran. `tickvals` fixes both -- every tick
+        # is a run, and nothing between runs is drawn -- and it is the honest form for a
+        # DESIGNED matrix, whose x values are a small chosen set rather than a range.
+        #
+        # Derived PER COLUMN: the CPU column's set and a GPU column's set differ, so one
+        # shared tick list would be wrong in at least one column.
+        #
+        # Set on BOTH members of the pair: `matches` links the RANGE, not tick
+        # configuration, so a leader-only fix leaves the follower's GRIDLINES on the old
+        # scheme even though its labels are hidden by `showticklabels=False`. Derived
+        # ONCE from the LABELLED member and applied to both, so the two cannot disagree.
+        #
+        # Empty-set fallback to the old behaviour: a panel with no marker trace has no
+        # tick values to name, and `tickvals=[]` would erase the axis entirely.
+        #
+        # Gate UNCHANGED from the `dtick` form it replaces. The top pair plots the
+        # CONFIGURED independent_var; whether a continuous independent_var also wants
+        # ticks-at-data is a separate question from this one, and widening the gate here
+        # would answer it silently. See the scope note in `_qualified`'s docstring for
+        # why this identity test is not the one that docstring rules out.
+        if top.source_var == _SCALING_AXIS_VAR:
+            _tv = _plotted_xs(2, _ci)
+            for _r in (1, 2):
+                if _tv:
+                    fig.update_xaxes(tickmode="array", tickvals=_tv, row=_r, col=_ci)
+                else:
+                    fig.update_xaxes(tickmode="linear", dtick=1, row=_r, col=_ci)
+    # Reachability: `n_hw = max(len(_hw_cols), 1)` at the call site, so n_hw >= 1 for
+    # EVERY input class (including an empty group_value column) and this loop body
+    # executes at least once on every plotly render. There is no reachable input for
+    # which the bottom pair goes unlinked or unlabelled.
+    for _ci in range(1, n_hw + 1):
+        fig.update_xaxes(matches=_xref(4, _ci), showticklabels=False, title_text="", row=3, col=_ci)
+        fig.update_xaxes(title_text=_qualified(bottom, _ci), row=4, col=_ci)
+        # Ticks at the device counts this column actually ran, ungated: the bottom pair
+        # is hard-keyed to `_SCALING_AXIS_VAR` (see
+        # `bottom = AxisGroup.for_var(_SCALING_AXIS_VAR, ...)`), so there is no
+        # independent_var question to gate on. Same derivation, same both-members rule,
+        # and the same empty-set fallback as the top pair above.
+        _tv = _plotted_xs(4, _ci)
+        for _r in (3, 4):
+            if _tv:
+                fig.update_xaxes(tickmode="array", tickvals=_tv, row=_r, col=_ci)
+            else:
+                fig.update_xaxes(tickmode="linear", dtick=1, row=_r, col=_ci)
+
+
 # Module-level styling constants moved to `report_cfg.sensitivity` per the
 # config-driven refactor (see plan: full sweep — eliminate hardcoded params).
 # Per-call: `sens_cfg = report_cfg.sensitivity` and read `sens_cfg.cpu_marker`,
-# `sens_cfg.gpu_marker`, `sens_cfg.point_size`, `sens_cfg.line_style`,
-# `sens_cfg.line_width`, `sens_cfg.palette`, `sens_cfg.independent_var_labels`.
+# `sens_cfg.point_size`, `sens_cfg.line_style`, `sens_cfg.line_width`,
+# `sens_cfg.palette`, `sens_cfg.independent_var_labels`.
+#
+# No GPU marker setting exists. The column facet carries hardware, so no site in this
+# module selects a marker on `is_gpu_group`. The plotly branch keys symbol on decomposition
+# (`_DECOMPOSITION_SYMBOLS`); the matplotlib branch has no per-decomposition marker
+# vocabulary and uses `cpu_marker` for every series.
+
+
+def _decomposition_label(group_value, *, is_gpu_group: bool, is_hybrid_group: bool) -> str:
+    """The series' DECOMPOSITION, named for a reader who does not know hhemt internals.
+
+    Presentation ONLY. This never becomes `df["group_value"]`, is never passed as
+    `group_col`, and never reaches `_hardware_family` or `_resolve_family_baselines` --
+    `group_value` is hardware-BEARING on purpose (see the `gpu (<token>)` rewrite) and
+    this label is deliberately many-to-one, so promoting it to the grouping key would
+    merge CPU-MPI with GPU and break per-hardware baseline resolution.
+
+    Hardware is carried by the COLUMN FACET, so no entry names it. A GPU run and a CPU
+    MPI run share `N ranks x 1 thread (MPI)` and are told apart by their column; that
+    merge is the design, not a collision. `serial` is not a strategy in a strong-scaling
+    figure -- it is the N=1 point every strategy starts from -- so it is labelled as the
+    baseline reference rather than as a fourth series.
+    """
+    if is_gpu_group:
+        return "MPI ranks"
+    if is_hybrid_group:
+        return "MPI + OpenMP (point label = threads/rank)"
+    # De-alias BEFORE the lookup. `single_cpu` / `single-cpu` are spellings of `serial`,
+    # and this label is now the sole key for the legend TEXT, the marker SYMBOL and the
+    # series COLOUR alike -- so an un-aliased spelling would fall to the open-vocabulary
+    # tail and take a different label, a different mark and a different colour from the
+    # series it IS. The alias lived only in the retired colour resolver; moving it here
+    # keeps one source for all three channels.
+    #
+    # The four labels assert NO counts. A count in a legend entry is a claim about the
+    # matrix, and the retired `N/2 ranks x 2 threads` entry was true only because both
+    # live hybrid rows happened to carry omp=2. The decomposition ARITHMETIC now reaches
+    # the reader through the x axis (N = ranks x threads/rank) and, for hybrid, through
+    # the per-point threads-per-rank annotation the hybrid entry names.
+    token = _FAMILY_ALIASES.get(str(group_value).strip().lower(), str(group_value).strip().lower())
+    return {
+        "mpi": "MPI ranks",
+        "openmp": "OpenMP threads",
+        "serial": "baseline: serial (S = 1 by definition)",
+    }.get(token, str(group_value))
+
+
+#: The LOCKED decomposition -> (marker symbol, palette INDEX) pairing. ONE dict, so the
+#: colour<->symbol relationship the user ruled ("each SYMBOL should have its own COLOR")
+#: cannot be half-changed: there is no edit that moves a symbol without moving its colour.
+#:
+#: Both channels key the DECOMPOSITION and nothing else. Hardware is carried by the COLUMN
+#: FACET, so a GPU MPI run and a CPU MPI run take the SAME colour AND the SAME symbol and
+#: are told apart by their column -- the merge `_decomposition_label` already makes for the
+#: legend TEXT, now extended to the marks so the legend row and the series it stands for
+#: finally agree on all three.
+#:
+#: Keying on the LABEL rather than on `group_value` is the point. The legend swatch is
+#: drawn from the first trace claiming a label, so any rule that reads `group_value`
+#: directly can hand two co-labelled groups different marks -- and the legend then shows
+#: one of them for both. That was the shipped defect: the legend's MPI row drew a CIRCLE
+#: while the GPU columns drew TRIANGLES under the same key. One dict decides both channels
+#: for both, so they cannot diverge.
+#:
+#: PALETTE INDICES, not literal hex, so `sens_cfg.palette` / `static_cfg.series_palette`
+#: stay authoritative and the frozen 8-entry Okabe-Ito set stays the single colour source.
+#: The four indices are DISTINCT literals into an 8-entry palette, so a modulo collision is
+#: unreachable by construction rather than warned about after the fact.
+#:
+#: WHICH four, and why these four. Measured over all C(8,4)=70 subsets of the palette
+#: under CIEDE2000 after a Vienot-Brettel-Mollon dichromat simulation, restricted to the
+#: six line-safe entries (`_WEAK_LINE_SLOTS` excluded, because point colour IS line colour
+#: now). The Pareto frontier over (normal-vision, red-green) separation has exactly two
+#: members, differing in ONE slot: sky blue (#56B4E9) or reddish purple (#CC79A7).
+#: Reddish purple wins once ROLE is accounted for -- it is assigned to `serial`, whose star
+#: is a lone point at N=1 that shares an x position with no other series in any column, so
+#: its colour does the least discriminating work of the four. That frees the three
+#: OVERLAPPING curves (MPI / OpenMP / hybrid) to take blue, orange and bluish green, whose
+#: red-green bottleneck is 20.3 against 15.5 for the previous assignment and 11.8 for the
+#: six-colour run-mode set this replaces.
+_DECOMPOSITION_STYLE: dict[str, tuple[str, int]] = {
+    # label: (plotly marker symbol, index into the Okabe-Ito palette)
+    # KEYS ARE THE `_decomposition_label` RETURN STRINGS. Editing one side alone drops
+    # every series to `_DECOMPOSITION_STYLE_FALLBACK`, which RENDERS rather than raising.
+    "MPI ranks": ("circle", 2),  # bluish green #009E73
+    "OpenMP threads": ("square", 1),  # orange       #E69F00
+    "MPI + OpenMP (point label = threads/rank)": ("diamond", 0),  # blue         #0072B2
+    "baseline: serial (S = 1 by definition)": ("star", 3),  # reddish purple #CC79A7
+}
+
+#: Where an unmapped LABEL lands. A fallback rather than a raise -- and the reason is NOT
+#: that the run-mode vocabulary is open. `run_mode` is a closed five-value `Literal`
+#: (`config/analysis.py`). What is open is `group_value`: `_decomposition_label` keys on
+#: it, not on run_mode, and `group_value` is the value of whatever CSV column
+#: `report_config.sensitivity.group_by_var` names -- a free `str | None` validated only
+#: as "is it a column". Two REACHABLE cases land here, one of them the DEFAULT:
+#:   group_by_var=None (the default) -> group_value "all"      -> label "all"
+#:   group_by_var="hpc.partition"    -> group_value "standard" -> label "standard"
+#: Neither is a key of `_DECOMPOSITION_STYLE`, and neither is an error. Raising here
+#: would abort a report on its default configuration.
+_DECOMPOSITION_STYLE_FALLBACK: tuple[str, int] = ("circle", 2)
+
+
+def _decomposition_style(group_value, *, is_gpu_group: bool, is_hybrid_group: bool) -> tuple[str, int]:
+    """The (symbol, palette index) pair for `group_value`'s decomposition.
+
+    The single lookup both channels go through. `_decomposition_symbol` and
+    `_decomposition_color` are thin views on it and must stay that way -- a second lookup
+    is how a locked pair comes unlocked.
+    """
+    label = _decomposition_label(group_value, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
+    return _DECOMPOSITION_STYLE.get(label, _DECOMPOSITION_STYLE_FALLBACK)
+
+
+def _decomposition_symbol(group_value, *, is_gpu_group: bool, is_hybrid_group: bool) -> str:
+    """Plotly marker symbol for `group_value`'s decomposition."""
+    return _decomposition_style(group_value, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)[0]
+
+
+def _decomposition_color(group_value, palette, *, is_gpu_group: bool, is_hybrid_group: bool) -> str:
+    """Series colour for `group_value`'s decomposition -- marker outline AND connector.
+
+    Set-INDEPENDENT by construction: the index is a literal from a closed four-entry map,
+    so no `all_groups` parameter exists to be passed a filtered frame. The panel-vs-legend
+    divergence the retired resolver warned about cannot be expressed here.
+
+    Two things are still checked, because both remain reachable through a CUSTOM palette:
+    a palette too short for the declared indices (raises -- a silently wrapped index would
+    make one colour mean two decompositions), and a decomposition landing on a weak line
+    slot (warns -- `sens_cfg.palette` is user-supplied and its first four entries are not
+    guaranteed to be the Okabe-Ito ones this map was measured against).
+    """
+    _symbol, index = _decomposition_style(group_value, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
+    if index >= len(palette):
+        raise ValueError(
+            f"sensitivity_benchmarking: palette has {len(palette)} entries but the "
+            f"decomposition style map declares index {index}. Colour is the decomposition "
+            "axis and its indices are distinct by construction; a wrapped index would make "
+            "one colour mean two decompositions. Supply a palette of at least "
+            f"{max(i for _s, i in _DECOMPOSITION_STYLE.values()) + 1} entries."
+        )
+    color = palette[index]
+    if color in _WEAK_LINE_SLOTS:
+        warnings.warn(
+            f"sensitivity_benchmarking: decomposition {group_value!r} resolved to {color}, "
+            "a poor LINE colour on white. Point colour IS line colour in this figure, so "
+            "this degrades the primary encoding rather than one incidental fill -- reorder "
+            "the supplied palette so its first four entries are line-safe.",
+            stacklevel=2,
+        )
+    return color
 
 
 def render(
@@ -91,7 +638,7 @@ def render(
     static_cfg: StaticPlotBaseConfig | None = None,
     **kwargs,
 ) -> Path:
-    """Render the dual-panel benchmarking figure for one independent variable.
+    """Render the four-panel benchmarking figure for one independent variable.
 
     When ``static_cfg`` is provided (publication static-plots path, ADR-8) the
     matplotlib branch is FORCED (publication is matplotlib-only per ADR-3) and the
@@ -117,8 +664,7 @@ def render(
 
     if independent_var not in df_setup.columns:
         raise ValueError(
-            f"{independent_var!r} is not a resolvable benchmarking axis; "
-            f"resolvable columns: {sorted(df_setup.columns)}"
+            f"{independent_var!r} is not a resolvable benchmarking axis; resolvable columns: {sorted(df_setup.columns)}"
         )
 
     dependent_var = report_cfg.sensitivity.dependent_var
@@ -126,25 +672,85 @@ def render(
 
     rows, source_paths = _collect_rows(analysis, dependent_var)
     if not rows:
+        from hhemt.utils import resolve_experiment_tree
+
+        _dt_path = resolve_experiment_tree(analysis.analysis_paths.analysis_dir)
+        _members = list(all_members_for_reading_of(sensitivity).keys())
+        _swmm_only = [
+            _m
+            for _m, _a in all_members_for_reading_of(sensitivity).items()
+            if _a._get_enabled_model_types() == ["swmm"]
+        ]
+        _nodes: list[str] = []
+        _perf_vars: dict[str, list[str]] = {}
+        if _dt_path is not None and _dt_path.exists():
+            _tree = open_store(str(_dt_path))
+            _nodes = [p for p, _n in _tree.subtree_with_keys]
+            for _m in _members:
+                _nd = _find_perf_node(_tree, _m)
+                _perf_vars[str(_m)] = sorted(_nd.data_vars) if _nd is not None else []
         raise RuntimeError(
-            f"No data for benchmarking {independent_var} vs {dependent_var}"
+            f"No data for benchmarking {independent_var} vs {dependent_var}. "
+            f"members={_members}; swmm_only_members={_swmm_only}; "
+            f"consolidated tree={_dt_path} "
+            f"exists={_dt_path is not None and _dt_path.exists()}; "
+            f"tree node paths={_nodes}; per-member performance data_vars={_perf_vars}. "
+            "For a member carrying a TRITON arm, exactly one of these is true: the "
+            "member set is empty, the consolidated tree is absent, no member resolves "
+            "a tritonswmm/performance/summary or triton_only/performance/summary node (its entry above "
+            "is an empty list), or that node carries no such column (its entry is "
+            f"non-empty and lacks {dependent_var.split('.', 1)[1]!r}). A swmm-only "
+            "member has a FIFTH path this enumeration does not cover: its .rpt file is "
+            "absent or unparseable, which _collect_rows skips without raising."
         )
 
     df = pd.DataFrame(rows)
-    # Wallclock-safe column allowlist (V0008+): only barrier-synchronized
-    # cumulative columns can be interpreted as wallclock. Other performance.*
-    # columns are per-category cost, not wallclock; raise rather than silently
-    # mislabel.
-    _WALLCLOCK_SAFE_COLS = {
-        "performance.Total",
-        "performance.Simulation",
-        "performance.Init",
-    }
+    # Wallclock-safe column allowlist (V0008+). ADMISSION TURNS ON TWO CONJUNCTS, and naming
+    # them separately is what makes the membership derivable rather than historical.
+    #
+    # CONJUNCT 1 -- BARRIER-SYNCHRONIZED. Only `Total`, `Simulation` and `Init` are elapsed
+    # wallclock at each rank: TRITON synchronizes ranks before every `st.stop(TOTAL_TIME)`
+    # (triton.h:2151-2162), so each of the three closes at a barrier and a maximum over ranks
+    # is the job-level elapsed figure. Every CATEGORY column (`Compute`, `MPI`, `IO`, `SWMM`,
+    # `Resize`, `Other` and the four SWMM children) is per-category cost at whichever rank
+    # happened to be slowest FOR THAT COLUMN, so its max over ranks is an upper bound on a
+    # contribution and not a duration anything elapsed. `SWMM_STEP` is the one named near-miss
+    # and it is still refused: its bracket sits inside the solver's rank-0 guard, so max(Rank)
+    # is exact rather than an upper bound -- but the bracket spans two index remaps and a
+    # per-timestep side-file append besides the solve, so it is not a phase wallclock either.
+    # The stipulation `wallclock reduction uses max over rank` carries that exception by name.
+    #
+    # CONJUNCT 2 -- EVALUATED OVER A DOMAIN A DURATION CAN BE READ FROM. The rank-axis schema
+    # added two derived families over all thirteen columns, so conjunct 1 alone no longer
+    # settles membership. `<Col>_coherent` is that column read at the SINGLE rank attaining
+    # max(Total), so for the three barrier-synchronized columns it is a genuine elapsed time at
+    # one real rank, and it is the form whose children close their level -- which the published
+    # family's do not, overshooting `Simulation` by 17.17 % to 40.80 % of `Total` over the
+    # 52-store corpus. `Total_coherent` equals `Total` IDENTICALLY by construction, since the
+    # selector's anchor IS argmax(Total) (pinned at tests/test_perf_rank_coherent_family.py:284),
+    # so admitting it moves no published figure. `<Col>_min` is the FASTEST rank and is refused
+    # for all thirteen: it is a lower bound on the phase, and plotting a lower bound as wallclock
+    # is the same mislabel class as plotting a category upper bound, merely in the opposite
+    # direction.
+    #
+    # WHAT THIS GUARD DOES NOT CHECK, stated because it is the sole gate. `dependent_var` is a
+    # bare `str` on `report_config.sensitivity` with no `Literal` and no validator over the
+    # column vocabulary, and `_collect_rows` resolves `dependent_var.split(".", 1)[1]` against
+    # whatever the tree carries -- so this set is the ONLY thing standing between a config value
+    # and a mislabelled axis. It raises on the CALLER's `dependent_var` rather than on the
+    # columns present, so a member whose store lacks the requested column reaches the
+    # no-data RuntimeError above instead, and the two failures stay distinguishable.
+    #
+    # The set itself is MODULE-SCOPED (`_WALLCLOCK_SAFE_COLS`, declared beside the other module
+    # constants) rather than rebuilt here, so a test can import the gate instead of re-deriving
+    # it from this function's source. Behaviour is unchanged by that move.
     if dependent_var not in _WALLCLOCK_SAFE_COLS:
         raise ValueError(
             f"dependent_var {dependent_var!r} is not wallclock-safe. "
             f"Choose one of: {sorted(_WALLCLOCK_SAFE_COLS)}. Other performance.* "
-            "columns are per-category cost and cannot be plotted as wallclock. "
+            "columns are per-category cost and cannot be plotted as wallclock; a "
+            "'_min' column is the fastest rank and is a lower bound on the phase, "
+            "not its wallclock. "
             "See library/docs/stipulations/hhemt/wallclock reduction uses max over rank.md "
             "for the project rule on this."
         )
@@ -160,11 +766,44 @@ def render(
                 f"resolvable columns: {sorted(df_setup.columns)}"
             )
         df["group_value"] = df["sa_id"].map(df_setup[group_by_var])
+        # Iteration 4 (FQ2): replicate identity. The trailing `_rN` token is the
+        # replicate marker and is
+        # deliberately NOT part of config identity (_config_diff._derive_config_label:
+        # "Replicate suffixes are NOT in the identity, so replicates share one label").
+        # `config_id` is what the line aggregation groups on: it averages over replicates
+        # before the per-N min is taken, so the min rule selects the best distinct CONFIG
+        # rather than the luckiest RUN. That is the load-bearing half of this pair.
+        #
+        # `n_replicates` USED to drive marker FILL (hollow = this config has repeated
+        # runs). That encoding is retired -- every marker is hollow now -- so the column
+        # feeds the hover payload, alongside the n_mpi_procs/n_omp_threads/n_gpus/
+        # n_nodes columns it sits beside. It briefly had NO consumer -- the two fill
+        # sites were its only reads until the fill channel became a constant -- and was
+        # kept through that window rather than dropped. The hover addition restored a
+        # consumer, so the earlier note calling it a removal candidate is retired: this
+        # column is read.
+        #
+        # Its purpose is to say WHICH configs repeated. The fill channel used to carry
+        # that and no longer does, so hover is now the only place a reader can learn it.
+        df["config_id"] = df["sa_id"].astype(str).str.replace(r"_r\d+$", "", regex=True)
+        df["n_replicates"] = df["config_id"].map(df.groupby("config_id")["sa_id"].nunique()).astype(int)
+        # Iteration 4 (FQ3 + FQ9b): qualify GPU group names with their hardware token when
+        # -- and only when -- more than one token is present. Unqualified, `gpu-a6000` and
+        # `gpu-a100-80` collapse into ONE series, and because the line is drawn through
+        # groupby(indep_value).min() its vertices are a100-80 at every device count while the
+        # a6000 data contributes none. Splitting the key carries hardware on colour + legend
+        # (strictly better than a fourth glyph channel, which cannot fix the line selection)
+        # and gives _resolve_family_baselines a per-hardware family to anchor on.
+        _part_col = _resolve_setup_col(df_setup, "hpc.partition")
+        if _part_col is not None:
+            _part = df["sa_id"].map(df_setup[_part_col]).astype(str)
+            _is_gpu = df["group_value"].astype(str).str.lower().eq("gpu") & _part.str.startswith("gpu-")
+            _tokens = _part[_is_gpu].str.replace(r"^gpu-", "", regex=True)
+            if _tokens.nunique() > 1:
+                df.loc[_is_gpu, "group_value"] = "gpu (" + _tokens + ")"
     else:
         df["group_value"] = "all"
-    df["n_mpi_procs"] = df["sa_id"].map(
-        df_setup[_resolve_setup_col(df_setup, "n_mpi_procs") or "n_mpi_procs"]
-    )
+    df["n_mpi_procs"] = df["sa_id"].map(df_setup[_resolve_setup_col(df_setup, "n_mpi_procs") or "n_mpi_procs"])
     # F2: extra config columns for hover customdata (OMP threads, GPUs, Nodes).
     # Use .get() semantics so missing columns degrade gracefully — hovertemplate
     # only includes labels for columns that map successfully. Each is resolved
@@ -175,6 +814,7 @@ def render(
             df[col] = df["sa_id"].map(df_setup[resolved_col])
 
     wall_unit, wall_factor = _adaptive_time_unit(df["wallclock_hr"].max())
+    wall_label = _wall_label(sensitivity)
     cost_unit, cost_factor = _adaptive_time_unit(df["compute_hr"].max())
     df["wallclock_disp"] = df["wallclock_hr"] * wall_factor
     df["compute_disp"] = df["compute_hr"] * cost_factor
@@ -192,62 +832,31 @@ def render(
     # is never promoted to publication (KEEP-no-hybrid invariant).
     use_plotly = False if static_cfg is not None else (static_backend == "plotly")
     if use_plotly:
-        # Pre-compute speedup + efficiency. Baseline anchors against the serial
-        # group's wallclock at N=1 (strong-scaling convention) rather than the
-        # global N=1 min (which would land on GPU, not serial, since 1 GPU is
-        # much faster than 1 CPU and yields meaningless speedups).
-        speedup_pg = _compute_speedup_per_group(
-            df, t_col="wallclock_s", indep_col="n_devices",
-            group_col="group_value", baseline_mode="serial",
+        speedup_pg, strong_eff_pg, speedup_all, efficiency_all = _compute_scaling_series(
+            df, aggregation=sens_cfg.aggregation
         )
-        strong_eff_pg = _compute_efficiency_per_group(
-            df, t_col="wallclock_s", indep_col="n_devices",
-            group_col="group_value", mode="strong", baseline_mode="serial",
-        )
-        # All-row variants for the markers trace on panels 3+4 (shows every hybrid
-        # configuration, not just the per-N min). Line goes through min; markers
-        # at all points. Mirrors the panels 1+2 behavior.
-        serial_anchor = _resolve_serial_baseline(
-            df, t_col="wallclock_s", group_col="group_value",
-        )
-        if serial_anchor is not None:
-            speedup_all = _compute_metric_all_rows_per_group(
-                df, t_col="wallclock_s", indep_col="n_devices",
-                group_col="group_value", kind="speedup", anchor=serial_anchor,
-            )
-            efficiency_all = _compute_metric_all_rows_per_group(
-                df, t_col="wallclock_s", indep_col="n_devices",
-                group_col="group_value", kind="efficiency", anchor=serial_anchor,
-            )
-        else:
-            speedup_all = None
-            efficiency_all = None
         if analysis.cfg_analysis.sensitivity_analysis is not None:
             source_paths.append(Path(analysis.cfg_analysis.sensitivity_analysis))
         # F1: GPU hardware suffix (e.g., "gpu (a6000)"). Phase-4 (4c, D3): gpu_hardware
         # was retired off system_config to the partition axis; resolve it from each
-        # sub-analysis's resolved partition's PartitionSpec.
+        # member's resolved partition's PartitionSpec.
         from hhemt.config.hpc_system import resolve_gpu_target
 
         # Phase 6 (DQ7c): under per-row partition, derive the distinct GPU hardware
-        # across sub-analyses. Single-hardware experiments keep the master suffix
+        # across members. Single-hardware experiments keep the master suffix
         # (byte-identical); multi-hardware experiments suppress the global suffix so
         # the per-group hardware is carried by the group label instead.
         _hw_values = set()
         _sens = getattr(analysis, "sensitivity", None)
         if _sens is not None:
-            for _sub in _sens.sub_analyses.values():
-                _hw = resolve_gpu_target(
-                    _sub.cfg_hpc_system, _sub.cfg_analysis.hpc_ensemble_partition
-                )[0]
+            for _sub in all_members_for_reading_of(_sens).values():
+                _hw = resolve_gpu_target(_sub.cfg_hpc_system, _sub.cfg_analysis.hpc_ensemble_partition)[0]
                 if _hw:
                     _hw_values.add(_hw)
         if len(_hw_values) == 1:
             gpu_hw = next(iter(_hw_values))
         elif len(_hw_values) == 0:
-            gpu_hw = resolve_gpu_target(
-                analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition
-            )[0]
+            gpu_hw = resolve_gpu_target(analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition)[0]
         else:
             gpu_hw = None  # multi-hardware: suffix carried per-group, not globally
         gpu_legend_suffix = f" ({gpu_hw})" if gpu_hw else ""
@@ -255,14 +864,24 @@ def render(
         # default to `full_ideal`. Surface via kwarg for caller override (e.g.,
         # render-twice comparison during /design-figure iteration).
         speedup_range_mode = getattr(
-            getattr(report_cfg, "sensitivity", None), "speedup_panel_range_mode", "full_ideal",
+            getattr(report_cfg, "sensitivity", None),
+            "speedup_panel_range_mode",
+            "full_ideal",
         )
+        _model_arm = _resolve_model_arm(analysis)
         return _render_plotly_branch(
-            df, speedup_pg, strong_eff_pg,
-            wall_unit=wall_unit, cost_unit=cost_unit,
-            independent_var=independent_var, group_by_var=group_by_var,
+            df,
+            speedup_pg,
+            strong_eff_pg,
+            model_arm=_model_arm,
+            wall_unit=wall_unit,
+            wall_label=wall_label,
+            cost_unit=cost_unit,
+            independent_var=independent_var,
+            group_by_var=group_by_var,
             sens_cfg=sens_cfg,
-            output_path=output_path, source_paths=source_paths,
+            output_path=output_path,
+            source_paths=source_paths,
             analysis_dir=analysis.analysis_paths.analysis_dir,
             plotly_js_mode=report_cfg.interactive.plotly_js_mode,
             prov=prov,
@@ -286,16 +905,34 @@ def render(
         if static_cfg is not None
         else tuple(sens_cfg.figsize_inches)
     )
-    fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(
-        4, 1, figsize=_figsize, sharex=True
+    # TWO shared-x GROUPS, not one. Panels 1+2 plot `indep_value` (the configured
+    # independent_var); panels 3+4 plot `n_devices`. `sharex=True` at construction
+    # forced all four onto ONE range, so with independent_var != n_devices the same
+    # member rendered at two different x positions in one vertically-aligned
+    # figure (member_16 at x=8 in the top pair, x=64 in the bottom). The groups are wired
+    # post-construction by _apply_matplotlib_axis_groups below, from the SAME two
+    # AxisGroup objects that supply the labels.
+    fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(4, 1, figsize=_figsize, sharex=False)
+    from hhemt.report_renderers.system_overview import _draw_static_subplot_label
+
+    _draw_static_subplot_label(ax_wall, static_cfg)
+    _draw_panel(
+        ax_wall,
+        df,
+        y_col="wallclock_disp",
+        group_by_var=group_by_var,
+        sens_cfg=sens_cfg,
+        prov=prov,
+        static_cfg=static_cfg,
     )
     _draw_panel(
-        ax_wall, df, y_col="wallclock_disp", group_by_var=group_by_var,
-        sens_cfg=sens_cfg, prov=prov, static_cfg=static_cfg,
-    )
-    _draw_panel(
-        ax_cost, df, y_col="compute_disp", group_by_var=group_by_var,
-        sens_cfg=sens_cfg, prov=prov, static_cfg=static_cfg,
+        ax_cost,
+        df,
+        y_col="compute_disp",
+        group_by_var=group_by_var,
+        sens_cfg=sens_cfg,
+        prov=prov,
+        static_cfg=static_cfg,
     )
     # Optional publication log-y on the magnitude panels (wall-clock / compute-cost);
     # the speedup/efficiency panels are ratios and stay linear.
@@ -303,30 +940,51 @@ def render(
         ax_wall.set_yscale("log")
         ax_cost.set_yscale("log")
 
+    # ONE resolution for BOTH the columns below and the labels applied at the bottom
+    # of this block. `bottom.x_col` replaces four bare "n_devices" literals so the
+    # column the scaling panels are keyed on and the label under them cannot drift.
+    _axis_top, _axis_bottom = resolve_axis_groups(independent_var, sens_cfg)
     speedup_per_group = _compute_speedup_per_group(
-        df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value",
+        df,
+        t_col="wallclock_s",
+        indep_col=_axis_bottom.x_col,
+        group_col="group_value",
         baseline_mode="global",
     )
     strong_eff_per_group = _compute_efficiency_per_group(
-        df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value", mode="strong",
+        df,
+        t_col="wallclock_s",
+        indep_col=_axis_bottom.x_col,
+        group_col="group_value",
+        mode="strong",
         baseline_mode="global",
     )
     _draw_metric_panel(
-        ax_speedup, speedup_per_group, df=df,
-        x_max=df["n_devices"].max(),
-        ideal_kind="linear", ideal_label="Ideal speedup (S=N)",
-        sens_cfg=sens_cfg, prov=prov, static_cfg=static_cfg,
+        ax_speedup,
+        speedup_per_group,
+        df=df,
+        x_max=df[_axis_bottom.x_col].max(),
+        ideal_kind="linear",
+        ideal_label="Ideal speedup (S=N)",
+        sens_cfg=sens_cfg,
+        prov=prov,
+        static_cfg=static_cfg,
     )
     _draw_metric_panel(
-        ax_eff, strong_eff_per_group, df=df,
-        x_max=df["n_devices"].max(),
-        ideal_kind="constant", ideal_value=1.0, ideal_label="Ideal efficiency (=1.0)",
-        sens_cfg=sens_cfg, prov=prov, static_cfg=static_cfg,
+        ax_eff,
+        strong_eff_per_group,
+        df=df,
+        x_max=df[_axis_bottom.x_col].max(),
+        ideal_kind="constant",
+        ideal_value=1.0,
+        ideal_label="Ideal efficiency (=1.0)",
+        sens_cfg=sens_cfg,
+        prov=prov,
+        static_cfg=static_cfg,
     )
 
-    xlabel_text = sens_cfg.independent_var_labels.get(independent_var, independent_var)
-    ax_eff.set_xlabel(xlabel_text)  # bottom panel only under sharex=True
-    ax_wall.set_ylabel(f"Wall-clock time ({wall_unit})")
+    _apply_matplotlib_axis_groups(ax_wall, ax_cost, ax_speedup, ax_eff, top=_axis_top, bottom=_axis_bottom)
+    ax_wall.set_ylabel(f"{wall_label} ({wall_unit})")
     ax_cost.set_ylabel(f"Compute cost ({cost_unit} × devices)")
     ax_speedup.set_ylabel("Strong-Scaling Speedup\n" + r"$S(N) = t(1)\,/\,t(N)$")
     ax_eff.set_ylabel("Strong-Scaling Efficiency\n" + r"$E_s(N) = t(1)\,/\,(N \cdot t(N))$")
@@ -334,18 +992,25 @@ def render(
         ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
         if report_cfg.sensitivity.show_gridlines:
             ax.grid(
-                True, which="major", axis="both",
+                True,
+                which="major",
+                axis="both",
                 color=sens_cfg.gridline_color,
                 linewidth=sens_cfg.gridline_width,
                 zorder=0,
             )
 
     if group_by_var is not None:
-        # Asterisk after groups that get per-point n_mpi_procs annotations
-        # (currently: hybrid). Connects the legend entry to the bottom-panel footnote.
+        # The legend names the DECOMPOSITION, not the stored `run mode` value: the label
+        # is a function of (run mode, device class), so the title is the derived axis
+        # rather than `group_by_var`. The former asterisk on the hybrid entry is retired
+        # -- it pointed at the bottom-panel footnote explaining the per-point
+        # threads-per-rank annotations, and the hybrid entry now names that point label
+        # in its own text, so the pointer is redundant. It was also a literal
+        # `== "hybrid"` comparison, which the relabelling would have silently broken in
+        # this backend while the plotly one kept starring.
         handles, labels = ax_wall.get_legend_handles_labels()
-        starred = [f"{lab}*" if lab.lower() == "hybrid" else lab for lab in labels]
-        ax_wall.legend(handles, starred, title=group_by_var, loc="upper right")
+        ax_wall.legend(handles, labels, title="decomposition", loc="upper right")
 
     # Title placed via ax_wall.set_title so it's anchored to the top panel's data
     # area (truly plot-centered horizontally, not figure-centered) and matplotlib
@@ -360,10 +1025,14 @@ def render(
     # on the plot area (fig.text x=0.5 is figure-center, not plot-center, because
     # the left y-axis labels offset the plot area rightward of figure-center).
     ax_eff.text(
-        0.5, -0.18,
+        0.5,
+        -0.18,
         sens_cfg.footnote_text,
         transform=ax_eff.transAxes,
-        ha="center", va="top", fontsize=sens_cfg.footnote_fontsize, style="italic",
+        ha="center",
+        va="top",
+        fontsize=sens_cfg.footnote_fontsize,
+        style="italic",
     )
 
     if analysis.cfg_analysis.sensitivity_analysis is not None:
@@ -387,7 +1056,7 @@ def _resolve_setup_col(df_setup: pd.DataFrame, bare: str) -> str | None:
 
     Sensitivity columns are BARE (``n_gpus``) for legacy suites or ``analysis.``-prefixed
     (``analysis.n_gpus``) for per-sub overlay suites (e.g. container-validation, which MUST
-    use the prefixed form so each row applies to its sub-analysis). ``df_setup_with_system_overlays``
+    use the prefixed form so each row applies to its member). ``df_setup_with_system_overlays``
     preserves whichever the CSV used. Returns None if neither form is present. Used by every
     compute-column read in this renderer so a prefixed-column suite does not raise ``KeyError``.
     """
@@ -398,7 +1067,11 @@ def _resolve_setup_col(df_setup: pd.DataFrame, bare: str) -> str | None:
 
 
 def _ensure_n_devices_column(df_setup: pd.DataFrame, independent_var: str) -> pd.DataFrame:
-    """Derive ``n_devices`` from ``run_mode`` × n_gpus / (n_mpi × n_omp × n_nodes) if absent.
+    """Derive ``n_devices`` from ``run_mode`` × n_gpus / (n_mpi × n_omp) if absent.
+
+    ``n_nodes`` is deliberately NOT a factor. ``n_mpi_procs`` is TOTAL ranks per
+    simulation, so ``ranks × threads-per-rank`` is already the full parallel width;
+    a node factor double-counts. See the comment at the assignment below.
 
     Resolves every compute column by bare-or-``analysis.``-prefixed name (see
     ``_resolve_setup_col``), else derivation silently no-ops on a prefixed-column suite and a
@@ -408,8 +1081,7 @@ def _ensure_n_devices_column(df_setup: pd.DataFrame, independent_var: str) -> pd
         return df_setup
 
     resolved = {
-        bare: _resolve_setup_col(df_setup, bare)
-        for bare in ("n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes")
+        bare: _resolve_setup_col(df_setup, bare) for bare in ("n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes")
     }
     missing = sorted(bare for bare, col in resolved.items() if col is None)
     if missing:
@@ -422,25 +1094,43 @@ def _ensure_n_devices_column(df_setup: pd.DataFrame, independent_var: str) -> pd
         return df_setup
 
     run_mode_col = _resolve_setup_col(df_setup, "run_mode")
-    run_mode = (
-        df_setup[run_mode_col].astype(str).str.lower() if run_mode_col is not None else ""
-    )
+    run_mode = df_setup[run_mode_col].astype(str).str.lower() if run_mode_col is not None else ""
     n_gpus = df_setup[resolved["n_gpus"]]
     is_gpu = (run_mode == "gpu") | (n_gpus > 0)
+    # THIS EDGE owns the BROADER gpu predicate above (a hybrid row that also requested a
+    # GPU counts as devices, not cores) and the .astype(int) cast below; the shared core
+    # owns only the arithmetic. Row-wise rather than vectorized so both callers execute
+    # the SAME function -- a `.where()` here would leave the "shared" core unshared on
+    # this path. df_setup is the sensitivity table (tens of rows), not a hot loop.
+    from hhemt.compute_config import n_devices_from
+
     df_setup = df_setup.assign(
-        n_devices=n_gpus.where(
-            is_gpu,
-            df_setup[resolved["n_mpi_procs"]]
-            * df_setup[resolved["n_omp_threads"]]
-            * df_setup[resolved["n_nodes"]],
+        # NO n_nodes factor: `n_mpi_procs` is TOTAL ranks per simulation, not ranks
+        # per node (config/analysis.py:292; run_simulation.py emits
+        # `srun -N {n_nodes} --ntasks={n_mpi_procs}`, and SLURM's --ntasks is total).
+        # Multiplying by n_nodes double-counted, inflating N by n_nodes on every
+        # multi-node CPU row and understating efficiency by 1/n_nodes. That arithmetic
+        # now lives in hhemt.compute_config.n_devices_from, which eda/_config_diff.py::
+        # _device_count also calls -- so the two agree by CONSTRUCTION rather than by
+        # coincidence, and the `n_devices.cpu` axis label ("cores") stays true.
+        n_devices=pd.Series(
+            [
+                n_devices_from(is_gpu=bool(g), n_gpus=int(ng), n_mpi_procs=int(nm), n_omp_threads=int(no))
+                for g, ng, nm, no in zip(
+                    is_gpu,
+                    n_gpus,
+                    df_setup[resolved["n_mpi_procs"]],
+                    df_setup[resolved["n_omp_threads"]],
+                    strict=True,
+                )
+            ],
+            index=df_setup.index,
         ).astype(int)
     )
     return df_setup
 
 
-def _resolve_global_baseline(
-    df: pd.DataFrame, *, t_col: str, indep_col: str
-) -> float | None:
+def _resolve_global_baseline(df: pd.DataFrame, *, t_col: str, indep_col: str) -> float | None:
     """Return the minimum wallclock at the smallest N across all groups, or None
     if the dataframe is empty / has no positive wallclock at N_min.
     """
@@ -454,6 +1144,74 @@ def _resolve_global_baseline(
     if t_baseline <= 0:
         return None
     return t_baseline
+
+
+def _hardware_family(gv: str) -> str:
+    """Implements the HARDWARE axis — every GPU token is its own hardware, every non-GPU
+    group shares the single `cpu` hardware. See the stipulation "the three compute-config
+    axes are run mode, hardware, and device class".
+
+    Promoted from `_resolve_family_baselines`'s nested `_family_of` so the figure
+    builder can partition columns by the SAME rule the baselines anchor on. Two
+    rules would let a group be anchored against one family and drawn in another.
+    """
+    low = gv.lower()
+    return gv if low.startswith("gpu") else "cpu"
+
+
+def _resolve_family_baselines(df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str) -> dict[str, float]:
+    """Return ``{group_value: baseline_wallclock}``, anchored PER HARDWARE FAMILY.
+
+    Implements the HARDWARE axis: CPU configs anchor on the serial-CPU run, and each GPU
+    hardware token anchors on ITS OWN minimum-device run.
+
+    ``_config_diff`` and ``raw_byte_identity`` both implement the DEVICE-CLASS axis; the
+    divergence is the user's 2026-08-21 ruling, not drift. Collapsing GPU tokens HERE would
+    anchor an a6000 run against an a100-80
+    baseline and report a cross-hardware performance RATIO dressed as a scaling
+    efficiency -- the exact number the paragraph below measures at 1.51 against a true
+    0.255. The shape rule: N3's collapse is right for IDENTITY views and wrong for
+    SCALING views. This docstring previously claimed all three implementations matched;
+    that claim was false from N3 until it was corrected here.
+
+    Why this is not a mode on ``_resolve_serial_baseline``: that function returns a SCALAR
+    and feeds a scalar ``anchor=`` parameter, while the per-family answer is a MAPPING --
+    there are three families on a two-GPU master (``cpu``, plus one per GPU token), not two.
+
+    The global-serial anchor this replaces reports a6000 3-GPU as S = 400.30/265.20 = 1.51,
+    which reads as "this scales"; the per-family anchor gives 67.64/265.20 = 0.255, the
+    correct within-hardware statement. The in-source objection to a global N=1-minimum
+    anchor does not reach this: a per-family anchor never compares across families, so the
+    "N=1 GPU is faster than serial" failure it names cannot arise.
+
+    Returns ``{}`` when no family resolves, so callers fall back to the serial anchor
+    rather than silently comparing against an arbitrary group.
+    """
+    if df.empty or group_col not in df.columns or indep_col not in df.columns:
+        return {}
+    groups = [str(g) for g in df[group_col].dropna().unique()]
+    if not groups:
+        return {}
+
+    fam_members: dict[str, list[str]] = {}
+    for gv in groups:
+        fam_members.setdefault(_hardware_family(gv), []).append(gv)
+
+    out: dict[str, float] = {}
+    for members in fam_members.values():
+        sub = df[df[group_col].astype(str).isin(members)]
+        if sub.empty:
+            continue
+        min_n = sub[indep_col].min()
+        ref = sub[sub[indep_col] == min_n]
+        if ref.empty:
+            continue
+        t_baseline = float(ref[t_col].min())
+        if t_baseline <= 0:
+            continue
+        for gv in members:
+            out[gv] = t_baseline
+    return out
 
 
 def _resolve_serial_baseline(
@@ -478,16 +1236,64 @@ def _resolve_serial_baseline(
     return t_baseline
 
 
+#: The per-member identity column on every frame the metric helpers below consume.
+#: It is STILL `sa_id` after the member-vocabulary rename, and that is a DECLARED
+#: deferral rather than an oversight: the column interoperates BY VALUE with
+#: `df_status` / `scenario_status.csv` and with the `override_force_rerun` API key,
+#: so renaming it here would break a contract that crosses this module's boundary.
+#:
+#: SCOPE, measured rather than asserted -- read this before treating the constant as a
+#: rename lever. It binds FOUR of the seventeen live `"sa_id"` literals in this module:
+#: the aggregation at `_df_avg` and the three metric-helper reads below. THIRTEEN remain
+#: literals, including the two row-builder writes that CONSTRUCT the frame. A rename is
+#: therefore fourteen edits, not one, and the constant's presence must not be read as
+#: making it one. What it does buy is real and narrower: producers bind it via
+#: `**{_MEMBER_KEY: (_MEMBER_KEY, "first")}` -- the plain keyword form CANNOT, because a
+#: kwarg name is not an expression -- so both sides of the ONE aggregation that feeds the
+#: metric helpers name the same constant. That is exactly the producer/consumer pair the
+#: `KeyError: 'sa_id'` defect spanned, and no wider claim is available from it.
+#:
+#: This is a PARTIAL adoption of the `EVENT_LABEL_COLUMN` pattern (report_plot_ids.py),
+#: not an instance of it: that constant works because EVERY consumer imports it, and this
+#: one does not reproduce that property. Binding the remaining thirteen is a static-check
+#: question, filed separately.
+_MEMBER_KEY = "sa_id"
+
+
+def _require_member_key(frame, *, caller: str) -> None:
+    """Raise a NAMED error when a frame reaches a metric helper without `_MEMBER_KEY`.
+
+    The failure this replaces was a bare `KeyError: 'sa_id'` raised inside a per-point
+    loop, which names neither the frame nor the producer that built it. Raising at the
+    boundary names the caller, so the next producer/consumer disagreement is diagnosable
+    from the traceback instead of requiring the reader to walk back to the aggregation.
+    """
+    if _MEMBER_KEY not in frame.columns:
+        raise ProcessingError(
+            operation=f"benchmarking: {caller} received a frame without the member identity column",
+            filepath=None,
+            reason=(
+                f"expected column {_MEMBER_KEY!r}; got {sorted(frame.columns)}. A producer "
+                f"upstream renamed or dropped it -- check any .agg(...) or .rename(columns=...) "
+                f"between the source frame and this call."
+            ),
+        )
+
+
 def _compute_speedup_per_group(
-    df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str,
+    df: pd.DataFrame,
+    *,
+    t_col: str,
+    indep_col: str,
+    group_col: str,
     baseline_mode: str = "per_group",
 ) -> dict[str, list[tuple[float, float, str]]]:
     """Compute strong-scaling speedup S(N) = t_baseline / t(N) for each group.
 
-    Return shape: ``{group_value: [(n_devices, speedup, sa_id), ...]}``. The ``sa_id``
+    Return shape: ``{group_value: [(n_devices, speedup, member_id), ...]}``. The ``member_id``
     is the identifier of the wallclock-minimum row at each N (the "best configuration
     at that resource level" — same row whose `t` was used to compute the speedup).
-    Per-`sa_id` provenance enables hover-customdata population and per-point
+    Per-`member_id` provenance enables hover-customdata population and per-point
     annotations downstream (F2, F3 in the kickoff figure-review).
 
     ``baseline_mode='per_group'``: each group anchors against its own N=1 wallclock
@@ -497,7 +1303,7 @@ def _compute_speedup_per_group(
     wallclock at the smallest N across all groups. Groups without an N=1 entry
     are still included; their points are normalized against the global anchor.
 
-    When a group has multiple sa rows at the same N, the minimum-wallclock entry
+    When a group has multiple member rows at the same N, the minimum-wallclock entry
     wins (best configuration at that resource level).
     """
     if baseline_mode not in ("per_group", "global", "serial"):
@@ -512,9 +1318,10 @@ def _compute_speedup_per_group(
         global_anchor = None
     if baseline_mode in ("global", "serial") and global_anchor is None:
         return {}
+    _require_member_key(df, caller="_compute_speedup_per_group")
     out: dict[str, list[tuple[float, float, str]]] = {}
     for group_value, sub in df.groupby(group_col):
-        # Keep the wallclock-min row per N so we can recover sa_id of the winning config.
+        # Keep the wallclock-min row per N so we can recover member_id of the winning config.
         min_rows = sub.loc[sub.groupby(indep_col)[t_col].idxmin()]
         per_n_min = min_rows.set_index(indep_col)
         if baseline_mode == "per_group":
@@ -528,20 +1335,25 @@ def _compute_speedup_per_group(
         pts: list[tuple[float, float, str]] = []
         for n_val, row in per_n_min.iterrows():
             n = int(n_val) if float(n_val).is_integer() else float(n_val)
-            pts.append((n, anchor / float(row[t_col]), str(row["sa_id"])))
+            pts.append((n, anchor / float(row[t_col]), str(row[_MEMBER_KEY])))
         pts.sort(key=lambda r: r[0])
         out[str(group_value)] = pts
     return out
 
 
 def _compute_efficiency_per_group(
-    df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str, mode: str,
+    df: pd.DataFrame,
+    *,
+    t_col: str,
+    indep_col: str,
+    group_col: str,
+    mode: str,
     baseline_mode: str = "per_group",
 ) -> dict[str, list[tuple[float, float, str]]]:
     """Compute scaling efficiency for each group.
 
-    Return shape: ``{group_value: [(n_devices, efficiency, sa_id), ...]}``. See
-    :func:`_compute_speedup_per_group` for the per-`sa_id` provenance rationale.
+    Return shape: ``{group_value: [(n_devices, efficiency, member_id), ...]}``. See
+    :func:`_compute_speedup_per_group` for the per-`member_id` provenance rationale.
 
     - ``mode='strong'``: E_s(N) = S(N) / N = t_baseline / (N × t(N)). Ideal = 1.0.
     - ``mode='weak'``: E_w(N) = t_baseline / t(N). Ideal = 1.0.
@@ -562,6 +1374,7 @@ def _compute_efficiency_per_group(
         global_anchor = None
     if baseline_mode in ("global", "serial") and global_anchor is None:
         return {}
+    _require_member_key(df, caller="_compute_efficiency_per_group")
     out: dict[str, list[tuple[float, float, str]]] = {}
     for group_value, sub in df.groupby(group_col):
         min_rows = sub.loc[sub.groupby(indep_col)[t_col].idxmin()]
@@ -584,15 +1397,20 @@ def _compute_efficiency_per_group(
                 eff = anchor / (n * tN)
             else:
                 eff = anchor / tN
-            pts.append((n, eff, str(row["sa_id"])))
+            pts.append((n, eff, str(row[_MEMBER_KEY])))
         pts.sort(key=lambda r: r[0])
         out[str(group_value)] = pts
     return out
 
 
 def _compute_metric_all_rows_per_group(
-    df: pd.DataFrame, *, t_col: str, indep_col: str, group_col: str,
-    kind: str, anchor: float,
+    df: pd.DataFrame,
+    *,
+    t_col: str,
+    indep_col: str,
+    group_col: str,
+    kind: str,
+    anchor: float,
 ) -> dict[str, list[tuple[float, float, str]]]:
     """Compute speedup or efficiency for EVERY row (not just the per-N min row).
 
@@ -611,6 +1429,7 @@ def _compute_metric_all_rows_per_group(
         raise ValueError(f"kind must be 'speedup' or 'efficiency'; got {kind!r}")
     if df.empty or anchor is None or anchor <= 0:
         return {}
+    _require_member_key(df, caller="_compute_metric_all_rows_per_group")
     out: dict[str, list[tuple[float, float, str]]] = {}
     for group_value, sub in df.groupby(group_col):
         pts: list[tuple[float, float, str]] = []
@@ -624,11 +1443,204 @@ def _compute_metric_all_rows_per_group(
                 y = anchor / tN
             else:
                 y = anchor / (n * tN)
-            pts.append((n, y, str(row["sa_id"])))
+            pts.append((n, y, str(row[_MEMBER_KEY])))
         pts.sort(key=lambda r: (r[0], r[1]))
         if pts:
             out[str(group_value)] = pts
     return out
+
+
+def _compute_scaling_series(
+    df: pd.DataFrame,
+    aggregation: str = "mean",
+) -> tuple[dict, dict, dict | None, dict | None]:
+    """Compute the four scaling-panel series from the raw per-run frame.
+
+    ``aggregation`` is the statistic (`SensitivityReportConfig.aggregation`: ``mean``,
+    ``median``, ``min`` or ``max``) that collapses the replicates of one configuration
+    before the per-N min is taken; ``mean`` is the original behaviour.
+
+    Returns ``(speedup_pg, strong_eff_pg, speedup_all, efficiency_all)``: the
+    per-group speedup and strong-efficiency LINE series, then the all-rows
+    MARKER series (``None`` when no anchor resolves). All four share one
+    per-family anchor resolved from the RAW frame.
+    """
+    # Panels 3+4 carry TWO series per group and they answer different questions.
+    # The LINE is the per-N envelope over replicate-AVERAGED configs, so a vertex
+    # is the best distinct CONFIG at that device count rather than the luckiest RUN.
+    # The MARKERS are every raw row, so the replicate spread stays visible. Before
+    # this change the "line" was itself an all-rows series (measured: panel-3 line
+    # x = [1,1,2,2,3,3], not [1,2,3]), so the min rule the comment claimed was never
+    # applied on these two panels and the two series were the same points twice.
+    #
+    # Both series anchor on the SAME per-family baseline. They share an axis, a
+    # colour and a legendgroup, which asserts to the reader that they are one
+    # series; a global-serial anchor against a per-family anchor made that
+    # assertion false for every GPU family and made the y-axis title's t_family(1)
+    # true of the line only.
+    #
+    # THE ANCHOR IS RESOLVED FROM THE RAW FRAME. This reverses a deliberate earlier
+    # choice, and the earlier reasoning is preserved because it is still true:
+    # resolving from the raw frame divides averaged line values by an un-averaged
+    # minimum, so the reference config no longer lands at EXACTLY 1.0 under its own
+    # line -- it lands slightly below.
+    #
+    # That was traded away because of what the averaged anchor cost. _resolve_family_
+    # baselines takes float(ref[t_col].min()) over the min-N rows of whatever frame it
+    # is handed, so an AVERAGED frame yields `min over configs of (mean over
+    # replicates)`. The line is then pinned to anchor/anchor = 1.0000 at min-N, while a
+    # marker is anchor/T_i over RAW rows -- and a single replicate that beat the mean
+    # including its slower sibling plots ABOVE 1.0. The line sat outside the spread of
+    # the points it summarises. MEASURED on the e581fffb0b1c generation:
+    # synth_cc_resume_triton panel x4/y4, gpu (a100-80), line 1.0000 vs BOTH markers at
+    # 1.2586; across all four masters, 18 of 208 line-vs-marker points deviate >1%,
+    # worst 25.85%.
+    #
+    # A raw anchor is <= every raw row at min-N by construction, so no marker can plot
+    # above its own family's reference. A line beginning marginally under 1.0 says "the
+    # averaged configuration is slower than the single best run", which is true and
+    # readable; a line beneath which its own points float says something false about the
+    # relationship between the two series. BM-2 ("use averages for drawing all lines")
+    # is unaffected -- the LINE is still built from _df_avg; only the shared scalar it
+    # divides by changes.
+    #
+    # This scalar feeds ALL FOUR metric calls below -- speedup line, speedup markers,
+    # efficiency line, efficiency markers -- so this one argument moves BOTH panels.
+    _df_avg = df.groupby(["group_value", "n_devices", "config_id"], as_index=False).agg(
+        # Emit the identity column under `_MEMBER_KEY`, matching this frame's own
+        # constructor at :1824/:1844 (`rows.append({"sa_id": member_id, ...})` -- the
+        # COLUMN is sa_id, the VARIABLE is member_id). The `**{...}` form binds the
+        # emitted name AND the source column to one constant; a plain keyword would
+        # bind neither, because a kwarg NAME cannot be a variable in this syntax.
+        wallclock_s=("wallclock_s", aggregation),
+        **{_MEMBER_KEY: (_MEMBER_KEY, "first")},
+    )
+    family_baselines = _resolve_family_baselines(
+        df,
+        t_col="wallclock_s",
+        indep_col="n_devices",
+        group_col="group_value",
+    )
+    if family_baselines:
+        speedup_pg, strong_eff_pg = {}, {}
+        speedup_all, efficiency_all = {}, {}
+        for _gv, _anchor in family_baselines.items():
+            _sub_avg = _df_avg[_df_avg["group_value"].astype(str) == _gv]
+            _sub_raw = df[df["group_value"].astype(str) == _gv]
+            if _sub_avg.empty:
+                continue
+            # Line: per-N minimum over the replicate-averaged configs.
+            _line_sub = _sub_avg.loc[_sub_avg.groupby("n_devices")["wallclock_s"].idxmin()]
+            speedup_pg.update(
+                _compute_metric_all_rows_per_group(
+                    _line_sub,
+                    t_col="wallclock_s",
+                    indep_col="n_devices",
+                    group_col="group_value",
+                    kind="speedup",
+                    anchor=_anchor,
+                )
+            )
+            strong_eff_pg.update(
+                _compute_metric_all_rows_per_group(
+                    _line_sub,
+                    t_col="wallclock_s",
+                    indep_col="n_devices",
+                    group_col="group_value",
+                    kind="efficiency",
+                    anchor=_anchor,
+                )
+            )
+            # Markers: every raw row, same anchor.
+            if _sub_raw.empty:
+                continue
+            speedup_all.update(
+                _compute_metric_all_rows_per_group(
+                    _sub_raw,
+                    t_col="wallclock_s",
+                    indep_col="n_devices",
+                    group_col="group_value",
+                    kind="speedup",
+                    anchor=_anchor,
+                )
+            )
+            efficiency_all.update(
+                _compute_metric_all_rows_per_group(
+                    _sub_raw,
+                    t_col="wallclock_s",
+                    indep_col="n_devices",
+                    group_col="group_value",
+                    kind="efficiency",
+                    anchor=_anchor,
+                )
+            )
+        speedup_all = speedup_all or None
+        efficiency_all = efficiency_all or None
+    else:
+        speedup_pg = _compute_speedup_per_group(
+            df,
+            t_col="wallclock_s",
+            indep_col="n_devices",
+            group_col="group_value",
+            baseline_mode="serial",
+        )
+        strong_eff_pg = _compute_efficiency_per_group(
+            df,
+            t_col="wallclock_s",
+            indep_col="n_devices",
+            group_col="group_value",
+            mode="strong",
+            baseline_mode="serial",
+        )
+        serial_anchor = _resolve_serial_baseline(
+            df,
+            t_col="wallclock_s",
+            group_col="group_value",
+        )
+        if serial_anchor is not None:
+            speedup_all = _compute_metric_all_rows_per_group(
+                df,
+                t_col="wallclock_s",
+                indep_col="n_devices",
+                group_col="group_value",
+                kind="speedup",
+                anchor=serial_anchor,
+            )
+            efficiency_all = _compute_metric_all_rows_per_group(
+                df,
+                t_col="wallclock_s",
+                indep_col="n_devices",
+                group_col="group_value",
+                kind="efficiency",
+                anchor=serial_anchor,
+            )
+        else:
+            speedup_all = None
+            efficiency_all = None
+    return speedup_pg, strong_eff_pg, speedup_all, efficiency_all
+
+
+#: Marker shapes cycled by `value_encoding_policy="value_to_shape"`, one per distinct group value.
+_SHAPE_CYCLE = ("o", "s", "^", "v", "D", "P", "X", "*")
+
+
+def _apply_value_encoding(static_cfg, index: int, color, marker, palette):
+    """Return `(color, marker)` for the series at sorted position `index` under `value_encoding_policy`.
+
+    `colorscale` (the default, and any call without `static_cfg`) returns the inputs
+    unchanged. `one_to_one_dict` gives every distinct group value its own palette colour
+    by sorted position, a dictionary from value to colour that does not depend on which
+    values a panel happens to hold. `value_to_shape` keeps the colour and sets the marker
+    from `_SHAPE_CYCLE` by sorted position.
+    """
+    if static_cfg is None:
+        return color, marker
+    policy = static_cfg.value_encoding_policy
+    if policy == ValueEncodingPolicy.one_to_one_dict:
+        return palette[index % len(palette)], marker
+    if policy == ValueEncodingPolicy.value_to_shape:
+        return color, _SHAPE_CYCLE[index % len(_SHAPE_CYCLE)]
+    return color, marker
 
 
 def _draw_metric_panel(
@@ -651,9 +1663,12 @@ def _draw_metric_panel(
     A red ideal-reference line is overlaid at zorder=2 — above the gridlines (zorder=0)
     but below the data markers (zorder=3) so points always render in front.
 
-    For hybrid groups (or any group with duplicate x-values), each marker is
-    annotated with its `n_mpi_procs` value. Same convention as the wallclock /
-    compute-cost panels.
+    For hybrid groups ONLY, each marker is annotated with its `n_omp_threads` value
+    (threads per rank). Same convention as the wallclock / compute-cost panels, which
+    likewise no longer annotate non-hybrid groups on duplicate x-values: under the
+    threads-per-rank annotation a non-hybrid label is a constant and disambiguates
+    nothing. The annotation is guarded on `n_omp_threads` being present, because the
+    column is only assigned when the sensitivity CSV declares it.
 
     - ``ideal_kind='linear'``: y = x (the perfect-speedup S(N) = N reference).
     - ``ideal_kind='constant'``: y = ``ideal_value`` (perfect efficiency = 1.0).
@@ -662,68 +1677,111 @@ def _draw_metric_panel(
     # Dual-source publication style: static_cfg overrides palette + cpu marker.
     palette = static_cfg.series_palette if static_cfg is not None else sens_cfg.palette
     cpu_marker = static_cfg.cpu_marker if static_cfg is not None else sens_cfg.cpu_marker
-    # Annotation lookup: map (group_value, n_devices) → n_mpi_procs at the MIN-y row.
+    # Annotation lookup: map (group_value, n_devices) → n_omp_threads at the MIN-y row.
+    # Threads-per-rank, NOT ranks: with N = ranks x threads/rank, ranks = N / threads,
+    # so the thread count plus the x position determines the decomposition uniquely.
     df_min = (
         df.loc[df.groupby(["group_value", "n_devices"])["wallclock_s"].idxmin()]
         if "wallclock_s" in df.columns and not df.empty
         else df
     )
-    annotation_lookup = {
-        (str(r["group_value"]), int(r["n_devices"])): int(r["n_mpi_procs"])
-        for _, r in df_min.iterrows()
-    }
-    for i, gv in enumerate(groups):
+    # GUARDED on column presence, unlike the retired n_mpi_procs read: n_mpi_procs is
+    # assigned unconditionally (~:701) but n_omp_threads only when the sensitivity CSV
+    # declares it (~:706-709), so an unguarded read raises KeyError on a suite that
+    # declares neither `n_omp_threads` nor `analysis.n_omp_threads`. Empty dict degrades
+    # to no annotation via the `if n_omp is not None` gate below.
+    annotation_lookup = (
+        {(str(r["group_value"]), int(r["n_devices"])): int(r["n_omp_threads"]) for _, r in df_min.iterrows()}
+        if "n_omp_threads" in df_min.columns
+        else {}
+    )
+    for _i, gv in enumerate(groups):
         pts = metric_per_group[gv]
         if not pts:
             continue
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
-        color = palette[i % len(palette)]
+        color = _decomposition_color(
+            gv,
+            palette,
+            is_gpu_group=str(gv).lower().startswith("gpu"),
+            is_hybrid_group=str(gv).lower() == "hybrid",
+        )
+        color, group_marker = _apply_value_encoding(static_cfg, _i, color, cpu_marker, palette)
         with prov.artist(
-            axes_id="ax_metric", kind="line",
+            axes_id="ax_metric",
+            kind="line",
             note=f"metric group {gv}",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
             ax.plot(xs, ys, color=color, linestyle=sens_cfg.line_style, linewidth=sens_cfg.line_width, zorder=2)
         with prov.artist(
-            axes_id="ax_metric", kind="scatter",
+            axes_id="ax_metric",
+            kind="scatter",
             note=f"metric points {gv}",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
             ax.scatter(
-                xs, ys, color=color, marker=cpu_marker, s=sens_cfg.point_size,
-                edgecolor="black", linewidth=1.0, zorder=3,
+                xs,
+                ys,
+                facecolor=_HOLLOW_FILL_MPL,
+                edgecolor=color,
+                marker=group_marker,
+                s=sens_cfg.point_size,
+                linewidth=1.0,
+                zorder=3,
             )
         if str(gv).lower() == "hybrid":
             for x, y in zip(xs, ys, strict=True):
-                n_mpi = annotation_lookup.get((str(gv), int(x)))
-                if n_mpi is not None:
+                n_omp = annotation_lookup.get((str(gv), int(x)))
+                if n_omp is not None:
                     ax.annotate(
-                        str(n_mpi), xy=(x, y),
-                        xytext=(6, 6), textcoords="offset points",
-                        fontsize=8, color=color,
+                        str(n_omp),
+                        xy=(x, y),
+                        xytext=(6, 6),
+                        textcoords="offset points",
+                        fontsize=8,
+                        color=color,
                     )
     if ideal_kind == "linear":
         with prov.artist(
-            axes_id="ax_metric", kind="line",
+            axes_id="ax_metric",
+            kind="line",
             note="ideal-reference line",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
             ax.plot(
-                [1, x_max], [1, x_max],
+                [1, x_max],
+                [1, x_max],
                 color=sens_cfg.ideal_line_color,
                 linewidth=sens_cfg.ideal_line_width,
-                zorder=2, label=ideal_label,
+                zorder=2,
+                label=ideal_label,
             )
     elif ideal_kind == "constant":
         ax.axhline(
             ideal_value,
             color=sens_cfg.ideal_line_color,
             linewidth=sens_cfg.ideal_line_width,
-            zorder=2, label=ideal_label,
+            zorder=2,
+            label=ideal_label,
         )
     else:
         raise ValueError(f"ideal_kind must be 'linear' or 'constant'; got {ideal_kind!r}")
+
+
+def _wall_label(sensitivity) -> str:
+    """The measure the wall-clock panel plots, named for the models the sweep runs.
+
+    A member that runs only SWMM has no MPI ranks: its value is the SWMM total elapsed time
+    parsed from its report file (`_collect_rows`). A sweep whose members are all SWMM-only
+    therefore titles its time axis for that measure; every other sweep plots the wall-clock
+    time of the TRITON or TRITON-SWMM run.
+    """
+    models = [member._get_enabled_model_types() for member in all_members_for_reading_of(sensitivity).values()]
+    if models and all(m == ["swmm"] for m in models):
+        return "SWMM elapsed time"
+    return "Wall-clock time"
 
 
 def _adaptive_time_unit(max_hours: float) -> tuple[str, float]:
@@ -739,126 +1797,332 @@ def _adaptive_time_unit(max_hours: float) -> tuple[str, float]:
 
 
 def _draw_panel(
-    ax, df: pd.DataFrame, *, y_col: str, group_by_var: str | None, sens_cfg, prov: ProvenanceLog, static_cfg=None,
+    ax,
+    df: pd.DataFrame,
+    *,
+    y_col: str,
+    group_by_var: str | None,
+    sens_cfg,
+    prov: ProvenanceLog,
+    static_cfg=None,
 ) -> None:
-    """Draw one panel of the dual-panel benchmarking figure."""
+    """Draw one of the four panels of the benchmarking figure."""
     groups = sorted(df["group_value"].dropna().unique(), key=str)
     # Dual-source publication style: static_cfg overrides palette + cpu/gpu markers.
     palette = static_cfg.series_palette if static_cfg is not None else sens_cfg.palette
+    # Hardware is out of the symbol channel, so a single `cpu_marker` binding serves every series.
     cpu_marker = static_cfg.cpu_marker if static_cfg is not None else sens_cfg.cpu_marker
-    gpu_marker = static_cfg.gpu_marker if static_cfg is not None else sens_cfg.gpu_marker
-    for i, gv in enumerate(groups):
+    for _i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
-        color = palette[i % len(palette)]
-        is_gpu_group = str(gv).lower() == "gpu"
+        is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
-        marker = gpu_marker if is_gpu_group else cpu_marker
+        color = _decomposition_color(gv, palette, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
+        # Hardware is OUT of the symbol channel: the column facet carries it in the
+        # plotly branch and the legend text names it here. This branch has no
+        # per-decomposition marker vocabulary and `sens_cfg` offers one marker, so every
+        # series takes `cpu_marker`, as `_draw_metric_panel` does for ALL groups
+        # including GPU. The two matplotlib sites agree. Giving this branch the
+        # four-symbol strategy map the plotly branch carries needs a config field
+        # (`decomposition_markers`), a schema change and not a figure iteration.
+        marker = cpu_marker
+        color, marker = _apply_value_encoding(static_cfg, _i, color, marker, palette)
         is_single_point_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
         if is_single_point_group or len(sub) == 1:
             with prov.artist(
-                axes_id="ax_panel", kind="scatter",
+                axes_id="ax_panel",
+                kind="scatter",
                 note=f"single-point group {gv}",
             ) as a:
-                a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+                a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
                 ax.scatter(
-                    sub["indep_value"], sub[y_col],
-                    color=color, marker=marker, s=sens_cfg.point_size,
-                    edgecolor="black", linewidth=1.0, zorder=3, label=str(gv),
+                    sub["indep_value"],
+                    sub[y_col],
+                    facecolor=_HOLLOW_FILL_MPL,
+                    edgecolor=color,
+                    marker=marker,
+                    s=sens_cfg.point_size,
+                    linewidth=1.0,
+                    zorder=3,
+                    label=_decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group),
                 )
-            if is_hybrid_group:
+            if is_hybrid_group and "n_omp_threads" in sub.columns:
                 for _, r in sub.iterrows():
                     ax.annotate(
-                        str(int(r["n_mpi_procs"])),
+                        str(int(r["n_omp_threads"])),
                         xy=(r["indep_value"], r[y_col]),
-                        xytext=(6, 6), textcoords="offset points",
-                        fontsize=8, color=color,
+                        xytext=(6, 6),
+                        textcoords="offset points",
+                        fontsize=8,
+                        color=color,
                     )
             continue
         # Multi-point group: line through MIN-y at each x-value, all points as markers.
         per_x_min = sub.groupby("indep_value", as_index=True)[y_col].min().sort_index()
         with prov.artist(
-            axes_id="ax_panel", kind="line",
+            axes_id="ax_panel",
+            kind="line",
             note=f"multi-point line {gv}",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
             ax.plot(
-                per_x_min.index, per_x_min.values,
-                color=color, linestyle=sens_cfg.line_style, linewidth=sens_cfg.line_width, zorder=2,
+                per_x_min.index,
+                per_x_min.values,
+                color=color,
+                linestyle=sens_cfg.line_style,
+                linewidth=sens_cfg.line_width,
+                zorder=2,
             )
         with prov.artist(
-            axes_id="ax_panel", kind="scatter",
+            axes_id="ax_panel",
+            kind="scatter",
             note=f"multi-point markers {gv}",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
             ax.scatter(
-                sub["indep_value"], sub[y_col],
-                color=color, marker=marker, s=sens_cfg.point_size,
-                edgecolor="black", linewidth=1.0, zorder=3, label=str(gv),
+                sub["indep_value"],
+                sub[y_col],
+                facecolor=_HOLLOW_FILL_MPL,
+                edgecolor=color,
+                marker=marker,
+                s=sens_cfg.point_size,
+                linewidth=1.0,
+                zorder=3,
+                label=_decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group),
             )
-        # Hybrid: annotate every point with its n_mpi_procs value (per user spec).
-        # Other groups: annotate only when duplicate x-values exist (helps disambiguate).
-        if is_hybrid_group or sub["indep_value"].duplicated().any():
+        # Hybrid ONLY: annotate every point with its threads-per-rank value (per user
+        # spec). The retired `or sub["indep_value"].duplicated().any()` arm annotated
+        # non-hybrid groups too; under the threads-per-rank annotation a non-hybrid
+        # label is a constant (1 for MPI, the thread count for OpenMP) and disambiguates
+        # nothing, so it is noise. Ranks stay recoverable as x / threads-per-rank.
+        # The column guard mirrors the plotly sites: n_omp_threads is assigned only when
+        # the sensitivity CSV declares it (~:706-709), unlike n_mpi_procs (~:701).
+        if is_hybrid_group and "n_omp_threads" in sub.columns:
             for _, r in sub.iterrows():
                 ax.annotate(
-                    str(int(r["n_mpi_procs"])),
+                    str(int(r["n_omp_threads"])),
                     xy=(r["indep_value"], r[y_col]),
-                    xytext=(6, 6), textcoords="offset points",
-                    fontsize=8, color=color,
+                    xytext=(6, 6),
+                    textcoords="offset points",
+                    fontsize=8,
+                    color=color,
                 )
 
 
-def _collect_rows(
-    analysis: TRITONSWMM_analysis, dependent_var: str
-) -> tuple[list[dict[str, Any]], list[Path]]:
-    """Collect (sa_id, event_iloc, value) rows + source paths for the dependent_var."""
+def _collect_rows(experiment: TRITONSWMM_analysis, dependent_var: str) -> tuple[list[dict[str, Any]], list[Path]]:
+    """Collect (member_id, event_iloc, value) rows + source paths for the dependent_var."""
     if not dependent_var.startswith("performance."):
         raise ValueError(
             f"dependent_var {dependent_var!r} must start with 'performance.' "
             f"(only performance metrics are supported in v1)"
         )
     col = dependent_var.split(".", 1)[1]
-    sensitivity = analysis.sensitivity
+    sensitivity = experiment.sensitivity
     rows: list[dict[str, Any]] = []
     source_paths: list[Path] = []
 
-    datatree_path = analysis.analysis_paths.sensitivity_datatree_zarr
+    # RESUME CORRECTNESS -- FIXED AT THE CAUSE, SINGLE-SOURCED HERE.
+    # `performance.{col}` is the slowest-rank sum of per-rank deltas over the
+    # performance{N}.txt checkpoints. On a hotstart-resumed sim TRITON restarts its
+    # cumulative timer at each resume, and the pre-fix aggregator INFERRED those resets
+    # from the data via `(deltas <= 0).all(axis=1)` -- a conjunction requiring EVERY
+    # column to decrease. `Init` INCREASES at a real boundary (the restarted process
+    # re-pays init), so boundaries were missed and a whole segment was SUBTRACTED
+    # instead of added. The column then under-reported wallclock by a factor that was
+    # NOT constant, so it also reordered configurations.
+    #
+    # NOTE, measured -- this corrects an earlier reading of this comment: the cause was
+    # NOT that checkpoints were missing from disk. All 144 perf files are present for
+    # the resumed member_serial_6_r1; the set IS the whole run. The fix is the ledger-driven
+    # `resume_steps` join in process_simulation._aggregate_perf_tseries, which takes the
+    # boundaries from TRITONSWMM_model_log.resume_reporting_tsteps instead of guessing.
+    #
+    # PRE-FIX baseline, retained as the regression reference. Measured on delivered
+    # generation 01655abb60c2, n=28 per arm:
+    # perf_Total / wall_clock_ledger_s = 0.975 (clean triton) / 0.985 (clean coupled)
+    # vs 0.527 +/- 0.133 (resume triton, range 0.21-0.72) / 0.215 +/- 0.012 (resume
+    # coupled). Spearman(perf_Total, ledger) falls from 0.996/0.9995 on the clean arms
+    # to 0.909 on resume-triton -- i.e. the plotted metric disagrees with true wallclock
+    # about which configuration is faster.
+    #
+    # POST-FIX, recomputed from raw performance{N}.txt + the ledger across all 56 resumed
+    # sims: 0.861 +/- 0.063 (resume triton) / 0.898 +/- 0.036 (resume coupled), and
+    # Spearman(perf_Total, ledger) recovers to 0.9934 / 0.9978 with only 2.1% / 1.1% of
+    # configuration pairs ordered differently. The residual gap is UNDERSTOOD, not noise:
+    # `ledger - perf_Total` is a near-constant ~6.3 s per attempt (process launch,
+    # checkpoint read, and the post-last-checkpoint work each killed attempt discarded
+    # and recomputed), so it is ADDITIVE and order-preserving. That is why the ratio
+    # still spreads 0.72-0.96 while the ordering does not move -- short sims pay the same
+    # seconds as a larger fraction. Do not read the ratio spread as reordering risk.
+    #
+    # WHY NO LEDGER SUBSTITUTION HERE. `wall_clock_ledger_s` is the append-only
+    # per-attempt ledger summed by run_simulation.read_walltime_ledger_total_s -- still
+    # the only kill-survivable per-attempt wall source, since the perf files and
+    # sim_run_time_minutes are overwrite-prone. It remains available in
+    # scenario_status.csv and is the right answer to "what did this configuration cost".
+    # It is deliberately NOT read here. This collector used to prefer it for `Total`
+    # only, as a rescue while the datatree value was wrong; that rescue is retired with
+    # the defect that justified it. Two reasons it is not merely unnecessary but wrong
+    # at this site: (1) it is a whole-process wall with no per-category decomposition, so
+    # mixing it in plotted `Total` ABOVE datatree `Simulation` from incommensurable
+    # sources and broke `Total - Simulation`; (2) its extra seconds are dominated by the
+    # 4-attempt structure of an ARTIFICIALLY scheduled 3-kill interruption, which is a
+    # property of the experiment design, not of the configuration under test. Every
+    # plotted column now comes from one source. If whole-process wall is wanted as a
+    # first-class quantity, add it as its OWN series -- do not substitute it into a
+    # decomposition.
+
+    from hhemt.utils import resolve_experiment_tree
+
+    datatree_path = resolve_experiment_tree(experiment.analysis_paths.analysis_dir)
     tree: xr.DataTree | None = None
     if datatree_path is not None and datatree_path.exists():
-        tree = xr.open_datatree(str(datatree_path), engine="zarr", consolidated=False)
+        tree = open_store(str(datatree_path))
         source_paths.append(datatree_path)
 
-    for sa_id, sub_analysis in sensitivity.sub_analyses.items():
-        node_ds = _find_perf_node(tree, sa_id) if tree is not None else None
+    for member_id, analysis in all_members_for_reading_of(sensitivity).items():
+        node_ds = _find_perf_node(tree, member_id) if tree is not None else None
         if node_ds is not None and col in node_ds.data_vars:
-            for event_iloc in sub_analysis.df_sims.index:
+            _emitted_for_member = False
+            for event_iloc in analysis.df_sims.index:
+                # SINGLE SOURCE + FAIL LOUD. The ledger substitution that used to preempt
+                # this read existed because the datatree `Total` was wrong on resume -- a
+                # missed reset boundary subtracted a whole segment (measured 0.527 of the
+                # attempt ledger, and it reordered configurations). That defect is fixed at
+                # its cause by the ledger-driven `resume_steps` join in
+                # process_simulation._aggregate_perf_tseries, so every plotted column now
+                # comes from ONE source and `Total - Simulation` means what it says again.
+                #
+                # The `if value is None: continue` that used to sit here dropped a sim from
+                # the figure without a word. With the fallback gone that skip would be the
+                # only thing between a broken read and a missing bar, so it is replaced by
+                # an explicit raise carrying the operands needed to debug it: which sub,
+                # which event, which column, and what was actually found.
                 value = _scalar_at_event(node_ds[col], int(event_iloc))
                 if value is None:
-                    continue
-                rows.append({"sa_id": sa_id, "event_iloc": int(event_iloc), "value": value})
+                    _dims = dict(node_ds[col].sizes)
+                    _events = (
+                        node_ds[col].coords["event_iloc"].values.tolist()
+                        if "event_iloc" in node_ds[col].coords
+                        else "<no event_iloc coord>"
+                    )
+                    raise ValueError(
+                        f"Benchmarking read failed: member_id={member_id!r} event_iloc={int(event_iloc)} "
+                        f"column={col!r} produced no scalar. Node dims={_dims}; "
+                        f"event_iloc values present={_events}. This is one of: the event index "
+                        "is absent from the consolidated node, or the selection is non-scalar, "
+                        "or the stored value is non-numeric. Until the ledger-driven resume-reset "
+                        "fix, a wall_clock_ledger_s fallback masked this for 'Total' and every "
+                        "other column skipped the row silently; the figure now refuses to plot "
+                        "a member it cannot read."
+                    )
+                if not math.isfinite(value):
+                    raise ValueError(
+                        f"Benchmarking read produced a non-finite value: member_id={member_id!r} "
+                        f"event_iloc={int(event_iloc)} column={col!r} value={value!r}. "
+                        "NaN/inf passes the None-sentinel this code used before, so such a "
+                        "value was previously PLOTTED rather than caught. A non-finite entry "
+                        "here means the per-scenario perf zarr carries one -- regenerate it "
+                        "(V0018) rather than suppressing this check."
+                    )
+                _emitted_for_member = True
+                rows.append({"sa_id": member_id, "event_iloc": int(event_iloc), "value": value})
+            if not _emitted_for_member:
+                raise ValueError(
+                    f"Benchmarking produced no rows for member_id={member_id!r} on column={col!r} "
+                    f"despite a resolvable performance node. df_sims index was "
+                    f"{list(analysis.df_sims.index)}. A member that silently "
+                    "contributes zero bars is indistinguishable in the rendered figure from "
+                    "one that was never configured; refuse rather than render a gap."
+                )
             continue
-        enabled = sub_analysis._get_enabled_model_types()
+        enabled = analysis._get_enabled_model_types()
         if "swmm" in enabled and len(enabled) == 1:
-            for event_iloc in sub_analysis.df_sims.index:
-                proc = sub_analysis._retrieve_sim_run_processing_object(int(event_iloc))
+            for event_iloc in analysis.df_sims.index:
+                proc = _swmm_only_event_handle(analysis, int(event_iloc))
                 rpt = proc.scen_paths.swmm_full_rpt_file
+                if getattr(proc, "is_recorded", False):
+                    # A removed SWMM-only member: the row reads the `Total elapsed time` captured at removal, and
+                    # the declared source is the record file in place of the removed full.rpt.
+                    value = proc.captured.get("swmm_total_elapsed")
+                    if value is None:
+                        continue
+                    rows.append({_MEMBER_KEY: member_id, "event_iloc": int(event_iloc), "value": value})
+                    source_paths.append(proc.record_path)
+                    continue
                 if not rpt or not rpt.exists():
                     continue
                 value = parse_total_elapsed(rpt)
                 if value is None:
                     continue
-                rows.append({"sa_id": sa_id, "event_iloc": int(event_iloc), "value": value})
+                rows.append({"sa_id": member_id, "event_iloc": int(event_iloc), "value": value})
                 source_paths.append(rpt)
     return rows, source_paths
 
 
-def _find_perf_node(tree: xr.DataTree, sa_id: str) -> xr.Dataset | None:
-    """Locate the per-sa_id performance node, preferring tritonswmm over triton-only."""
-    for model_subpath in ("tritonswmm/performance", "triton/performance"):
-        path = f"/sa_{sa_id}/{model_subpath}"
+def _swmm_only_event_handle(analysis, event_iloc: int):
+    """The handle ``_collect_rows`` reads one SWMM-only event through, record-backed when the event is removed.
+
+    A member the master has already replaced by a recorded view answers for itself, and its answer is returned
+    untouched. An ACTIVE member whose event was removed (its record ``pending`` or ``done``, its ``sims/{event}/``
+    directory gone) is the state an interrupted master consolidation leaves: the member is still an analysis, and
+    asking it for ``_retrieve_sim_run_processing_object`` builds a processing object that calls ``get_log`` on the
+    removed scenario and raises ``ScenarioRemovedError``. That event gets the same ``RecordedSimRun`` a removed
+    member's view yields, so the caller's ``is_recorded`` branch reads ``captured['swmm_total_elapsed']`` and declares
+    the record file as the source. Deliberately NOT a ``try``/``except ScenarioRemovedError`` around the call: the
+    record is read once and its state decides, so a ``superseded`` or absent record leaves the live handle, and a
+    failure of any other kind still surfaces instead of being read as a removed event.
+    """
+    if getattr(analysis, "is_recorded_member", False):
+        return analysis._retrieve_sim_run_processing_object(event_iloc)
+    from hhemt.scenario import compute_event_id_slug
+
+    event_id = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
+    analysis_dir = Path(analysis.analysis_paths.analysis_dir)
+    record = read_scenario_record(analysis_dir, event_id)
+    if record is None or record["state"] not in REMOVED_STATES:
+        return analysis._retrieve_sim_run_processing_object(event_iloc)
+    return RecordedSimRun(
+        event_id,
+        Path(analysis.analysis_paths.simulation_directory) / event_id,
+        record,
+        scenario_record_path(analysis_dir, event_id),
+    )
+
+
+def _find_perf_node(tree: xr.DataTree, member_id: str) -> xr.Dataset | None:
+    """Locate the per-member_id performance node, preferring tritonswmm over triton-only."""
+    for model_subpath in ("tritonswmm/performance/summary", "triton_only/performance/summary"):
+        path = f"/member_{member_id}/{model_subpath}"
         try:
             return tree[path].ds
         except KeyError:
             continue
+    return None
+
+
+def _resolve_model_arm(analysis) -> str | None:
+    """Return the single TRITON model arm this benchmarking master carries.
+
+    Phase 6 change (2). Under the sibling-master architecture each sensitivity
+    master enables exactly one TRITON arm, so the figure is single-arm and the
+    encoding is constant per figure (self-labeling). ``"coupled"`` == the
+    TRITON-SWMM arm (``tritonswmm/performance/summary``); ``"uncoupled"`` == the
+    pure-TRITON arm (``triton_only/performance/summary``). Returns ``None`` for a
+    non-TRITON master (e.g. swmm-only) so the pre-change filled/dashed default is
+    preserved byte-identically. The tritonswmm-first precedence mirrors
+    ``_find_perf_node``'s probe order, so config-truth agrees with the plotted
+    node under the single-arm invariant.
+    """
+    sens = getattr(analysis, "sensitivity", None)
+    if sens is None:
+        return None
+    enabled: set[str] = set()
+    for sub in all_members_for_reading_of(sens).values():
+        enabled.update(sub._get_enabled_model_types())
+    if "tritonswmm" in enabled:
+        return "coupled"
+    if "triton" in enabled:
+        return "uncoupled"
     return None
 
 
@@ -881,6 +2145,7 @@ def _build_sensitivity_benchmarking_figure(
     strong_eff_per_group: dict,
     *,
     wall_unit: str,
+    wall_label: str = "Wall-clock time",
     cost_unit: str,
     independent_var: str,
     group_by_var: str | None,
@@ -895,10 +2160,14 @@ def _build_sensitivity_benchmarking_figure(
     speedup_all_rows: dict | None = None,
     efficiency_all_rows: dict | None = None,
     speedup_range_mode: str = "full_ideal",
+    model_arm: str | None = None,
 ):
     """Plotly MV port (pre-/design-figure): static 4-panel benchmarking figure.
     Wall-clock | Compute-cost | Strong-scaling speedup | Parallel efficiency,
-    stacked rows=4, cols=1 with shared x-axis. One trace per group_by_var value
+    stacked rows=4 with cols=_n_hw (one column per hardware family on the two scaling
+    panels) and TWO explicitly-linked x-axis groups rather than one shared axis: rows
+    1+2 keyed on ``independent_var``, rows 3+4 on ``n_devices``. One trace per
+    group_by_var value
     per panel, sharing the Okabe-Ito palette (sens_cfg.palette) as Plotly's
     colorway. Informationally congruent with the matplotlib branch — no hover
     refinement, no line-toggle UX, no per-panel zoom/pan customization.
@@ -906,116 +2175,291 @@ def _build_sensitivity_benchmarking_figure(
     # Side-effect import: registers `triton_journal` Plotly template.
     from hhemt.report_renderers import _plotly_theme  # noqa: F401
 
+    # ALL FOUR panels get one column per hardware family (CPU, then one per GPU
+    # token). The wall-clock and compute-cost rows were previously full width via
+    # colspan and drew every group in one axes; faceting them is what lets the legend
+    # name the DECOMPOSITION alone, since a full-width row has no column to carry
+    # hardware. Columns are DERIVED from the data, so a family absent from this
+    # master produces no column rather than an empty one (P9).
+    _hw_cols = sorted(
+        {_hardware_family(str(gv)) for gv in df["group_value"].dropna().unique()},
+        key=lambda f: (f != "cpu", f),
+    )
+    _n_hw = max(len(_hw_cols), 1)
+    # P10: spacing is derived, never hard-coded. Plotly's own default is
+    # 0.2/cols; a third of that keeps the per-column y-axis titles clear of the
+    # neighbouring panel at the column counts this campaign produces.
+    _h_space = min(0.09, 0.20 / _n_hw)
+    # shared_xaxes=False is DELIBERATE and the axis linking is done explicitly by
+    # _apply_plotly_axis_groups below. Two reasons, both measured at HEAD 73696af:
+    # (1) rows 1+2 plot `indep_value` while rows 3+4 plot `n_devices`, so one shared
+    #     range is wrong whenever independent_var != n_devices;
+    # (2) `shared_xaxes=True` behaved DIFFERENTLY by _n_hw under the former colspan
+    #     spec, and explicit per-group linking is what made the layout identical at
+    #     every _n_hw. The colspan is gone now that all four rows are faceted, but the
+    #     explicit linking is retained: reason (1) is independent of the layout and
+    #     still holds, and deriving refs stays correct under any future spec change.
+    # vertical_spacing rises 0.06 -> 0.09 because row 2 now carries its own tick band
+    # AND an x-axis title immediately above row 3's hardware subplot titles.
     fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True,
-        vertical_spacing=0.045,
+        rows=4,
+        cols=_n_hw,
+        shared_xaxes=False,
+        vertical_spacing=0.09,
+        horizontal_spacing=_h_space,
+        specs=[
+            [{} for _ in range(_n_hw)],
+            [{} for _ in range(_n_hw)],
+            [{} for _ in range(_n_hw)],
+            [{} for _ in range(_n_hw)],
+        ],
+        # One title per CELL, row-major, and the grid is now 4 x _n_hw because every
+        # row is faceted. The hardware names belong on ROW 1 (the first _n_hw cells);
+        # every later row is blank. The previous expression predated faceting -- it
+        # emitted 2 titles for the two colspan rows plus _n_hw names plus _n_hw blanks,
+        # which is 2 + 2*_n_hw cells and no longer matches 4*_n_hw, so plotly's
+        # row-major fill pushed the names into rows 1-2 at arbitrary columns.
+        # The slice+pad keeps the count exact even if _hw_cols is empty, where
+        # _n_hw is floored at 1 and the names list is shorter than the row.
+        subplot_titles=(([f"{f}" for f in _hw_cols] + [""] * _n_hw)[:_n_hw] + [""] * (3 * _n_hw)),
     )
     fig.update_layout(
         template="plotly_white",
         colorway=list(sens_cfg.palette),
         showlegend=True,
         legend=dict(
-            title=group_by_var if group_by_var is not None else "",
-            orientation="v", yanchor="top", y=1.0, xanchor="left", x=1.02,
+            # The series axis is the DERIVED `decomposition`, a function of
+            # (run mode, device class) -- not the stored `group_by_var` field. Kept
+            # byte-identical in wording to the matplotlib backend's title so the
+            # static and interactive reports cannot drift.
+            title="decomposition" if group_by_var is not None else "",
+            orientation="v",
+            yanchor="top",
+            y=1.0,
+            xanchor="left",
+            x=1.02,
         ),
-        margin=dict(l=10, r=120, t=30, b=80),
+        # No `b=` here: the bottom margin is DERIVED from the caption and set at the
+        # add_figure_caption call site below. This b=80 was superseded by that call
+        # (same figure, no intervening def) and survived only as a leftover -- exactly
+        # the hand-tuned constant the geometry guard now detects.
+        margin=dict(l=90, r=120, t=30),
+        # WIDTH DECLARED. Without it the figure ships `responsive:true` and plotly sizes it
+        # to its container, so the rendered width is a browser fact unknown at build time --
+        # while the caption below is wrapped against a fixed number. Measured on the
+        # delivered artifact: caption wrapped at 790 px inside a figure rendering ~2300 px,
+        # i.e. a caption spanning one third of the figure. Declaring the width is what makes
+        # the wrap reproducible; it is not a styling choice.
+        width=1000,
+        height=1000,
     )
+
+    # ONE resolution for this whole figure. Hoisted above both consumers -- the
+    # `_x_max_c` read in the per-family loop below and the label/linking call further
+    # down -- so the column the scaling panels are keyed on and the label under them
+    # are literally the same object rather than two agreeing lookups.
+    _axis_top, _axis_bottom = resolve_axis_groups(independent_var, sens_cfg)
 
     # ---- Panels 1 + 2: wallclock + compute-cost -------------------------
     for row, y_col, panel_id in (
         (1, "wallclock_disp", "ax_wall_plotly"),
         (2, "compute_disp", "ax_cost_plotly"),
     ):
-        _plotly_metric_panel(
-            fig, df, y_col=y_col, row=row, panel_id=panel_id,
-            group_by_var=group_by_var, sens_cfg=sens_cfg, prov=prov,
-            show_in_legend=(row == 1),
-            gpu_legend_suffix=gpu_legend_suffix,
-        )
+        # ONE accumulator per ROW, owned here rather than inside the panel: the row is
+        # now several panels and first-occurrence must be computed across all of them.
+        _row_legend_seen: set[str] = set()
+        for _ci, _fam in enumerate(_hw_cols, start=1):
+            _df_c = df[df["group_value"].astype(str).map(_hardware_family) == _fam]
+            if _df_c.empty:
+                continue
+            _plotly_metric_panel(
+                fig,
+                _df_c,
+                y_col=y_col,
+                row=row,
+                col=_ci,
+                panel_id=f"{panel_id}_{_fam}",
+                group_by_var=group_by_var,
+                sens_cfg=sens_cfg,
+                prov=prov,
+                show_in_legend=(row == 1),
+                legend_seen=_row_legend_seen,
+                gpu_legend_suffix=gpu_legend_suffix,
+                model_arm=model_arm,
+            )
 
-    # ---- Panels 3 + 4: speedup + efficiency -----------------------------
-    # Single legendgroup-pooled entry for both ideal-reference lines (speedup
-    # row 3 + efficiency row 4 share `legendgroup="ideal"`); the speedup trace
-    # carries the combined display name and is the only one with showlegend=True
-    # so the legend has ONE row that toggles both red lines.
-    _plotly_metric_panel_precomputed(
-        fig, speedup_per_group, df_for_groups=df, row=3,
-        panel_id="ax_speedup_plotly",
-        ideal_kind="linear", x_max=float(df["n_devices"].max()),
-        ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
-        sens_cfg=sens_cfg, prov=prov, show_in_legend=False,
-        gpu_legend_suffix=gpu_legend_suffix,
-        all_rows_per_group=speedup_all_rows,
-        ideal_show_in_legend=True,
-    )
-    _plotly_metric_panel_precomputed(
-        fig, strong_eff_per_group, df_for_groups=df, row=4,
-        panel_id="ax_efficiency_plotly",
-        ideal_kind="constant", ideal_value=1.0, x_max=float(df["n_devices"].max()),
-        ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
-        sens_cfg=sens_cfg, prov=prov, show_in_legend=False,
-        gpu_legend_suffix=gpu_legend_suffix,
-        all_rows_per_group=efficiency_all_rows,
-        ideal_show_in_legend=False,
-    )
+    # ---- Panels 3 + 4: speedup + efficiency, one column per hardware family --
+    # Groups are DISJOINT across families, so filtering the per-group dicts
+    # partitions the data with no group drawn twice and no legend entry
+    # duplicated. The ideal reference is emitted per column -- BM-6's "a single
+    # reference case in each one to define perfect scaling" -- but only column 1
+    # carries the legend entry, so the legend keeps ONE row for both red lines.
+    for _ci, _fam in enumerate(_hw_cols, start=1):
+        _df_c = df[df["group_value"].astype(str).map(_hardware_family) == _fam]
+        if _df_c.empty:
+            continue
+        _sp_c = {k: v for k, v in speedup_per_group.items() if _hardware_family(str(k)) == _fam}
+        _ef_c = {k: v for k, v in strong_eff_per_group.items() if _hardware_family(str(k)) == _fam}
+        _sp_all_c = {k: v for k, v in (speedup_all_rows or {}).items() if _hardware_family(str(k)) == _fam} or None
+        _ef_all_c = {k: v for k, v in (efficiency_all_rows or {}).items() if _hardware_family(str(k)) == _fam} or None
+        # Same column the scaling panels are keyed on, read from the resolved group
+        # rather than re-typed, so the ideal-reference line's extent cannot outlive a
+        # change to _SCALING_AXIS_VAR.
+        _x_max_c = float(_df_c[_axis_bottom.x_col].max())
+        _plotly_metric_panel_precomputed(
+            fig,
+            _sp_c,
+            df_for_groups=_df_c,
+            row=3,
+            col=_ci,
+            panel_id=f"ax_speedup_plotly_c{_ci}",
+            ideal_kind="linear",
+            x_max=_x_max_c,
+            ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
+            sens_cfg=sens_cfg,
+            prov=prov,
+            show_in_legend=False,
+            gpu_legend_suffix=gpu_legend_suffix,
+            all_rows_per_group=_sp_all_c,
+            ideal_show_in_legend=(_ci == 1),
+            model_arm=model_arm,
+        )
+        _plotly_metric_panel_precomputed(
+            fig,
+            _ef_c,
+            df_for_groups=_df_c,
+            row=4,
+            col=_ci,
+            panel_id=f"ax_efficiency_plotly_c{_ci}",
+            ideal_kind="constant",
+            ideal_value=1.0,
+            x_max=_x_max_c,
+            ideal_label="ideal speedup (S=N)<br>and efficiency (=1.0)",
+            sens_cfg=sens_cfg,
+            prov=prov,
+            show_in_legend=False,
+            gpu_legend_suffix=gpu_legend_suffix,
+            all_rows_per_group=_ef_all_c,
+            ideal_show_in_legend=False,
+            model_arm=model_arm,
+        )
     # F-FU-6 / Q1: speedup panel range mode. Default `full_ideal` shows the full
     # ideal line; `empirical_clipped` clips y to the empirical max for better
     # discrimination of low-speedup points (Kelleher Guideline 4) and adds a
     # corner annotation naming the ideal slope so the reader doesn't lose the
     # reference.
     if speedup_range_mode == "empirical_clipped" and speedup_all_rows:
+        # BM-6: max_empirical stays GLOBAL -- computed over the unfiltered
+        # speedup_all_rows, before the per-family column split. A per-column max
+        # would give each hardware family its own y-scale, which makes the columns
+        # silently non-comparable; that is worse than not clipping at all, because
+        # the reader has no cue that the axes differ.
         max_empirical = max(
             (p[1] for pts in speedup_all_rows.values() for p in pts),
             default=None,
         )
         if max_empirical is not None and max_empirical > 0:
-            fig.update_yaxes(range=[0, max_empirical * 1.1], row=3, col=1)
+            # IF YOU REVIVE THIS BRANCH, DROP THIS LOOP. An explicit `range=` OVERRIDES
+            # `matches=`, and `_apply_plotly_axis_groups` now links every row's columns
+            # to column 1 (see `_Y_LINKED_ROWS`). Setting a per-column range here would
+            # silently win over that link and restore the per-column rulers the linking
+            # exists to remove -- with no error, because both calls are individually
+            # valid. The global `max_empirical` computed above is the right VALUE; apply
+            # it once to column 1 and let the link carry it, or drop it and keep the
+            # union. This branch is currently unreachable: its gate reads
+            # `speedup_range_mode`, whose only source is a `getattr` default because
+            # `speedup_panel_range_mode` has no Pydantic field anywhere.
+            for _ci in range(1, _n_hw + 1):
+                fig.update_yaxes(range=[0, max_empirical * 1.1], row=3, col=_ci)
             # The ideal-reference line's truncation is communicated via the legend
             # entry "Ideal speedup (S=N)" rather than a corner annotation (v5
             # feedback); the legend entry stays visible at the clipped y-range,
             # the line itself extends off the panel.
 
-    # ---- Axis labels + tickers ------------------------------------------
-    xlabel_text = sens_cfg.independent_var_labels.get(independent_var, independent_var)
-    fig.update_xaxes(title_text="", row=1, col=1)
-    fig.update_xaxes(title_text="", row=2, col=1)
-    fig.update_xaxes(title_text="", row=3, col=1)
-    fig.update_xaxes(title_text=xlabel_text, row=4, col=1)
-    fig.update_yaxes(title_text=f"Wall-clock ({wall_unit})", row=1, col=1)
+    # ---- Axis groups (linking + tick visibility + labels) + tickers ------
+    # ONE resolution, TWO groups. The retired form derived a single label from
+    # independent_var and applied it to row 4 -- the row keyed on n_devices -- while
+    # `shared_xaxes=True` made that row's axis the whole figure's axis at _n_hw == 1.
+    # The two groups are the SAME objects the `_x_max_c` read above consumed (hoisted
+    # to the top of this function), not a second resolution that merely agrees.
+    _apply_plotly_axis_groups(
+        fig,
+        n_hw=_n_hw,
+        top=_axis_top,
+        bottom=_axis_bottom,
+        hw_cols=_hw_cols,
+        labels=sens_cfg.independent_var_labels,
+    )
+    fig.update_yaxes(title_text=f"{wall_label} ({wall_unit})", row=1, col=1)
     fig.update_yaxes(title_text=f"Compute cost ({cost_unit} × devices)", row=2, col=1)
+    # OE-1: the numerator is the FAMILY baseline (CPU -> serial CPU; each GPU hardware ->
+    # its own 1-GPU run), not the plotted series' own t(1) and not a global serial.
+    # The `family` subscript distinguished baselines ACROSS panels; each column is now
+    # one hardware family, so it distinguishes nothing within a panel. The cross-panel
+    # fact it carried ("S = 1.0 is a different wall-clock on each curve") is stated in
+    # full by the footnote below and is NOT weakened by this relabel -- but do not drop
+    # that footnote in the same pass, because it is now the sole carrier.
     fig.update_yaxes(title_text="Strong-Scaling Speedup<br>S(N) = t(1) / t(N)", row=3, col=1)
     fig.update_yaxes(title_text="Strong-Scaling Efficiency<br>E<sub>s</sub>(N) = t(1) / (N · t(N))", row=4, col=1)
-    # Footnote (matches matplotlib reference): explain the n_mpi_procs annotations on hybrid markers.
-    # v5 tuning — middle ground between v3 (y=-0.14, b=110, too far) and v4
-    # (y=-0.07, b=85, too close).
-    fig.update_layout(margin=dict(l=10, r=120, t=30, b=95))
-    fig.add_annotation(
-        text="* number next to hybrid scenarios indicates number of MPI processes",
-        xref="paper", yref="paper", x=0.5, y=-0.10,
-        showarrow=False, font=dict(size=10, color="gray"), xanchor="center",
+    # Adopt hhemt.figure_caption: this annotation predated the module (see the retired
+    # v3/v4/v5 b= history in git). `y=-0.10` was a FRACTION of the plot area while the
+    # x-axis-title band below it is a fixed pixel height, so the two converge as the
+    # hardware-column count grows -- which is why the middle column's long
+    # "Number of Devices (CPUs or GPUs)" title is the one that reaches the block first.
+    _bench_caption = (
+        "The number beside each hybrid point is its OpenMP threads per rank."
+        " The x axis is total devices N = ranks x threads/rank, so ranks = N divided by that number."
+        " Speedup and efficiency are measured against each hardware family's own"
+        " minimum-device run (CPU → serial CPU; each GPU → its own 1-GPU run),"
+        " so S = 1.0 denotes a different wall-clock on each curve."
+        " Every marker is hollow so overlapping configurations stay readable;"
+        " every replicate is plotted."
     )
+    _bench_plot_h = 1000 - 30  # height minus top margin; bottom is what we are deriving
+    _bench_b_px = add_figure_caption(
+        fig,
+        _bench_caption,
+        content_w_px=content_width_px(fig),
+        plot_h_px=_bench_plot_h,
+        font_px=10,
+        axis_band_px=46,
+    )
+    fig.update_layout(margin=dict(l=90, r=120, t=30, b=_bench_b_px))
     if sens_cfg.show_gridlines:
         for r in range(1, 5):
-            fig.update_xaxes(
-                showgrid=True, gridcolor=sens_cfg.gridline_color,
-                gridwidth=sens_cfg.gridline_width, row=r, col=1,
-            )
-            fig.update_yaxes(
-                showgrid=True, gridcolor=sens_cfg.gridline_color,
-                gridwidth=sens_cfg.gridline_width, row=r, col=1,
-            )
+            _cols = range(1, _n_hw + 1) if r >= 3 else range(1, 2)
+            for _c in _cols:
+                fig.update_xaxes(
+                    showgrid=True,
+                    gridcolor=sens_cfg.gridline_color,
+                    gridwidth=sens_cfg.gridline_width,
+                    row=r,
+                    col=_c,
+                )
+                fig.update_yaxes(
+                    showgrid=True,
+                    gridcolor=sens_cfg.gridline_color,
+                    gridwidth=sens_cfg.gridline_width,
+                    row=r,
+                    col=_c,
+                )
 
     # ---- Emit -----------------------------------------------------------
     plotly_config = {
         "displayModeBar": True,
         "displaylogo": False,
         "modeBarButtonsToRemove": [
-            "lasso2d", "select2d", "autoScale2d",
-            "hoverCompareCartesian", "hoverClosestCartesian",
+            "lasso2d",
+            "select2d",
+            "autoScale2d",
+            "hoverCompareCartesian",
+            "hoverClosestCartesian",
             "toggleSpikelines",
         ],
         "toImageButtonOptions": {
-            "format": "svg", "filename": "sensitivity_benchmarking", "scale": 2,
+            "format": "svg",
+            "filename": "sensitivity_benchmarking",
+            "scale": 2,
         },
     }
     return fig, plotly_config
@@ -1027,6 +2471,7 @@ def _render_plotly_branch(
     strong_eff_per_group: dict,
     *,
     wall_unit: str,
+    wall_label: str = "Wall-clock time",
     cost_unit: str,
     independent_var: str,
     group_by_var: str | None,
@@ -1041,12 +2486,14 @@ def _render_plotly_branch(
     speedup_all_rows: dict | None = None,
     efficiency_all_rows: dict | None = None,
     speedup_range_mode: str = "full_ideal",
+    model_arm: str | None = None,
 ) -> Path:
     fig, plotly_config = _build_sensitivity_benchmarking_figure(
         df,
         speedup_per_group,
         strong_eff_per_group,
         wall_unit=wall_unit,
+        wall_label=wall_label,
         cost_unit=cost_unit,
         independent_var=independent_var,
         group_by_var=group_by_var,
@@ -1061,26 +2508,36 @@ def _render_plotly_branch(
         speedup_all_rows=speedup_all_rows,
         efficiency_all_rows=efficiency_all_rows,
         speedup_range_mode=speedup_range_mode,
+        model_arm=model_arm,
     )
     html_text = pio.to_html(
-        fig, include_plotlyjs=plotly_js_mode,
-        full_html=True, config=plotly_config,
+        fig,
+        include_plotlyjs=plotly_js_mode,
+        full_html=True,
+        config=plotly_config,
     )
 
     try:
         fig.write_image(
             output_path.with_suffix(".svg"),
-            engine="kaleido", width=1400, height=700, scale=1,
+            engine="kaleido",
+            width=1400,
+            height=700,
+            scale=1,
         )
     except Exception as exc:  # noqa: BLE001 — Kaleido failure is non-fatal
         import logging
+
         logging.getLogger(__name__).warning(
             "Kaleido SVG export skipped for %s: %s",
-            output_path.with_suffix(".svg"), exc,
+            output_path.with_suffix(".svg"),
+            exc,
         )
 
     return emit_plot_with_sources(
-        html_text, output_path, source_paths,
+        html_text,
+        output_path,
+        source_paths,
         analysis_dir=analysis_dir,
         output_format="html",
         manifest_data={
@@ -1106,54 +2563,80 @@ def _plotly_metric_panel(
     sens_cfg,
     prov: ProvenanceLog,
     show_in_legend: bool,
+    col: int = 1,
+    # Hoisted from a local. With rows 1-2 faceted this function is called once per
+    # hardware column, so a per-call accumulator would gate first-occurrence PER
+    # COLUMN and fragment the legend into one copy per column -- worse than the
+    # duplication the gate was added to remove. One set, owned by the caller, spans
+    # every panel of the row.
+    legend_seen: set[str] | None = None,
     gpu_legend_suffix: str = "",
+    model_arm: str | None = None,
 ) -> None:
     """Plot one of the wallclock/compute-cost panels (raw data per group)."""
     groups = sorted(df["group_value"].dropna().unique(), key=str)
-    cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"]
+    cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes", "n_replicates"]
     available_cfg_cols = [c for c in cfg_cols if c in df.columns]
-    for i, gv in enumerate(groups):
+    # First-occurrence gate for the legend. Several `gv` groups share one decomposition
+    # label -- CPU-MPI and GPU both read `N ranks x 1 thread (MPI)` -- so without this
+    # the row emits duplicate identical entries. The CALLER owns the set when the row is
+    # faceted, so first-occurrence is computed across every column rather than per panel.
+    _legend_seen = legend_seen if legend_seen is not None else set()
+    for _i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
-        color = sens_cfg.palette[i % len(sens_cfg.palette)]
-        is_gpu_group = str(gv).lower() == "gpu"
+        is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
         is_single_point_group = is_serial_group or len(sub) == 1
-        if is_gpu_group:
-            marker_symbol = "triangle-up"
-        elif is_serial_group:
-            marker_symbol = "star"
-        else:
-            marker_symbol = "circle"
-        if is_gpu_group:
-            legend_name = f"{gv}{gpu_legend_suffix}"
-        elif is_hybrid_group:
-            legend_name = f"{gv}*"
-        else:
-            legend_name = str(gv)
+        color = _decomposition_color(gv, sens_cfg.palette, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
+        marker_symbol = _decomposition_symbol(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
+        # Iteration 4: model-arm encoding REMOVED. This renderer is structurally
+        # single-arm (see _resolve_model_arm's docstring: each sibling master enables
+        # exactly one TRITON arm) and no cross_experiment_* renderer consumes it, so
+        # the arm is carried by the figure's title and its position in the combined
+        # report's paired_figures small-multiple. Arm-conditioned fill and dash made
+        # the two arms' symbology DISJOINT by construction, which is what regressed
+        # the standing "symbology identical across models" requirement. The freed
+        # marker FILL channel now encodes replicate count; the connector dash is a
+        # single constant style.
+        arm_dash = "solid"
+        legend_name = _decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
         if not is_single_point_group:
-            per_x_min = sub.groupby("indep_value", as_index=True)[y_col].min().sort_index()
+            # Average replicates of one config first, THEN take the per-N min across
+            # distinct configs (the documented "best configuration at that resource
+            # level" rule). Without the first step the min is a min over RUNS, which on
+            # the staged master discards a 159.3 s vs 275.9 s replicate spread silently.
+            _by_cfg = (
+                sub.groupby(["indep_value", "config_id"], as_index=False)[y_col].agg(sens_cfg.aggregation)
+                if "config_id" in sub.columns
+                else sub
+            )
+            per_x_min = _by_cfg.groupby("indep_value", as_index=True)[y_col].min().sort_index()
             with prov.artist(
-                axes_id=panel_id, kind="line",
+                axes_id=panel_id,
+                kind="line",
                 note=f"multi-point line {gv} (panel {panel_id})",
             ) as a:
-                a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+                a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
                 fig.add_trace(
                     go.Scatter(
-                        x=per_x_min.index, y=per_x_min.values,
+                        x=per_x_min.index,
+                        y=per_x_min.values,
                         mode="lines",
-                        line=dict(color=color, dash="dash",
-                                  width=sens_cfg.line_width),
-                        legendgroup=str(gv), name=legend_name,
-                        showlegend=False, hoverinfo="skip",
+                        line=dict(color=color, dash=arm_dash, width=sens_cfg.line_width),
+                        legendgroup=legend_name,
+                        name=legend_name,
+                        showlegend=False,
+                        hoverinfo="skip",
                     ),
-                    row=row, col=1,
+                    row=row,
+                    col=col,
                 )
-        # Build hybrid n_mpi_procs annotations as marker text (matches matplotlib reference).
-        marker_mode = "markers+text" if is_hybrid_group and "n_mpi_procs" in sub.columns else "markers"
+        # Build hybrid threads-per-rank annotations as marker text (matches matplotlib).
+        marker_mode = "markers+text" if is_hybrid_group and "n_omp_threads" in sub.columns else "markers"
         marker_text = (
-            sub["n_mpi_procs"].fillna(0).astype(int).astype(str).tolist()
-            if is_hybrid_group and "n_mpi_procs" in sub.columns
+            sub["n_omp_threads"].fillna(0).astype(int).astype(str).tolist()
+            if is_hybrid_group and "n_omp_threads" in sub.columns
             else None
         )
         # Hover customdata: per-point MPI ranks, OMP threads, GPUs, Nodes (F2).
@@ -1163,39 +2646,53 @@ def _plotly_metric_panel(
             customdata = None
         hover_lines = [f"<b>{legend_name}</b>", "x: %{x}", "y: %{y:.3f}"]
         if customdata is not None:
-            for j, col in enumerate(available_cfg_cols):
-                label = {"n_mpi_procs": "MPI ranks",
-                         "n_omp_threads": "OMP threads",
-                         "n_gpus": "GPUs",
-                         "n_nodes": "Nodes"}.get(col, col)
+            # `_cfg_col`, NOT `col`: this iterates DataFrame COLUMN NAMES, a
+            # different sense of "col" from plotly's subplot-grid `col=`. The
+            # sibling `_plotly_metric_panel_precomputed` took a `col` parameter and
+            # this same loop shadowed it -- and because the loop sits BELOW the
+            # first add_trace, only groups 2+ were corrupted, so a single-group
+            # fixture would have passed. This function takes no `col` parameter
+            # today; the rename is here so that adding one later cannot re-form the
+            # collision silently.
+            for j, _cfg_col in enumerate(available_cfg_cols):
+                label = _CFG_HOVER_LABELS.get(_cfg_col, _cfg_col)
                 hover_lines.append(f"{label}: %{{customdata[{j}]}}")
         hovertemplate_str = "<br>".join(hover_lines) + "<extra></extra>"
         with prov.artist(
-            axes_id=panel_id, kind="scatter",
+            axes_id=panel_id,
+            kind="scatter",
             note=f"markers {gv} (panel {panel_id})",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
+            # Every marker hollow, unconditionally (`_HOLLOW_FILL`). The per-point
+            # `n_replicates` branch that used to build a fill LIST here is retired with
+            # the encoding it served; a scalar is all that is left to pass.
             scatter_kwargs = dict(
-                x=sub["indep_value"], y=sub[y_col],
+                x=sub["indep_value"],
+                y=sub[y_col],
                 mode=marker_mode,
                 text=marker_text,
                 textposition="top right",
                 textfont=dict(size=9, color=color),
                 marker=dict(
                     symbol=marker_symbol,
-                    size=max(int(sens_cfg.point_size ** 0.5), 6),
-                    color=color, line=dict(color="black", width=1.0),
+                    size=max(int(sens_cfg.point_size**0.5), 6),
+                    color=_HOLLOW_FILL,
+                    line=dict(color=color, width=1.4),
                 ),
-                legendgroup=str(gv), name=legend_name,
-                showlegend=show_in_legend,
+                legendgroup=legend_name,
+                name=legend_name,
+                showlegend=show_in_legend and legend_name not in _legend_seen,
                 hovertemplate=hovertemplate_str,
             )
             if customdata is not None:
                 scatter_kwargs["customdata"] = customdata
             fig.add_trace(
                 go.Scatter(**scatter_kwargs),
-                row=row, col=1,
+                row=row,
+                col=col,
             )
+        _legend_seen.add(legend_name)
 
 
 def _plotly_metric_panel_precomputed(
@@ -1204,6 +2701,7 @@ def _plotly_metric_panel_precomputed(
     *,
     df_for_groups: pd.DataFrame,
     row: int,
+    col: int = 1,
     panel_id: str,
     ideal_kind: str,
     x_max: float,
@@ -1215,34 +2713,44 @@ def _plotly_metric_panel_precomputed(
     gpu_legend_suffix: str = "",
     all_rows_per_group: dict | None = None,
     ideal_show_in_legend: bool = False,
+    model_arm: str | None = None,
 ) -> None:
     """Plot speedup / efficiency panel from precomputed per-group data.
 
-    Accepts ``per_group_data`` as ``{gv: list[(x, y, sa_id), ...]}`` (current format
+    Accepts ``per_group_data`` as ``{gv: list[(x, y, member_id), ...]}`` (current format
     returned by ``_compute_speedup_per_group`` / ``_compute_efficiency_per_group``,
     F2/F3 enriched), OR legacy ``{gv: list[(x, y), ...]}`` (older callers), OR
     ``{gv: {xs: [...], ys: [...]}}`` (legacy dict form for forward compat).
 
-    When per-row `sa_id` is available, populates `customdata` for hover enrichment
+    When per-row `member_id` is available, populates `customdata` for hover enrichment
     (n_mpi_procs / n_omp_threads / n_gpus / n_nodes) and per-point text annotations
     on hybrid markers (matplotlib reference parity for panels 3+4).
     """
     groups = sorted(df_for_groups["group_value"].dropna().unique(), key=str)
-    # Per-sa_id config lookup for hover customdata + hybrid annotations (F2, F3).
-    sa_cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"]
-    available_cfg_cols = [c for c in sa_cfg_cols if c in df_for_groups.columns]
+    # NO colour key is threaded here any more. The retired resolver took an `all_groups`
+    # list because an OPEN run-mode vocabulary derived its palette index from the supplied
+    # set, so a per-column FILTERED frame renumbered the tail and the same series took two
+    # slots in one figure. Colour now indexes a CLOSED four-entry decomposition map by
+    # literal, so the index cannot move whatever frame arrives -- the defect is not fixed
+    # but unrepresentable, which is why the parameter is gone rather than defaulted.
+    # Per-member_id config lookup for hover customdata + hybrid annotations (F2, F3).
+    member_cfg_cols = ["n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes", "n_replicates"]
+    available_cfg_cols = [c for c in member_cfg_cols if c in df_for_groups.columns]
     if available_cfg_cols and "sa_id" in df_for_groups.columns:
-        # Deduplicate to one row per sa_id (config doesn't vary within an sa_id).
-        sa_cfg_lookup = (
-            df_for_groups.drop_duplicates(subset=["sa_id"])
-            .set_index("sa_id")[available_cfg_cols]
-            .fillna(0).astype(int)
+        # Deduplicate to one row per member_id (config doesn't vary within a member_id).
+        member_cfg_lookup = (
+            df_for_groups.drop_duplicates(subset=["sa_id"]).set_index("sa_id")[available_cfg_cols].fillna(0).astype(int)
         )
     else:
-        sa_cfg_lookup = None
+        member_cfg_lookup = None
+
+    # The `n_rep_by_member` lookup that stood here is GONE. Its own comment recorded that
+    # `n_replicates` "was never read again; this is the lookup that consumes it" -- so
+    # with the fill encoding retired it had exactly zero remaining consumers, and keeping
+    # a per-member_id reindex alive to feed nothing would be machinery that reads as live.
 
     def _extract_xyz(data):
-        """Return (xs, ys, sa_ids) from one of the supported per-group data formats."""
+        """Return (xs, ys, member_ids) from one of the supported per-group data formats."""
         if isinstance(data, dict):
             return data.get("xs") or [], data.get("ys") or [], None
         if isinstance(data, list):
@@ -1250,23 +2758,23 @@ def _plotly_metric_panel_precomputed(
                 return [], [], None
             xs_local = [p[0] for p in data]
             ys_local = [p[1] for p in data]
-            sa_local = [str(p[2]) for p in data] if len(data[0]) >= 3 else None
-            return xs_local, ys_local, sa_local
+            member_local = [str(p[2]) for p in data] if len(data[0]) >= 3 else None
+            return xs_local, ys_local, member_local
         return [], [], None
 
-    def _build_customdata(sa_ids_local):
-        if sa_ids_local is None or sa_cfg_lookup is None:
+    def _build_customdata(member_ids_local):
+        if member_ids_local is None or member_cfg_lookup is None:
             return None
         try:
-            return sa_cfg_lookup.reindex(sa_ids_local).to_numpy()
+            return member_cfg_lookup.reindex(member_ids_local).to_numpy()
         except KeyError:
             return None
 
-    for i, gv in enumerate(groups):
+    for _i, gv in enumerate(groups):
         if str(gv) not in per_group_data and gv not in per_group_data:
             continue
         data = per_group_data.get(str(gv), per_group_data.get(gv))
-        line_xs, line_ys, line_sa = _extract_xyz(data)
+        line_xs, line_ys, line_member = _extract_xyz(data)
         if not line_xs:
             continue
         # If all_rows_per_group is provided, use it for the markers trace; else fall
@@ -1275,42 +2783,38 @@ def _plotly_metric_panel_precomputed(
         if all_rows_per_group is not None:
             all_data = all_rows_per_group.get(str(gv), all_rows_per_group.get(gv))
         if all_data is None:
-            marker_xs, marker_ys, marker_sa = line_xs, line_ys, line_sa
+            marker_xs, marker_ys, marker_member = line_xs, line_ys, line_member
         else:
-            marker_xs, marker_ys, marker_sa = _extract_xyz(all_data)
+            marker_xs, marker_ys, marker_member = _extract_xyz(all_data)
             if not marker_xs:
                 # Empty all-rows fall back to line data for markers.
-                marker_xs, marker_ys, marker_sa = line_xs, line_ys, line_sa
-        color = sens_cfg.palette[i % len(sens_cfg.palette)]
-        is_gpu_group = str(gv).lower() == "gpu"
+                marker_xs, marker_ys, marker_member = line_xs, line_ys, line_member
+        is_gpu_group = str(gv).lower().startswith("gpu")
         is_hybrid_group = str(gv).lower() == "hybrid"
         is_serial_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
-        if is_gpu_group:
-            marker_symbol = "triangle-up"
-        elif is_serial_group:
-            marker_symbol = "star"
-        else:
-            marker_symbol = "circle"
-        legend_name = f"{gv}{gpu_legend_suffix}" if is_gpu_group else (
-            f"{gv}*" if is_hybrid_group else str(gv)
-        )
-        # Build hover customdata + hybrid annotation text from sa_id provenance.
-        marker_customdata = _build_customdata(marker_sa)
+        color = _decomposition_color(gv, sens_cfg.palette, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
+        marker_symbol = _decomposition_symbol(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
+        # Iteration 4: model-arm encoding REMOVED (see _plotly_metric_panel for the
+        # rationale). The ideal-reference line below is NOT a data connector and was
+        # never arm-encoded.
+        arm_dash = "solid"
+        legend_name = _decomposition_label(gv, is_gpu_group=is_gpu_group, is_hybrid_group=is_hybrid_group)
+        # Build hover customdata + hybrid annotation text from member_id provenance.
+        marker_customdata = _build_customdata(marker_member)
         marker_text = None
         marker_mode = "markers"
-        if is_hybrid_group and marker_customdata is not None and "n_mpi_procs" in available_cfg_cols:
-            mpi_col_idx = available_cfg_cols.index("n_mpi_procs")
-            marker_text = [str(int(row[mpi_col_idx])) for row in marker_customdata]
+        if is_hybrid_group and marker_customdata is not None and "n_omp_threads" in available_cfg_cols:
+            omp_col_idx = available_cfg_cols.index("n_omp_threads")
+            marker_text = [str(int(row[omp_col_idx])) for row in marker_customdata]
             marker_mode = "markers+text"
-        hover_lines = [f"<b>{legend_name}</b>",
-                       "x: %{x}",
-                       "y: %{y:.3f}"]
+        hover_lines = [f"<b>{legend_name}</b>", "x: %{x}", "y: %{y:.3f}"]
         if marker_customdata is not None and available_cfg_cols:
-            for j, col in enumerate(available_cfg_cols):
-                label = {"n_mpi_procs": "MPI ranks",
-                         "n_omp_threads": "OMP threads",
-                         "n_gpus": "GPUs",
-                         "n_nodes": "Nodes"}.get(col, col)
+            # `_cfg_col`, NOT `col`: this function now takes a `col` PARAMETER
+            # (the subplot column), and a loop variable of that name rebinds it
+            # to the last config field for every statement below. The free-name
+            # check cannot see this -- the name is bound, just to the wrong thing.
+            for j, _cfg_col in enumerate(available_cfg_cols):
+                label = _CFG_HOVER_LABELS.get(_cfg_col, _cfg_col)
                 hover_lines.append(f"{label}: %{{customdata[{j}]}}")
         hovertemplate_str = "<br>".join(hover_lines) + "<extra></extra>"
         # Line trace through per-N min — dashed, no markers, no hover (line is connective only).
@@ -1318,27 +2822,38 @@ def _plotly_metric_panel_precomputed(
             line_trace = None  # serial / single-point groups skip the line, render markers only
         else:
             line_trace = dict(
-                x=line_xs, y=line_ys, mode="lines",
-                line=dict(color=color, dash="dash", width=sens_cfg.line_width),
-                legendgroup=str(gv), name=legend_name,
-                showlegend=False, hoverinfo="skip",
+                x=line_xs,
+                y=line_ys,
+                mode="lines",
+                line=dict(color=color, dash=arm_dash, width=sens_cfg.line_width),
+                legendgroup=legend_name,
+                name=legend_name,
+                showlegend=False,
+                hoverinfo="skip",
             )
         if line_trace is not None:
             with prov.artist(
-                axes_id=panel_id, kind="line",
+                axes_id=panel_id,
+                kind="line",
                 note=f"metric min-line {gv} (panel {panel_id})",
             ) as a:
-                a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
-                fig.add_trace(go.Scatter(**line_trace), row=row, col=1)
+                a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
+                fig.add_trace(go.Scatter(**line_trace), row=row, col=col)
         # Markers trace — all-row points (or fall back to per-N-min if all-row not provided).
+        # Every marker hollow, unconditionally (`_HOLLOW_FILL`). The per-point fill list
+        # this built from `n_rep_by_member` is retired with the encoding it served.
         marker_kwargs = dict(
-            x=marker_xs, y=marker_ys, mode=marker_mode,
+            x=marker_xs,
+            y=marker_ys,
+            mode=marker_mode,
             marker=dict(
                 symbol=marker_symbol,
-                size=max(int(sens_cfg.point_size ** 0.5), 6),
-                color=color, line=dict(color="black", width=1.0),
+                size=max(int(sens_cfg.point_size**0.5), 6),
+                color=_HOLLOW_FILL,
+                line=dict(color=color, width=1.4),
             ),
-            legendgroup=str(gv), name=legend_name,
+            legendgroup=legend_name,
+            name=legend_name,
             showlegend=show_in_legend,
             hovertemplate=hovertemplate_str,
         )
@@ -1349,11 +2864,12 @@ def _plotly_metric_panel_precomputed(
             marker_kwargs["textposition"] = "top right"
             marker_kwargs["textfont"] = dict(size=9, color=color)
         with prov.artist(
-            axes_id=panel_id, kind="scatter",
+            axes_id=panel_id,
+            kind="scatter",
             note=f"metric markers {gv} (panel {panel_id})",
         ) as a:
-            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
-            fig.add_trace(go.Scatter(**marker_kwargs), row=row, col=1)
+            a.add_channel("data", ProvenanceRef(source_path=EXPERIMENT_TREE_NAME))
+            fig.add_trace(go.Scatter(**marker_kwargs), row=row, col=col)
     # Ideal reference line: linear (S=N) or constant (E=1.0).
     if ideal_kind == "linear":
         ideal_x = [1.0, x_max]
@@ -1366,18 +2882,21 @@ def _plotly_metric_panel_precomputed(
         ideal_y = []
     if ideal_x:
         with prov.artist(
-            axes_id=panel_id, kind="line",
+            axes_id=panel_id,
+            kind="line",
             note=f"ideal-reference line ({ideal_kind})",
         ):
             fig.add_trace(
                 go.Scatter(
-                    x=ideal_x, y=ideal_y, mode="lines",
-                    line=dict(color=sens_cfg.ideal_line_color,
-                              width=sens_cfg.ideal_line_width),
+                    x=ideal_x,
+                    y=ideal_y,
+                    mode="lines",
+                    line=dict(color=sens_cfg.ideal_line_color, width=sens_cfg.ideal_line_width),
                     name=ideal_label,
                     legendgroup="ideal",
                     showlegend=ideal_show_in_legend,
                     hoverinfo="skip",
                 ),
-                row=row, col=1,
+                row=row,
+                col=col,
             )

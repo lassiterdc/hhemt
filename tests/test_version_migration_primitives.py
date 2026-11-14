@@ -1,4 +1,5 @@
 """Unit tests for MigrationContext primitives."""
+
 from __future__ import annotations
 
 import json
@@ -14,9 +15,7 @@ from hhemt.version_migration.context import (
 
 
 def _ctx(tmp_path: Path, *, dry_run: bool = False) -> MigrationContext:
-    return MigrationContext(
-        target_dir=tmp_path, dry_run=dry_run, migration_id="test"
-    )
+    return MigrationContext(target_dir=tmp_path, dry_run=dry_run, migration_id="test")
 
 
 # ---- Directory: rename_dir ----
@@ -256,9 +255,7 @@ def test_zarr_flat_to_datatree_builds_tree(tmp_path: Path) -> None:
     import xarray as xr
 
     flat = tmp_path / "flat.zarr"
-    xr.Dataset({"a": (("t",), np.arange(2))}).to_zarr(
-        flat, mode="w", consolidated=False
-    )
+    xr.Dataset({"a": (("t",), np.arange(2))}).to_zarr(flat, mode="w", consolidated=False)
     out = tmp_path / "tree.zarr"
     ctx = _ctx(tmp_path)
     ctx.zarr_flat_to_datatree(
@@ -272,9 +269,7 @@ def test_zarr_flat_to_datatree_builds_tree(tmp_path: Path) -> None:
     assert "a" in dt["group"].dataset.variables
 
 
-def test_zarr_flat_to_datatree_skips_missing_inputs(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_zarr_flat_to_datatree_skips_missing_inputs(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """Missing input stores produce a WARNING and are skipped, not raised.
 
     V0003 in production may run against trees missing one or more flat-mode
@@ -288,9 +283,7 @@ def test_zarr_flat_to_datatree_skips_missing_inputs(
 
     present = tmp_path / "present.zarr"
     missing = tmp_path / "absent.zarr"  # never created
-    xr.Dataset({"a": (("t",), np.arange(2))}).to_zarr(
-        present, mode="w", consolidated=False
-    )
+    xr.Dataset({"a": (("t",), np.arange(2))}).to_zarr(present, mode="w", consolidated=False)
     out = tmp_path / "tree.zarr"
     caplog.set_level(logging.WARNING, logger="hhemt.version_migration.context")
     ctx = _ctx(tmp_path)
@@ -303,15 +296,10 @@ def test_zarr_flat_to_datatree_skips_missing_inputs(
     dt = xr.open_datatree(out, engine="zarr", consolidated=False)
     assert "here" in dt.children
     assert "gone" not in dt.children
-    assert any(
-        r.levelname == "WARNING" and "input store missing" in r.getMessage()
-        for r in caplog.records
-    )
+    assert any(r.levelname == "WARNING" and "input store missing" in r.getMessage() for r in caplog.records)
 
 
-def test_zarr_flat_to_datatree_all_missing_no_output(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_zarr_flat_to_datatree_all_missing_no_output(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """When every input store is missing, no output store is created."""
     import logging
 
@@ -334,9 +322,7 @@ def test_yaml_rename_field(tmp_path: Path) -> None:
     p = tmp_path / "c.yaml"
     p.write_text("old_key: 1\nother: 2\n")
     ctx = _ctx(tmp_path)
-    ctx.yaml_rename_field(
-        p, "old_key", "new_key", in_model_cls=type("M", (), {})
-    )
+    ctx.yaml_rename_field(p, "old_key", "new_key", in_model_cls=type("M", (), {}))
     ctx.execute()
     assert yaml.safe_load(p.read_text()) == {"new_key": 1, "other": 2}
 
@@ -400,9 +386,7 @@ def test_flag_rewrite_paths(tmp_path: Path) -> None:
     status.mkdir()
     (status / "0-event_id.0.flag").touch()
     ctx = _ctx(tmp_path)
-    ctx.flag_rewrite_paths(
-        tmp_path, r"^\d+-(?P<slug>.+)\.flag$", "{slug}.flag"
-    )
+    ctx.flag_rewrite_paths(tmp_path, r"^\d+-(?P<slug>.+)\.flag$", "{slug}.flag")
     ctx.execute()
     assert (status / "event_id.0.flag").exists()
     assert not (status / "0-event_id.0.flag").exists()
@@ -425,9 +409,7 @@ def test_invalidate_compile_artifacts(tmp_path: Path) -> None:
 # ---- Invalidation: regenerate_scenario_status_csv ----
 
 
-def test_regenerate_scenario_status_csv_dispatches(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_regenerate_scenario_status_csv_dispatches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Primitive requires cfg_paths. With cfg_paths set and analysis/system
     constructors stubbed, it delegates to export_scenario_status_to_csv."""
     called = []
@@ -444,12 +426,8 @@ def test_regenerate_scenario_status_csv_dispatches(
     def fake_export(analysis, output_path=None):
         called.append(analysis)
 
-    monkeypatch.setattr(
-        "hhemt.system.TRITONSWMM_system", fake_system
-    )
-    monkeypatch.setattr(
-        "hhemt.analysis.TRITONSWMM_analysis", fake_analysis
-    )
+    monkeypatch.setattr("hhemt.system.TRITONSWMM_system", fake_system)
+    monkeypatch.setattr("hhemt.analysis.TRITONSWMM_analysis", fake_analysis)
     monkeypatch.setattr(
         "hhemt.export_scenario_status.export_scenario_status_to_csv",
         fake_export,
@@ -527,15 +505,13 @@ def test_guarded_remove_removes_when_force_and_replacement_present(
 def test_record_applied_records_op(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
     ctx.record_applied("V0001__test")
-    assert ctx.plan == [
-        PlannedOp("record_applied", {"migration_id": "V0001__test"})
-    ]
+    assert ctx.plan == [PlannedOp("record_applied", {"migration_id": "V0001__test"})]
 
 
 # ---- Helper: collect_sims_dirs ----
 
 
-def test_collect_sims_dirs_finds_top_and_subanalyses(tmp_path: Path) -> None:
+def test_collect_sims_dirs_finds_top_and_analyses(tmp_path: Path) -> None:
     (tmp_path / "sims").mkdir()
     (tmp_path / "subanalyses" / "sa_0" / "sims").mkdir(parents=True)
     (tmp_path / "subanalyses" / "sa_1" / "sims").mkdir(parents=True)

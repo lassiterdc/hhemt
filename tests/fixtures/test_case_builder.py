@@ -21,22 +21,48 @@ Example:
     system = test_case.system
 """
 
+import dataclasses
 import os
+import tempfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import platformdirs
 import yaml
 
 import hhemt.utils as ut
 from hhemt.analysis import TRITONSWMM_analysis
+from hhemt.cache import keys as cache_keys
+from hhemt.cache import markers as cache_markers
 from hhemt.config.analysis import analysis_config
 
 # Import from production package
-from hhemt.examples import TRITON_SWMM_example
+from hhemt.experiments import TRITON_SWMM_experiment
 from hhemt.system import TRITONSWMM_system
-from tests.fixtures import worktree_slug
+from hhemt.version_migration import constants as _version_constants
+from hhemt.version_migration.exceptions import VersionFileUnreadableError
+from hhemt.version_migration.state import read_version_file
+from tests.fixtures import _triton_source_cache, worktree_slug
+from tests.fixtures._triton_source_cache import (
+    TRITON_GIT_URL,
+    TRITON_PIN,
+    provision_borrower,
+    slug_runs_root,
+)
+
+
+def _tree_under_test_sha() -> str:
+    """The 40-hex sha of the toolkit tree THIS interpreter imports (D3, [Q331]).
+
+    Read through `hhemt.validation.running_identity` — the same source the analysis
+    constructor compares against — so a synthetic config always names the tree under
+    test (a worktree PWI, a `file://` clone, the main checkout). Never a literal: a
+    hard-coded sha goes stale at the next commit and refuses every synth test.
+    """
+    from hhemt.validation import running_identity
+
+    return running_identity().sha
+
 
 # NOTE: the former _SHARED_ARTIFACT_CACHE cross-worktree _software symlink was
 # removed because CMake build dirs are non-relocatable — sharing the build tier
@@ -44,8 +70,8 @@ from tests.fixtures import worktree_slug
 # RPATH with whichever worktree configured last, and concurrent cross-worktree
 # compiles corrupted each other's build + shared compilation.log (CompilationError
 # rc=1 on fresh fixture rebuilds). Each worktree now owns a per-worktree real
-# _software dir (see TestCaseBuilder.__init__). platformdirs is still imported —
-# it is used to root the per-worktree runs_root below.
+# _software dir (see TestCaseBuilder.__init__). The runs_root derivation moved to
+# tests/fixtures/_triton_source_cache.py, so platformdirs is no longer imported here.
 
 # census-green-up Phase 1: env-var override for the runs_root of start_from_scratch=True
 # BUILDER fixtures. When set (by a conftest builder fixture via monkeypatch.setenv to a
@@ -55,6 +81,43 @@ from tests.fixtures import worktree_slug
 # read from. The session/cached fixtures never set it, so they keep the slug-nested path.
 # Mirrors the existing HHEMT_TEST_NON_INTERACTIVE_LOCK_CLEAR test-env-var pattern.
 _TEST_RUNS_ROOT_OVERRIDE_ENV = "HHEMT_TEST_RUNS_ROOT_OVERRIDE"
+
+# The value the variable had when this module was first imported. `tests/conftest.py` imports this module at its
+# top, before any fixture runs, so this is the value the PROCESS was started with: the harness chunk wrapper exports
+# one node-local isolation root for the whole pytest process, while a fixture that sets the variable does so later,
+# around one construction, and to a different directory. Comparing the two tells the cases apart by who set them.
+_PROCESS_LEVEL_RUNS_ROOT_OVERRIDE = os.environ.get(_TEST_RUNS_ROOT_OVERRIDE_ENV)
+
+
+def _select_runs_root(
+    slug_runs_root_path: Path,
+    *,
+    start_from_scratch: bool,
+    share_scratch_root: bool,
+    runs_root_override: Path | None,
+) -> Path:
+    """Choose the runs root a case builds under: the override's, a private scratch root, or the slug root.
+
+    Three overrides exist and only one is privatised. An explicit `runs_root_override=` argument and a value a
+    fixture set around one construction (any value other than the process-level one) are used as given, because the
+    caller built that directory for this build and later readers look in it. The process-level value (the harness's
+    exported isolation root, shared by every worker of the chunk) is treated like the slug root: a
+    `start_from_scratch=True` build under it would delete a tree other workers are reading, so it gets a private
+    `mkdtemp` root, as it does with no override at all. `share_scratch_root=True` opts out of that privatisation.
+    A fixture cannot be mistaken for the harness here because it sets a different value than the one recorded at
+    import; the one residual is a fixture that sets exactly the process-level value, which no fixture does."""
+    environment_override = os.environ.get(_TEST_RUNS_ROOT_OVERRIDE_ENV)
+    effective = runs_root_override or environment_override
+    harness_level = (
+        runs_root_override is None
+        and environment_override is not None
+        and environment_override == _PROCESS_LEVEL_RUNS_ROOT_OVERRIDE
+    )
+    if start_from_scratch and not share_scratch_root and (effective is None or harness_level):
+        return Path(tempfile.mkdtemp(prefix="hhemt-scratch-")) / "synthetic_test_runs"
+    if effective is not None:
+        return Path(effective) / "synthetic_test_runs"
+    return slug_runs_root_path
 
 
 class retrieve_TRITON_SWMM_test_case:
@@ -78,7 +141,7 @@ class retrieve_TRITON_SWMM_test_case:
     # LOADING FROM SYSTEM CONFIG
     def __init__(
         self,
-        example: TRITON_SWMM_example,
+        example: TRITON_SWMM_experiment,
         # cfg_system_yaml: Path,
         analysis_name: str,
         n_events: int,
@@ -118,9 +181,7 @@ class retrieve_TRITON_SWMM_test_case:
             setattr(self.system.cfg_system, key, val)
 
         # update system directory
-        self.system.cfg_system.system_directory = (
-            self.system.cfg_system.system_directory.parent / test_system_dirname
-        )
+        self.system.cfg_system.system_directory = self.system.cfg_system.system_directory.parent / test_system_dirname
         anlysys_dir = self.system.cfg_system.system_directory / analysis_name
 
         if start_from_scratch and anlysys_dir.exists():
@@ -139,11 +200,12 @@ class retrieve_TRITON_SWMM_test_case:
         self.system = TRITONSWMM_system(new_system_config_yaml)
 
         # load single sime analysis
-        # single_sim_anlysys_yaml = NorfolkIreneExample.load_analysis_template()
+        # single_sim_anlysys_yaml = NorfolkIreneExperiment.load_analysis_template()
         cfg_analysis = example.analysis.cfg_analysis.model_copy()
 
         # update analysis attributes
         cfg_analysis.analysis_id = analysis_name
+        cfg_analysis.hhemt_sha = _tree_under_test_sha()  # D3: the tree the interpreter imports, never a literal
         cfg_analysis.analysis_description = analysis_description
         f_weather_indices = anlysys_dir / "weather_indices.csv"
         cfg_analysis.weather_events_to_simulate = f_weather_indices
@@ -164,7 +226,7 @@ class retrieve_TRITON_SWMM_test_case:
 
         # Materialize the synthetic weather timeseries BEFORE constructing
         # TRITONSWMM_analysis: for sensitivity cases the analysis eagerly builds
-        # sub-analyses, each validated from a dict via analysis_config.model_validate,
+        # members, each validated from a dict via analysis_config.model_validate,
         # which runs the `_check_paths_exist` field validator and requires
         # weather_timeseries to exist on disk. Creating the .nc after analysis
         # construction left sensitivity fixtures unbuildable.
@@ -192,8 +254,7 @@ class retrieve_TRITON_SWMM_test_case:
         if cfg_analysis.toggle_sensitivity_analysis:
             self.analysis.sensitivity.export_sensitivity_definition_csv()
 
-        self.system.process_system_level_inputs(
-        )
+        self.system.process_system_level_inputs()
 
     # create weather time series dataset
     def create_short_intense_weather_timeseries(
@@ -222,16 +283,10 @@ class retrieve_TRITON_SWMM_test_case:
             storm_tide: Water level (m) - default 3m
         """
         wlevel_name = self.analysis.cfg_analysis.weather_time_series_storm_tide_datavar
-        tstep_coord_name = (
-            self.analysis.cfg_analysis.weather_time_series_timestep_dimension_name
-        )
-        rain_spatial_mean_name = (
-            self.analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
-        )
+        tstep_coord_name = self.analysis.cfg_analysis.weather_time_series_timestep_dimension_name
+        rain_spatial_mean_name = self.analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
         df_raingage_mapping = pd.read_csv(self.system.cfg_system.subcatchment_raingage_mapping)  # type: ignore
-        gage_colname = (
-            self.system.cfg_system.subcatchment_raingage_mapping_gage_id_colname
-        )
+        gage_colname = self.system.cfg_system.subcatchment_raingage_mapping_gage_id_colname
         gages = df_raingage_mapping[gage_colname].unique()
 
         reporting_tstep_sec = self.analysis.cfg_analysis.TRITON_reporting_timestep_s
@@ -256,9 +311,7 @@ class retrieve_TRITON_SWMM_test_case:
             df[event_index_name] = event_idx
             lst_df.append(df)
         df_tseries = pd.concat(lst_df)
-        df_tseries = df_tseries.reset_index().set_index(
-            [event_index_name, tstep_coord_name]
-        )
+        df_tseries = df_tseries.reset_index().set_index([event_index_name, tstep_coord_name])
 
         ds_weather_tseries = df_tseries.to_xarray()
         ds_weather_tseries.to_netcdf(f_out)
@@ -274,6 +327,27 @@ from tests.fixtures.synthetic_model import (  # noqa: E402
     SyntheticModelParams,
     get_or_build_synthetic_case,
 )
+
+
+def _discard_if_layout_stale(system_directory: Path) -> bool:
+    """Remove ``system_directory`` when its ``_version.json`` records a layout other than the current one.
+
+    A reused tree is only valid at the layout it was stamped with; removing it makes the caller rebuild it at the
+    current layout exactly as a wipe would. The analysis directory sits inside the system directory, so one
+    removal covers both. A directory with no stamp, or a stamp that does not parse, is left alone: the first is an
+    unstamped tree the toolkit stamps itself, and the second is a broken record that the toolkit's own readers
+    report by name, which a silent removal here would hide. Returns True when the tree was removed.
+    """
+    if not system_directory.exists():
+        return False
+    try:
+        state = read_version_file(system_directory)
+    except VersionFileUnreadableError:
+        return False
+    if state is None or state.layout_version == _version_constants.LAYOUT_VERSION:
+        return False
+    ut.fast_rmtree(system_directory)
+    return True
 
 
 class retrieve_synth_TRITON_SWMM_test_case:
@@ -300,10 +374,30 @@ class retrieve_synth_TRITON_SWMM_test_case:
         additional_system_configs: dict | None = None,
         hpc_system_config_yaml: Path | None = None,
         runs_root_override: Path | None = None,
+        share_scratch_root: bool = False,
     ):
-        self.artifacts = get_or_build_synthetic_case(params)
+        # `source_raster=None` is passed EXPLICITLY rather than omitted. No case in this
+        # tree supplies an external raster -- every catalog entry is a `retrieve_synth_*`,
+        # and this is the sole non-smoke caller -- so the tier-0 term it feeds is inert
+        # here. Spelling it out is what makes the routing visible at the one site a reader
+        # checks, instead of leaving "no raster" looking like "nobody thought about it".
+        self.artifacts = get_or_build_synthetic_case(params, source_raster=None)
         self.analysis_name = analysis_name
         self._hpc_system_config_yaml = hpc_system_config_yaml
+
+        # The case-side cache-key terms, retained so `key_terms()` can serve them AFTER
+        # construction. Retaining is not duplication: these are the values the caller handed
+        # over, and the alternative -- re-reading them out of the written YAML -- is a second
+        # derivation that can drift from what was written.
+        #
+        # The reporting timestep is NOT a constructor parameter on this class the way it is on
+        # the config-driven variant: a synthetic case carries it on ``params``, and the
+        # written config takes ``params.reporting_timestep_s``. Storing one copy of the fact
+        # it actually uses keeps the digest honest about this builder's own surface.
+        self._n_events = n_events
+        self._params = params
+        self._additional_system_configs = dict(additional_system_configs or {})
+        self._additional_analysis_configs = dict(additional_analysis_configs or {})
 
         # Per-worktree rooting (Phase 1, synth-test-isolation-and-runtime):
         # nest runs_root under the current worktree's slug so concurrent pytest
@@ -324,18 +418,17 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # not-exists() clone gate re-clone it PER TEST, which fills the disk
         # (35GB+ across a suite). The slug _software already exists (compiled once
         # by tritonswmm_cpu_compiled), so the gate skips it and the builders reuse it.
-        _slug_runs_root = (
-            Path(platformdirs.user_cache_dir("hhemt"))
-            / "synthetic_test_runs"
-            / worktree_slug()
+        # Single-sourced (R12): the reaper and both catalog sites consume the
+        # SAME derivation. A second copy here would let the builder's root drift
+        # out from under the reaper's, which is a delete-the-wrong-tree bug, not
+        # a style problem.
+        _slug_runs_root = slug_runs_root(worktree_slug())
+        runs_root = _select_runs_root(
+            _slug_runs_root,
+            start_from_scratch=start_from_scratch,
+            share_scratch_root=share_scratch_root,
+            runs_root_override=runs_root_override,
         )
-        _runs_root_override = runs_root_override or os.environ.get(
-            _TEST_RUNS_ROOT_OVERRIDE_ENV
-        )
-        if _runs_root_override is not None:
-            runs_root = Path(_runs_root_override) / "synthetic_test_runs"
-        else:
-            runs_root = _slug_runs_root
         self.system_directory = runs_root / analysis_name
         # _software is a per-worktree REAL directory (NOT a symlink to a shared
         # cross-worktree cache). The build tier MUST NOT be shared across
@@ -358,8 +451,29 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # override (census-green-up Phase 1) — see the CRITICAL note above: the
         # ~326MB compiled tier must be shared/reused, never re-cloned per test.
         self._software_root = _slug_runs_root / "_software"
+        # A start_from_scratch build MUTATES a tree other tests read. Under the chunked
+        # HPC harness those readers run CONCURRENTLY in a different pytest session, so
+        # the wipe lands under them and surfaces as StalePlotsError or a shutil failure
+        # naming the shared slug cache. census-green-up Phase 1 introduced
+        # runs_root_override for exactly this and applied it at 10 of 35 wiper fixtures;
+        # making it the DEFAULT here is the same remedy at ONE site instead of many, so a
+        # fixture added later inherits it instead of having to remember.
+        #
+        # SCOPE, stated because it was measured and is easy to overclaim: this closes a
+        # LATENT hazard on ten trees where a shared wiper and a shared reader coexist. It
+        # does NOT explain the observed synth_multi_sim failures -- every wiper site for
+        # that tree was ALREADY isolated (conftest.py:260/266/279/318/806), so that race
+        # cannot be a wipe race and this change must not be credited for fixing it.
+        #
+        # `_software_root` is pinned to the slug path above, OUTSIDE the if/else that
+        # chooses runs_root, so the one-borrow/one-compile invariants are untouched.
+        # Opt out with share_scratch_root=True only when a LATER reader must see the tree
+        # this build produces. The branch itself is `_select_runs_root`, which also privatises a build under the
+        # harness's process-level override (a shared tree other workers read); see its docstring.
         if start_from_scratch and self.system_directory.exists():
             ut.fast_rmtree(self.system_directory)
+        elif not start_from_scratch:
+            _discard_if_layout_stale(self.system_directory)
         self.system_directory.mkdir(parents=True, exist_ok=True)
         runs_root.mkdir(parents=True, exist_ok=True)
         # Evict any pre-existing cross-worktree symlink so we never inherit a
@@ -368,6 +482,66 @@ class retrieve_synth_TRITON_SWMM_test_case:
         if self._software_root.is_symlink():
             self._software_root.unlink()
         self._software_root.mkdir(parents=True, exist_ok=True)
+        # ORIGIN BREADCRUMB. The reaper's worktree arm matches a tier directory NAME
+        # against a git worktree BASENAME (_run_dir_reaper.py:142-146), so a path-derived
+        # address stops matching it and live tiers lose their protection. Record the
+        # checkout this tier belongs to, so liveness can be decided by asking whether that
+        # checkout still exists rather than by whether its name looks like something.
+        # Sited at the SLUG root, one level ABOVE `_software`, so it survives
+        # provision_borrower's fast_rmtree of `_software/triton`. Compare-and-write, so a
+        # steady-state re-run preserves its mtime and adds no rerun trigger.
+        _origin_path = self._software_root.parent / ".origin"
+        _origin_text = f"{Path.cwd().resolve()}\n"
+        if not _origin_path.exists() or _origin_path.read_text() != _origin_text:
+            _origin_path.write_text(_origin_text)
+        # Provision triton's working tree from the SHARED canonical object store.
+        # Runs BEFORE system.py's not-exists() clone gate, which then finds the
+        # tree present + carrying CMakeLists.txt and skips its own full clone —
+        # which is why this change touches no production code. Only the git
+        # OBJECT STORE is shared (namespace-invariant, content-addressed); the
+        # working tree and every nested CMake build dir stay per-worktree REAL
+        # dirs, so the non-relocatable-build-tier invariant (Gotcha 52) is
+        # untouched. provision_borrower() is a no-op on a healthy existing tree.
+        #
+        # EFFECTIVE PIN, not the module default. `_write_configs` applies
+        # `additional_system_configs` LAST (test_case_builder.py:450), so a caller
+        # that overrides TRITONSWMM_branch_key — scripts/experiments/
+        # container_validation.py pins its native arm to the SIF's sha — gets that
+        # value in the system cfg, and system.py::_verify_tritonswmm_pin compares
+        # the CHECKOUT against it. Provisioning at the module default would check
+        # out a different commit than the config pins and raise ConfigurationError.
+        # One working tree per slug is shared across cases, so a case whose pin
+        # differs from the previous case's re-provisions (borrower_is_healthy is
+        # False against the other sha); post-canonical that costs ~61 MB, not a
+        # full clone, which is the same argument master Risk X3 makes.
+        _effective_pin = (additional_system_configs or {}).get("TRITONSWMM_branch_key", TRITON_PIN)
+        # Retained beside the local so `key_terms()` can stamp the pin a CALLER provisioned
+        # rather than the module default. The distinction is the whole reason the tier-1 key
+        # carries two pin terms: this one moves when a caller overrides, the digest of
+        # `_triton_source_cache.py` moves when the declaration module is edited, and one
+        # caller overriding is invisible to the other.
+        self._effective_pin = _effective_pin
+        # PROVISION THE CONFIGURED TREE, never a fixed `_software/triton`.
+        # `_write_configs` applies `additional_system_configs` LAST
+        # (`system_cfg.update(kwargs["additional_system_configs"])`, :501), so a
+        # caller overriding TRITONSWMM_software_directory got that value in the
+        # system cfg while this call provisioned a DIFFERENT tree. Two harms
+        # followed. (1) The cfg's tree was then filled by
+        # `system.py::_download_tritonswmm_source`, which holds no lock of any
+        # kind. (2) The hardcoded tree was clobbered even though nothing read it,
+        # and it is the tree the estate's `_SOFTWARE_ROOT` docstring reserves for
+        # extbc_ablation_resume_b4b. Measured 2026-08-24: SLURM job 18864593 died
+        # at this call with `git clone ... exit 128` / "Untracked working tree file
+        # '.gitignore' would be overwritten by merge" while sibling job 18864594
+        # wrote the same path from another node. The `.triton.provision.lock` did
+        # not serialize them: job 18864835 measured two nodes acquiring one
+        # resolve_filelock lock on this GPFS home at t+0.00s each.
+        _effective_software_dir = (additional_system_configs or {}).get("TRITONSWMM_software_directory")
+        self._effective_software_dir = _effective_software_dir
+        provision_borrower(
+            Path(_effective_software_dir) if _effective_software_dir is not None else self._software_root / "triton",
+            pin=_effective_pin,
+        )
 
         self._write_configs(
             n_events=n_events,
@@ -393,14 +567,90 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # system_directory and re-writes configs; only the run-side preprocessing
         # is gated. See A6 verification in the Phase 2 plan doc.
         if start_from_scratch and not skip_run:
-            self.system.process_system_level_inputs( verbose=False
-            )
+            self.system.process_system_level_inputs(verbose=False)
+        # R12 (2026-09-18): a cached (start_from_scratch=False) build ALSO seeds the
+        # system-level inputs. Before bc044e89 the wiping build above wrote the DEM
+        # into the shared root and every later cached reader found it; bc044e89
+        # redirected the wiping build to a private mkdtemp root without moving the
+        # readers' dependency, so the first session on any fresh shared root had no
+        # producer before tests/test_synth_01_singlesim.py::test_prepare_all_scenarios
+        # (red on seven fresh roots, 2026-08-25 .. 2026-09-18). The call is idempotent
+        # -- create_dem_for_TRITON / create_mannings_file_for_TRITON skip on an
+        # existing file after an integrity check and regenerate only a malformed one
+        # -- and the DEM write is atomic (mkstemp + Path.replace), so concurrent cached
+        # constructions on one cold root are last-writer-wins on a whole file. The
+        # skip_run gate is honoured exactly as on the wiping branch.
+        #
+        # THE TIER-0 REGENERATION. The idempotent skip is only correct while the tier-0
+        # artifacts the tree was processed from are the SAME ones it would be processed from
+        # now. A tier-0 change re-mints that cache directory, so the marker left by the
+        # previous build records a different `tier0_key` -- and without this branch the skip
+        # would keep the stale derived rasters while the marker reported the tree current.
+        # The trigger is a TIER-0 MISMATCH SPECIFICALLY, never `stale` in general: every
+        # builder-sources edit invalidates a marker, and regenerating the DEM for those would
+        # be the same cost defect the toolkit-source digest term exists to remove one
+        # directory up.
+        #
+        # An ABSENT marker is not a mismatch. A first construction on a fresh tree has no
+        # recorded key, and treating that as a mismatch would pay a full DEM regeneration on
+        # every first build.
+        if not start_from_scratch and not skip_run:
+            _analysis_dir = self.system_directory / self.analysis_name
+            _recorded_tier0_key = cache_markers.recorded_tier0_key(_analysis_dir)
+            _live_tier0_key = self.artifacts.cache_dir.name
+            _tier0_moved = _recorded_tier0_key is not None and _recorded_tier0_key != _live_tier0_key
+            self.system.process_system_level_inputs(overwrite_outputs_if_already_created=_tier0_moved, verbose=False)
+
+    def key_terms(self) -> dict[str, object]:
+        """The case-side terms of the tier-1 identity: what only THIS builder knows.
+
+        The tier-1 key is composed by the fixture that stamps the marker, and five of its
+        nine terms are properties of the CASE rather than of the checkout: the tier-0 key the
+        artifacts live under, the solver declaration and provisioned pin, the solver
+        environment, and the parameters the tree is built for. Serving them from here keeps
+        one derivation: the marker site asks this builder rather than reconstructing the same
+        facts from the written YAML, which is a second source free to drift.
+
+        CALL AFTER CONSTRUCTION. ``kokkos-backend`` is read from the constructed system's
+        ``gpu_compilation_backend``, and is ``OPENMP`` when that attribute is unset -- which
+        is EVERY case this builder constructs, because ``TRITONSWMM_system(self.system_yaml)``
+        passes only the config path. The attribute is CONSTRUCTOR-INJECTED and never read from
+        system config (``system.py``'s own comment says so); the value a run actually compiles
+        with is resolved later, from ``cfg_hpc`` and the partition, by
+        ``config.hpc_system.resolve_gpu_target`` at the GPU-compile construction sites. So this
+        term records the toolchain the FIXTURE built against, not the one the run will compile
+        with, and a tree whose GPU axis is expressed through ``hpc_system_config_yaml``
+        contributes nothing to it.
+
+        The on-disk layout version is part of ``case_params_digest``'s ``params`` (as
+        ``layout_version``): a tree stamped at one layout version is not valid at another, so a
+        layout bump makes every cached tree stale.
+
+        ``additional_analysis_configs`` is deliberately NOT among these terms -- it is an
+        ADDRESSING concern, per the tier-1 key's own statement, so a per-call analysis overlay
+        changes where a tree is looked up and not what it is.
+        """
+        backend = getattr(self.system, "gpu_compilation_backend", None)
+        kokkos_backend = "CUDA" if backend == "CUDA" else ("HIP" if backend == "HIP" else "OPENMP")
+        return {
+            "tier0_key": self.artifacts.cache_dir.name,
+            "solver_identity": cache_keys.file_identity(Path(_triton_source_cache.__file__).resolve()),
+            "effective_pin": cache_keys.effective_pin_digest(self._effective_pin, self._effective_software_dir),
+            "environment_digest": cache_keys.environment_digest("solver", values={"kokkos-backend": kokkos_backend}),
+            "case_params_digest": cache_keys.case_params_digest(
+                n_events=self._n_events,
+                # This builder exposes no reporting-length knob; its equivalent fact is the
+                # timestep it writes into the analysis config, taken from ``params`` below.
+                n_reporting_tsteps_per_sim=None,
+                triton_reporting_timestep_s=float(self._params.reporting_timestep_s),
+                params={**dataclasses.asdict(self._params), "layout_version": _version_constants.LAYOUT_VERSION},
+                additional_system_configs=self._additional_system_configs,
+            ),
+        }
 
     def _write_configs(self, **kwargs):
         events_csv = self.system_directory / "weather_events_to_simulate.csv"
-        pd.DataFrame({"event_index": list(range(kwargs["n_events"]))}).to_csv(
-            events_csv, index=False
-        )
+        pd.DataFrame({"event_index": list(range(kwargs["n_events"]))}).to_csv(events_csv, index=False)
 
         params = kwargs["params"]
         system_cfg = {
@@ -408,15 +658,16 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "watershed_gis_polygon": str(self.artifacts.watershed),
             "DEM_fullres": str(self.artifacts.dem),
             "SWMM_hydraulics": str(self.artifacts.swmm_hydraulics),
-            "TRITONSWMM_software_directory": str(
-                self._software_root / "triton"
-            ),
-            "TRITONSWMM_git_URL": "https://code.ornl.gov/hydro/triton.git",
-            "TRITONSWMM_branch_key": "15eb18a5d25afe5da295cb4b559a62669dbe5bc3",
+            "TRITONSWMM_software_directory": str(self._software_root / "triton"),
+            # SINGLE-SOURCED with the provisioner. A literal here and a different literal
+            # in `_triton_source_cache.py` lets a re-point half-land: the provisioner
+            # clones one remote while this config declares the other, and
+            # `_verify_tritonswmm_pin` compares the COMMIT and never the REMOTE, so the
+            # mismatch verifies clean.
+            "TRITONSWMM_git_URL": TRITON_GIT_URL,
+            "TRITONSWMM_branch_key": TRITON_PIN,
             "SWMM_software_directory": str(self._software_root / "swmm"),
-            "triton_swmm_configuration_template": str(
-                self.artifacts.tritonswmm_cfg
-            ),
+            "triton_swmm_configuration_template": str(self.artifacts.tritonswmm_cfg),
             "toggle_tritonswmm_model": kwargs["toggle_tritonswmm_model"],
             "toggle_triton_model": kwargs["toggle_triton_model"],
             "toggle_swmm_model": kwargs["toggle_swmm_model"],
@@ -430,7 +681,6 @@ class retrieve_synth_TRITON_SWMM_test_case:
                 {
                     "landuse_lookup_file": str(self.artifacts.landuse_lookup),
                     "landuse_raster": str(self.artifacts.landuse),
-                    "landuse_description_colname": "landuse_description",
                     "landuse_lookup_class_id_colname": "landuse_class_id",
                     "landuse_lookup_mannings_colname": "mannings",
                 }
@@ -439,9 +689,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
             system_cfg.update(
                 {
                     "SWMM_hydrology": str(self.artifacts.swmm_hydrology),
-                    "subcatchment_raingage_mapping": str(
-                        self.artifacts.subcatchment_raingage_mapping
-                    ),
+                    "subcatchment_raingage_mapping": str(self.artifacts.subcatchment_raingage_mapping),
                     "subcatchment_raingage_mapping_gage_id_colname": "raingage_id",
                 }
             )
@@ -451,6 +699,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
 
         analysis_cfg = {
             "analysis_id": self.analysis_name,
+            "hhemt_sha": _tree_under_test_sha(),  # D3: computed from the tree under test
             "weather_event_indices": ["event_index"],
             "weather_timeseries": str(self.artifacts.weather),
             "weather_time_series_timestep_dimension_name": "time",
@@ -477,6 +726,11 @@ class retrieve_synth_TRITON_SWMM_test_case:
             # test_data/norfolk_coastal_flooding/template_analysis_config.yaml.
             "clear_raw": "none",
             "force_rerun": "none",
+            # The package defaults clear everything and keep only the consolidated series (D24 (a)); the
+            # synthetic tier's tests read per-scenario stores and raw outputs after a run, so the OLD values are
+            # written explicitly here once. The new defaults are covered by tests/test_defaults_clear_everything.py.
+            "toggle_consolidate_timeseries": False,
+            "remove_after_processing": "none",
         }
         if kwargs["sensitivity_csv"] is not None:
             analysis_cfg["sensitivity_analysis"] = str(kwargs["sensitivity_csv"])
@@ -484,9 +738,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
             # run() validates the INLINE report block (Post-F2 R1), NOT a standalone
             # report_config.yaml. Emitting an empty inline block + an unread standalone
             # file tripped validate_sensitivity_independent_vars() at run() entry (D2).
-            _report_src = (
-                Path(__file__).resolve().parent / "synthetic_model" / "report_config_synth_sensitivity.yaml"
-            )
+            _report_src = Path(__file__).resolve().parent / "synthetic_model" / "report_config_synth_sensitivity.yaml"
             analysis_cfg["report"] = yaml.safe_load(_report_src.read_text())
         analysis_cfg.update(kwargs["additional_analysis_configs"])
 
@@ -496,36 +748,36 @@ class retrieve_synth_TRITON_SWMM_test_case:
         self.analysis_yaml.write_text(yaml.safe_dump(analysis_cfg, sort_keys=False))
 
 
-def induce_incomplete_subanalysis(sensitivity, sa_id, *, delete_master_tree=True):
+def induce_incomplete_analysis(sensitivity, member_id, *, delete_master_tree=False):
     """Induce the flag-present / summary-absent (or summary-absent generally)
-    partial-completion state for ONE sub-analysis of a completed sensitivity
+    partial-completion state for ONE member of a completed sensitivity
     analysis, for reprocess regression coverage.
 
-    Deletes, for the named ``sa_id``:
+    Deletes, for the named ``member_id``:
       * every per-enabled-model per-scenario summary file (the set the self-heal
         keys on — TRITONSWMM_*_summary.zarr etc.),
       * the sub's ``analysis_datatree.zarr``,
       * the sub's consolidation log-success record (so completion is not
         falsely reported),
-    and (when ``delete_master_tree``) the master ``sensitivity_datatree.zarr``
-    plus ``f_consolidate_master_complete.flag`` so the next reprocess rebuilds.
+    and, only when ``delete_master_tree=True`` is passed explicitly, the master
+    ``sensitivity_datatree.zarr`` plus ``f_consolidate_experiment_complete.flag`` so
+    the next reprocess rebuilds. That flag DEFAULTS TO FALSE.
     Leaves the sub's ``d_process_*`` and ``c_run_*`` flags INTACT — that is the
     divergence state under test. Returns the list of deleted summary paths.
+
+    ``delete_master_tree`` was flipped from True to False on 2026-09-06. At that time the
+    helper had exactly one call site and it passed the flag explicitly, so the flip changed
+    no behaviour -- it removes a latent footgun for a future caller, who would otherwise
+    have to know to pass the flag to keep the master tree it is most likely to want to
+    observe. That is a claim about a past state and needs no keeper. No live census is
+    recorded here on purpose: a count embedded in installed source is a decaying
+    measurement with nobody maintaining it.
     """
     from hhemt.scenario import TRITONSWMM_scenario
+    from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
     from hhemt.utils import fast_rmtree
 
-    _SUMMARY_ATTRS_BY_MODEL = {
-        "tritonswmm": (
-            "output_tritonswmm_triton_summary",
-            "output_tritonswmm_node_summary",
-            "output_tritonswmm_link_summary",
-            "output_tritonswmm_performance_summary",
-        ),
-        "triton": ("output_triton_only_summary", "output_triton_only_performance_summary"),
-        "swmm": ("output_swmm_only_node_summary", "output_swmm_only_link_summary"),
-    }
-    sub = sensitivity.sub_analyses[sa_id]
+    sub = sensitivity.members[member_id]
     deleted = []
     enabled_models = sub._get_enabled_model_types()
     for event_iloc in sub.df_sims.index:
@@ -545,9 +797,11 @@ def induce_incomplete_subanalysis(sensitivity, sa_id, *, delete_master_tree=True
     if hasattr(sub.log, "datatree_consolidation_complete"):
         sub.log.datatree_consolidation_complete.set(False)
     if delete_master_tree:
-        master = sensitivity.master_analysis
-        mtree = master.analysis_paths.sensitivity_datatree_zarr
+        master = sensitivity.experiment
+        mtree = master.analysis_paths.experiment_datatree_zarr
         if mtree is not None and mtree.exists():
             fast_rmtree(mtree)
-        (master.analysis_paths.analysis_dir / "_status" / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
+        (master.analysis_paths.analysis_dir / "_status" / "f_consolidate_experiment_complete.flag").unlink(
+            missing_ok=True
+        )
     return deleted

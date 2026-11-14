@@ -1,0 +1,11 @@
+# Approximates the suite's link-then-colon test: Vale text has no link marker, so a short phrase at 
+# the start of a line followed by a colon and an interrogative stands for it. The match is only the 
+# first word, via a lookahead, because Vale drops an alert whose matched text spans the stripped link 
+# markup.
+extends: existence
+message: 'Link gloss ''%s'': open with a noun phrase.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '(?m)^[\w]+(?=[\w'' -]{0,60}:\s*(?<![-\w])(?:what|how|why|when|where|who|whether)(?![-\w]))'

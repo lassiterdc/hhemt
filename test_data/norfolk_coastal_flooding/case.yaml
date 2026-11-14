@@ -1,7 +1,30 @@
 case_name: "norfolk case study"
 res_identifier: "a4aace329b8c401a93e94ce2a761fe1b"
-resource_version: null
+resource_version: "2026-11-14T03:47:13.929729Z"
 description: "Norfolk, VA coastal compound-flood case study (DEM, weather, SWMM model inputs)."
 citation: "https://www.hydroshare.org/resource/a4aace329b8c401a93e94ce2a761fe1b/"
 host: "hydroshare"
-manifest: {}
+manifest:
+  data/contents/external/TRITON_SWMM_definition_template.cfg: 8d8808bf87e015a48b63301657bf76c3bd7680bc10d21b36369d5e6a1386eae0
+  data/contents/external/b_sub_ids_and_mrms_rain_col.csv: 2f51aaedfffc071e44e03385408cd0e12f0b8be6b6d7d4af303054211e07ab32
+  data/contents/external/event_windows_observed.csv: 8d165e6fb924046963cc1dc523c69e8f237d59126bf16adb54747175b41fb704
+  data/contents/external/fullres_dem_m.tif: 890733a3f2482b1b60666b3c3036e10f278e91530b30e9feaeca541d3c90c1da
+  data/contents/external/hague_full_model_template.inp: 991bac901f64e82bf9d8065a1e87592d8e0ddcdd77e1d621fdc168f907727730
+  data/contents/external/hague_hydraulics_model_template.inp: d154ce48a5a012a277c3c0a82fbb5609f8998e8b351857530428bd221a647072
+  data/contents/external/hague_hydrology_model_template.inp: d19b6c2be02d6efbb6386e4a1469f8b6d3154fff334cf3ba02292df31a998962
+  data/contents/external/hurricane_irene_event_index.csv: 4ba17518631aff41dd330f3741f5cfa44f68bd3cab42c536259252adf67c140b
+  data/contents/external/landuse_clipped_to_triton_extent.tif: 252885bc76bd74dd06954c4062d831fe035bf349fd32a2f922e90237415d6743
+  data/contents/external/landuse_lookup_tables.csv: 207697f4f8ff1b476f2052f086973b65f93ea784b904f7ed957fa74035310969
+  data/contents/external/norfolk_wshed_epsg32147_state_plane_m.cpg: 3ad3031f5503a4404af825262ee8232cc04d4ea6683d42c5dd0a2f2a27ac9824
+  data/contents/external/norfolk_wshed_epsg32147_state_plane_m.dbf: dd454a25ee24c90627ad1416713938cd0e874961efdd53b9e9383979d373acc8
+  data/contents/external/norfolk_wshed_epsg32147_state_plane_m.prj: a465986f24c771ac0dd03d542bcf723f868fb9b880f50f5be2c0236450c17fe9
+  data/contents/external/norfolk_wshed_epsg32147_state_plane_m.shp: 517b073de2c31e004017c882e9010e7a3165a4f2dcf0d4632763176cd3ed5111
+  data/contents/external/norfolk_wshed_epsg32147_state_plane_m.shx: 6f1045f9363f51595c57e85613bb286469e1d894a148c8348c7ffdce74682161
+  data/contents/external/obs_event_tseries_from_yrs_with_complete_coverage.nc: c87a04022954cc9f5078e4666b3ce6975e5c2d314febc04f0bac69ebe09e3536
+  data/contents/external/observed_event_events.csv: 740b6a2a1034beeb399afe0db64fc4a806c541ff1e558cbbf356c5d3890a3e20
+  data/contents/external/observed_events_named_subset.csv: 0b40810ae81c3d91ac10b45ed035576543876ea5a2e0a39def69cd56a369e538
+  data/contents/external/variable_bc.cpg: 3ad3031f5503a4404af825262ee8232cc04d4ea6683d42c5dd0a2f2a27ac9824
+  data/contents/external/variable_bc.dbf: 548af5bd32481b0fba31357a3bdff0e25e6a43b80585eb83dab47c0782358483
+  data/contents/external/variable_bc.prj: a465986f24c771ac0dd03d542bcf723f868fb9b880f50f5be2c0236450c17fe9
+  data/contents/external/variable_bc.shp: aae935947321af9741e7eaf97b032b608c0e1d2e53902d5ac934fad51ff7e510
+  data/contents/external/variable_bc.shx: 28f9038c53c3cf6aa6171e177986de8e1e98359073328a7466918982d0fb6ae1

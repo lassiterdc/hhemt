@@ -1,0 +1,7 @@
+extends: existence
+message: "No instruction may send the reader to the install folder: '%s'."
+level: warning
+ignorecase: true
+scope: raw
+raw:
+  - '\bcp\s+(?:-\w+\s+)*\S*test_data/|(?:install|installation)\s+(?:folder|path|directory)'

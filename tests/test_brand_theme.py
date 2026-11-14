@@ -8,9 +8,11 @@ function the dominant ``render_report_runner`` fresh-instance path calls, so
 testing it directly (no ``run()`` warmup, no ``self._brand_theme``) is the
 regression cover for plan-review SE Flag 1.
 
-The real-data run→render→bundle path (formerly the ``@pytest.mark.slow`` tests
-in this file) is now covered end-to-end by ``test_analysis_test_end_to_end.py``
-via ``analysis.test()`` — the retired ``test_PC_*`` tier's replacement.
+The run→render→bundle path (formerly the ``@pytest.mark.slow`` tests in this
+file) is now covered end-to-end by ``test_synth_analysis_test_end_to_end.py``
+via ``analysis.test()`` on the synthetic tier. The real-data smoke this
+paragraph used to name was removed once that mirror covered the same
+properties.
 """
 
 from __future__ import annotations

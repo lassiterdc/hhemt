@@ -14,8 +14,8 @@ Capture mechanism (structured comparison, not Snakefile-text regex): monkeypatch
 ``workflow._emit_plot_rule`` to record each emitted RuleSpec's
 ``rule_name -> report_kwargs["category"]`` while a source-side generator runs, then
 compare against the registry templates. Keying on ``rule_name`` (not
-``renderer_module``) is deliberate: the source ``per_sim_per_sa`` builder emits
-rules named ``plot_per_sim_per_sa_*`` but with ``renderer_module`` ``per_sim_*``,
+``renderer_module``) is deliberate: the source ``per_sim_per_member`` builder emits
+rules named ``plot_per_sim_per_member_*`` but with ``renderer_module`` ``per_sim_*``,
 so ``rule_name`` is the stable cross-reference.
 """
 
@@ -26,15 +26,32 @@ from collections.abc import Callable
 import hhemt.workflow as wf
 from hhemt.report_renderers._reporting_sets import get_reporting_set
 
+#: The report_kwargs keys the co-sourcing guard compares. `category` alone left
+#: `labels` and `caption` unguarded, and both are hand-maintained in TWO places
+#: (workflow.py's generators and _reporting_sets.py's templates) with nothing
+#: comparing them -- so an edit to one copy shipped silently. `subcategory` IS
+#: included: `_kwargs_subset` calls .get() on both sides, so a key absent from both
+#: compares None == None, and absent-on-one-side-only is a true divergence the guard
+#: should catch. (An earlier revision excluded it on the reasoning that a
+#: None-vs-missing comparison would fail on rules that never declared one; that
+#: reasoning was wrong, and excluding it narrowed the guard for no benefit.)
+_CO_SOURCED_KEYS = ("category", "labels", "caption", "subcategory")
 
-def _capture_source_categories(generate_call: Callable[[], object]) -> dict[str, str]:
+
+def _kwargs_subset(report_kwargs) -> dict[str, str]:
+    """The co-sourced slice of one rule's ``report_kwargs``, missing keys as None."""
+    return {k: report_kwargs.get(k) for k in _CO_SOURCED_KEYS}
+
+
+def _capture_source_categories(generate_call: Callable[[], object]) -> dict[str, dict]:
     """Run a source-side generator with ``_emit_plot_rule`` patched to record each
-    rule's category by ``rule_name``. Returns ``{rule_name: category}``."""
-    captured: dict[str, str] = {}
+    rule's co-sourced report_kwargs by ``rule_name``.
+    Returns ``{rule_name: {category, labels, caption}}``."""
+    captured: dict[str, dict] = {}
     orig = wf._emit_plot_rule
 
     def _cap(spec, ctx):
-        captured[spec.rule_name] = spec.report_kwargs.get("category")
+        captured[spec.rule_name] = _kwargs_subset(spec.report_kwargs)
         return orig(spec, ctx)
 
     wf._emit_plot_rule = _cap
@@ -45,11 +62,12 @@ def _capture_source_categories(generate_call: Callable[[], object]) -> dict[str,
     return captured
 
 
-def _template_categories(set_name: str) -> dict[str, str]:
-    """Registry-side ``{rule_name: category}`` for every figure template in a set."""
+def _template_categories(set_name: str) -> dict[str, dict]:
+    """Registry-side ``{rule_name: {category, labels, caption}}`` for every figure
+    template in a set."""
     rset = get_reporting_set(set_name)
     return {
-        tmpl.rule_name: tmpl.report_kwargs.get("category")
+        tmpl.rule_name: _kwargs_subset(tmpl.report_kwargs)
         for sel in rset.renderer_selection
         for tmpl in sel.rule_spec_template
     }
@@ -62,7 +80,7 @@ def test_default_set_category_co_sourced(synth_multi_sim_analysis):
     source = _capture_source_categories(
         lambda: builder.generate_snakefile_content(
             process_system_level_inputs=True,
-            compile_TRITON_SWMM=True,
+            run_setup_phase=True,
             prepare_scenarios=True,
             process_timeseries=True,
         )
@@ -106,7 +124,7 @@ def test_benchmarking_set_category_co_sourced(synth_sensitivity_analysis):
     assert templates, "benchmarking set has no rule_spec_template figures"
     # Membership parity (Option I / iterate-selection guard) — see the default-set
     # test for the rationale. synth_sensitivity fires BOTH conditional predicates
-    # (sa_event_pairs + independent_vars), so the source emits the full
+    # (member_event_pairs + independent_vars), so the source emits the full
     # benchmarking figure set, making set-equality the correct assertion here.
     assert set(templates) == set(source), (
         "benchmarking-set membership parity broken: registry templates and "
@@ -124,3 +142,45 @@ def test_benchmarking_set_category_co_sourced(synth_sensitivity_analysis):
             f"source builder={source[rule_name]!r}. Update the rule_spec_template to "
             f"match the source-side report(category=)."
         )
+
+
+def test_b4b_set_config_diff_maps_wired_and_ordered():
+    """The report-wiring edit adds ``config_diff_maps`` (rule
+    ``plot_eda_compute_sensitivity``) to the b4b set, declaring an ORDERED category.
+
+    Two invariants, scoped to the template this wiring introduces:
+
+    1. Presence — the ``eda_compute_sensitivity`` template is in the b4b set (guards
+       against the edit being dropped/reverted, or the second-same-key-selection
+       trap where ``_eda_rule_spec_templates()`` would silently ignore it).
+    2. Ordered category — its ``report(category=)`` is a member of the set's
+       ``category_order`` (so the figure lands in a positioned section rather than
+       the implicit "everything else last" tail).
+
+    Scope note: ``category_order`` is deliberately NON-exhaustive — the b4b set
+    already inherits pre-existing templates (e.g. ``plot_scenario_status_appendix``
+    → ``"Appendix"``) whose category is outside it and sorts at the tail, so a
+    universal "every template category in category_order" assertion would (wrongly)
+    fail on that inherited template. The full source-co-sourcing guard the
+    default/benchmarking sets use is not mirrored here because the b4b set's
+    ``eda_compute_sensitivity`` selection emits only when
+    ``has_preserved_raw_outputs`` fires — a runtime gate covered by the
+    ``reporting_set="compute_config_byte_identity"`` dry-run parity check, not a construction-only unit test.
+    """
+    rset = get_reporting_set("compute_config_byte_identity")
+    templates = _template_categories("compute_config_byte_identity")
+    assert templates, "b4b set has no rule_spec_template figures"
+    assert "plot_eda_compute_sensitivity" in templates, (
+        "b4b set is missing the eda_compute_sensitivity (config_diff_maps) template; "
+        "the report-wiring edit did not land (or was dropped as a second same-key "
+        "eda_compute_sensitivity selection)."
+    )
+    # _template_categories now returns the co-sourced kwargs SUBSET per rule, so the
+    # category must be selected out of it; `dict in set(...)` would raise TypeError:
+    # unhashable type rather than failing an assertion.
+    category = templates["plot_eda_compute_sensitivity"]["category"]
+    assert category in set(rset.category_order), (
+        f"config_diff_maps template declares category {category!r} not in the b4b "
+        f"set's category_order {sorted(rset.category_order)}; it would render in the "
+        f"untracked tail instead of a positioned section."
+    )

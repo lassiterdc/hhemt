@@ -1,15 +1,15 @@
-import numpy as np
-from matplotlib.colors import ListedColormap
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-from matplotlib import colormaps
-import pandas as pd
-import geopandas as gpd
-from pathlib import Path
-import xarray as xr
-from typing import Optional, Union
-from matplotlib.axes import Axes
 import json
+from pathlib import Path
+
+import geopandas as gpd
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import xarray as xr
+from matplotlib import colormaps
+from matplotlib.axes import Axes
+from matplotlib.colors import ListedColormap
 
 
 def plot_polygon_boundary_on_ax(ax, shp_path: Path, color="black", linewidth=1):
@@ -21,14 +21,17 @@ def plot_discrete_raster(
     rds,
     cbar_lab,
     cmap: str = "",  # requires either this or colors
-    colors: pd.Series = pd.Series(),  # colors indexed by value
-    labs: pd.Series = pd.Series(),  # description for tick labels on colorbar indexed by value
+    colors: pd.Series | None = None,  # colors indexed by value
+    labs: pd.Series | None = None,  # description for tick labels on colorbar indexed by value
     label_axes_ticks=False,  # determines whether or not x and y axis ticks are labeled
-    ax: Optional[Axes] = None,
+    ax: Axes | None = None,
     watershed_shapefile: Path = Path(""),
     watershed_shapefile_color="black",
 ):
     # filter out no data values
+    # B008: mutable/call defaults materialised here rather than at def time.
+    colors = pd.Series() if colors is None else colors
+    labs = pd.Series() if labs is None else labs
     nodata = rds.rio.nodata
     if nodata is not None:
         mask = rds.values != nodata
@@ -57,7 +60,7 @@ def plot_discrete_raster(
     if len(labs) > 0:
         ticklabels = labs.loc[unique_vals]
     else:
-        ticklabels = [str((val)) for val in unique_vals]
+        ticklabels = [str(val) for val in unique_vals]
     cbar.ax.set_yticklabels(ticklabels)
     cbar.set_label(cbar_lab)
     if not label_axes_ticks:
@@ -67,9 +70,7 @@ def plot_discrete_raster(
         ax.set_ylabel("")
     ax.set_title("")
     if len(watershed_shapefile.name) > 0:
-        plot_polygon_boundary_on_ax(
-            ax, watershed_shapefile, color=watershed_shapefile_color
-        )
+        plot_polygon_boundary_on_ax(ax, watershed_shapefile, color=watershed_shapefile_color)
     # plt.show()
 
     return ax
@@ -80,9 +81,9 @@ def plot_continuous_raster(
     cbar_lab: str,
     cmap: str = "viridis",
     label_axes_ticks: bool = False,
-    watershed_shapefile: Optional[Path] = None,
+    watershed_shapefile: Path | None = None,
     watershed_shapefile_color: str = "black",
-    ax: Optional[Axes] = None,
+    ax: Axes | None = None,
     show_cbar: bool = True,
     vmin=None,
     vmax=None,
@@ -138,9 +139,7 @@ def plot_continuous_raster(
     return ax
 
 
-def print_json_file_tree(
-    source: Union[str, Path, dict], base_dir: Optional[Union[str, Path]] = None
-) -> None:
+def print_json_file_tree(source: str | Path | dict, base_dir: str | Path | None = None) -> None:
 
     # -------------------------
     # Load JSON or dict
@@ -187,7 +186,7 @@ def print_json_file_tree(
     # Auto-detect base directory
     # -------------------------
     if base_dir is None:
-        common_parts = list(zip(*(p.parts for p in all_paths if p.parts)))
+        common_parts = list(zip(*(p.parts for p in all_paths if p.parts)))  # noqa: B905 - common-prefix over DIFFERENT-depth paths; truncation IS the algorithm
         root_parts = []
         for parts in common_parts:
             if len(set(parts)) == 1:
@@ -218,9 +217,7 @@ def print_json_file_tree(
             is_leaf = i == len(rel.parts) - 1
             sub_path = current.path / part
             if part not in current.children:
-                current.children[part] = Node(
-                    sub_path, is_file=is_leaf and sub_path.is_file()
-                )
+                current.children[part] = Node(sub_path, is_file=is_leaf and sub_path.is_file())
             current = current.children[part]
 
     # -------------------------

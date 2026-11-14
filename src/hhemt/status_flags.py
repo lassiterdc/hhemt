@@ -27,7 +27,7 @@ def write_status_flag(
     *,
     rule_name: str,
     model_type: str | None = None,
-    sa_id: str | None = None,
+    member_id: str | None = None,
     event_id: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> None:
@@ -44,8 +44,8 @@ def write_status_flag(
         if it does not exist.
     rule_name : str
         The Snakemake rule that produced this flag (e.g., `run_tritonswmm`,
-        `process_sa_42_evt_3`, `delete_subanalysis_5`).
-    model_type, sa_id, event_id : str | None
+        `process_member_42_evt_3`, `delete_member_5`).
+    model_type, member_id, event_id : str | None
         Per-rule diagnostic provenance; included in the sidecar payload when
         provided. None values are omitted from the JSON.
     extra : dict[str, Any] | None
@@ -91,8 +91,8 @@ def write_status_flag(
     }
     if model_type is not None:
         payload["model_type"] = model_type
-    if sa_id is not None:
-        payload["sa_id"] = sa_id
+    if member_id is not None:
+        payload["sa_id"] = member_id
     if event_id is not None:
         payload["event_id"] = event_id
     if extra:
@@ -109,11 +109,50 @@ def write_status_flag(
         raise
 
 
+def harvest_slurm_job_index(analysis_dir: Path) -> dict[str, str]:
+    """`{slurm_job_id: rule_name}` for EVERY job the SLURM executor ever submitted here.
+
+    The `_status/*.flag.json` sidecar records one job id per flag PATH and is rewritten on
+    every re-run, so across a multi-submission experiment it retains only the last job per
+    rule. Measured on the delivered generation: 60 distinct job ids retained for 116 rule
+    instances, against 570 allocations actually present in the efficiency reports -- 511
+    allocations with no toolkit record at all.
+
+    snakemake-executor-plugin-slurm has been recording the missing mapping the whole time.
+    Its `run_job` builds `slurm_logdir / f"rule_{job.name}" / wildcard_str / "%j.log"` and
+    substitutes the real job id at submit, so the RULE is the directory and the JOB ID is
+    the filename. This harvest is therefore `scandir`+`stat` only -- it opens nothing, which
+    is what keeps it invisible to the renderer-IO provenance audit and free of any new
+    declared source.
+
+    Two honest limits, both of which degrade to an EMPTY entry rather than a wrong one.
+    The plugin prunes these logs past its own age cutoff, so an experiment older than the
+    cutoff yields a partial index; and a local/native run has no such tree at all. Callers
+    must treat an absent job id as "not recorded", never as "did not run".
+    """
+    logdir = analysis_dir / ".snakemake" / "slurm_logs"
+    if not logdir.is_dir():
+        return {}
+    out: dict[str, str] = {}
+    try:
+        for rule_dir in logdir.iterdir():
+            if not rule_dir.is_dir():
+                continue
+            rule_name = rule_dir.name[5:] if rule_dir.name.startswith("rule_") else rule_dir.name
+            for log_path in rule_dir.rglob("*.log"):
+                stem = log_path.stem
+                if stem.isdigit():
+                    out[stem] = rule_name
+    except OSError:
+        return {}
+    return out
+
+
 def emit_runner_flag(args: Any) -> None:
     """Conditional flag-write helper for runner scripts.
 
     Reads `--flag-output`, `--rule-name`, and optional `--model-type` /
-    `--sa-id` / `--event-id` from the parsed argparse namespace and calls
+    `--member-id` / `--event-id` from the parsed argparse namespace and calls
     `write_status_flag`. No-op when `--flag-output` is not supplied (legacy
     CLI invocations outside the toolkit-managed Snakemake workflow).
     """
@@ -124,6 +163,6 @@ def emit_runner_flag(args: Any) -> None:
         flag_path=Path(flag_output),
         rule_name=getattr(args, "rule_name", None) or "(unknown)",
         model_type=getattr(args, "model_type", None),
-        sa_id=getattr(args, "sa_id", None),
+        member_id=getattr(args, "member_id", None),
         event_id=getattr(args, "event_id", None),
     )

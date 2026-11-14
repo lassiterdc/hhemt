@@ -1,0 +1,8 @@
+# A word that dates a statement to the moment of writing.
+extends: existence
+message: "Cut the time-relative '%s'; state what holds for every release or name the release."
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\b(?:currently|presently|at the moment|at present|no longer|nowadays|these days|historical|historically|legacy|as of now)\b'

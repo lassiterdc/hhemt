@@ -2,15 +2,17 @@
 """
 Simple test to reproduce netcdf output issues.
 """
+
 import tempfile
-import shutil
 from pathlib import Path
-import xarray as xr
+
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 # Import the write_netcdf function
 from hhemt.utils import write_netcdf, write_zarr
+
 
 # Create a simple test dataset
 def create_test_dataset():
@@ -25,18 +27,19 @@ def create_test_dataset():
 
     ds = xr.Dataset(
         {
-            "wlevel_m": (["timestep_min", "y", "x"], np.random.rand(n_timesteps, n_y, n_x)),
-            "velocity_x_mps": (["timestep_min", "y", "x"], np.random.rand(n_timesteps, n_y, n_x)),
-            "velocity_y_mps": (["timestep_min", "y", "x"], np.random.rand(n_timesteps, n_y, n_x)),
+            "flood_depth": (["timestep", "y", "x"], np.random.rand(n_timesteps, n_y, n_x)),
+            "unit_discharge_x": (["timestep", "y", "x"], np.random.rand(n_timesteps, n_y, n_x)),
+            "unit_discharge_y": (["timestep", "y", "x"], np.random.rand(n_timesteps, n_y, n_x)),
         },
         coords={
-            "timestep_min": timesteps,
+            "timestep": timesteps,
             "x": x,
             "y": y,
-        }
+        },
     )
     ds.attrs["test_attr"] = "test_value"
     return ds
+
 
 def test_netcdf_write():
     """Test writing to netcdf format."""
@@ -68,7 +71,9 @@ def test_netcdf_write():
         except Exception as e:
             print(f"✗ NetCDF write/read failed: {e}")
             import traceback
+
             traceback.print_exc()
+
 
 if __name__ == "__main__":
     test_netcdf_write()

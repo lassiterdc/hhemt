@@ -76,15 +76,29 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "hpc_mem_allocation_for_analysis_output_consolidation_mb": "hpc",
     "hpc_mem_allocation_for_setup_mb": "hpc",
     "hpc_runtime_min_for_setup": "hpc",
+    "hpc_runtime_min_for_sim_output_processing": "hpc",
+    "hpc_runtime_min_for_analysis_output_consolidation": "hpc",
     "hpc_max_wait_for_inflight_min": "hpc",
+    "hpc_no_progress_timeout_min": "hpc",  # orchestrator stall backstop; mirrors hpc_max_wait_for_inflight_min
+    "hpc_max_queue_wait_min": "hpc",  # queue-starved cap; target-machine revisable, so Amend not Keep
     "local_gpus_for_workflow": "hpc",
     "mem_gb_per_cpu": "hpc",
     "hpc_time_min_per_sim": "hpc",
     "hpc_restart_times_simulate": "hpc",
     "hpc_restart_times_other": "hpc",
+    # "hpc" and not "experiment": the budget is a resilience knob a reproducer AMENDS for
+    # its own scheduler and nesting depth, exactly like the two retries knobs above it.
+    # It bounds how many times a deterministically-failing sim is relaunched; it does not
+    # participate in the experiment's identity, and two runs differing only in this value
+    # are the same experiment.
+    "hpc_consecutive_failure_budget_simulate": "hpc",
     "hpc_ensemble_partition": "hpc",
     "hpc_setup_and_analysis_processing_partition": "hpc",
+    # CPU-only sim partition selector (QOSMinGRES fix, 9db7343); sibling of the two above
+    "hpc_cpu_sim_partition": "hpc",
     "execution_environment": "hpc",  # native<->container is HPC-revisable (UVA->Frontier, FQ3/FQ4)
+    "process_in_sim_rule": "hpc",  # in-rule per-sim processing (2026-09-12): result-neutral scheduling topology
+    "hhemt_sha": "experiment",  # the experiment's toolkit identity ([Q331]): Keep, never amend on a reproducer
     "local_cpu_cores_for_workflow": "hpc",  # machine-local exec resource (sibling of local_gpus_for_workflow)
     # ---- every remaining non-Path field of system_config + analysis_config -> "experiment" ----
     "SWMM_git_URL": "experiment",
@@ -94,6 +108,7 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "TRITON_raw_output_type": "experiment",
     "TRITON_reporting_timestep_s": "experiment",
     "additional_SBATCH_params": "experiment",
+    "allow_mixed_version_chapters": "experiment",
     "analysis_description": "experiment",
     "analysis_id": "experiment",
     "clear_raw": "experiment",
@@ -103,15 +118,20 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "dem_building_height": "experiment",
     "dem_outside_watershed_height": "experiment",
     "eda": "experiment",
+    "flood_velocity_min_depth_m": "experiment",
     "force_rerun": "experiment",
     "hydraulic_timestep_s": "experiment",
-    "is_subanalysis": "experiment",
-    "landuse_description_colname": "experiment",
+    "is_experiment_member": "experiment",
     "landuse_lookup_class_id_colname": "experiment",
     "landuse_lookup_mannings_colname": "experiment",
-    "landuse_plot_color_colname": "experiment",
     "manhole_diameter": "experiment",
     "manhole_loss_coefficient": "experiment",
+    # "experiment": it decides which manholes exchange water with the surface, so it is part
+    # of what was modelled and a reproducer keeps it.
+    "one_coupled_inflow_node_per_dem_cell": "experiment",
+    # "experiment": it decides where each coupled manhole's rim sits, so it is part of what was
+    # modelled and a reproducer keeps it.
+    "swmm_node_rim_from_dem": "experiment",
     "ncols": "experiment",
     "nrows": "experiment",
     "open_boundaries": "experiment",
@@ -123,9 +143,15 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "processed_xllcorner": "experiment",
     "processed_yllcorner": "experiment",
     "rainfall_units": "experiment",
+    # Same class as its sibling cleanup knob `clear_raw` (and `force_rerun`) directly above:
+    # a retention policy defines WHAT THE EXPERIMENT KEEPS, so a reproducer must inherit it
+    # unchanged rather than re-choose it for their own disk budget -- re-choosing changes
+    # which artifacts the reproduction can be checked against.
+    "remove_after_processing": "experiment",
     "report": "experiment",
     "storm_tide_units": "experiment",
     "subcatchment_raingage_mapping_gage_id_colname": "experiment",
+    "swmm_coupling_mode": "experiment",
     "target_dem_resolution": "experiment",
     "target_processed_output_type": "experiment",
     "toggle_sensitivity_analysis": "experiment",
@@ -139,6 +165,65 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "weather_time_series_spatial_mean_rainfall_datavar": "experiment",
     "weather_time_series_storm_tide_datavar": "experiment",
     "weather_time_series_timestep_dimension_name": "experiment",
+    # Both added per the RULE above: neither is an HPC-execution field, so both are
+    # "experiment". `resume_interruption_schedule` is the multi-resume
+    # checkpoint-kill harness knob; `toggle_consolidate_timeseries` gates per-scenario
+    # SWMM node/link timeseries consolidation. Their absence was caught by
+    # test_every_config_field_appears_exactly_once — the totality gate this table's
+    # docstring names — which had been red for both fields.
+    "resume_interruption_schedule": "experiment",
+    "toggle_consolidate_timeseries": "experiment",
+    # Gates WHAT LANDS in the coupled node time-series store (the exchange flux series and its eight
+    # statistics), so it is an experiment field by the RULE above, like its sibling directly above.
+    "toggle_coupling_exchange_flow": "experiment",
+    # Gates whether the per-scenario time-series stores survive the consolidation, so it decides WHAT LANDS on disk.
+    "toggle_clear_scenario_timeseries_after_consolidation": "experiment",
+    # The three keep-lists decide which time-series variables survive on disk and in the consolidated store.
+    "timeseries_keep_swmm_node": "experiment",
+    "timeseries_keep_swmm_link": "experiment",
+    "timeseries_keep_triton_gridded": "experiment",
+    # "experiment" by the RULE above (non-Path, not an HPC-execution field) and
+    # independently by SIBLING CONSISTENCY with `resume_interruption_schedule`
+    # directly above: both are resume-EXPERIMENT arm selectors, and this one
+    # DEFINES which resume path the arm exercises. A reproducer must KEEP it, not
+    # Supply or Amend it — amending it silently converts a replay arm into a
+    # snapshot arm, which is the one comparison the arm exists to make.
+    "swmm_snapshot_disable": "experiment",
+    # "experiment" by the RULE above (non-Path, not an HPC-execution field) and
+    # independently by SIBLING CONSISTENCY with swmm_snapshot_disable directly
+    # above: both are resume-EXPERIMENT arm selectors, and this one DEFINES the
+    # RETENTION DEPTH of the snapshot path whose EXISTENCE that one governs. A
+    # reproducer must KEEP it, not Supply or Amend it -- amending it changes which
+    # resume mechanism the arm exercises, which is the one thing the arm holds
+    # fixed. MANDATORY rather than optional: test_field_bucket_is_total and
+    # test_every_config_field_appears_exactly_once both go RED on any new config
+    # field carrying no bucket.
+    "swmm_snapshot_keep_all": "experiment",
+    # "experiment" by the RULE above (non-Path, not an HPC-execution field), and independently by
+    # SIBLING CONSISTENCY with the two snapshot fields directly above: it selects how a coupled
+    # resume treats a snapshot, so a reproducer must keep it as the experiment set it.
+    "swmm_snapshot_failed_replay": "experiment",
+    # per-sim-event-labeling: names the presentation column on the user's own
+    # weather_events_to_simulate CSV. "experiment" by the RULE above (non-Path,
+    # not an HPC-execution field), and independently by SIBLING CONSISTENCY --
+    # weather_event_indices names OTHER columns of that SAME file and is already
+    # "experiment". Two fields naming columns of one artifact must share a bucket,
+    # or the metadata renderer's reproduction guide tells a reproducer to Supply
+    # one and Keep the other for the same CSV. Caught by
+    # test_field_bucket_is_total / test_every_config_field_appears_exactly_once.
+    "weather_event_label_column": "experiment",
+    # synthetic-event-window-padding: the two column-name fields of
+    # weather_event_windows_csv. "experiment" by the RULE above (non-Path, not an
+    # HPC-execution field), and independently by the SIBLING-CONSISTENCY argument
+    # written out for weather_event_label_column directly above -- these name columns
+    # of weather_event_windows_csv, whose own BUNDLE_RELATIVE_OR_NONE policy already
+    # resolves to "experiment". A path and its column names must share a bucket or the
+    # reproduction guide tells a reproducer to Keep the file and Supply its headers.
+    # Their absence was caught by test_field_bucket_is_total, which had been RED: the
+    # sibling Path field got its _PATH_FIELD_POLICY entry and these two got nothing,
+    # because the taxonomy is total over TWO composed tables and only one was updated.
+    "weather_event_start_column": "experiment",
+    "weather_event_end_column": "experiment",
 }
 
 

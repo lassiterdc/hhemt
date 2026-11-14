@@ -32,8 +32,16 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
     root = Path(analysis.analysis_paths.analysis_dir)
     eda_cfg = analysis.cfg_analysis.eda
 
+    from hhemt.eda._plotting import _ALWAYS_EMIT_KINDS
+
     target_stem = Path(output_path).stem
     wanted = [kind for kind in eda_cfg.enabled_plots if canonical_plot_id(kind) == target_stem]
+    # The compute_config_byte_identity ReportingSet enumerates its figures unconditionally (not gated on enabled_plots
+    # membership at the rule-all site), and their renderer degrades honestly. Render an
+    # enumerated compute_config_byte_identity target even when enabled_plots omits it, so the enumeration/emission
+    # contract holds structurally rather than depending on a config invariant (Gate-6).
+    if not wanted and target_stem in _ALWAYS_EMIT_KINDS:
+        wanted = [target_stem]
     if not wanted:
         raise ValueError(
             f"eda_compute_sensitivity: no enabled EDA plot maps to output stem "
@@ -44,4 +52,19 @@ def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
     # eda_config validators per the per-row-overlay stipulation; model_copy is
     # forbidden for config models).
     scoped_cfg = eda_config.model_validate({**eda_cfg.model_dump(), "enabled_plots": wanted})
-    render_eda_plots(root, cfg_analysis=analysis.cfg_analysis, eda_cfg=scoped_cfg)
+    # `target_stem` IS the enumerated report() target: the Snakemake rule is emitted one-per-
+    # RuleSpecTemplate (workflow.py::_build_plot_rule_block_eda_compute_sensitivity on the
+    # source side, bundle/snakefile_generator.py on the bundle side), and this rule's declared
+    # output is what Snakemake will demand. Handing it to render_eda_plots as `must_emit` is
+    # what makes "a ReportingSet enumerated this figure" imply "this figure's file is produced",
+    # for every current and future enumerating set, with no per-kind list to maintain.
+    # The analysis directory of a real run holds no system configuration file, so the
+    # DEM-resolution figures take `crs.horizontal_epsg` from the system object this adapter
+    # already holds (the one the rule's `--system-config` argument loaded).
+    render_eda_plots(
+        root,
+        cfg_analysis=analysis.cfg_analysis,
+        eda_cfg=scoped_cfg,
+        must_emit={target_stem},
+        cfg_system=getattr(getattr(analysis, "_system", None), "cfg_system", None),
+    )

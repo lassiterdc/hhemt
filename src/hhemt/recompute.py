@@ -24,8 +24,10 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
+
+from hhemt.utils import open_store
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -34,18 +36,20 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------- #
 # Frozen action / scope enums (versioning-specialist Q2/Q3).
 #
-# Both are ``(str, Enum)`` NOT ``StrEnum``: StrEnum landed in Python 3.11, and the
-# ``(str, Enum)`` mix-in gives the same string-identity + clean YAML/JSON
-# serialization (the members are written into the ``hhemt recompute-plan`` output
-# and compared against the registry's fields) while staying import-safe on 3.10.
+# Both are ``StrEnum``. They were ``(str, Enum)`` while the project floor was 3.10;
+# the floor is now ``requires-python = ">= 3.11, < 3.13"`` and ``just testall``
+# collects on 3.11 and 3.12, so the constraint that forced the mix-in is gone.
+# ``StrEnum`` keeps the string-identity and JSON serialization the members need
+# (they are written into the ``hhemt recompute-plan`` output and compared against
+# the registry's fields).
 # ``analysis_validation.IssueLevel`` is a bare ``Enum`` because it is internal-only
 # and never serialized; ``RecomputeAction`` IS serialized, so it needs ``str``.
 # --------------------------------------------------------------------------- #
-class RecomputeAction(str, Enum):  # noqa: UP042 -- (str, Enum) is deliberate; see the comment block above (NOT StrEnum)
+class RecomputeAction(StrEnum):
     """The four recompute tiers, each a thin dispatch into existing machinery.
 
     * ``RE_RUN``              -> scoped ``run(override_force_rerun=...)`` per affected
-                                 ``sa_id`` / ``event_iloc`` (surgical; NOT a
+                                 ``member_id`` / ``event_iloc`` (surgical; NOT a
                                  ``from_scratch`` whole-tree wipe).
     * ``REPROCESS_SCENARIO``  -> ``reprocess(start_with="process", regenerate_existing=True)``.
     * ``RE_CONSOLIDATE``      -> ``reprocess(start_with="consolidate")``.
@@ -58,15 +62,15 @@ class RecomputeAction(str, Enum):  # noqa: UP042 -- (str, Enum) is deliberate; s
     NONE_COSMETIC = "none-cosmetic"
 
 
-class RecomputeScope(str, Enum):  # noqa: UP042 -- (str, Enum) is deliberate; see the comment block above (NOT StrEnum)
+class RecomputeScope(StrEnum):
     """Which production tier a bug lives in — designated EXPLICITLY, never inferred
     from changed-file paths (the ADR-16 flip-condition: path->scope auto-derivation
     is fragile and mis-scopes a cosmetic edit as a scenario-processing NUMERICS bug)."""
 
-    SIMULATION = "simulation"                    # solver numerics (run tier)
+    SIMULATION = "simulation"  # solver numerics (run tier)
     SCENARIO_PROCESSING = "scenario-processing"  # per-scenario summary calc (process tier)
-    CONSOLIDATION = "consolidation"              # datatree assembly (consolidate tier)
-    COSMETIC = "cosmetic"                        # render/label only, no numeric change
+    CONSOLIDATION = "consolidation"  # datatree assembly (consolidate tier)
+    COSMETIC = "cosmetic"  # render/label only, no numeric change
 
 
 # --------------------------------------------------------------------------- #
@@ -195,13 +199,11 @@ def _is_scope_pre_fix(scope_sha: str | None, fix_sha: str) -> bool | None:
     if rc == 0:
         return False  # fix is an ancestor of scope -> scope has the fix
     if rc == 1:
-        return True   # fix not an ancestor -> scope predates the fix
-    return None       # rc >= 2 (128 / unexpected) -> undecidable, never crash
+        return True  # fix not an ancestor -> scope predates the fix
+    return None  # rc >= 2 (128 / unexpected) -> undecidable, never crash
 
 
-def _is_scope_affected_by_semver(
-    scope_semver: str | None, affected_version_range: str
-) -> bool | None:
+def _is_scope_affected_by_semver(scope_semver: str | None, affected_version_range: str) -> bool | None:
     """Semver fallback for the indeterminate-ancestry branch (T1 -- Option C).
 
     Evaluate ``scope_semver in SpecifierSet(affected_version_range)``. This is the
@@ -225,17 +227,15 @@ def _is_scope_affected_by_semver(
 # --------------------------------------------------------------------------- #
 # Scoped force-rerun emission (hhemt-specialist Q1 / plan D4).
 # --------------------------------------------------------------------------- #
-def _emit_re_run_instruction(
-    analysis: TRITONSWMM_analysis, prefix_scopes: set[str | int]
-) -> dict:
+def _emit_re_run_instruction(analysis: TRITONSWMM_analysis, prefix_scopes: set[str | int]) -> dict:
     """Map ``RecomputeAction.RE_RUN`` -> a scoped ``run(override_force_rerun=...)`` plan.
 
-    ``prefix_scopes`` is the set of (sa_id | event_iloc) identifiers whose ADR-15
+    ``prefix_scopes`` is the set of (member_id | event_iloc) identifiers whose ADR-15
     stamp is a pre-fix ancestor of the bug-fix commit. Uses the surgical scoped
     force-rerun (``analysis.py`` ``_apply_force_rerun``), NEVER
     ``run(from_scratch=True)``: from_scratch wipes the whole ``analysis_dir`` and
     destroys correct post-fix scenarios, defeating ADR-15's per-scope drift
-    capture. The key is ``sa_id`` for a sensitivity master, ``event_iloc`` otherwise
+    capture. The key is ``member_id`` for a sensitivity master, ``event_iloc`` otherwise
     (an off-by-one key raises ``ConfigurationError`` at the API boundary -- a loud,
     safe failure, not silent).
     """
@@ -327,7 +327,7 @@ def _iter_scope_stamps(analysis: TRITONSWMM_analysis):
 
     The four ADR-15 stamp-carrier locations (hhemt Q4 confirmed set) are:
       1. per-scenario ``sims/{event_id}/processed/*.zarr``
-      2. per-sub ``subanalyses/sa_{id}/analysis_datatree.zarr``
+      2. per-sub ``members/member_{id}/analysis_datatree.zarr``
       3. the regular ``analysis_datatree.zarr`` (non-sensitivity consolidated tree)
       4. the master ``sensitivity_datatree.zarr`` (sensitivity master tree)
     with the asymmetry that a non-sensitivity analysis has scopes {1,3} and a
@@ -340,13 +340,12 @@ def _iter_scope_stamps(analysis: TRITONSWMM_analysis):
     uniform common case) and falls back to ``read_producing_stamp`` under
     absence/divergence -- exactly the read model ``cf_conventions`` documents.
     """
-    import xarray as xr
 
     from hhemt.cf_conventions import read_producing_stamp
 
     paths = analysis.analysis_paths
     if analysis.cfg_analysis.toggle_sensitivity_analysis:
-        locations = [("sensitivity-master", getattr(paths, "sensitivity_datatree_zarr", None))]
+        locations = [("sensitivity-master", getattr(paths, "experiment_datatree_zarr", None))]
     else:
         locations = [("analysis-datatree", getattr(paths, "analysis_datatree_zarr", None))]
 
@@ -354,7 +353,7 @@ def _iter_scope_stamps(analysis: TRITONSWMM_analysis):
         if zarr_path is None or not zarr_path.exists():
             continue  # graceful-absent: scope not yet consolidated
         try:
-            tree = xr.open_datatree(zarr_path, engine="zarr", chunks="auto", consolidated=False)
+            tree = open_store(zarr_path, chunks="auto")
         except Exception:
             continue  # unreadable tree -> skip this scope (never crash the resolver)
         sha = tree.attrs.get("hhemt_producing_sha")
@@ -409,8 +408,7 @@ def _action_call_descriptor(
             "call": "analysis.run",
             "kwargs": {"override_force_rerun": {"pre_fix_scopes": pre_fix_scopes}},
             "rationale": (
-                "scenario-scoped re-run; per-scenario force-rerun targets resolve "
-                "from the per-scenario ADR-15 stamps"
+                "scenario-scoped re-run; per-scenario force-rerun targets resolve from the per-scenario ADR-15 stamps"
             ),
         }
     if action is RecomputeAction.REPROCESS_SCENARIO:
@@ -432,9 +430,7 @@ def _action_call_descriptor(
     }
 
 
-def plan_recompute(
-    analysis: TRITONSWMM_analysis, fix_sha: str, scope: RecomputeScope
-) -> dict:
+def plan_recompute(analysis: TRITONSWMM_analysis, fix_sha: str, scope: RecomputeScope) -> dict:
     """Ad-hoc dry-run resolver for ``hhemt recompute-plan``.
 
     Classifies this analysis's ADR-15-stamped scopes against a single bug-fix
@@ -520,9 +516,7 @@ def _resolve_registry_matches(
         for entry in registry:
             affected = _is_scope_pre_fix(scope_sha, entry.commit_id)
             if affected is None:  # indeterminate ancestry -> semver fallback
-                affected = _is_scope_affected_by_semver(
-                    scope_semver, entry.affected_version_range
-                )
+                affected = _is_scope_affected_by_semver(scope_semver, entry.affected_version_range)
             if affected is None:  # neither ancestry nor semver could decide
                 info.append(_classify_unstamped_scope(scope_id))
                 continue
@@ -533,10 +527,7 @@ def _resolve_registry_matches(
                         severity=entry.severity,
                         recommended_action=entry.recommended_action,
                         affected_scope=scope_id,
-                        summary=(
-                            f"Scope {scope_id!r} predates invalidating fix "
-                            f"{entry.commit_id} ({entry.severity})."
-                        ),
+                        summary=(f"Scope {scope_id!r} predates invalidating fix {entry.commit_id} ({entry.severity})."),
                     )
                 )
     return actionable, info

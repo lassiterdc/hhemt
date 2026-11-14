@@ -13,6 +13,7 @@ The current Snakefile (see `workflow.py`) emits flags under a different
 touches *legacy* `scenario_*` flags and is a no-op on trees written by the
 current Snakefile.
 """
+
 from __future__ import annotations
 
 from hhemt.version_migration.context import MigrationContext

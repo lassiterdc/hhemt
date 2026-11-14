@@ -1,0 +1,38 @@
+# Allowlist of the unread-settings test (tests/docs/test_config_settings_are_read.py).
+# One entry per configuration field that no module outside src/hhemt/config/ reads by attribute, subscript or get.
+# field: the field's path, `src/hhemt/config/{module}::{model}.{name}`; entries are sorted by it.
+# reason: one line stating what a search of src/hhemt shows for the field's name.
+# The test fails on an unread field with no entry and on an entry whose field is read or gone.
+entries:
+  - field: "src/hhemt/config/bundle_exclude.py::BundleExcludeConfig.exclusions"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). Outside src/hhemt/config/ the name appears only in a comment, docstring or message string in bundle/_emit.py, publishing.py and validation.py; no module reads it."
+  - field: "src/hhemt/config/case_manifest.py::CaseManifest.resource_version"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). The field definition is the only occurrence of the name in src/hhemt."
+  - field: "src/hhemt/config/experiment_definition.py::ContainerRef.sha256_source"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). The name appears in src/hhemt only inside the config package (experiment_definition.py); no module outside it names the field."
+  - field: "src/hhemt/config/experiment_definition.py::DatasetRef.deposit"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). Outside src/hhemt/config/ the name appears only as a parameter name in publishing.py; a variable name in publishing.py; a keyword argument in publishing.py; the test counts none of these as a read."
+  - field: "src/hhemt/config/experiment_definition.py::DatasetRef.destinations"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). Outside src/hhemt/config/ the name appears only in a comment, docstring or message string in bundle/_emit.py; no module reads it."
+  - field: "src/hhemt/config/experiment_definition.py::DatasetRef.local_path"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). The name appears in src/hhemt only inside the config package (experiment_definition.py); no module outside it names the field."
+  - field: "src/hhemt/config/experiment_definition.py::ExperimentConfig.inputs"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). Outside src/hhemt/config/ the name appears only as a parameter name in report_renderers/metadata.py, workflow.py; a variable name in report_renderers/metadata.py, slurm_store.py, workflow.py; a text of a non-Python file in report_templates/captions/system_map.rst, sif/recipes/openmpi-cpu.def; the test counts none of these as a read."
+  - field: "src/hhemt/config/globus.py::PostRunTransferConfig.destination_endpoint_uuid"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). The name appears in src/hhemt only inside the config package (globus.py); no module outside it names the field."
+  - field: "src/hhemt/config/globus.py::PostRunTransferConfig.include_sims"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). The name appears in src/hhemt only inside the config package (globus.py); no module outside it names the field."
+  - field: "src/hhemt/config/hpc_system.py::PartitionSpec.max_gpu"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). Outside src/hhemt/config/ the name appears only as a string literal in validation.py; the test counts none of these as a read."
+  - field: "src/hhemt/config/hpc_system.py::PartitionSpec.max_mem_mb"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). Outside src/hhemt/config/ the name appears only as a string literal in validation.py; a variable name in resource_management.py; the test counts none of these as a read."
+  - field: "src/hhemt/config/hpc_system.py::PartitionSpec.max_nodes"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). Outside src/hhemt/config/ the name appears only as a string literal in validation.py; a variable name in resource_management.py; the test counts none of these as a read."
+  - field: "src/hhemt/config/hpc_system.py::hpc_system_config.hpc_name"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). Outside src/hhemt/config/ the name appears only as a string literal in bundle/_emit.py; the test counts none of these as a read."
+  - field: "src/hhemt/config/report.py::SystemMapConfig.target_epsg"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). Outside src/hhemt/config/ the name appears only as a text of a non-Python file in report_templates/captions/system_map.rst; the test counts none of these as a read."
+  - field: "src/hhemt/config/synthetic_experiment.py::synthetic_experiment_config.ensemble_partition"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). The name appears in src/hhemt only inside the config package (synthetic_experiment.py); no module outside it names the field."
+  - field: "src/hhemt/config/synthetic_experiment.py::synthetic_experiment_config.setup_partition"
+    reason: "Kept by the developer's ruling of 2026-11-03 12:20 (\"agred and approved on all fronts\"). Outside src/hhemt/config/ the name appears only as a string literal in sensitivity_analysis.py; the test counts none of these as a read."

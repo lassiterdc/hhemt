@@ -31,7 +31,7 @@ def test_group_by_hash_empty():
     assert group_by_hash({}) == {}
 
 
-def test_group_by_hash_sorts_sa_ids_within_group():
+def test_group_by_hash_sorts_member_ids_within_group():
     groups = group_by_hash({"z": b"x", "a": b"x", "m": b"x"})
     assert groups == {_md5(b"x"): ["a", "m", "z"]}
 

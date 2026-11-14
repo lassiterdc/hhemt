@@ -1,0 +1,7 @@
+source: src/hhemt/eda/_sensitivity_figures.py
+entries:
+- rule: retired_word
+  string: sa_id
+  status: permitted
+  reason: 'dimension and coordinate name of the stored sensitivity artifact that compute_sensitivity.py writes (renaming it is a layout migration); not printed: the figure titles the axis Sensitivity member'
+  count: 3

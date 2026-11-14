@@ -122,11 +122,11 @@ class TestExcludeDirsParameter:
             manager = GlobusTransferManager.__new__(GlobusTransferManager)
             manager.transfer_client = mock_client
 
-            manager.transfer(spec, exclude_dirs=["subanalyses/", "sims/out_triton/"])
+            manager.transfer(spec, exclude_dirs=["members/", "sims/out_triton/"])
 
             # Verify filter rules were added as directory type
             calls = mock_tdata.add_filter_rule.call_args_list
             assert len(calls) == 2
-            assert calls[0].args == ("subanalyses/",)
+            assert calls[0].args == ("members/",)
             assert calls[0].kwargs == {"method": "exclude", "type": "dir"}
             assert calls[1].args == ("sims/out_triton/",)

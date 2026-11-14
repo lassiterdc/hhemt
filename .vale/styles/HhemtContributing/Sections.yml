@@ -1,0 +1,9 @@
+# The contributing guide carries the second-level sections named in the pattern below and no other.
+extends: existence
+message: "'%s' is not a section of the contributing-guide template."
+level: warning
+scope: heading.h2
+ignorecase: false
+nonword: true
+raw:
+  - '^(?!(?:Licensing of contributions|Development setup|Workflow|Documentation|Writing documentation pages|Documentation gates|Documentation gate exemptions|Branching and releases|Code conventions|Repository map)$).+$'

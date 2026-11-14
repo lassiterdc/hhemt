@@ -131,7 +131,7 @@ def _get_endpoint_uuids(system: str) -> tuple[str, str, bool, str | None]:
     if entry is None:
         raise ConfigurationError(
             field="system",
-            message=(f"Unknown Globus system '{system}'. " f"Valid systems: {sorted(GLOBUS_SYSTEM_ENDPOINTS)}"),
+            message=(f"Unknown Globus system '{system}'. Valid systems: {sorted(GLOBUS_SYSTEM_ENDPOINTS)}"),
         )
     source_uuid, scratch_base, needs_data_access, session_domain = entry
     if source_uuid is None:
@@ -151,7 +151,7 @@ def _get_endpoint_uuids(system: str) -> tuple[str, str, bool, str | None]:
 # These match anywhere in the tree — e.g. "out_triton" excludes any directory
 # named out_triton at any depth.
 DEFAULT_EXCLUDE_PATTERNS = [
-    "subanalyses",
+    "members",
     "out_triton",
     "out_tritonswmm",
     "out_swmm",

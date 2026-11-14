@@ -1,0 +1,10 @@
+# F6_link_text, the two arms that need one element only: link text and admonition title with the 
+# phrase. The arm that compares a link text with a flagged heading of another element is the reviewing 
+extends: existence
+message: 'Link text or admonition title ''%s'' repeats a heading or says ''when and why'' or ''when to''.'
+level: warning
+ignorecase: true
+nonword: true
+scope: raw
+raw:
+  - '(?m)\[[^\]]*?(?:when\s+and\s+why|when\s+to)[^\]]*\]\(|^\s*(?:\?\?\?\+?|!!!)\s+[\w-]+(?:\s+[\w-]+)*?\s+[\"“”][^\"“”]*(?:when\s+and\s+why|when\s+to)[^\"“”]*[\"“”]'

@@ -1,0 +1,21 @@
+source: src/hhemt/eda/cross_sim_identity.py
+entries:
+- rule: retired_word
+  string: sa_id
+  status: permitted
+  reason: 'dictionary key and coordinate name of the stored verdict and datatree layout (renaming it is a layout migration); not printed: the page prints the key''s value under its own column header'
+  count: 17
+- rule: retired_word
+  string: subanalyses
+  status: permitted
+  reason: key naming the retired directory layout that a read-only archive still carries, used to read old archives; not printed (the one message that printed the layout name was reworded)
+  count: 2
+- rule: retired_word
+  string: subanalyses/sa_*
+  status: permitted
+  reason: glob over the retired directory layout of a read-only archive, used as a path; not printed on a page
+- rule: retired_word
+  string: sims
+  status: permitted
+  reason: 'directory name of the stored scenario layout (sims/{event_id}/processed), read as a path segment when a member''s per-scenario summary paths are listed (renaming it is a layout migration); not printed on a page'
+  count: 3

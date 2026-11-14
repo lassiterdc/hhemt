@@ -1,0 +1,196 @@
+"""Regression tests for hooks/config_reference.py -- the `### D99` closure population.
+
+Phase 1 measured that NO test referenced this hook. The assertions below pin the
+population BY NAME rather than by a count: a count cannot say WHICH models it
+reached, so it would pass on any change that happened to reach twenty-five of
+something.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+import types
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parent.parent
+_HOOK = _REPO / "hooks" / "config_reference.py"
+
+
+def _load():
+    spec = importlib.util.spec_from_file_location("config_reference", _HOOK)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["config_reference"] = mod
+    spec.loader.exec_module(mod)
+    mod._load_local_src().bind_local_src(mod._SRC, {"hhemt"})
+    return mod
+
+
+cfgref = _load()
+
+#: The twenty-one models the closure reaches that the old four-model hand-list did
+#: not. Pinned BY NAME. Sixteen are report style sub-models -- that is the cost
+#: `### D99` accepted, and it is written here so a later reader meets it as a
+#: recorded decision rather than as page bloat of unknown origin.
+CLOSURE_GAINED = frozenset(
+    {
+        "CRSConfig",
+        "ContainerSpec",
+        "ElevationPanelStyle",
+        "ErrorsAndWarningsConfig",
+        "FigureDefaults",
+        "ForceRerunSpec",
+        "HydraulicsPanelStyle",
+        "HydrologyMapPanelStyle",
+        "HydrologyPanelConfig",
+        "InteractiveBackendConfig",
+        "PerAnalysisSummaryConfig",
+        "PerSimConfig",
+        "PerSimFigureSpec",
+        "PerSimMapConfig",
+        "PerSimMapInteractiveConfig",
+        "ScenarioStatusAppendixConfig",
+        "SensitivityReportConfig",
+        "SystemMapConfig",
+        "TableInteractiveConfig",
+        "eda_config",
+        "report_config",
+    }
+)
+
+#: The four the old hand-list tabled. Present in the closure too, so the widening
+#: is purely additive -- the property that decided `### D99` over its alternatives.
+PREVIOUSLY_TABLED = frozenset(
+    {
+        "analysis_config",
+        "system_config",
+        "hpc_system_config",
+        "PartitionSpec",
+    }
+)
+
+
+def _forward_refs_in(annotation) -> bool:
+    """True when a ForwardRef survives anywhere inside `annotation`."""
+    import typing
+
+    stack = [annotation]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, typing.ForwardRef):
+            return True
+        stack.extend(typing.get_args(node) or ())
+    return False
+
+
+def test_closure_reaches_every_model_the_hand_list_missed():
+    """THE NON-VACUITY ARM. Red against the four-model hand-list, green after.
+
+    The old generator tabled four models and this asserts twenty-one further ones
+    by name, so it cannot pass against the pre-repair page. A count assertion
+    could: 25 is reachable by many wrong routes.
+    """
+    names = {m.__name__ for m in cfgref._closure_models()}
+    missing = sorted(CLOSURE_GAINED - names)
+    assert not missing, f"{len(missing)} model(s) the D99 closure must reach are absent: {missing[:5]}"
+
+
+def test_the_widening_removes_nothing():
+    """Purely additive, which is what `### D99` was selected for."""
+    names = {m.__name__ for m in cfgref._closure_models()}
+    assert PREVIOUSLY_TABLED <= names, sorted(PREVIOUSLY_TABLED - names)
+
+
+def test_the_walk_leaves_no_unresolved_forward_reference():
+    """Pins the PROPERTY, not one model's presence.
+
+    An earlier version asserted ``"ContainerSpec" in names``. That pins a MODEL'S
+    PRESENCE: it passes if ContainerSpec is reached by any other edge and it never
+    exercises resolution at all, so the property a regression would destroy was
+    pinned by nothing. Measured: 1 unresolved ForwardRef without the rebuild, 0
+    with it, so this assertion discriminates where the old one did not.
+
+    Removing the rebuild makes `_closure_models()` raise instead of returning, so
+    this goes red by exception rather than by assertion -- red either way, which is
+    what the test is for.
+    """
+    unresolved = sorted(
+        f"{m.__name__}.{fname}"
+        for m in cfgref._closure_models()
+        for fname, info in m.model_fields.items()
+        if _forward_refs_in(info.annotation)
+    )
+    assert not unresolved, (
+        f"{len(unresolved)} field(s) still carry an unresolved ForwardRef after the "
+        f"walk: {unresolved}. model_rebuild() must run before the annotation walk."
+    )
+
+
+def test_every_closure_model_is_tabled_on_the_page():
+    """The completeness sentence must be TRUE of the rendered page.
+
+    Asserted on each model's own rendered TABLE, not on its name appearing
+    somewhere: the three entry configs are tabled under prose headings ("System
+    config"), so a name-presence heuristic reports them missing while they are
+    plainly there. `_table(model)` is the exact string the page must contain.
+    """
+    page = cfgref._render()
+    missing = sorted(m.__name__ for m in cfgref._closure_models() if cfgref._table(m) not in page)
+    assert not missing, f"closure members absent from the rendered page: {missing}"
+
+
+def test_on_config_writes_the_generated_page_under_docs_dir(tmp_path):
+    """The hook's ENTRYPOINT, which no other node reaches: the binder call, both
+    lint passes and the write under ``docs_dir``. A wrong argument list at the
+    binder call site raises here instead of at CI's first ``mkdocs build``.
+    Green in both states: it is the coverage node for the retargeted call, not a
+    differential for the wrong-tree defect.
+    """
+    config = types.SimpleNamespace(docs_dir=str(tmp_path))
+    assert cfgref.on_config(config) is config
+    page = (tmp_path / "reference" / "config-schema.md").read_text(encoding="utf-8")
+    assert page.startswith(f"<!-- {cfgref._load_lint().GENERATED_MARKER} -->")
+    assert cfgref._table(cfgref._closure_models()[0]) in page
+
+
+_OLD_STYLE = "body{font-family:system-ui,sans-serif;margin:1rem 1.5rem}h1{font-size:1.4rem;margin:0 0 .4rem}"
+
+
+def _scheme_problems(page: str) -> list[str]:
+    """What a standalone configuration page lacks of following the visitor's colour scheme."""
+    import re
+
+    problems = []
+    if "prefers-color-scheme" not in page:
+        problems.append("no prefers-color-scheme rule")
+        return problems
+    base, _, light = page.partition("@media (prefers-color-scheme: light){")
+    for label, pattern in (
+        ("page text colour", r"body\{[^}]*?[^-]color:(#[0-9a-fA-F]+)"),
+        ("table background", r"body \.tabulator\{background-color:(#[0-9a-fA-F]+)"),
+    ):
+        dark = re.findall(pattern, base)
+        bright = re.findall(pattern, light)
+        if not dark or not bright:
+            problems.append(f"{label} is not set in both schemes")
+        elif dark[-1] == bright[0]:
+            problems.append(f"{label} is the same in both schemes: {dark[-1]}")
+    return problems
+
+
+def test_the_standalone_page_follows_the_visitors_colour_scheme():
+    """The standalone page has a prefers-color-scheme rule; its text and table colours differ between schemes."""
+    from hhemt.config.system import system_config
+
+    page = cfgref._standalone_table_page(system_config, "System config")
+    assert _scheme_problems(page) == []
+
+
+def test_control_a_page_with_the_old_style_fails_the_scheme_check():
+    """Must-fire control: the check reports the page built from the old style string, which has no colour rules."""
+    from hhemt.config.system import system_config
+
+    page = cfgref._standalone_table_page(system_config, "System config").replace(cfgref._STANDALONE_STYLE, _OLD_STYLE)
+    assert cfgref._STANDALONE_STYLE not in page
+    assert _scheme_problems(page), "the old style must fail the check"

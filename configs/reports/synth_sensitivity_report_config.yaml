@@ -3,6 +3,16 @@
 # Phase 6 synth sensitivity CSV currently exposes a single useful independent_var
 # (n_devices). Add additional independent_vars here when the synth fixture grows
 # additional CSV columns.
+
+# Pinned explicitly rather than left to the sentinel: with no `reporting_set` key,
+# resolve_reporting_set_names maps "default" -> ("sensitivity",) on a sensitivity
+# analysis, which is not the set this fixture exercises.
+# Pinning it here makes the zero-delta criterion of later golden comparisons a real
+# check. BOTH this file and its mirror are pinned: the byte-identity goldens read the
+# tests/fixtures copy, so pinning only one leaves the golden path unpinned while
+# reading as done.
+reporting_set: benchmarking
+
 figure_defaults:
   font_family: "DejaVu Sans"
   font_size: 9
@@ -12,7 +22,6 @@ figure_defaults:
 system_map:
   target_epsg: null
   figsize_inches: [8.0, 6.0]
-  watershed_color: red
 
 per_sim:
   peak_flood_depth:
@@ -29,7 +38,6 @@ per_analysis_summary:
     - n_pending
 
 sensitivity:
-  mode: benchmarking
   # n_devices is a derived column (n_mpi_procs * n_omp_threads * n_nodes for CPU runs;
   # n_gpus for GPU runs) — derived by sensitivity_benchmarking._ensure_n_devices_column.
   # The validator allow-lists derived columns alongside literal CSV columns.
@@ -37,5 +45,5 @@ sensitivity:
     - n_devices
   dependent_var: performance.Total
   aggregation: mean
-  group_by_var: run_mode
+  group_by_var: analysis.run_mode
   show_gridlines: true

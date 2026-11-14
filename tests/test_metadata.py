@@ -75,11 +75,52 @@ def test_dataset_license_creativework_entity_survives_into_core():
     assert core_root["license"] == {"@id": "https://spdx.org/licenses/CC-BY-NC-4.0"}
 
 
-def test_default_dataset_license_is_cc0():
-    # R5/R6: the default build (no override) carries CC0-1.0 as the root license.
-    doc = json.loads(metadata.canonical_jsonld(_build()))
-    root = next(e for e in doc["@graph"] if e.get("@id") == "./")
-    assert root["license"] == {"@id": "https://spdx.org/licenses/CC0-1.0"}
+def test_unlicensed_build_writes_no_license():
+    """Property: a crate built with no dataset license asserts none, in the graph or the core.
+
+    Class: every build that omits `dataset_license` or passes None. Why required: a license
+    is required only to publish, so an unpublished dataset must not claim terms nobody
+    chose, and publish detects "no license" by the root `license` being absent. Killed by:
+    restoring a CC0 (or any) keyword default, or writing a placeholder entity when blank.
+    Second correct implementation: writing the root without the key by building the root
+    dict conditionally instead of skipping the entity block.
+    """
+    for crate in (_build(), _build(dataset_license=None)):
+        doc = json.loads(metadata.canonical_jsonld(crate))
+        root = next(e for e in doc["@graph"] if e.get("@id") == "./")
+        assert "license" not in root
+        license_entities = [
+            e for e in doc["@graph"] if e.get("@type") == "CreativeWork" and "spdx.org/licenses" in e.get("@id", "")
+        ]
+        assert license_entities == []
+        core = metadata.partition_core_vs_sidecar(crate.metadata.generate())
+        core_root = next(e for e in core["@graph"] if e.get("@id") == "./")
+        assert "license" not in core_root
+
+
+def test_license_table_is_the_seven_cc_licenses_with_spdx_uris():
+    """Property: the single license table carries exactly the seven CC ids, each with its SPDX URI.
+
+    Class: every table entry. Why required: the crate entity, the DataCite rightsList and the
+    HydroShare rights all read this one table, so an id the config accepts but the table lacks
+    raises KeyError at consolidation. Killed by: dropping or adding an entry, or a URI that
+    does not end in its own id. Second correct implementation: the URIs derived from the ids
+    at import time instead of written out.
+    """
+    from typing import get_args
+
+    from hhemt.config.analysis import analysis_config
+
+    # The field's accepted strings, read without any helper this change adds, so the same
+    # lines run on the tree before the change: a flat Literal yields its strings directly,
+    # and `Literal[...] | None` yields them one level down, with NoneType filtered out.
+    annotation = analysis_config.model_fields["dataset_license"].annotation
+    accepted = {s for member in get_args(annotation) for s in (get_args(member) or (member,)) if isinstance(s, str)}
+    assert set(metadata._SPDX_LICENSE_TABLE) == accepted
+    assert len(accepted) == 7
+    for spdx, entry in metadata._SPDX_LICENSE_TABLE.items():
+        assert entry["uri"] == f"https://spdx.org/licenses/{spdx}"
+        assert entry["name"].startswith("Creative Commons")
 
 
 def test_upgrade_doc_to_workflow_run_crate():
@@ -105,11 +146,33 @@ def test_upgrade_doc_to_workflow_run_crate():
     assert metadata.canonical_jsonld_from_doc(doc2) == s1
 
 
-def test_bundle_schema_version_bumped_to_v3():
-    # C8: round-trippable Workflow-Run-Crate + reprex carriage = bundle schema v3.
+def test_bundle_schema_version_matches_the_fixtures():
+    """The constant and the committed fixtures must name the SAME generation.
+
+    RENAMED off `_bumped_to_v3`: a test named for one version pins that
+    version, so it fails on every future bump and is repaired by editing the
+    number in its own name -- which is how it came to assert v3 against a v4
+    constant. Pinning the RELATION instead means the next bump needs no edit
+    here, and a bump that forgets the fixtures fails loudly rather than
+    silently shipping six confusing BundleSchemaErrors.
+    """
+    import json
+    from pathlib import Path
+
     from hhemt.version_migration.constants import BUNDLE_SCHEMA_VERSION
 
-    assert BUNDLE_SCHEMA_VERSION == 3
+    fixtures = Path(__file__).parent / "fixtures" / "bundles"
+    manifests = sorted(fixtures.glob("*/bundle_manifest.json"))
+    # Disclosed denominator: without this, an emptied/renamed fixtures dir makes the
+    # loop below iterate zero times and the test passes having checked nothing.
+    assert manifests, f"no bundle fixtures under {fixtures}; run `python -m tests.fixtures.bundles.build_fixtures`"
+    for manifest in manifests:
+        declared = json.loads(manifest.read_text())["bundle_schema_version"]
+        assert declared == BUNDLE_SCHEMA_VERSION, (
+            f"{manifest.parent.name} declares bundle_schema_version={declared} "
+            f"but the toolkit is at {BUNDLE_SCHEMA_VERSION}; re-emit via "
+            f"`python -m tests.fixtures.bundles.build_fixtures`"
+        )
 
 
 def test_sidecar_compare_and_write_idempotent(tmp_path):
@@ -119,3 +182,248 @@ def test_sidecar_compare_and_write_idempotent(tmp_path):
     mtime1 = (tmp_path / "ro-crate-metadata.json").stat().st_mtime_ns
     assert metadata.write_rocrate_sidecar(tmp_path, graph_json=g) is False
     assert (tmp_path / "ro-crate-metadata.json").stat().st_mtime_ns == mtime1
+
+
+def _advertised_var_names(crate) -> set[str]:
+    """Names of the `#var-*` PropertyValue entities in a built crate."""
+    doc = json.loads(metadata.canonical_jsonld(crate))
+    return {
+        n["name"]
+        for n in doc["@graph"]
+        if isinstance(n, dict) and str(n.get("@id", "")).startswith("#var-") and "name" in n
+    }
+
+
+def test_variable_measured_advertises_only_emitted_variables():
+    """`variableMeasured` is a claim about the DEPOSITED store, not about the CF map.
+
+    Regression guard for the 2026-07-21 over-claim defect: `build_analysis_crate`
+    iterated `_CF_VARIABLE_MAP` unconditionally, so every map key was published as a
+    PropertyValue asserting the deposited zarr contains that variable. Measured on a
+    real sensitivity crate at the time: 18 advertised, 11 absent from the zarr.
+
+    THIS TEST IS THE ONLY COVERAGE OF THE GATED PATH. Every other test in this file
+    calls `_build()` without `emitted_vars`, so they exercise only the legacy `None`
+    branch, where bytes are unchanged BY CONSTRUCTION — a green suite there is not
+    evidence the gate works. That gap is exactly how the original defect survived.
+    """
+    from hhemt.cf_conventions import _CF_VARIABLE_MAP
+
+    # Legacy branch: emitted_vars=None preserves the whole-map advertisement.
+    legacy = _advertised_var_names(_build())
+    assert legacy == set(_CF_VARIABLE_MAP), (
+        f"emitted_vars=None must preserve legacy whole-map behavior; got {sorted(legacy)}"
+    )
+
+    # Gated branch: advertise the intersection with the store's real variables ONLY.
+    real = {"max_flood_depth", "max_flow"}
+    gated = _advertised_var_names(_build(emitted_vars=real))
+    assert gated == real & set(_CF_VARIABLE_MAP), f"gated advertisement wrong: {sorted(gated)}"
+    assert gated < legacy, "the gated advertisement must SHRINK relative to the whole map"
+
+    # The defect itself: a MAPPED variable absent from the store must NOT be advertised.
+    absent = sorted(set(_CF_VARIABLE_MAP) - real)
+    assert absent, "fixture precondition: the map must carry a variable outside `real`"
+    for var in absent:
+        assert var not in gated, f"{var!r} is absent from the deposited store but is advertised as present"
+
+
+def test_performance_names_reach_variable_measured_on_the_gated_path_only():
+    """The performance CF map is advertisable on the GATED path and on that path ONLY.
+
+    `_CF_PERFORMANCE_VARIABLES` is mode-scoped in `cf_conventions` precisely because its
+    keys (`Total`, `MPI`, `IO`, `Other`) are generic enough to name a different quantity
+    under another mode, so it is deliberately NOT merged into `_CF_VARIABLE_MAP`. The
+    consequence before this guard was that none of the thirteen could ever reach
+    `variableMeasured`, however plainly the deposited store contained them.
+
+    The union is scoped to the gated branch because `variableMeasured` is a claim about
+    the DEPOSITED store: on the `emitted_vars is None` path there is no store to consult,
+    and advertising thirteen performance names there would re-open the 2026-07-21
+    over-claim defect the sibling test above guards. Both halves are asserted here —
+    the gated path MUST carry them, the legacy path MUST NOT — because a union written
+    at the shared expression satisfies the first and silently breaks the second.
+    """
+    from hhemt.cf_conventions import _CF_PERFORMANCE_VARIABLES, _CF_VARIABLE_MAP
+
+    assert not (set(_CF_PERFORMANCE_VARIABLES) & set(_CF_VARIABLE_MAP)), (
+        "fixture precondition: the two maps must be disjoint, so the union shadows no entry"
+    )
+
+    # Gated path, a store holding ONLY performance columns: every one is advertised.
+    perf_only = _advertised_var_names(_build(emitted_vars=set(_CF_PERFORMANCE_VARIABLES)))
+    assert perf_only == set(_CF_PERFORMANCE_VARIABLES), (
+        f"gated path must advertise every emitted performance column; got {sorted(perf_only)}"
+    )
+
+    # Gated path, a mixed store: the advertisement is the union restricted to the store.
+    both = set(_CF_VARIABLE_MAP) | set(_CF_PERFORMANCE_VARIABLES)
+    assert _advertised_var_names(_build(emitted_vars=both)) == both
+
+    # Legacy path: unchanged, and a performance name must NOT appear on it.
+    legacy = _advertised_var_names(_build())
+    assert legacy == set(_CF_VARIABLE_MAP), f"emitted_vars=None must stay at the CF variable map; got {sorted(legacy)}"
+    assert not (legacy & set(_CF_PERFORMANCE_VARIABLES)), (
+        "a performance name reached the legacy whole-map path — the union was written at "
+        "the SHARED expression rather than in the gated branch"
+    )
+
+
+def test_every_advertised_performance_name_carries_a_provenance_descriptor():
+    """The pair is CLOSED: every advertised performance name resolves a descriptor.
+
+    UPDATED, not deleted, from the interim pin this test shipped as. That pin asserted
+    `described == []` — the state in which the advertisement union had landed and its
+    `_QUANTITY_PROVENANCE_BY_MODE` overlay had not, so the report's data-dictionary
+    rendered an em-dash in all three provenance columns for thirteen variables it had
+    just started advertising. The assertion is INVERTED here rather than removed,
+    because the question the pin was asking is permanent and only its answer moved: an
+    advertised variable with no descriptor is the defect, whichever direction the tree
+    drifts into it.
+
+    This is the mode-BLIND read, which is the one the renderer performs: it reads a
+    crate, and a crate carries no mode. A descriptor reachable only with a mode would
+    leave the rendered page exactly as broken as no descriptor at all, so asserting the
+    mode-blind arm here is what makes this test about the report rather than about the
+    table.
+    """
+    from hhemt.cf_conventions import _CF_PERFORMANCE_VARIABLES, quantity_provenance
+
+    undescribed = sorted(v for v in _CF_PERFORMANCE_VARIABLES if quantity_provenance(v) is None)
+    assert undescribed == [], (
+        f"{undescribed} are advertised on the gated path with no provenance descriptor, "
+        "so the report's data dictionary renders an em-dash in all three provenance "
+        "columns for them. Add an entry to cf_conventions._PERF_QUANTITY_PROVENANCE."
+    )
+
+    # The advertisement and the descriptor must agree about WHICH names exist, not merely
+    # about how many. A renderer row is keyed on the name, so a near-miss spelling renders
+    # an em-dash while both tables carry thirteen entries.
+    advertised = _advertised_var_names(_build(emitted_vars=set(_CF_PERFORMANCE_VARIABLES)))
+    assert {v for v in advertised if quantity_provenance(v)} == advertised
+
+
+# --------------------------------------------------------------------------------------
+# WP-3F(c)/(d): the descriptor is SOURCED FROM THE DEPOSITED STORE, and `unitText` is guarded.
+# --------------------------------------------------------------------------------------
+
+
+def _advertised_props(crate) -> dict[str, dict]:
+    doc = json.loads(metadata.canonical_jsonld(crate))
+    return {
+        n["name"]: n
+        for n in doc["@graph"]
+        if isinstance(n, dict) and str(n.get("@id", "")).startswith("#var-") and "name" in n
+    }
+
+
+def test_the_descriptor_is_sourced_from_the_deposited_store_when_supplied():
+    """The DESCRIPTION half of the advertisement invariant: "described exactly as the store describes them".
+
+    THE DEFECT THIS CLOSES IS A DIVERGENCE, NOT AN ABSENCE. `metadata.py` reads
+    `_CF_VARIABLE_MAP` / `_CF_PERFORMANCE_VARIABLES` and reads `_CF_VARIABLE_OVERRIDES_BY_MODE`
+    not at all, so a link-mode deposit published the BASE entry's `long_name` while its own store
+    carried the override's. The static table cannot see the mode; the store is already
+    mode-resolved by the time it is deposited.
+
+    THE STORE'S `long_name` IS THE DISCRIMINATOR AND `cell_methods` IS NOT. Both read
+    `time: maximum`, so a test keyed on `cell_methods` would be satisfied whether or not the store
+    was read. Keying on `long_name` is what makes this test able to fail.
+
+    THE STORE FIXTURE IS HAND-BUILT TO DIFFER FROM THE BASE ENTRY. Until the TRITON tier stopped
+    writing `max_velocity`, the live link-mode override differed from the base entry and the
+    fixture used it; the base now describes the conduit too, so the live tables no longer diverge and
+    the fixture's `long_name` is a deliberately different string. The test then fails if the crate
+    publishes the static label instead of the store's.
+    """
+    store = {
+        "max_velocity": {
+            "long_name": "Maximum conduit velocity as stamped by the deposited store",
+            "units": "m s-1",
+            "standard_name": "sea_water_speed",
+            "cell_methods": "time: maximum",
+        }
+    }
+    base = _advertised_props(_build(emitted_vars={"max_velocity"}))["max_velocity"]
+    sourced = _advertised_props(_build(emitted_vars={"max_velocity"}, emitted_attrs=store))["max_velocity"]
+
+    assert base["description"] == "Maximum conduit velocity", (
+        "fixture precondition: the static table is the base conduit entry"
+    )
+    assert sourced["description"] == "Maximum conduit velocity as stamped by the deposited store", (
+        "the advertised description must come from the store's own attrs, not from the static table"
+    )
+    assert base["description"] != sourced["description"], "this test cannot discriminate unless the two differ"
+
+
+def test_omitting_emitted_attrs_is_byte_identical_to_before():
+    """The default MUST be byte-identical, because every caller is unthreaded until it is threaded.
+
+    `emitted_attrs=None` is the state the two production call sites are in today, so a change in
+    this branch's bytes would be a silent change to every deposited crate.
+    """
+    real = {"max_flood_depth", "max_flow"}
+    assert metadata.canonical_jsonld(_build(emitted_vars=real)) == metadata.canonical_jsonld(
+        _build(emitted_vars=real, emitted_attrs=None)
+    )
+    assert metadata.canonical_jsonld(_build(emitted_vars=real)) == metadata.canonical_jsonld(
+        _build(emitted_vars=real, emitted_attrs={})
+    )
+
+
+def test_an_unstamped_store_node_falls_back_to_the_static_descriptor():
+    """THE MONOTONICITY PROPERTY: store-sourcing can only REPLACE a descriptor that exists.
+
+    A tree may legitimately carry a node `apply_cf_attributes` never stamped -- the opt-in
+    per-scenario timeseries groups are not stamped -- so an advertised name whose store attrs
+    carry no `long_name` must not publish an empty descriptor. The fallback predicate is
+    `long_name` for that reason, and not mere key presence.
+    """
+    from hhemt.cf_conventions import _CF_VARIABLE_MAP
+
+    props = _advertised_props(_build(emitted_vars={"max_flood_depth"}, emitted_attrs={"max_flood_depth": {}}))[
+        "max_flood_depth"
+    ]
+    assert props["description"] == _CF_VARIABLE_MAP["max_flood_depth"]["long_name"]
+    assert props["unitText"] == "m"
+
+
+def test_unit_text_is_guarded_symmetrically_with_its_two_siblings():
+    """(d) -- PROPHYLACTIC, and deliberately not described as a live false claim.
+
+    Measured at the time: `units is None` in zero of the 25 advertisable entries, and a real
+    deposited crate carried 9 PropertyValues with 9 non-null `unitText`. So the asymmetry was
+    LATENT. The value of closing it is that a future entry legitimately carrying no units -- or a
+    store-sourced descriptor read off a node that declares none -- cannot publish a `unitText`
+    null into the deposited record, which is what an unguarded subscription did.
+    """
+    store = {
+        "max_flood_depth": {"long_name": "Water level", "units": None, "standard_name": None, "cell_methods": None}
+    }
+    props = _advertised_props(_build(emitted_vars={"max_flood_depth"}, emitted_attrs=store))["max_flood_depth"]
+
+    assert props["description"] == "Water level"
+    assert "unitText" not in props, "a None units must OMIT the key, exactly as propertyID and measurementTechnique do"
+    assert "propertyID" not in props
+    assert "measurementTechnique" not in props
+
+    # And the guard is not a blanket omission: a real value still publishes.
+    store["max_flood_depth"]["units"] = "m"
+    props = _advertised_props(_build(emitted_vars={"max_flood_depth"}, emitted_attrs=store))["max_flood_depth"]
+    assert props["unitText"] == "m"
+
+
+def test_emit_provenance_carries_emitted_attrs_through_to_the_crate():
+    """The TWO-SIGNATURE cost, asserted on the signature rather than inferred from the design.
+
+    `emit_provenance` is the intermediate hop; a mapping it fails to carry through reaches
+    nothing, and the failure is silent because the crate still builds from the static table.
+    """
+    import inspect
+
+    from hhemt.provenance import emit_provenance
+
+    for fn in (emit_provenance, metadata.build_analysis_crate):
+        params = inspect.signature(fn).parameters
+        assert "emitted_attrs" in params, f"{fn.__name__} does not accept emitted_attrs"
+        assert params["emitted_attrs"].default is None, f"{fn.__name__}'s emitted_attrs must default to None"

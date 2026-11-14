@@ -91,7 +91,14 @@ def test_reconcile_fast_path_no_sentinels(synthetic_multisim_builder):
 
 
 def test_recover_inflight_via_comment_parses_sacct(monkeypatch, synthetic_multisim_builder):
-    """The sacct-parsing path returns live + comment-matched jobs and skips malformed lines."""
+    """The sacct-parsing path returns live + comment-matched jobs and skips malformed lines.
+
+    The corroborator's second query is pinned to "dead" for 9002 rather than left
+    to run: left real, it answers NOT-KNOWN here (the fake buffer carries the
+    scan's three-field row, not the probe's four-field one), and NOT-KNOWN resolves
+    to INCLUSION at this site — which would make this parse test an assertion about
+    the corroboration policy instead of about the parse.
+    """
     import subprocess as _sp
 
     sacct_out = (
@@ -109,18 +116,19 @@ def test_recover_inflight_via_comment_parses_sacct(monkeypatch, synthetic_multis
         "hhemt.workflow._slurm_job_is_live",
         lambda jid: jid == "9001",  # only 9001 is live
     )
+    monkeypatch.setattr("hhemt.workflow._corroborate_not_live", lambda jid: "dead")
     b = synthetic_multisim_builder
     found = b._recover_inflight_via_comment(known_jobids=set())
     jids = {jid for _, jid in found}
-    assert jids == {"9001"}  # live + comment-matched; 9002 completed; malformed skipped
+    assert jids == {"9001"}  # live + comment-matched; 9002 corroborated dead; malformed skipped
 
 
 def test_reconcile_returns_sensitivity_sentinel_in_alive_set(monkeypatch, synthetic_multisim_builder):
-    """Phase 2: a sensitivity sentinel (simulation_sa_{id}_evt-{id}) with no marker is
+    """Phase 2: a sensitivity sentinel (simulation_member_{id}_evt-{id}) with no marker is
     returned in the alive set keyed on its full stem; v2 does not raise.
 
     Replaces the v1 raise-based `test_reconcile_keys_on_sensitivity_sentinel_pattern`.
-    Guards the sa_id-keyed token (no collision with the multisim pattern) under v2
+    Guards the member_id-keyed token (no collision with the multisim pattern) under v2
     return-alive semantics.
     """
     # R9 hermeticity: pin the sacct seam (see the sibling reconcile test) so the
@@ -128,9 +136,9 @@ def test_reconcile_returns_sensitivity_sentinel_in_alive_set(monkeypatch, synthe
     monkeypatch.setattr("hhemt.workflow._sacct_states_batched", lambda job_ids, **kw: {})
 
     b = synthetic_multisim_builder
-    s = _write_sentinel(b.analysis_paths.analysis_dir, "simulation_sa_alpha_evt-0", "777001")
+    s = _write_sentinel(b.analysis_paths.analysis_dir, "simulation_member_alpha_evt-0", "777001")
     alive = b._reconcile_inflight_submissions()
-    assert ("simulation_sa_alpha_evt-0", "777001") in alive  # keyed on full sa_id stem
+    assert ("simulation_member_alpha_evt-0", "777001") in alive  # keyed on full member_id stem
     assert s.exists()  # alive sentinel preserved (no marker present)
 
 
@@ -405,7 +413,9 @@ def test_force_rerun_does_not_descend_into_status_subdirs(synthetic_multisim_bui
     nested_flag.touch()
 
     try:
-        b._delete_flags_for_force_rerun(ResolvedForceRerunSpec(scope="all", tokens=()))
+        b._delete_flags_for_force_rerun(
+            ResolvedForceRerunSpec(scope="all", tokens=(), stage="simulate", models=("triton", "tritonswmm", "swmm"))
+        )
 
         assert not top_flag.exists(), "top-level _status/*.flag must be deleted by scope='all'"
         assert nested_flag.exists(), "nested _status/**/*.flag must survive — glob is non-recursive (R10)"
@@ -414,12 +424,12 @@ def test_force_rerun_does_not_descend_into_status_subdirs(synthetic_multisim_bui
             p.unlink(missing_ok=True)
 
 
-def test_force_rerun_sa_scope_does_not_touch_submitted_sentinels(synthetic_multisim_builder):
-    """Phase 4 (R10): scope='sa' force-rerun deletes only delimiter-anchored
-    *sa-{id}_*.flag / *sa-{id}.flag completion markers and MUST NOT delete
+def test_force_rerun_member_scope_does_not_touch_submitted_sentinels(synthetic_multisim_builder):
+    """Phase 4 (R10): scope='member' force-rerun deletes only delimiter-anchored
+    *member-{id}_*.flag / *member-{id}.flag completion markers and MUST NOT delete
     _status/_submitted/*.json sentinels. Also locks the delimiter anchoring so
-    sa-0 does not false-match sa-10. Tested directly on _delete_flags_for_force_rerun
-    because the public _apply_force_rerun(sa-scope) entry requires
+    member-0 does not false-match member-10. Tested directly on _delete_flags_for_force_rerun
+    because the public _apply_force_rerun(member-scope) entry requires
     toggle_sensitivity_analysis=True; the regression target is the glob, which is
     analysis-type-agnostic.
     """
@@ -427,25 +437,29 @@ def test_force_rerun_sa_scope_does_not_touch_submitted_sentinels(synthetic_multi
 
     b = synthetic_multisim_builder
     analysis_dir = b.analysis_paths.analysis_dir
-    submitted = _write_sentinel(analysis_dir, "simulation_sa_0_evt-test", "55501")
+    submitted = _write_sentinel(analysis_dir, "simulation_member_0_evt-test", "55501")
     status_dir = analysis_dir / "_status"
     status_dir.mkdir(parents=True, exist_ok=True)
-    sa_flag = status_dir / "e_consolidate_sa-0_complete.flag"
-    sa_flag.touch()
-    other_sa_flag = status_dir / "e_consolidate_sa-10_complete.flag"
-    other_sa_flag.touch()
+    member_flag = status_dir / "e_consolidate_member-0_complete.flag"
+    member_flag.touch()
+    other_member_flag = status_dir / "e_consolidate_member-10_complete.flag"
+    other_member_flag.touch()
 
     try:
-        b._delete_flags_for_force_rerun(ResolvedForceRerunSpec(scope="sa", tokens=("0",)))
+        b._delete_flags_for_force_rerun(
+            ResolvedForceRerunSpec(
+                scope="member", tokens=("0",), stage="simulate", models=("triton", "tritonswmm", "swmm")
+            )
+        )
 
-        assert not sa_flag.exists(), "sa-0 flag must be deleted by scope='sa' tokens=('0',)"
-        assert other_sa_flag.exists(), "sa-10 must NOT be matched by sa-0 (delimiter-anchored glob)"
+        assert not member_flag.exists(), "member-0 flag must be deleted by scope='member' tokens=('0',)"
+        assert other_member_flag.exists(), "member-10 must NOT be matched by member-0 (delimiter-anchored glob)"
         assert submitted.exists(), "force-rerun must NOT delete _status/_submitted/*.json sentinels (R10)"
     finally:
-        # other_sa_flag is a top-level *.flag with no sidecar — leaking it
+        # other_member_flag is a top-level *.flag with no sidecar — leaking it
         # breaks test_synth_flag_writes::test_run_emits_flag_and_sidecar, which
         # asserts every _status/*.flag in the shared case dir has a sidecar.
-        for p in (sa_flag, other_sa_flag, submitted):
+        for p in (member_flag, other_member_flag, submitted):
             p.unlink(missing_ok=True)
 
 
@@ -771,20 +785,20 @@ def test_wait_runner_reads_queued_jobid_fallback(tmp_path):
 
 
 def test_sensitivity_pending_recovery_per_sub_dir(synth_sensitivity_builder):
-    """R5 sensitivity parity: the sensitivity writer enumerates per-(sa_id, event) tokens
+    """R5 sensitivity parity: the sensitivity writer enumerates per-(member_id, event) tokens
     under EACH sub's own _status/_queued/, and _reconcile_sensitivity_alive recovers them
     with the correct per-sub --analysis-dir mapping (SM Flag 2)."""
     sens = synth_sensitivity_builder.sensitivity
     swb = sens._workflow_builder
     swb._write_queued_sentinels_sensitivity(None)  # executor-owns (jobid null)
 
-    # Every sub got per-(sa_id, event) _queued/ sentinels with the literal evt- token.
+    # Every sub got per-(member_id, event) _queued/ sentinels with the literal evt- token.
     any_written = False
-    for sa_id, sub in sens.sub_analyses.items():
+    for member_id, sub in sens.members.items():
         qdir = sub.analysis_paths.analysis_dir / "_status" / "_queued"
         for q in qdir.glob("*.json"):
             any_written = True
-            assert q.stem.startswith(f"simulation_sa_{sa_id}_evt-")
+            assert q.stem.startswith(f"simulation_member_{member_id}_evt-")
     assert any_written, "expected sensitivity _queued/ sentinels written under sub dirs"
 
     # Recovery returns them in the alive set with each wait-rule's --analysis-dir set to
@@ -792,7 +806,7 @@ def test_sensitivity_pending_recovery_per_sub_dir(synth_sensitivity_builder):
     alive_by_token, alive_token_to_dir = swb._reconcile_sensitivity_alive()
     assert alive_by_token, "expected recovered sensitivity pending tokens"
     for tok, jid in alive_by_token.items():
-        assert tok.startswith("simulation_sa_") and "_evt-" in tok
+        assert tok.startswith("simulation_member_") and "_evt-" in tok
         assert jid == ""  # executor-owns held-on-presence
         # the dir mapping points at a real sub dir containing this token's _queued/
         assert (Path(alive_token_to_dir[tok]) / "_status" / "_queued" / f"{tok}.json").exists()

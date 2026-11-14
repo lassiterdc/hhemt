@@ -2,7 +2,7 @@
 
 Run once per hosted resource version to pin the expected file contents into
 ``test_data/{case_name}/case.yaml``. The toolkit verifies the manifest at
-download time (examples.py::_download_data_from_hydroshare).
+download time (experiments.py::_download_data_from_hydroshare).
 
 Usage:
     python -m hhemt.generate_case_manifest \

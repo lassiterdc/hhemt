@@ -23,7 +23,7 @@ dependencies:
   - make
   - openmpi
   - compilers   # conda-forge metapackage: c-compiler + cxx-compiler (gcc/g++)
-  - typer
+  - typer>=0.26,<1
   - pydantic
   - pyyaml
   - zarr
@@ -49,7 +49,7 @@ dependencies:
   - shapely
   # other stuff
   - coverage
-  - pytest
+  - pytest>=9,<9.2
   - ruff
   - ty
   - ipdb

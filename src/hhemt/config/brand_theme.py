@@ -67,6 +67,20 @@ class brand_theme(cfgBaseModel):
             "Hyperlink color. Maps to report.css --uva-link-blue (white-on-link contrast 6.23:1, WCAG AA pass)."
         ),
     )
+    affordance_color: MplColor = Field(
+        "#A85000",
+        description=(
+            "Tooltip-affordance color: the text colour and underline on any element "
+            "carrying a hover tooltip. A DARKENED derivative of accent_color, not "
+            "accent_color itself. Raw UVA Orange #E57200 measures 3.12:1 on white, "
+            "2.99:1 on the #FAFAFA sidebar and 2.76:1 on the #F1F1EF alternating "
+            "row, all below the WCAG AA 4.5:1 normal-text floor; #A85000 measures "
+            "5.51 / 5.28 / 4.87:1 on those same three grounds and 4.50:1 on the "
+            "#FFE4C4 legacy hover tint. Maps to _HtmlTableStyleBase.affordance_color "
+            "via the D-5 overlay in analysis.py. A deployer who rebrands accent_color "
+            "should re-darken this to hold 4.5:1 against white, #FAFAFA and #F1F1EF."
+        ),
+    )
     upper_left_text: str | None = Field(
         None,
         description=(

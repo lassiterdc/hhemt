@@ -1,0 +1,116 @@
+"""Per-member PROCESSED+zarr scoped deletion runner for the SLURM-offloaded
+reprocess delete (R8, D-scope Option C). Invoked by ``delete_member_reprocess_*``
+rules in ``Snakefile.reprocess_delete``. Deletes the sub's ``sims/*/processed/``
+dirs (only when ``--delete-processed``) + the ``summary`` branches of the sub's ``analysis_datatree.zarr``,
+PRESERVING the tree's ``timeseries`` branches (append-only; with the clearing switch on they are the only copy of
+the series), the sibling raw ``out_*`` binaries, and never touching report/plots/_status.
+A member whose tree was moved into the sensitivity master (``member_tree_moved_to_master`` recorded) has no tree of
+its own, so there is nothing to delete here and the master is never touched by this runner.
+Mirrors ``delete_member_runner``'s per-sub granularity but reprocess-scoped."""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+
+from hhemt.delete_reprocess_zarr_runner import delete_summary_branches
+from hhemt.du_sentinels import delete_and_account
+from hhemt.status_flags import write_status_flag
+from hhemt.swmm_runoff_modeling import processed_outputs_to_delete
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--member-id", required=True)
+    parser.add_argument("--analysis-dir", type=Path, required=True, help="The SUB-analysis dir.")
+    parser.add_argument(
+        "--delete-processed",
+        action="store_true",
+        help="Also delete sims/*/processed/ (set when start_with=='process').",
+    )
+    return parser.parse_args(argv)
+
+
+def _write_submission_sentinel(sentinel_path: Path, *, rule_token: str, slurm_job_id: str, member_id: str) -> None:
+    sentinel_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = sentinel_path.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps(
+            {
+                "slurm_jobid": slurm_job_id,
+                "run_uuid": os.environ.get("SLURM_JOB_NAME"),
+                "rule_token": rule_token,
+                "sa_id": member_id,
+                "submitted_at": datetime.datetime.now().isoformat(),
+            }
+        )
+    )
+    os.replace(tmp, sentinel_path)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    sub_dir = args.analysis_dir.resolve()
+    # A member whose whole directory was removed after the master copied its tree (D24 (e)) is not an error, and
+    # nothing here may re-create it: the submission sentinel and the completion flag below each mkdir under
+    # ``sub_dir``. The master's own reprocess delete covers the member's summary branches.
+    if not sub_dir.is_dir():
+        print(
+            f"[delete-member-reprocess] member directory {sub_dir} is absent (removed member); nothing to delete",
+            flush=True,
+        )
+        return 0
+    _sentinel: Path | None = None
+    _slurm_jobid = os.environ.get("SLURM_JOB_ID")
+    if _slurm_jobid:
+        _rule_token = f"delete_member_reprocess_{args.member_id}"
+        _sentinel = sub_dir / "_status" / "_submitted" / f"{_rule_token}.json"
+        _write_submission_sentinel(
+            _sentinel, rule_token=_rule_token, slurm_job_id=_slurm_jobid, member_id=args.member_id
+        )
+    try:
+        if args.delete_processed:
+            for processed_dir in sorted(sub_dir.glob("sims/*/processed")):
+                if processed_dir.is_dir():
+                    # The per-node inflow capture stays: the scenario's preparation wrote it and nothing else
+                    # rebuilds it.
+                    doomed = processed_outputs_to_delete(processed_dir.parent)
+                    print(
+                        f"[delete-member-reprocess] removing {len(doomed)} item(s) under {processed_dir}",
+                        flush=True,
+                    )
+                    if doomed:
+                        delete_and_account(doomed, scope_dir=processed_dir.parent, scope="scenario")
+        # "analysis_datatree.zarr" is the canonical consolidated-zarr default
+        # (analysis.py:160 sets analysis_paths.analysis_datatree_zarr to
+        # analysis_dir / "analysis_datatree.zarr"). Hardcoded here because the
+        # runner only receives --analysis-dir and reconstructing AnalysisPaths
+        # in-subprocess is heavier than this scoped deleter warrants — KEEP IN
+        # SYNC if the consolidated-zarr filename ever becomes config-driven.
+        #
+        # Only the `summary` branches go, never the tree: deleting the whole tree removes the `timeseries` branches
+        # too, which are the only copy of the member's series once its per-scenario stores are cleared, and the
+        # master's own reprocess delete keeps them for the same reason. An ABSENT tree is a member the master
+        # already moved into itself, and is not an error: the runner then exits 0 having deleted nothing.
+        sub_zarr = sub_dir / "analysis_datatree.zarr"
+        if sub_zarr.exists():
+            print(f"[delete-member-reprocess] removing the summary branches of {sub_zarr}", flush=True)
+            delete_summary_branches(sub_zarr, sub_dir, scope="member")
+        flag_path = sub_dir / "_status" / "_deleting_reprocess" / "member_reprocess.flag"
+        write_status_flag(flag_path, rule_name=f"delete_member_reprocess_{args.member_id}", member_id=args.member_id)
+        return 0
+    finally:
+        if _sentinel is not None:
+            # EXEMPT-DU: status-flag
+            _sentinel.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

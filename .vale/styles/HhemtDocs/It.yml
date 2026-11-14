@@ -1,0 +1,7 @@
+extends: existence
+message: 'Name what ''it'' stands for.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\bit\b'

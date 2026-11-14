@@ -9,6 +9,7 @@ Covers:
   deletes the analysis dir (fast_rmtree is now `if from_scratch and not
   dry_run:`-guarded).
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -16,6 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from hhemt.orchestration import translate_mode
+from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV
 
 _MOCK_RESULT = {"success": True, "mode": "local", "snakefile_path": None, "message": "ok"}
 
@@ -49,12 +51,10 @@ def test_translate_mode_resume_unchanged():
 def isolated_multisim_analysis(tmp_path, monkeypatch):
     """Construct-only (skip_run), tmp_path-isolated multisim analysis so the
     from_scratch wipe under test cannot touch any shared session cache."""
-    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
     import tests.fixtures.test_case_catalog as cases
 
-    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
-        start_from_scratch=False, skip_run=True
-    )
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False, skip_run=True)
     return case.analysis
 
 
@@ -94,3 +94,74 @@ def test_run_from_scratch_dry_run_preserves_analysis_dir(isolated_multisim_analy
     with patch.object(analysis, "submit_workflow", return_value=_MOCK_RESULT):
         analysis.run(from_scratch=True, dry_run=True, verbose=False)
     assert sentinel.exists(), "from_scratch dry-run wiped the analysis dir (R5 regression)"
+
+
+@pytest.mark.slow
+def test_share_scratch_root_returns_to_slug_root_and_rearms_the_wipe(monkeypatch):
+    """`share_scratch_root=True` sends the build to the SHARED root AND wipes it there.
+
+    FORBIDS: silently changing either half of the property that grounds the standing
+    REJECT of `share_scratch_root` as a remedy for a build-then-rebuild pair. The wipe at
+    test_case_builder.py:376-377 sits OUTSIDE the isolation `if` at :373, so the opt-out
+    both leaves the private-root branch and re-arms fast_rmtree on the tree other tests
+    read. If someone later moves the wipe inside that `if`, the second assertion here goes
+    red and names what changed -- which is the whole reason this test exists, since the
+    parameter's only caller (scripts/experiments/container_validation.py:151) exercises
+    neither half.
+
+    ANALYSIS NAME IS DELIBERATELY UNIQUE AND THROWAWAY. This test writes into the shared
+    slug root by construction -- that IS the property under test -- so it must not name a
+    tree any other test reads. Nothing else in the corpus uses this name.
+    """
+    from tests.fixtures import worktree_slug
+    from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case, slug_runs_root
+
+    monkeypatch.delenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, raising=False)
+    name = "share_scratch_root_wipe_probe"
+    doomed = slug_runs_root(worktree_slug()) / name
+    doomed.mkdir(parents=True, exist_ok=True)
+    sentinel = doomed / "wiped_by_share_scratch_root.txt"
+    sentinel.write_text("this file must not survive")
+
+    case = retrieve_synth_TRITON_SWMM_test_case(
+        analysis_name=name, start_from_scratch=True, share_scratch_root=True, skip_run=True
+    )
+
+    assert case.system_directory == doomed, (
+        "share_scratch_root=True must keep the SHARED slug root, not the mkdtemp branch"
+    )
+    assert not sentinel.exists(), (
+        "share_scratch_root=True must still re-arm the wipe on the shared root; if the "
+        "fast_rmtree at test_case_builder.py:376-377 moved inside the isolation `if`, "
+        "this is the assertion that tells you"
+    )
+
+
+def test_cached_build_seeds_system_inputs_on_cold_root_and_skips_on_warm(tmp_path, monkeypatch):
+    from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
+
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
+    name = "cold_root_seed_probe"
+
+    # Arm 1 -- cold root, cached build, run-side preprocessing NOT skipped: the
+    # builder must seed the processed DEM itself (R12: it did not, since bc044e89).
+    case = retrieve_synth_TRITON_SWMM_test_case(analysis_name=name, start_from_scratch=False, skip_run=False)
+    dem = case.analysis._system.sys_paths.dem_processed
+    assert dem.exists(), f"cached build on a cold root left the processed DEM absent: {dem}"
+
+    # Arm 2 -- warm root: a second cached build takes the integrity-check skip
+    # branch (system.py::create_dem_for_TRITON) and never rewrites the DEM.
+    mtime_ns = dem.stat().st_mtime_ns
+    retrieve_synth_TRITON_SWMM_test_case(analysis_name=name, start_from_scratch=False, skip_run=False)
+    assert dem.stat().st_mtime_ns == mtime_ns, "warm-root cached build rewrote the DEM instead of skipping"
+
+
+def test_skip_run_cached_build_leaves_system_inputs_absent(tmp_path, monkeypatch):
+    from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
+
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
+
+    # Arm 3 -- skip_run=True builders (the session-scoped *_builder fixtures) stay
+    # preprocessing-free under the cached branch exactly as under the wiping one.
+    case = retrieve_synth_TRITON_SWMM_test_case(analysis_name="skip_run_probe", start_from_scratch=False, skip_run=True)
+    assert not case.analysis._system.sys_paths.dem_processed.exists()

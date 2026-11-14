@@ -4,7 +4,12 @@ Standalone script for setting up the TRITON-SWMM workflow.
 
 This script handles Phase 1 of the consolidated SLURM workflow:
 1. Process system-level inputs (DEM, Mannings files)
-2. Compile enabled model types (TRITON-SWMM, TRITON-only, SWMM)
+2. In native mode, assert that every enabled model type (TRITON-SWMM, TRITON-only,
+   SWMM) already has a successful build. Container mode skips the check, because the
+   SIF carries the binary.
+
+Compiling is opt-in and no emitted setup rule requests it: pass one or more of the
+--compile-* flags below to build from this script by hand.
 
 This script is designed to run as a single task in a heterogeneous SLURM job,
 before the array of simulation tasks begins.
@@ -26,15 +31,14 @@ Exit codes:
     2: Invalid arguments
 """
 
-import sys
 import argparse
-from pathlib import Path
-import traceback
 import logging
+import sys
+import traceback
+from pathlib import Path
 
 from hhemt.log_utils import log_workflow_context
 from hhemt.status_flags import emit_runner_flag as _emit_runner_flag
-
 
 # Configure logging to stderr
 logging.basicConfig(
@@ -44,12 +48,140 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Compile-tier messaging -- ONE expression of the convention for all SIX sites.
+#
+# Since d98802556 (D84 phases 1+2) NO generated Snakefile emits --compile-triton-swmm,
+# --compile-triton-only or --compile-swmm: the setup rule ASSERTS the tier instead of
+# building it. So no message below may tell the reader to pass a compile flag to the
+# WORKFLOW -- that names a remedy no caller on the generated path can supply. Each names
+# the caller's DIRECT invocation instead. Re-emitting the flag from a generated rule is
+# forbidden: it reinstates the shared-_software compile race d98802556 removed (parallel
+# setup rules compiling into one tree behind a lock that does not exclude across nodes).
+#
+# The three model arms carry this convention in two ROLES and both route here:
+#   refused=False   the skip notice. FIRST statement of each `elif _native_compile:` arm,
+#                   so it fires on EVERY native run INCLUDING successful ones -- which is
+#                   why it is one line and carries no command block.
+#   refused=True    the refusal. Nested under `if toggle_X_model and not
+#                   compilation_X_successful:` and followed by `return 1`, so it fires
+#                   only when the run is about to fail -- which is where the full remedy
+#                   belongs and where a reader will actually act on it.
+#
+# `compile_and_preprocess_all_targets` is deliberately NOT named as the remedy: it
+# compiles off `target.system` and carries a build_dir_gpu=None hazard on the GPU path,
+# so naming it would re-commit the defect this message exists to fix. setup_workflow's
+# own main() does the four-kwarg, partition-resolved construction correctly on every
+# model arm, on both CPU and GPU, today.
+# ---------------------------------------------------------------------------
+_COMPILE_TARGETS: dict[str, tuple[str, str]] = {
+    "tritonswmm": ("TRITON-SWMM (coupled model)", "--compile-triton-swmm"),
+    "triton_only": ("TRITON-only", "--compile-triton-only"),
+    "swmm": ("standalone SWMM", "--compile-swmm"),
+}
+
+
+def _compile_tier_message(
+    model_key: str,
+    *,
+    refused: bool,
+    gpu_target: bool = False,
+    hpc_config_present: bool = False,
+) -> str:
+    """Render the compile-tier message for one model arm in one of its two roles.
+
+    Parameters
+    ----------
+    model_key
+        Key into ``_COMPILE_TARGETS`` -- ``"tritonswmm"``, ``"triton_only"`` or ``"swmm"``.
+        That mapping is the single place the model's display label and its direct-invocation
+        compile flag are paired.
+    refused
+        ``False`` renders the one-line skip notice that fires on every native run;
+        ``True`` renders the refusal, which carries the direct-invocation command block.
+    gpu_target
+        Whether the DIRECT invocation needs ``--target-partition``, which is genuinely
+        GPU-only. **Read only when ``refused=True``.** When true the command block names
+        ``--target-partition`` (and, via the disjunction below, ``--hpc-system-config``),
+        because both are ``required=False`` and ``resolve_gpu_target`` returns ``(None, None)``
+        SILENTLY when either is absent -- so a GPU user following a message that named only
+        the two required configs would get a CPU-only build and land back in this same
+        refusal with no indication why.
+
+        Every caller passes ``bool(system.gpu_compilation_backend)``, INCLUDING the
+        ``"swmm"`` arm, and that is deliberate rather than an oversight to tidy up. The
+        question this flag answers is not "does THIS model have a GPU build" (standalone SWMM
+        has none) but "does this INVOCATION need those flags to get past the GPU preflight
+        guard". Under an analysis with ``n_gpus > 0`` that guard raises ``ConfigurationError``
+        for ANY direct ``setup_workflow`` invocation missing them -- a ``--compile-swmm`` one
+        included -- so hardcoding ``False`` for SWMM would hand a GPU-analysis operator a
+        command that cannot run.
+    hpc_config_present
+        Whether the invocation that is printing this refusal itself received
+        ``--hpc-system-config``. **Read only when ``refused=True``.** Every caller passes
+        ``args.hpc_system_config is not None``.
+
+        This is a SEPARATE parameter from ``gpu_target`` because ``--hpc-system-config`` carries
+        TWO payloads and only one of them is GPU-conditioned:
+
+        1. ``resolve_gpu_target(cfg_hpc, partition)`` -- the GPU payload. Correctly GPU-gated.
+        2. ``resolve_additional_modules(cfg_hpc)`` -- the cluster's ``module load`` set
+           (``setup_workflow`` main() at the ``additional_modules = ...`` binding). NOT
+           GPU-conditioned: ``additional_modules`` is a CLUSTER-level ``hpc_system_config``
+           field, so the resolve depends only on whether the config was supplied at all.
+           It returns ``None`` with no config, which makes ``system.additional_modules`` falsy
+           and makes all three compile paths skip their ``module load`` emission outright --
+           ``system.py`` ``_compile_backend_locked`` (reached from ``compile_TRITON_SWMM`` via
+           ``_compile_backend``), ``_compile_triton_only_backend_locked`` (from
+           ``compile_TRITON_only`` via ``_compile_triton_only_backend``) and
+           ``_compile_SWMM_locked`` (from ``compile_SWMM`` directly), each guarded
+           ``if self.additional_modules:``.
+
+        MEASURED, on a profile this repository ships rather than a hypothetical:
+        ``test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml`` declares
+        ``additional_modules: ['gcc/12.4.0']`` at cluster level and a ``standard`` partition
+        with no ``gpu_compilation_backend``. A CPU analysis on that partition takes the
+        ``gpu_target=False`` branch while the generated setup rule DID pass
+        ``--hpc-system-config`` (``workflow.py::_get_config_args`` emits it whenever the
+        analysis carries one). Gating this flag on ``gpu_target`` therefore printed a remedy
+        that compiles with no ``module load gcc/12.4.0`` on the cluster whose libstdc++ and
+        MPI resolution that module stack determines -- the same "remedy the reader cannot act
+        on" defect this message exists to remove, relocated rather than fixed.
+
+        The flag is emitted on ``gpu_target or hpc_config_present``. The disjunction is
+        deliberate and is NOT redundancy to tidy away: ``gpu_target`` is truthy only when a
+        backend resolved, which is only possible with a config supplied, so on every reachable
+        path it implies ``hpc_config_present`` -- but keeping it means a caller that supplies
+        either signal gets a correct command, and on a printed remedy the fail-OPEN direction
+        (naming a flag the reader has) is harmless while the fail-CLOSED one is the defect.
+    """
+    model_label, compile_flag = _COMPILE_TARGETS[model_key]
+    if not refused:
+        return (
+            f"Not compiling {model_label} in this rule: the build is the caller's "
+            "responsibility and is performed before workflow submission (this rule asserts "
+            "that a build exists, it does not produce one)."
+        )
+    command_lines = [
+        "    python -m hhemt.setup_workflow \\",
+        "        --system-config {system.yaml} \\",
+        "        --analysis-config {analysis.yaml} \\",
+    ]
+    if gpu_target or hpc_config_present:
+        command_lines.append("        --hpc-system-config {hpc_system.yaml} \\")
+    if gpu_target:
+        command_lines.append("        --target-partition {partition} \\")
+    command_lines.append(f"        {compile_flag}")
+    return (
+        f"{model_label} is enabled in the system config but no successful build was found. "
+        "This rule asserts that a build exists; it does not produce one, and no generated "
+        "workflow requests a compile. Build it as the caller, before resubmitting:\n" + "\n".join(command_lines)
+    )
+
 
 def main() -> int:
     """Main entry point for workflow setup."""
-    parser = argparse.ArgumentParser(
-        description="Setup TRITON-SWMM workflow: process system inputs and compile"
-    )
+    parser = argparse.ArgumentParser(description="Setup TRITON-SWMM workflow: process system inputs and compile")
     parser.add_argument(
         "--system-config",
         type=Path,
@@ -155,11 +287,11 @@ def main() -> int:
 
     try:
         # Import here to avoid import errors if dependencies are missing
-        from hhemt.system import TRITONSWMM_system
         from hhemt.analysis import TRITONSWMM_analysis
-        from hhemt.config.loaders import load_hpc_system_config, load_analysis_config
-        from hhemt.config.hpc_system import resolve_gpu_target, resolve_additional_modules
+        from hhemt.config.hpc_system import resolve_additional_modules, resolve_gpu_target
+        from hhemt.config.loaders import load_analysis_config, load_hpc_system_config
         from hhemt.exceptions import ConfigurationError
+        from hhemt.system import TRITONSWMM_system
 
         # Log workflow context for traceability
         log_workflow_context(logger)
@@ -176,9 +308,7 @@ def main() -> int:
         # takes `system` as a constructor arg — so the flag is read directly here).
         # Drives BOTH the system's libstdc++ mode-guard injection and the compile-skip
         # gate below. False in native mode (byte-identical).
-        _exec_env_container = (
-            load_analysis_config(args.analysis_config).execution_environment == "container"
-        )
+        _exec_env_container = load_analysis_config(args.analysis_config).execution_environment == "container"
         system = TRITONSWMM_system(
             args.system_config,
             gpu_hardware=gpu_hardware,
@@ -211,13 +341,25 @@ def main() -> int:
                 ),
                 config_path=str(args.hpc_system_config) if args.hpc_system_config else None,
             )
-        any_compile = (
-            args.compile_triton_swmm or args.compile_triton_only or args.compile_swmm
+        any_compile = args.compile_triton_swmm or args.compile_triton_only or args.compile_swmm
+        # ASSERT-NOT-BUILD (D84). With the compile flags removed from every emitted
+        # setup rule, `any_compile` is False for every workflow-driven invocation, so
+        # this early return became reachable for the first time -- and it emits the
+        # completion flag WITHOUT reaching the three verify arms below. That is
+        # fail-OPEN at the one rule whose remaining job is to assert the tier.
+        # Scoped to NATIVE mode on purpose: ADR-1/M-7 (see the comment at the
+        # `_native_compile` binding below) records that container mode skips both the
+        # compile and its enabled-but-not-compiled verification guard, because the SIF
+        # carries the binary. Gating on `_native_compile` here is not available -- it
+        # binds 29 lines below this point -- so this reads `_exec_env_container`
+        # directly, which is bound above at :176 and is the same fact.
+        _tier_must_be_asserted = not _exec_env_container and (
+            system.cfg_system.toggle_tritonswmm_model
+            or system.cfg_system.toggle_triton_model
+            or system.cfg_system.toggle_swmm_model
         )
-        if (not any_compile) and not (args.process_system_inputs):
-            logger.info(
-                "No compilation or processing flags were passed. Doing nothing."
-            )
+        if (not any_compile) and not (args.process_system_inputs) and not _tier_must_be_asserted:
+            logger.info("No compilation or processing flags were passed. Doing nothing.")
             _emit_runner_flag(args)
             return 0
 
@@ -235,9 +377,7 @@ def main() -> int:
                 logger.error(traceback.format_exc())
                 return 1
         else:
-            logger.info(
-                "Skipping system-level input processing (--process-system-inputs not specified)"
-            )
+            logger.info("Skipping system-level input processing (--process-system-inputs not specified)")
 
         # ADR-1/M-7 (SE Spec 6): in container mode the SIF carries the pre-compiled
         # binary (built off-site), so the on-cluster compile AND its enabled-but-not-
@@ -248,9 +388,230 @@ def main() -> int:
         # mode (byte-identical) and to a no-op in container mode.
         _native_compile = not _exec_env_container
         if not _native_compile:
-            logger.info(
-                "Container mode — skipping on-cluster compile (SIF carries the binary)"
-            )
+            logger.info("Container mode — skipping on-cluster compile (SIF carries the binary)")
+            # Container-mode solver provenance. The native capture
+            # (system.py::_capture_tritonswmm_provenance) is UNREACHABLE here: both of
+            # its call sites (system.py:645, :1486) live inside the two compiles this
+            # branch skips, and container mode clones no TRITON tree for it to read.
+            # Left unhandled, system.log.triton_head_sha stays unset ->
+            # processing_analysis._stamp_triton_provenance omits the root attr ->
+            # every model_defects verdict resolves "indeterminate / no_producing_sha"
+            # and check_coupled_resume_validity reports INDETERMINATE. On a SHARED
+            # system_directory the field can instead retain a sha written by an earlier
+            # NATIVE compile, which is worse than absence: it names a binary that did
+            # not produce the data. The image carries the producing sha as an OCI
+            # label, so read it and write the SAME field the native path writes —
+            # every downstream consumer is then unchanged.
+            #
+            # Weaker than the native path by design: this TRUSTS the image's label
+            # rather than verifying a git tree (system.py::_verify_tritonswmm_pin is
+            # likewise skipped here). A mislabelled image is believed. That is still
+            # strictly better than the unanchored status quo, and a label/filename
+            # disagreement is visible to an operator.
+            #
+            # TWO ARMS, sandbox first. An apptainer SANDBOX DIRECTORY exposes its
+            # labels as a plain JSON file, so that arm needs no `apptainer` binary at
+            # all and is tried first unconditionally. A packed .sif exposes them only
+            # through `apptainer inspect` — and on a cluster where apptainer is
+            # module-only (UVA Rivanna) the bare argv form CANNOT run: measured
+            # `bash -c "apptainer inspect --json {sif}"` -> rc 127 `command not found`,
+            # while `bash -c "module load apptainer/1.5.0 && apptainer inspect …"` ->
+            # rc 0 with the label recovered. `apptainer_module` is consumed at exactly
+            # two other sites (workflow.py process rung, run_simulation.py sim rung)
+            # and at NEITHER is it the setup rung, so without the prefix here the .sif
+            # arm is dead on any module-gated cluster. Emitting the module load from
+            # the TOOLKIT rather than asking each estate to widen additional_modules
+            # keeps containerization a first-class toolkit feature and fixes every
+            # such cluster at once.
+            #
+            # Prefixed-then-plain, mirroring workflow.py::_tmux_session_is_live's
+            # ATTEMPT-LIST structure (its retry PREDICATE is widened below — see the
+            # three-valued split at the non-zero-rc branch): the
+            # prefixed form answers on a module-gated cluster, and the plain fallback
+            # answers where apptainer is on the default PATH with no modulefile
+            # (Frontier), where the prefixed form would short-circuit. When
+            # apptainer_module is None/empty the attempt list is the plain form alone
+            # — byte-identical to a deployment that never had a module.
+            #
+            # Graceful-absent throughout: EVERY failure route leaves the field unset,
+            # which downstream already reads as INDETERMINATE — never a false claim.
+            try:
+                import json as _json
+                import shlex as _shlex
+                import subprocess as _subprocess
+
+                from hhemt.config.hpc_system import resolve_container_spec
+
+                _cspec = resolve_container_spec(cfg_hpc)
+                _labels: dict = {}
+                _inspect_ran = False
+                _image_error: str | None = None
+                if _cspec is not None and _cspec.sif_root:
+                    from hhemt.sif.identity import manifest_path, resolve_sif
+
+                    _sif = resolve_sif(_cspec.sif_root, analysis._sif_identity_for(args.target_partition))
+                    _man = manifest_path(_sif)
+
+                    # ADR-19 (ii-a) — the SIF's own content digest, captured HERE.
+                    #
+                    # DELIBERATELY INDEPENDENT OF THE LABEL READ BELOW, and placed before
+                    # it, because the two have DIFFERENT failure modes and must not share
+                    # a fate: hashing needs no `apptainer` binary and no modulefile, so an
+                    # image whose labels cannot be read still yields a digest. Folding it
+                    # into the inspect branches would make a module problem silently cost
+                    # the digest too.
+                    #
+                    # GATED ON is_file() because `_sif` is a DIRECTORY in the sandbox
+                    # branch below (`.singularity.d/labels.json` is a plain file inside
+                    # it). A sandbox container has no single blob to digest, so no digest
+                    # is recorded and the absence reads as "not captured" downstream —
+                    # never as "native run".
+                    #
+                    # Reuses `_sha256_file` rather than adding an eighth streaming-sha256
+                    # implementation to this codebase: the case-manifest stipulation binds
+                    # every sha256 the toolkit emits or verifies to that 1 MiB-chunk form,
+                    # so emit-side and verify-side agree by construction. Function-local
+                    # import, matching this block's own idiom.
+                    if _sif.is_file():
+                        try:
+                            import json as _json
+
+                            from hhemt.bundle._emit import _sha256_file
+
+                            _sif_digest = (
+                                _json.loads(_man.read_text())["sha256"] if _man.is_file() else _sha256_file(_sif)
+                            )
+                            system.log.sif_sha256.set(_sif_digest)
+                            system.log.write()
+                            logger.info(f"[Provenance] container SIF sha256 {_sif_digest[:12]}… ({_sif})")
+                        except Exception as _dexc:
+                            # Never fail setup on a provenance read. Absence is honest.
+                            logger.warning(
+                                f"Container mode: could not digest {_sif} ({_dexc}); the "
+                                "bundle will carry no SIF sha256 and a reprex round-trip "
+                                "will report it as unverifiable rather than verified."
+                            )
+
+                    _sandbox_labels = _sif / ".singularity.d" / "labels.json"
+                    if _sandbox_labels.is_file():
+                        # Sandbox directory: labels are a plain file. No binary, no
+                        # module, no subprocess.
+                        _labels = _json.loads(_sandbox_labels.read_text()) or {}
+                        _inspect_ran = True
+                    else:
+                        # Packed .sif: only `apptainer inspect` can read the labels.
+                        _q_sif = _shlex.quote(str(_sif))
+                        _inspect = f"apptainer inspect --json {_q_sif}"
+                        _mod = getattr(_cspec, "apptainer_module", None)
+                        _attempts = ([f"module load {_shlex.quote(_mod)} && {_inspect}"] if _mod else []) + [_inspect]
+                        for _cmd in _attempts:
+                            try:
+                                _r = _subprocess.run(
+                                    ["bash", "-c", _cmd],
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=120,
+                                )
+                            except (OSError, _subprocess.TimeoutExpired):
+                                continue
+                            if _r.returncode != 0:
+                                # THREE-VALUED, and the split is measured rather than
+                                # assumed (UVA Rivanna, read-only):
+                                #   rc 127  + "command not found"      -> binary absent
+                                #   rc 1    + "Lmod has detected …"    -> bad modulefile
+                                #   rc 255  + "FATAL: Failed to open"  -> bad IMAGE
+                                # The first two mean the FORM could not run the tool, so
+                                # the next form may still answer — retry. The third means
+                                # apptainer RAN and rejected the image, which the next
+                                # form cannot change — stop and report it AS an image
+                                # problem. A bare `!= 0 -> continue` sends a corrupt-image
+                                # operator to fix their MODULE; a bare `== 127 -> continue`
+                                # sends a wrong-modulefile operator to inspect a perfectly
+                                # good CONTAINER. Both are the same wrong-remedy defect in
+                                # opposite directions, which is why neither is used.
+                                #
+                                # Contrast workflow.py::_tmux_session_is_live, whose
+                                # `rc == 127 or "command not found"` IS complete: `tmux
+                                # has-session` returns non-zero for exactly one meaningful
+                                # reason. This probe is a `module load X && …` COMPOUND
+                                # with two failure producers in series plus the tool, so it
+                                # needs one more term, not fewer.
+                                _err = f"{_r.stderr}".lower()
+                                if _r.returncode == 127 or "command not found" in _err or "lmod has detected" in _err:
+                                    continue
+                                # The tool ran and refused the image. Keep the first line
+                                # of its own diagnosis; it is more specific than anything
+                                # reconstructable from the return code.
+                                _image_error = (f"{_r.stderr}".strip().splitlines() or ["(no stderr)"])[0]
+                                break
+                            _inspect_ran = True
+                            _labels = (
+                                ((_json.loads(_r.stdout) or {}).get("data") or {})
+                                .get("attributes", {})
+                                .get("labels", {})
+                            ) or {}
+                            break
+                from hhemt.container_labels import SWMM_VERSION_LABEL, TRITON_SHA_LABEL
+
+                _sha = _labels.get(TRITON_SHA_LABEL)
+                # Contract axis 4 in container mode. The labels dict is ALREADY parsed
+                # here, so reading the SWMM version off it costs one lookup and adds no
+                # failure mode. Normalized to the same KIND the native capture writes
+                # (leading "v" stripped) so a mixed-mode campaign cannot appear to
+                # disagree on shape alone. No sha is recorded: a SIF label carries none,
+                # and inferring one from the tag would fabricate a measurement.
+                #
+                # Both labels are MEASURED from the built tree, not declared: every recipe
+                # under src/hhemt/sif/recipes/ writes them in %post, the TRITON sha from
+                # `git -C /opt/triton rev-parse HEAD` (the build fails when it differs from
+                # the requested sha) and the SWMM tag from `git -C /opt/swmm-src describe
+                # --tags --exact-match HEAD`. Preflight then compares the TRITON label with
+                # the configured sha, and the SWMM label with the declared tag when one is
+                # declared (sif/preflight.py).
+                _swmm_ver = _labels.get(SWMM_VERSION_LABEL)
+                if _swmm_ver:
+                    system.log.standalone_swmm_producing_version.set(str(_swmm_ver).lstrip("vV"))
+                if _sha:
+                    system.log.triton_head_sha.set(str(_sha))
+                if _sha or _swmm_ver:
+                    system.log.write()
+                if _sha:
+                    logger.info(f"[Provenance] container TRITON producing sha {_sha}")
+                elif _inspect_ran:
+                    # The image WAS read and carries no label — an image defect.
+                    logger.warning(
+                        "Container mode: no org.hhemt.triton_sha label found on "
+                        f"{_sif} — the consolidated tree "
+                        "will carry no triton_producing_sha, and every model-defect "
+                        "verdict will resolve INDETERMINATE."
+                    )
+                elif _image_error is not None:
+                    # apptainer RAN and REFUSED the image — an image problem, not a
+                    # module one. Quoting its own FATAL line is what stops an operator
+                    # from being sent to fix `container.apptainer_module` over a
+                    # corrupt, truncated, or wrong-format container.
+                    logger.warning(
+                        "Container mode: `apptainer inspect` could not read "
+                        f"{_sif} — {_image_error}. "
+                        "Provenance was NOT captured; the container itself is "
+                        "unreadable, so re-transfer or rebuild it. The apptainer "
+                        "module loaded correctly, so container.apptainer_module is "
+                        "NOT the problem."
+                    )
+                else:
+                    # No form could RUN apptainer — a MISSING/WRONG MODULE, not a
+                    # label-less image. Kept as a distinct message so an operator is
+                    # not sent to inspect a perfectly good container.
+                    logger.warning(
+                        "Container mode: could not run `apptainer inspect` on "
+                        f"{_sif} in any form "
+                        f"(container.apptainer_module={getattr(_cspec, 'apptainer_module', None)!r}). "
+                        "Provenance was NOT captured; set container.apptainer_module to "
+                        "the cluster's apptainer modulefile, or ship a sandbox-directory "
+                        "container whose labels need no binary."
+                    )
+            except Exception as _prov_exc:  # never fail setup on a provenance read
+                logger.warning(f"Container-mode TRITON provenance capture failed: {_prov_exc}")
 
         # Phase 1b: Compile TRITON-SWMM (coupled model)
         if _native_compile and args.compile_triton_swmm:
@@ -266,28 +627,24 @@ def main() -> int:
                     logger.error("TRITON-SWMM: No backends compiled successfully")
                     logger.error(f"CPU log:\n{system.retrieve_compilation_log('cpu')}")
                     if system.gpu_compilation_backend:
-                        logger.error(
-                            f"GPU log:\n{system.retrieve_compilation_log('gpu')}"
-                        )
+                        logger.error(f"GPU log:\n{system.retrieve_compilation_log('gpu')}")
                     return 1
-                logger.info(
-                    f"TRITON-SWMM available backends: {', '.join(system.available_backends)}"
-                )
+                logger.info(f"TRITON-SWMM available backends: {', '.join(system.available_backends)}")
             except Exception as e:
                 logger.error(f"Failed to compile TRITON-SWMM: {e}")
                 logger.error(traceback.format_exc())
                 return 1
         elif _native_compile:
-            logger.info(
-                "Skipping TRITON-SWMM compilation (--compile-triton-swmm not specified)"
-            )
+            logger.info(_compile_tier_message("tritonswmm", refused=False))
             # Verify compilation if model is enabled
-            if (
-                system.cfg_system.toggle_tritonswmm_model
-                and not system.compilation_successful
-            ):
+            if system.cfg_system.toggle_tritonswmm_model and not system.compilation_successful:
                 logger.error(
-                    "TRITON-SWMM is enabled but not compiled and --compile-triton-swmm not specified"
+                    _compile_tier_message(
+                        "tritonswmm",
+                        refused=True,
+                        gpu_target=bool(system.gpu_compilation_backend),
+                        hpc_config_present=args.hpc_system_config is not None,
+                    )
                 )
                 return 1
 
@@ -311,10 +668,7 @@ def main() -> int:
                 if not system.compilation_triton_only_cpu_successful:
                     logger.error("TRITON-only CPU compilation failed")
                     return 1
-                if (
-                    system.gpu_compilation_backend
-                    and not system.compilation_triton_only_gpu_successful
-                ):
+                if system.gpu_compilation_backend and not system.compilation_triton_only_gpu_successful:
                     logger.error("TRITON-only GPU compilation failed")
                     return 1
                 logger.info("TRITON-only compiled successfully")
@@ -323,16 +677,16 @@ def main() -> int:
                 logger.error(traceback.format_exc())
                 return 1
         elif _native_compile:
-            logger.info(
-                "Skipping TRITON-only compilation (--compile-triton-only not specified)"
-            )
+            logger.info(_compile_tier_message("triton_only", refused=False))
             # Verify compilation if model is enabled
-            if (
-                system.cfg_system.toggle_triton_model
-                and not system.compilation_triton_only_successful
-            ):
+            if system.cfg_system.toggle_triton_model and not system.compilation_triton_only_successful:
                 logger.error(
-                    "TRITON-only is enabled but not compiled and --compile-triton-only not specified"
+                    _compile_tier_message(
+                        "triton_only",
+                        refused=True,
+                        gpu_target=bool(system.gpu_compilation_backend),
+                        hpc_config_present=args.hpc_system_config is not None,
+                    )
                 )
                 return 1
 
@@ -355,14 +709,16 @@ def main() -> int:
                 logger.error(traceback.format_exc())
                 return 1
         elif _native_compile:
-            logger.info("Skipping SWMM compilation (--compile-swmm not specified)")
+            logger.info(_compile_tier_message("swmm", refused=False))
             # Verify compilation if model is enabled
-            if (
-                system.cfg_system.toggle_swmm_model
-                and not system.compilation_swmm_successful
-            ):
+            if system.cfg_system.toggle_swmm_model and not system.compilation_swmm_successful:
                 logger.error(
-                    "SWMM is enabled but not compiled and --compile-swmm not specified"
+                    _compile_tier_message(
+                        "swmm",
+                        refused=True,
+                        gpu_target=bool(system.gpu_compilation_backend),
+                        hpc_config_present=args.hpc_system_config is not None,
+                    )
                 )
                 return 1
 

@@ -1,0 +1,1638 @@
+# An entry exempts ONE (renderer, caption) PAIR from the caption-pairing
+# requirement, for the EXACT renderer content recorded in renderer_sha256.
+#
+# Keyed by the PAIR, not by the renderer: a module-keyed exemption would let one
+# justification cover every caption that module owns -- six, for
+# eda_compute_sensitivity -- which is a blanket rather than an exemption. One
+# justification covers one re-read. The verbosity is deliberate: it makes "one
+# sentence covers six documents" unwriteable.
+#
+# The digest makes the exemption EXPIRE. Change the renderer again and it stops
+# matching, so the guard fires and someone re-reads the caption. Compare
+# _layout_relevant_files.yaml's non_breaking_allowlist, whose scenario.py entry
+# has already accreted "Two collapsed non-breaking changes" because a path-keyed
+# exemption never expires -- the permanent-hole outcome, already realised in the
+# sibling machinery this guard is modelled on.
+#
+# KNOWN-STALE EXEMPTION, DISCLOSED RATHER THAN RE-RECORDED (2026-09-01)
+#
+# `sensitivity_benchmarking` below carries a digest that no longer matches its
+# renderer. The renderer was changed by the docs-and-experiment-system merge
+# cleanup -- an E402 import hoist plus a whole-tree ruff-format pass -- and the
+# recorded digest predates both.
+#
+# It is NOT re-recorded, deliberately. Re-recording would stamp a fresh "someone
+# looked" claim onto a caption nobody re-read, which is the false artifact this
+# file's own header warns about one paragraph up. A disclosed stale exemption is
+# honest; a silently refreshed one is not.
+#
+# WHY THE GUARD DOES NOT REPORT IT. main() skips a pair before consulting the
+# allowlist at all: `if renderer_rel not in changed or caption_rel in changed:
+# continue`. Both disjuncts have fired here at different moments -- at merge time
+# the merge had also edited the caption, and post-merge the renderer is simply no
+# longer in the diff against the base ref. Either way the stale-digest branch is
+# unreachable, so the guard is silent about it.
+#
+# WHEN IT WILL FIRE. The first commit that changes
+# `src/hhemt/report_renderers/sensitivity_benchmarking.py` WITHOUT also touching
+# `src/hhemt/report_templates/captions/sensitivity_benchmarking.rst`. At that point
+# the pair reaches the allowlist, the digest mismatches, and the guard emits a
+# stale-exemption message citing a digest from before this merge. That is the
+# guard working. The correct response then is to re-read the caption and either
+# edit it or re-record the digest with a fresh justification -- not to assume the
+# staleness is this note's leftover.
+#
+# DISCHARGED 2026-09-04. It fired exactly as predicted -- on a commit that changes the
+# renderer (FR-7, an error-path-only diagnostic) and not the caption. The caption was
+# re-read in full, the digest re-recorded, and the intervening merge-cleanup layer shown
+# import/format-only by AST measurement. The paragraphs above are RETAINED rather than
+# deleted: the prediction and its discharge are the evidence that this guard's expiry
+# mechanism works, and that is worth more than a tidy file. Only the sentence "It is NOT
+# re-recorded, deliberately" is now historical -- it describes the state until 2026-09-04.
+#
+unpaired_allowlist:
+  - renderer: sensitivity_benchmarking
+    caption: src/hhemt/report_templates/captions/sensitivity_benchmarking.rst
+    renderer_sha256: 5d10ed18e19e3d88ed087df7df8e2e4be2999d9b8ca3f66196beff0cdd6d015c
+    justification_2026_11_13_1g1_removed_event_active_member: >-
+      Re-read 2026-11-13 against this renderer's diff (git diff HEAD -- src/hhemt/report_renderers/sensitivity_benchmarking.py).
+      The one added branch routes an active SWMM-only member's removed event through the record-backed handle already used
+      for a removed member, so the row reads the SWMM total elapsed time captured in its record. The caption was read in full:
+      it states the time against the independent variable, the slowest-rank wall-clock summed over restarts for a TRITON or
+      TRITON-SWMM member, the aggregation statistic and the per-axis scaling, and makes no claim about a SWMM-only member's
+      source file or where a removed event is read from, so every clause is still true. PAIRING discharge on a re-read; the
+      digest expires on the next change to this renderer.
+    justification_2026_11_10_member_key_constant: >-
+      Re-read 2026-11-10 by the coordinator against this renderer's diff since the last recorded digest
+      (git diff cfb8cb37 -- src/hhemt/report_renderers/sensitivity_benchmarking.py). The diff is one line in _collect_rows: the
+      dictionary key "sa_id" of the appended row becomes the module constant _MEMBER_KEY, whose value is "sa_id"
+      (_MEMBER_KEY = "sa_id" in the same module), so the row carries the same key as before. The caption states the measured
+      time, the slowest-rank wall-clock summed over restarts, the aggregation statistic and the per-axis scaling; it names no
+      member key and no column (grep -c -i -E 'sa_id|member key' on the caption returns 0). Every clause of the caption is true
+      of the changed renderer. This is a PAIRING discharge on a re-read, and the digest above is recorded at the changed
+      renderer content, so this exemption expires on the next change to the renderer.
+    justification_2026_11_09_1e3_removed_scenarios_sensitivity_benchmarking: >-
+      (Includes the later hunk that reaches the member enumeration through the helper all_members_for_reading_of and one import line; no displayed text moved.) Re-read 2026-11-09 against this renderer's diff (git diff HEAD -- src/hhemt/report_renderers/sensitivity_benchmarking.py). The hunks iterate every member including a removed one through a read-only view, and add one branch: the row of a removed SWMM-only member reads the SWMM total elapsed time captured in its record, with the record file as the declared source in place of the removed report. The caption was read in full. It states the time against the independent variable, that for a TRITON or TRITON-SWMM member the value is the slowest-rank wall-clock summed over restarts for the named phase, the aggregation statistic under report.sensitivity and the per-axis scaling. It makes no claim about a SWMM-only member's source file or about where a removed member's data is read from, and the dataset read for the TRITON arms, its dimension and its column are unchanged, so every clause is still true. PAIRING discharge on a re-read; the digest expires on the next change to this renderer.
+    justification_2026_11_08_1d1_summary_branch_paths: >-
+      Re-read 2026-11-08 by the coordinator against this renderer's diff (git diff -- src/hhemt/report_renderers/sensitivity_benchmarking.py).
+      The diff holds five hunks: three are comments, docstrings and one diagnostic message that now name the
+      tritonswmm/performance/summary and triton_only/performance/summary node paths; one is the probe tuple in _find_perf_node,
+      which now reads the same performance dataset one level deeper, at the summary branch the datatree layout 31 gives every
+      group. The caption states the measured time, the slowest-rank wall-clock summed over restarts, the aggregation statistic and
+      the per-axis scaling; it names no store path and no node path (grep -c summary returns 0 on the caption), and the dataset
+      read, its dimension and its column are unchanged. Every clause of the caption is true of the changed renderer. This is a
+      PAIRING discharge on a re-read. Digest recorded at the changed renderer content, so this exemption expires on the next
+      change to the renderer.
+    justification_2026_11_04_3c10_comments: >-
+      Re-read 2026-11-04 against this renderer's diff (removal of the unread gpu_marker setting). The
+      diff holds four hunks, all comment lines: the module note and two notes in _draw_panel that named the removed
+      sens_cfg.gpu_marker are reworded. Measured: the AST of the file at HEAD equals the AST of the working file, and
+      the same comparison with one string constant changed in a scratch copy reports a difference, so no code line,
+      label, title, default or displayed string moved. The caption was read in full. It states the plotted time, the
+      slowest-rank wall-clock meaning, the aggregation statistic and the matplotlib minimum, and the axis scaling; it
+      names neither gpu_marker nor the reworded notes, so no clause is falsified, weakened or left ambiguous and there
+      is no caption edit to make. Digest recorded at the post-change renderer, so this exemption expires on the next
+      change to the renderer.
+    justification_2026_11_04_develop_merge: >-
+      Re-read 2026-11-04 against this renderer as merged with develop at layout 28, after
+      the caption was edited. The merge brought in develop's edits to the file: a wall_label
+      helper that names the time axis for the measure plotted (SWMM elapsed time when every member runs
+      SWMM only, Wall-clock time otherwise), one reworded hover label, and the matching y-axis title in
+      the matplotlib and plotly branches. The caption on disk is develop's text plus one sentence added
+      by that edit. The caption was read in full. It states that the y-axis title names the measure and that
+      a TRITON or TRITON-SWMM member plots the slowest-rank wall-clock time summed over restarts, which
+      the merged renderer does. The added sentence states that the plotly backend collapses the
+      replicates of each configuration by the aggregation statistic before the best configuration per
+      device count is chosen, which is the read at sensitivity_benchmarking.py line 826
+      (sens_cfg.aggregation, inside the use_plotly branch) and line 2564 (_plotly_metric_panel), and
+      that the matplotlib backend takes the minimum over the individual runs, which _draw_panel does at
+      the per_x_min line and which reads no aggregation. Every clause is true of the merged renderer.
+      This is a PAIRING discharge on a re-read. Digest recorded at the merged renderer content, so this
+      exemption expires on the next change to the renderer.
+    justification_2026_11_02_develop_integration: >-
+      Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that the store opens go through `open_store`, with no change to any displayed text.
+      Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
+      This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
+    justification_2026_11_02_consolidated_metadata: >-
+      Re-read 2026-11-02 against this renderer's diff (chunk 3a.2, consolidated metadata). The only hunks
+      replace two xr.open_datatree(..., consolidated=False) calls with utils.open_store(...) and add its
+      import; the store is read through its index when it carries one and the values returned are the same.
+      The caption's claims (the dependent variable, the aggregation mode, the axis auto-scaling) concern what is
+      plotted and none is touched, so no clause is falsified, weakened or left ambiguous and there is no caption
+      edit to make. Digest recorded at the post-change renderer, so this exemption expires on the next change.
+    justification_2026_10_18: >-
+      Re-read 2026-10-18. The reporting-system change altered one docstring word only
+      (raw_resume_identity -> raw_byte_identity, the module's current name); with docstrings
+      stripped the renderer is AST-identical to HEAD, so no emitted column, unit or panel
+      moved. The caption's words are unchanged; its axis-range paragraph was moved above the
+      Sources heading, where it had been rendering as part of the sources block.
+    justification_2026_09_30: >-
+      WP-3D: the wallclock-safe allowlist widened from three literals to six, and
+      `_WALLCLOCK_SAFE_COLS` moved from a `render()`-local set to a module constant so the
+      sole gate on this figure's axis is importable and therefore testable. THIRD FIRING of
+      the 2026-09-01 header note, discharged the way that note prescribes: the caption was
+      re-read IN FULL and the digest re-recorded, not written off as leftover staleness.
+      NO CURRENTLY-RENDERED CAPTION GOES STALE, and the reason is that every one of the
+      caption's six claims is keyed to the DEFAULT dependent variable `performance.Total`,
+      which this change does not move. The widening ADDS five admissible alternatives
+      (`Simulation`, and the `_coherent` forms of `Total` / `Simulation` / `Init`); it
+      changes neither the default nor what is plotted when the default is in force. Nothing
+      in the tree configures a non-default `dependent_var` today.
+      ONE LATENT GAP IS RECORDED RATHER THAN REPAIRED, because it is conditional on a
+      configuration that does not yet exist. Line 3 describes the dependent variable as
+      "slowest-rank wallclock (max across MPI ranks of per-rank cumulative deltas)". That is
+      true of `performance.Total` and FALSE of a `_coherent` column, which is a single-rank
+      read at the rank attaining max(Total) rather than a per-column max across ranks. So
+      the first time an operator sets `dependent_var: performance.Init_coherent` this caption
+      will assert the wrong reduction. The clause owed is one sentence distinguishing the two
+      domains; it is routed to the WP-3 coordinator rather than written here, because the
+      caption is a separate file outside this package's declared edits surface and no
+      rendered artifact is currently wrong.
+      THE RE-READ WAS PERFORMED, claim by claim. Independent variable: untouched. Dependent
+      variable default and its slowest-rank semantics: default untouched, semantics now
+      incomplete-not-false as recorded above. Restart-safety: untouched. The per-member
+      `aggregation` mode: untouched. SWMM-only routing to `swmm_full_rpt_file` Total elapsed
+      via `swmm_output_parser.parse_total_elapsed`: untouched -- that branch does not consult
+      the allowlist. Per-report axis auto-scaling and the cross-arm comparison warning:
+      untouched.
+    justification_2026_09_08: >-
+      Defect 1 of the twelve-red set (the experiment-tree reader conversion). THIS IS THE
+      SECOND FIRING THE 2026-09-01 HEADER NOTE PREDICTED, discharged the way that note
+      prescribes: the caption was re-read IN FULL and the digest re-recorded, not written
+      off as leftover staleness.
+      THE CHANGE IS PATH-RESOLUTION ONLY, ON TWO READ SITES. S1 and S2 replace
+      `analysis_paths.sensitivity_datatree_zarr` with
+      `hhemt.utils.resolve_experiment_tree(analysis_dir)` at the `if not rows:` diagnostic
+      and inside `_collect_rows`. No branch is added, no series is added or removed, and
+      nothing about WHAT is plotted or HOW it is aggregated moves.
+      THE RE-READ WAS PERFORMED. The caption makes six claims: the independent variable it
+      is keyed on; the dependent variable's default and its slowest-rank wallclock
+      semantics under the `wallclock reduction uses max over rank` stipulation;
+      restart-safety; the per-member `aggregation` mode from report_config.yaml; the
+      SWMM-only routing to `swmm_full_rpt_file` Total elapsed via
+      `swmm_output_parser.parse_total_elapsed`; and the per-report axis auto-scaling caveat
+      with its cross-arm comparison warning. Every one describes the quantity plotted or
+      the axis it is plotted on. None names a store filename, so none can have gone stale
+      under a change that only decides WHICH store path is opened.
+      ONE CONSEQUENCE IS REAL AND IT IMPROVES THE CAPTION RATHER THAN STALING IT, and it
+      was traced rather than assumed. `_collect_rows` appends the resolved path to
+      `source_paths` (line 1872), and `source_paths` reaches the rendered
+      `{{ snakemake.params.source_paths_rst }}` Sources block. So the Sources block will
+      now name the tree that ACTUALLY EXISTS -- `experiment_datatree.zarr` on a current
+      tree, `sensitivity_datatree.zarr` on a stranded one -- where before it always printed
+      the retired field's path whether or not anything was there. The caption interpolates
+      that block rather than hardcoding either filename, so the prose needs no edit and
+      the rendered output gets strictly more accurate.
+      WHY NOT EDIT THE CAPTION. There is nothing to say. A reader of the figure cannot act
+      on which of two filenames the store carries, and the Sources block already tells them
+      the answer for their own report. Adding a sentence about the rename would document a
+      transition rather than the figure.
+    justification_2026_09_04: >-
+      FR-7 of the post-merge-suite-reds friction set. THIS IS THE FIRING THE 2026-09-01
+      HEADER NOTE PREDICTED, discharged the way that note prescribed: the caption was
+      re-read in full and the digest re-recorded, rather than the staleness being written
+      off as the note's own leftover.
+      THE CHANGE IS ERROR-PATH ONLY. FR-7 edits exactly one statement -- the RuntimeError
+      raised at `if not rows:` when `_collect_rows` returns empty -- replacing a message
+      that named none of the ways the collection can come back empty with one that prints
+      the member list, the swmm-only member list, the consolidated-tree path and its
+      existence, the tree node paths, and a per-member performance `data_vars` map. It
+      adds no branch: the `if not rows:` arm already existed and is the arm being taken
+      today. Nothing on the SUCCESS path moved.
+      THE RE-READ WAS PERFORMED AND IS THE POINT OF THIS ENTRY. The caption makes six
+      claims: the independent variable it is keyed on; the dependent variable's default
+      and its slowest-rank wallclock semantics with the `wallclock reduction uses max over
+      rank` stipulation; restart-safety; the per-member `aggregation` mode from
+      report_config.yaml; the SWMM-only routing to `swmm_full_rpt_file` Total elapsed via
+      `swmm_output_parser.parse_total_elapsed`; and the per-report axis auto-scaling
+      caveat with its cross-arm comparison warning. Every one of them describes the figure
+      that RENDERS. FR-7 governs only the case where no figure is produced, so no claim
+      the caption makes can have gone stale under it.
+      ACTIVELY CONSISTENT, not merely non-contradictory: the caption already names
+      `swmm_full_rpt_file` and `parse_total_elapsed`, and those are exactly the two symbols
+      FR-7's new "FIFTH path" sentence is about -- the swmm-only branch's two silent
+      `continue`s when that .rpt is absent or unparseable. The figure's documentation and
+      its failure message now use one vocabulary.
+      WHY THE CAPTION IS NOT EDITED TO DESCRIBE THE ABSENCE. A caption is Jinja-rendered
+      INTO the report beside its figure. When this RuntimeError fires the plot rule fails,
+      the workflow fails, and no report exists to carry the caption -- so a sentence about
+      what the figure's absence means could never reach a reader. The diagnostic belongs in
+      the exception, which is where FR-7 put it.
+      THIS ENTRY DISCHARGES TWO LAYERS, AND BOTH WERE MEASURED. The recorded digest
+      f0a3493f belongs to commit 75ca35de (the _compute_scaling_series extraction); between
+      it and HEAD sits the merge cleanup the header note describes, never re-recorded. That
+      middle layer is import/format-only BY MEASUREMENT, on the instrument the sibling
+      entries in this file established: with imports stripped from every body list the
+      module's AST at 75ca35de is IDENTICAL to its AST at HEAD, and the imported-name set
+      is identical with zero names added and zero removed. So re-recording here does not
+      silently absorb an un-re-read semantic change. Reproduce by running this script,
+      which prints True (verified before this entry was written):
+      import ast, subprocess
+      f = "src/hhemt/report_renderers/sensitivity_benchmarking.py"
+      def strip(src):
+      ....t = ast.parse(src)
+      ....for n in ast.walk(t):
+      ........for fld in ("body", "orelse", "finalbody"):
+      ............v = getattr(n, fld, None)
+      ............if isinstance(v, list):
+      ................setattr(n, fld, [x for x in v if not isinstance(x, (ast.Import, ast.ImportFrom))])
+      ....return ast.dump(t)
+      show = lambda r: subprocess.run(["git", "show", f"{r}:{f}"], capture_output=True, text=True).stdout
+      print(strip(show("75ca35de")) == strip(show("HEAD")))
+      (Leading dots stand for four spaces each; YAML folded scalars collapse real
+      indentation, so the script is written with dot-padding and must be de-dotted before
+      running. NOTE the list guard `isinstance(v, list)` -- without it ast.walk reaches a
+      Lambda or IfExp whose `body` is a single node, and the script dies with
+      "TypeError: 'Constant' object is not iterable". That is measured, not anticipated:
+      the first form written for this entry had no guard and failed exactly that way.)
+      Digest re-derived independently with sha256sum against the working tree after the
+      ruff-format pass that rides this change, so the exemption expires on the next change
+      to this renderer rather than on arrival.
+    justification: >-
+      Item (A) extraction (ruling ## 18, option 2). Caption RE-READ in full; the finding is
+      that this change is a PURE MOVE and the caption makes no claim a pure move can touch.
+      `_compute_scaling_series` was lifted out of `render()` verbatim -- the four returned
+      objects are the same objects built by the same calls, established by a refute round
+      that rebuilt ten mutants and ran seventy test-mutant pairs, plus seven further mutants
+      including both 4-tuple return-order swaps.
+      The caption describes the DEPENDENT VARIABLE and its aggregation mode, and warns that
+      axis ranges are auto-scaled per report so equal bar heights across reports do not
+      denote equal values. Both are SEMANTIC claims about what the figure means. The
+      extraction changes no value, no axis, no aggregation and no rendering path -- it moves
+      where a computation is defined, not what it computes. Verify by reading the caption
+      against the diff: git diff -- src/hhemt/report_renderers/sensitivity_benchmarking.py
+      This is a PAIRING discharge on a re-read, not a formatting exemption: the change is
+      structural, and the re-read found the caption's claims invariant under it. Digest
+      recorded after the extraction, so the exemption expires on the next change to this
+      renderer.
+      S8b consolidated-store rename, 2026-09-05. Caption RE-READ: it contains no reference
+      to any store filename (`grep -c datatree` returns 0), and every hunk in this renderer is
+      a RESOLUTION SUBSTITUTION -- a hardcoded `sensitivity_datatree.zarr` literal replaced by
+      `resolve_experiment_tree()` or by the `EXPERIMENT_TREE_NAME` / `ROOT_TREE_NAMES` constants.
+      The substitution changes WHICH STORE PATH is read, never what the figure computes, its
+      axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
+      the rename, so the exemption expires on the next change to this renderer.
+    justification_merge_2026_09_05: >-
+      MERGE-RESOLVED DIGEST, AND NO SINGLE PARTY READ THIS CAPTION AGAINST THE FILE THIS
+      DIGEST NAMES. That is stated first because it is the fact a reader most needs and the
+      one a bare re-record would conceal. `be596c79` is the merge of two independently
+      re-recorded changes: HEAD's S8b consolidated-store rename (recorded `e434125b`) and
+      sidequest-clearing-08-30's FR-7 error-path diagnostic (recorded `93cdbbe7`). Both
+      justifications above are RETAINED and both re-reads really happened; each was performed
+      against its own branch's version of this renderer, and neither against the merge.
+      WHY THE UNION OF TWO PARTIAL RE-READS DISCHARGES THE PAIRING HERE. A pairing re-read
+      establishes a NEGATIVE -- no claim this caption makes is reachable by this change -- and
+      a negative over a claim set is NOT automatically closed under the union of two changes:
+      two individually-safe changes can compose into one that moves a value neither moves
+      alone. Textual distance between the hunks is not the condition and must not be offered
+      as one. The condition is that the two change sets are independent AND that the caption's
+      RENDERED surface, not only its source text, is checked. All three were measured against
+      the merge base `2853a077`, not against either tip.
+      (1) DISJOINT IN REGION AND IN DEFINITION. S8b touches line 60 (one added import) and
+      exactly ten `ProvenanceRef(source_path=...)` call sites in `_draw_metric_panel`,
+      `_draw_panel`, `_plotly_metric_panel` and `_plotly_metric_panel_precomputed`. FR-7
+      touches lines 648-676, wholly inside `render()`'s pre-existing `if not rows:` arm. No
+      shared line and no shared function.
+      (2) BIDIRECTIONAL NON-INTERFERENCE, measured in both directions. The S8b diff mentions
+      `render`, `_collect_rows` and `_find_perf_node` zero times; the FR-7 diff mentions
+      `EXPERIMENT_TREE_NAME` and `ProvenanceRef` zero times. Every name FR-7's new code
+      depends on -- `xr`, `_find_perf_node`, `sensitivity.members` -- is present at the merge
+      base and untouched by S8b. Its only contact with the rename is through the
+      `analysis_paths.sensitivity_datatree_zarr` ATTRIBUTE, whose value S8b redirects at its
+      definition in `analysis.py`, outside this file, so FR-7 follows the rename without
+      naming it. The merged module parses (`ast.parse` OK).
+      THE ONE INTERACTION THAT DOES EXIST, named because omitting it is what would make this
+      entry a laundered pairing. After BOTH changes, FR-7's diagnostic prints
+      `consolidated tree={_dt_path}` resolving to `experiment_datatree.zarr` while S8b's ten
+      manifest writes record `source_path=EXPERIMENT_TREE_NAME`, the same string. The failure
+      message and the figure manifest now name one store in one vocabulary. That agreement is
+      a property of the COMPOSITION and of neither change alone, so neither prior justification
+      could have recorded it. It is consistent, and it is caption-unreachable: both surfaces
+      are the error path and the manifest, while every caption claim is about the figure that
+      RENDERS.
+      (3) THE RENDERED SURFACE, WHERE A FALSE NEGATIVE WAS AVAILABLE. This caption ends with
+      `**Sources:**` followed by `{{ snakemake.params.source_paths_rst }}`, so a caption can
+      PRINT a store path it never NAMES -- which means `grep -c datatree` over the caption
+      text, the instrument both re-reads leaned on, is not sufficient by itself. Traced:
+      `source_paths_rst` is built by `_figure_emission.format_sources_rst` ("Produces the text
+      that goes under ``**Sources:**`` in caption RSTs") from `RuleSpecTemplate.source_paths`
+      via `workflow.py:404-410`. The `sensitivity_benchmarking` rule spec declares NO
+      `source_paths` and no `source_paths_fn_name`, so that block renders EMPTY for this
+      figure and no store name reaches it. The zero-grep finding holds -- by this measurement,
+      not by the grep.
+      WHAT THIS ENTRY DOES NOT CLAIM. It does not claim a re-read against the merged file. It
+      claims that the two recorded re-reads compose, and it states the measurements a later
+      reader would need to reject that claim rather than inherit it. Digest re-derived with
+      `sha256sum` against the post-merge working tree, so the exemption expires on the next
+      change to this renderer.
+  - renderer: cross_experiment_intercomparison_maps
+    caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison_maps.rst
+    renderer_sha256: 959c9b9300ce18de9b978bb3400d449279ad2b56b8e976314888542578adb8a1
+    justification_2026_11_03_develop_integration_bffe88b3: >-
+      Merge of origin/develop (bffe88b3), 2026-11-03: the renderer's one merge conflict (the sentence naming the
+      coupled comparison) is resolved to develop's wording with the variable name `max_flow`; the digest is recorded from the
+      merged renderer. The caption was not edited in the merge. Caption RE-READ in full by a reviewer who is not the
+      author and reads true. This entry is a PAIRING discharge on that re-read, and it expires on the next change to
+      this renderer.
+    justification_2026_11_03_thresholds_text: >-
+      The colour-band sentence says both models in place of both model arms, and the line naming the
+      coupled comparison says TRITON-SWMM. Caption RE-READ IN FULL (5 lines): it quotes neither string and
+      describes the panels, the verdict table and the colour direction, which these two edits do not touch.
+      Digest recorded after the last edit, so the exemption expires on the next change to this renderer.
+    justification_2026_11_02_title_colon: >-
+      The figure title and the panel heading join their parts with a colon in place of an em dash, and
+      the figure title now puts the figure name before the experiment pair. Caption RE-READ IN FULL
+      (5 lines): it names neither the title nor the panel heading, and it describes the panels and the
+      verdict table, which these two string edits do not touch. Digest recorded after the last edit, so
+      the exemption expires on the next change to this renderer.
+    justification_2026_11_02_wo6_text: >-
+      The omission-notice prefix, the filler adverb in the identical-pairs sentence and the title of the
+      unavailable-bundles panel are reworded. Caption RE-READ IN FULL (5 lines): its sentence that no
+      difference panel is drawn when every pair is identical and the verdict table states the result still
+      holds, and it quotes none of the three changed strings. Digest recorded after the last edit, so the
+      exemption expires on the next change to this renderer.
+    justification_2026_11_02_develop_integration: >-
+      Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that each child's tree is opened once and cached across events, with no change to any displayed text.
+      Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
+      This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
+    justification: >-
+      Iteration-8 annotation-carrier group (D3 annotation split and the
+      title-collision fix), plus a whole-file ruff-format pass. Caption re-read:
+      it describes diff-map semantics (resume minus clean over byte-identity
+      classes), the RdBu direction convention, and the variable-dt SWMM
+      final-period truncation. All three are data claims; the change moved
+      annotation anchoring only. Looked; no change needed.
+      RE-RECORDED for the config-labels leaf extraction: the renderer's only
+      change is an import re-point of _derive_config_label from
+      hhemt.eda._config_diff to the new hhemt.config_labels leaf. The BOUND
+      NAME, both call sites and the function body are unchanged, so no panel,
+      table, colour scale or caveat this caption describes can move. Caption
+      re-read in full; no change needed. NOTE: the
+      cross-experiment RESTRUCTURE is still open on a user question, so this
+      exemption expires with the next renderer change by construction.
+      S8b consolidated-store rename, 2026-09-05. Caption RE-READ: it contains no reference
+      to any store filename (`grep -c datatree` returns 0), and every hunk in this renderer is
+      a RESOLUTION SUBSTITUTION -- a hardcoded `sensitivity_datatree.zarr` literal replaced by
+      `resolve_experiment_tree()` or by the `EXPERIMENT_TREE_NAME` / `ROOT_TREE_NAMES` constants.
+      The substitution changes WHICH STORE PATH is read, never what the figure computes, its
+      axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
+      the rename, so the exemption expires on the next change to this renderer.
+      Experiment-tree summary, chunk 2b.3, 2026-11-02. Caption RE-READ in full against the
+      measured diff of this renderer: the only hunks replace `_load_subs(crates / eid, ...)`
+      with one cached `_open_experiment_tree` per child and `_load_subs_from_tree` per event,
+      an unopenable child yielding no subs for every event as a failed open did per event.
+      The caption describes diff-map semantics (resume minus clean over byte-identity
+      classes), the resume-count table, the RdBu direction convention and the variable-dt SWMM
+      truncation; all are data claims and the arrays, event selection and classes come from the
+      same function body. Looked; no change needed. Digest recorded after the change, so the
+      exemption expires on the next change to this renderer.
+  - renderer: errors_and_warnings
+    caption: src/hhemt/report_templates/captions/errors_and_warnings.rst
+    renderer_sha256: 9416c1b58049f211aaa34a9343cd4378577cd2874638de271d6e1d267cde327e
+    justification_2026_11_02_develop_integration: >-
+      Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that one vocabulary entry is added for the consolidated-metadata check.
+      Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
+      This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
+    justification_2026_11_02_consolidated_metadata: >-
+      Re-read 2026-11-02 against this renderer's diff (chunk 3a.2, consolidated metadata). The only hunk adds
+      one _CHECK_VOCABULARY row for the new system-level check 'consolidated metadata current', which
+      validate_analysis now runs. The caption describes the page as the projection of the read-model written by
+      the same checks the pytest aggregate runs, ordered system-level checks first; that aggregate calls
+      validate_analysis, so the new row is covered by those sentences and none is falsified, weakened or left
+      ambiguous; there is no caption edit to make. Digest recorded at the post-change renderer, so this
+      exemption expires on the next change to the renderer.
+    justification_2026_11_02_title_colon: >-
+      The page title joins the page name and the analysis id with a colon in place of an em dash.
+      Caption RE-READ IN FULL (5 lines): it names no page title and says only that the page lists the
+      validation check results, which this one string edit does not touch. Digest recorded after the last
+      edit, so the exemption expires on the next change to this renderer.
+    justification_2026_11_03_develop_integration_bffe88b3: >-
+      Merge of origin/develop (bffe88b3), 2026-11-03: the merged renderer differs from each side's recorded
+      version by the other side's edits only, and this entry's digest is recorded from the merged renderer. The
+      caption has not been edited in the merge. Caption RE-READ in full by a reviewer who is not the author and
+      reads true. This entry is a PAIRING discharge on that re-read, and it expires on the next change
+      to this renderer.
+    justification: >-
+      docs-and-experiment-system merge. Caption re-read against a MEASURED diff
+      rather than a read-through. The merge-authored delta to this renderer --
+      taken from the index and whitespace-normalised -- is FOUR lines, all of
+      them the sub-analysis -> member vocabulary rename: two _CHECK_VOCABULARY
+      description strings, and a local variable renamed from sa_id to member_id.
+      The section-label set was extracted from HEAD, MERGE_HEAD and the merged
+      index and is BYTE-IDENTICAL across all three, so the caption's claim of
+      four sections (system-level, aggregate per-scenario, granular
+      per-scenario, resource-utilization) is exactly as true after the merge as
+      before it. No column moved, no section was added or removed, no unit
+      changed. Separately verified that member_id = d.get("sa_id", "") is a
+      cosmetic half-rename and not a defect: analysis_validation.py emits the
+      "sa_id" detail key 8 times at HEAD, 8 at MERGE_HEAD and 8 in the merged
+      index, so the producer key never moved. Looked; no change needed.
+      Digest recorded AFTER the whole-file ruff-format pass that rides this same
+      commit -- recording it before would have gone stale on arrival and the
+      guard would have fired again with a stale-exemption message.
+    justification_2026_09_10: >-
+      RE-RECORDED for a ruff-format sweep, and THE ENTRY ABOVE PREDICTED THIS FIRING almost
+      exactly: it recorded its digest after the reformat riding that commit precisely so the
+      exemption would not "go stale on arrival". It did not. A LATER sweep moved the file
+      again, so 1632cee6 was the sha at HEAD and at BOTH merge parents, and the guard fired
+      with the stale-exemption message that entry named. The expiry mechanism worked as
+      designed; this is its second turn, not its failure.
+      THE SWEEP IS EXACTLY WHAT THE PUSH-RANGE GATE DEMANDED -- 44 files, no wider. An
+      earlier draft of this change cleared 115 files repo-wide; that was narrowed after
+      measurement showed a repo-wide pass carries costs a formatting pass has no business
+      carrying: it broke ELEVEN layout_signature attestations rather than three, and it
+      flipped _GENERATOR_SOURCE_HASH (e4985d0c -> 49e25896) by touching
+      synthetic_model/landuse.py, invalidating every cached synthetic model. Under the
+      44-file set the generator hash is UNCHANGED at e4985d0c0c7b275e and no
+      synthetic_model file is touched. Recorded here because the width of a formatting
+      sweep is the kind of decision a later reader will otherwise have to re-derive.
+      DISCHARGED BY MEASUREMENT, and this measurement is STRONGER than the AST-vs-HEAD form
+      the sibling entries in this file use. ast.dump(parse(...), include_attributes=False) of
+      the working-tree file is IDENTICAL to the same dump at HEAD AND at BOTH merge parents
+      (acdb25c3, 53825fea), so there is no semantic delta anywhere in the range from any
+      basis -- which forecloses the objection that the merge's second-parent delta might be
+      unexamined here. Measured across the whole 44-file sweep: 44 files whose BYTES all
+      changed, 44 of 44 AST-identical, 0 differing, 0 unparseable, and the comment multiset
+      byte-identical in 44 of 44 with all 24 load-bearing comments (type: ignore, noqa,
+      EXEMPT-DU, REVIEW, pragma) across 11 files preserved. This file's own diff is three
+      implicit string concatenations joined into single literals (two _CHECK_VOCABULARY
+      description values, one overall-banner f-string); each joined value is character-for-
+      character what the concatenation produced, which is why the ASTs match rather than
+      merely resemble each other.
+      THE RE-READ WAS PERFORMED, because this guard checks PAIRING and an AST argument is a
+      claim about the RENDERER rather than about the caption -- the standard this file's
+      system_overview entry set. AND THE RE-READ FOUND TWO REAL DEFECTS, neither introduced
+      by the reformat, so the caption is EDITED in this same commit rather than merely
+      certified:
+      (1) SECTION ORDER WAS INVERTED. The caption said "organized by (1) system-level
+      checks, (2) aggregate per-scenario checks, (3) granular per-scenario stage failures,
+      and (4) resource-utilization mismatches". The renderer's body_parts list emits
+      system-level, aggregate, RESOURCE-UTILIZATION, then GRANULAR -- items 3 and 4
+      transposed. The transposition is deliberate on the renderer's side and carries a
+      stated rationale immediately above the list ("I7-3: Granular Per-Scenario Failures
+      moves LAST ... Check-bearing sections are now contiguous"); the caption was never
+      updated to follow it.
+      WHY THE 2026-09-01 RE-READ ABOVE MISSED IT, recorded so the next reader can avoid the
+      same substitution: that re-read verified the section-label SET was byte-identical
+      across HEAD, MERGE_HEAD and the merged index, and concluded "the caption's claim of
+      four sections ... is exactly as true after the merge as before it". That is TRUE of
+      the set and beside the point, because the caption asserts an ORDER. Set-identity is
+      the wrong invariant for an ordered claim. This is the guard's own conceded residual --
+      it forces a human to look, it cannot make them look at the right thing.
+      (2) MECHANISM WAS MISDESCRIBED, AND TWO SUCCESSIVE CORRECTIONS OF IT WERE ALSO WRONG.
+      The caption said the page "runs the same checks as the pytest aggregate
+      assert_analysis_workflow_completed_successfully". It runs nothing at render time: per
+      Gotcha 53 Class-Y / Option D the sole data read is the PERSISTED
+      validation_report.json, via one load_validation_report(analysis) call at line 520, and
+      the renderer's own docstring says "never validate_analysis() at render time". That
+      read is graceful-absent -- but NOT in the direction the first correction asserted. It
+      does NOT render an empty page. ValidationReport.overall_passed is
+      all(c.passed for c in self.checks), vacuously True over an empty list, so
+      _render_overall_banner takes its PASS branch while _omitted_note(0) and all four table
+      renderers return "". Executed against ValidationReport(checks=[]) at this commit:
+      exactly ONE non-empty body part, verbatim
+      <div class="banner pass">✓ 0 of 0 applicable checks passed.</div> -- an
+      affirmative green tick, strictly worse than an empty page, because an empty page
+      announces itself.
+      THE SECOND CORRECTION THEN OVERSHOT, and this is the one a future reader is most
+      likely to repeat: it said a zero denominator MEANS the read-model was missing. It does
+      not. _render_overall_banner computes applicable = [c for c in report.checks if
+      getattr(c, "applicable", True)], so len(applicable) is 0 under TWO distinct states --
+      an empty or absent read-model, AND a present read-model whose every check carries
+      applicable=False, which analysis_validation.py sets at four sites and documents as a
+      deliberate third state. Both executed at this commit and both emit a byte-identical
+      banner. What separates them is the OMISSION LINE: checks=[] yields omitted count 0 and
+      no note, whereas an all-non-applicable report yields a note reading "1 check not
+      applicable to this analysis was omitted." So the discriminator is the presence of that
+      note, not the denominator, and the caption now says exactly that. Naming one cause as
+      THE cause is the same over-precision the original defect committed, one correction
+      later.
+      THE DIGEST IS RE-RECORDED EVEN THOUGH THE CAPTION EDIT ALONE WOULD SATISFY THE GUARD,
+      and that is the point of recording it. main() skips a pair before consulting the
+      allowlist at all -- `if renderer_rel not in changed or caption_rel in changed:
+      continue` -- so with the caption in the changed set this pair never reaches the
+      digest branch and 1632cee6 would have survived, unreported, to fire on some later
+      commit citing a pre-sweep digest. Measured by driving the guard's own predicate over
+      four apply-arms at this commit: nothing-applied FAILS with one stale exemption;
+      caption-only PASSES with 1632cee6 still on disk; digest-only PASSES via the digest
+      branch; all-three PASSES via the skip branch with the correct digest on disk. Only
+      the last arm is both green and stale-free. That caption-only arm is verbatim the
+      KNOWN-STALE EXEMPTION state this file's header spends forty lines warning about, and
+      under this narrowed sweep this pair is the ONLY finding the guard reports -- so
+      caption-edit-alone would clear the gate while leaving the one true defect in place.
+      Recorded post-sweep, so the exemption expires on the next real change to this
+      renderer rather than on arrival.
+    justification_2026_09_18: >-
+      RE-RECORDED at the R14 apply (2026-09-18). MEASURED delta to this renderer since the
+      digest above: `git diff --stat` -> 7 insertions, 0 deletions -- ONE _CHECK_VOCABULARY
+      entry keyed "Log recoveries" (display "Log recovery records" plus its description),
+      registering the check_log_recoveries producer that dad33653 landed without it. The
+      caption was RE-READ against that delta: it describes the pass/fail banner, the
+      omitted-count line and the four-section order (system-level, aggregate per-scenario,
+      resource-utilization, granular per-scenario); it enumerates NO check name and NO
+      vocabulary string, so no caption claim is reachable by a row-level display-name /
+      description pair inside the aggregate table. No section, column or unit moved. This
+      is a pairing discharge on a re-read, not a formatting exemption; the digest expires
+      on the next change to this renderer.
+    justification_2026_10_20: >-
+      RE-RECORDED at the commit of the repair-first round that added the resume-event check.
+      MEASURED delta to this renderer since the digest above: an ast diff of HEAD
+      against the working tree with docstrings removed shows ONE changed statement,
+      the _CHECK_VOCABULARY literal, gaining ONE entry keyed "resume event
+      evidence" (display "Resume evidence" plus its description). Every other hunk
+      is a docstring or comment of the repair-first round. The caption was RE-READ
+      against that delta: it describes the read-model it surfaces, the pass/fail
+      banner, the omitted-count line and the page order (system-level, aggregate
+      per-scenario, resource-utilization, granular per-scenario); it enumerates NO
+      check name and NO vocabulary string, so no caption claim is reachable by a
+      row-level display-name / description pair inside the aggregate table. No
+      section, column or unit moved. This is a pairing discharge on a re-read, not
+      a formatting exemption; the digest expires on the next change to this
+      renderer.
+    justification_2026_10_21: >-
+      RE-RECORDED at the chunk that added the one-node-per-cell option's
+      inflow-node reduction disclosure). MEASURED delta to this renderer since the
+      digest above: an ast diff of HEAD against the working tree with docstrings
+      removed shows TWO changed statements. (1) The _CHECK_VOCABULARY literal gains ONE
+      entry keyed "inflow node reduction" (display "Inflow node reduction" plus its
+      description). (2) The aggregate per-scenario table lists the detail rows of that
+      ONE check, keyed on its name, when it passes; every other check renders exactly
+      as before. The caption was RE-READ against that delta: it describes the
+      read-model it surfaces, the pass/fail banner, the omitted-count line and the page
+      order (system-level, aggregate per-scenario, resource-utilization, granular
+      per-scenario, the last re-presenting the detail rows of the checks above it); it
+      enumerates NO check name and NO vocabulary string, and it says nothing about which
+      rows the aggregate table lists, so no caption claim is reachable by a disclosure
+      row inside that table. The granular table still carries failing checks' rows
+      only. No section, column or unit moved. This is a pairing discharge on a re-read,
+      not a formatting exemption; the digest expires on the next change to this
+      renderer.
+    justification_2026_10_22: >-
+      RE-RECORDED when the every-coupled-run solver-defect check was added.
+      MEASURED delta to this renderer since the digest above: ONE changed statement, the
+      _CHECK_VOCABULARY literal gains ONE entry keyed "Known solver defects" (display
+      "Known solver defects" plus its description); no rendering path changed. The caption
+      was RE-READ against that delta: it enumerates NO check name and NO vocabulary string,
+      so no caption claim is reachable by the new entry. No section, column or unit moved.
+      This is a pairing discharge on a re-read, not a formatting exemption; the digest
+      expires on the next change to this renderer.
+    justification_2026_11_02_develop_merge: >-
+      Re-read 2026-11-02 against this renderer's diff on top of the merged origin/develop. The diff renames
+      the check "Cross-sim byte-identity" to "Byte identity across
+      compute configurations" in the check vocabulary (key and display name), makes the overall banner
+      return the empty string when no check applies (the omission note then stands alone), and renames a
+      variable name in a docstring. The caption (5 lines, read in full) says only that the page holds the
+      results of the validation checks run once the workflow completed and lists the sources; it names no
+      check, no banner and no count, so no clause is falsified, weakened or left ambiguous and there is no
+      caption edit to make.
+    justification_2026_11_02: >-
+      Re-read 2026-11-02 against this renderer's diff (git diff HEAD). The change is a rename of one stored variable in a docstring
+      (max_wlevel_m -> max_flood_depth) and one word in a finding message string ("peak water level"
+      -> "peak flood depth", the forcing tail influence description). No emitted column, unit, row
+      or panel moved. This caption was read in full: it describes the pass/fail banner, the
+      omission line and the four section kinds, and contains none of water.level, wlevel, flood
+      depth, peak, maximum, timestep or max_ (matcher: grep -c -i -E on those alternatives, unit
+      lines, result 0), so no clause is falsified, weakened or left ambiguous and there is no
+      caption edit to make. Digest recorded at the post-change renderer content, so this exemption
+      expires on the next change to the renderer.
+  - renderer: cross_experiment_disk_utilization
+    caption: src/hhemt/report_templates/captions/cross_experiment_disk_utilization.rst
+    renderer_sha256: c4225448eeff9272075a91a6cde436b811348f24644bdc1b8132cc6ad85764d7
+    justification_2026_11_02_develop_integration: >-
+      Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that the model label is read from `experiment_tree_summary` through a shared `model_label_from_models` helper instead of a full open, giving develop's label for every tree develop's tests cover.
+      Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
+      This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
+    justification_2026_11_02_empty_state_sentence: >-
+      The sentence the page prints when no experiment is recorded changes from one that named
+      child crates to "No experiment is recorded for this combine." Caption RE-READ IN FULL (5
+      lines: the description of the columns, rows and footer, the clause that the page says so
+      when no experiment is recorded, and the Sources block) against the diff. The clause stays
+      true of the new sentence and nothing else in the caption describes the string. The diff
+      of this renderer against HEAD has one hunk, listed by `git diff -U0 | grep '^@@'`, the
+      line holding that sentence. This is a PAIRING discharge on a re-read, not a formatting
+      exemption. Digest recorded after the edit, so the exemption expires on the next change
+      to this renderer.
+    justification: >-
+      docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
+      not by judgement. This renderer's abstract syntax tree, parsed from the working
+      tree, is IDENTICAL to its AST at MERGE_HEAD (and differs from HEAD, because the
+      merge took the other branch's version of this file wholesale). The only textual
+      difference from MERGE_HEAD is the whole-tree ruff-format pass riding this same
+      commit. A formatting change cannot alter a column, a unit, a section, or any
+      other claim a caption can make, so this caption cannot have gone stale and a
+      re-read has no possible finding. The renderer's semantics were reviewed on the
+      branch that authored them. Reproduce with:
+      python -c "import ast,subprocess;
+      f='src/hhemt/report_renderers/cross_experiment_disk_utilization.py';
+      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
+      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
+      Digest recorded AFTER the reformat, so the exemption expires on the next real
+      change to this file rather than on arrival.
+      S8b consolidated-store rename, 2026-09-05. Caption RE-READ: it contains no reference
+      to any store filename (`grep -c datatree` returns 0), and every hunk in this renderer is
+      a RESOLUTION SUBSTITUTION -- a hardcoded `sensitivity_datatree.zarr` literal replaced by
+      `resolve_experiment_tree()` or by the `EXPERIMENT_TREE_NAME` / `ROOT_TREE_NAMES` constants.
+      The substitution changes WHICH STORE PATH is read, never what the figure computes, its
+      axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
+      the rename, so the exemption expires on the next change to this renderer.
+      Experiment-tree summary, chunk 2b.3, 2026-11-02. Caption RE-READ in full against the
+      measured diff of this renderer: the only hunk is in `_child_model`, where
+      `experiment_tree_summary(store).tier == "tritonswmm"` replaces a `dt.groups` loop and
+      returns the same two labels with the same defaults. The caption states one column per
+      model, one row per storage scope, MiB values with per-model totals, derived from each child
+      bundle's `_status/_du.json`; the values, scopes and source are untouched, and the caption
+      names no store-opening mechanism. Looked; no change needed. Digest recorded after the
+      change, so the exemption expires on the next change to this renderer.
+  - renderer: metadata
+    caption: src/hhemt/report_templates/captions/metadata.rst
+    renderer_sha256: 63a375f065a90c5d667c148115ddbb7f145272431a45bffe25171d3e20673f78
+    justification_2026_11_13_1q2_attribute_rename: >-
+      Chunk 1q.2 renames the AnalysisPaths attribute sensitivity_datatree_zarr to
+      experiment_datatree_zarr. The only hunk in this renderer is the first string of
+      `_DECLARED_TREE_PATH_ATTRS`, listed by `git diff -U0 | grep '^@@'`. Caption RE-READ IN FULL
+      (20 lines: the three displayed sections, Provenance, Data Availability and Reproduction
+      Guide, plus the Sources block) against the diff; it names no attribute and no store
+      filename (`grep -c datatree` over it prints 0), so nothing in it can have gone stale. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after the
+      edit, so the exemption expires on the next change to this renderer.
+    justification_2026_11_02_title_colon: >-
+      The page title joins the page name and the analysis id with a colon in place of an em dash.
+      Caption RE-READ IN FULL (20 lines): it names no page title, and it describes the three displayed
+      sections, which this one string edit does not touch. Digest recorded after the last edit, so the
+      exemption expires on the next change to this renderer.
+    justification_2026_11_02_develop_integration: >-
+      Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that the store opens go through `open_store`, with no change to any section or wording.
+      Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
+      This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
+    justification_2026_11_03_develop_integration_bffe88b3: >-
+      Merge of origin/develop (bffe88b3), 2026-11-03: the merged renderer differs from each side's recorded
+      version by the other side's edits only, and this entry's digest is recorded from the merged renderer. The
+      caption has not been edited in the merge. Caption RE-READ in full by a reviewer who is not the author and
+      reads true. This entry is a PAIRING discharge on that re-read, and it expires on the next change
+      to this renderer.
+    justification_2026_11_02_metadata_page_text: >-
+      The Metadata page text follows the report style brief, and the caption is rewritten in the
+      same change (so this entry is not what satisfies the pairing guard for this change; it
+      records the digest of the file the caption was re-read against). Caption RE-READ IN FULL
+      (20 lines: the three displayed sections, Provenance, Data Availability and Reproduction
+      Guide, plus the Sources block) against the diff. The renderer change: bucket headings and
+      the HPC instruction, the placeholder, the software, environment, inputs, process and
+      outputs notices, the collapsed-run summary, the data dictionary note, the option tooltip
+      separator, the Required and Conditional cells, the reproduction guide note, the
+      omission notices of Provenance and Data Availability (one new helper, `_omitted`), the
+      removed process count line and provenance chain note, and the reclaim banner. Digest
+      recorded after the last edit, so the exemption expires on the next change to this renderer.
+    justification_2026_11_02_job_count_text: >-
+      The SLURM efficiency table's text follows the report style brief: the summary note counts
+      jobs submitted, cancelled before starting and ran with the plural of the number, the
+      Invocation column becomes Workflow run, the Toolkit record column is cut (a dash already
+      marks a job with no record, and the blank-cell note counts those jobs from an internal
+      key), the note on unrecognised report columns becomes a log warning, the column rules
+      and the glossary under the table are reworded, and the glossary drops its Method line.
+      Caption RE-READ IN FULL (27 lines: the three displayed sections, Provenance summary, Data
+      availability and Reproduction guide, plus the Sources block) against the diff. The table
+      is on the Workflow performance page, whose own caption is edited in the same change; the
+      Metadata caption makes no claim about it. The diff of this renderer against HEAD has
+      twenty-eight hunks, listed by `git diff -U0 | grep '^@@'`, and every one sits in the SLURM
+      efficiency table code: one module import (`logging`); the reduction declarations
+      `_SUM_STEPS`, `_MAX_STEPS`, `_JOB_RECORD`, `_QUEUE_JOIN`, `_ATTEMPTS_JOIN`,
+      `_TOOLKIT_JOIN` and `_INVOCATION_JOIN`; the `_EFF_COLUMNS` table; `_reduction_caption`;
+      the comment above the two toolkit-record constants; two strings of
+      `_invocation_for_job`; the removed flag line of `_enrich_efficiency_rows`; the removed
+      `_undisplayed_columns_note`; and the summary, queue provenance string and log warning in
+      `_build_slurm_efficiency_html`. None reaches the RO-Crate provenance summary, the
+      data-availability projection or the reproduction guide. This is a PAIRING discharge on a
+      re-read, not a formatting exemption. Digest recorded after the last edit, so the
+      exemption expires on the next change to this renderer.
+    justification_2026_11_01_excluded_run_sentence: >-
+      The summary note of the SLURM efficiency table gains one sentence that names the workflow
+      run left out of the table, or states that none was. Caption RE-READ IN FULL (27 lines:
+      the three displayed sections, Provenance summary, Data availability and Reproduction
+      guide, plus the Sources block) against the diff. The table is on the Workflow performance
+      page and the Metadata caption makes no claim about it. The diff of this renderer against
+      HEAD has two hunks, listed by `git diff -U0 | grep '^@@'`: the block before the summary
+      that chooses the sentence, and the summary's last line gaining the sentence. Neither
+      reaches the RO-Crate provenance summary, the data-availability projection or the
+      reproduction guide. This is the last change of this renderer in its group of edits, so
+      the digest recorded here equals the landed file. This is a PAIRING discharge on a
+      re-read, not a formatting exemption. Digest recorded after the edit, so the exemption
+      expires on the next change to this renderer.
+    justification_2026_11_01_provenance_values: >-
+      The verifiability anchors print "input digests not captured" when no input entity carries
+      a digest and label the anchor's git-SHA as the consolidation build's, the provenance chain
+      splits "Simulated / processed by" into "Simulated by" and "Processed by" and rewrites its
+      note for four rows, and a gapped id set in the folder tree prints its ranges. The caption
+      is edited in the same change (its first bullet, 27 lines in all), so this entry is not
+      what satisfies the pairing guard for this change; it records the digest of the file the
+      caption was re-read against, in full, including the Data availability and Reproduction
+      guide bullets and the Sources block, which no hunk reaches. The diff of this renderer
+      against HEAD has eleven hunks, listed by `git diff -U0 | grep '^@@'`, in these groups: two
+      in `_provenance_bluf`; one new helper `_stage_stamps` before the chain; six in
+      `_provenance_chain` (the docstring summary line, the docstring paragraph, the simulating row, the
+      processing row, the removed old rows, and the note); one in `_index_template` (the label
+      built from `_id_ranges`); one new function `_id_ranges`.
+    justification_2026_11_01_blank_cell_notes: >-
+      The note on blank cells in the SLURM efficiency table becomes a function that writes one
+      sentence per kind of blank cell with a count computed from the rendered rows, the paragraph
+      on the scenario join rate is removed, and the banner for a join that matched no job becomes
+      a one-sentence notice. Caption RE-READ IN FULL (23 lines: the three displayed sections,
+      Provenance summary, Data availability and Reproduction guide, plus the Sources block)
+      against the diff. The table and its notes are on the Workflow performance page and the
+      Metadata caption makes no claim about them. The diff of this renderer against HEAD has
+      ten hunks, listed by `git diff -U0 | grep '^@@'`, in these groups: one new helper
+      `_banner_html` after `_banner`; two in the docstring of `_eff_label`; one replacing the old note constant with the function
+      `_uncaptured_note`; one comment in `_enrich_efficiency_rows`; four in
+      `_build_slurm_efficiency_html` (the comment on the join counts, the removed join-rate
+      paragraph, the replaced banner, and the call that adds the note); one docstring in
+      `_read_scenario_status`. None reaches the RO-Crate provenance summary, the
+      data-availability projection or the reproduction guide. This is a PAIRING discharge on a
+      re-read, not a formatting exemption. Digest recorded after the edit, so the exemption
+      expires on the next change to this renderer.
+    justification_2026_11_01_member_resolution: >-
+      A member is now read from a rule name only for the rule families that name one, compared
+      with the analysis's member ids after the dot and dash replacement the workflow applies,
+      and the run timeline leaves out and counts records of members no longer in the analysis.
+      Caption RE-READ IN FULL (23 lines: the three displayed sections, Provenance summary, Data
+      availability and Reproduction guide, plus the Sources block) against the diff. The run
+      timeline and the purpose join are on the Workflow performance page and the Metadata
+      caption makes no claim about them. The diff of this renderer against HEAD has sixteen
+      hunks, listed by `git diff -U0 | grep '^@@'`, in these groups: two module imports
+      (`Collection`, `member_id_from_mapping`); one removal of the old rule-name pattern and its
+      comment; one new block holding the family patterns, `_member_token`, `_resolve_member`
+      and `_count`; five in `_job_purpose_map` (a new parameter, a docstring paragraph, the
+      sidecar member read, the removed pattern match, the rule-name member read); seven in
+      `_provenance_timeline` (a new parameter, a docstring paragraph, the left-out filter and
+      count, the Member cell, the sentence on the count, the branch for a timeline whose records
+      are all left out, and the note text). None reaches the RO-Crate provenance summary, the
+      data-availability projection or the reproduction guide. This is a PAIRING discharge on a
+      re-read, not a formatting exemption. Digest recorded after the edit, so the exemption
+      expires on the next change to this renderer.
+    justification_2026_11_01_invocation_column: >-
+      The SLURM efficiency table's Record column becomes an Invocation column that names the
+      Snakemake invocation which submitted each job, and the former two-valued flag moves to its
+      own Toolkit record column with the values "toolkit record" and "no toolkit record". Caption
+      RE-READ IN FULL (23 lines: the three displayed sections, Provenance summary, Data
+      availability and Reproduction guide, plus the Sources block) against the diff. The table
+      is on the Workflow performance page and the Metadata caption makes no claim about it. The
+      diff of this renderer against HEAD has twelve hunks, listed by
+      `git diff -U0 | grep '^@@'`, in these groups: one module import (`Mapping`); one new
+      reduction declaration `_INVOCATION_JOIN` beside `_TOOLKIT_JOIN`; one in the `_EFF_COLUMNS`
+      table (the Invocation column and the Toolkit record column); one line of
+      `_EFF_UNCAPTURED_NOTE` (the column its prose names); one line in
+      `_parse_efficiency_csvs` (it keeps each row's report label) and one block after it
+      holding the new constants and the helpers `_report_uuid` and `_invocation_for_job`; two
+      lines in `_enrich_efficiency_rows` (a comment line edited above the flag, and the flag's
+      key and values); four in
+      `_build_slurm_efficiency_html` (a new parameter, the docstring paragraph that describes it,
+      the per-job report run ids, and the loop that sets the invocation and the flag on every row). None reaches the RO-Crate
+      provenance summary, the data-availability projection or the reproduction guide.
+      This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded
+      after the edit, so the exemption expires on the next change to this renderer.
+    justification_2026_11_01_job_set: >-
+      The SLURM efficiency table builder takes an optional job universe and an exclusion set,
+      adds a State column and a cancelled-before-starting count, rewords the table's summary
+      sentence, and corrects three docstrings and comments about the efficiency reports. Caption
+      RE-READ IN FULL (23 lines: the three displayed sections, Provenance summary, Data
+      availability and Reproduction guide, plus the Sources block) against the diff. The table
+      lives on the Workflow performance page, whose own caption is edited in the same change; the
+      Metadata caption makes no claim about it. The diff of this renderer against HEAD has
+      eighteen hunks, listed by `git diff -U0 | grep '^@@'`, and every one sits in the SLURM
+      efficiency table code: one in the `_EFF_COLUMNS` table (the new State column), two in
+      `_EFF_KNOWN_UNDISPLAYED` and the comment above `_RECOVERED_ONLY_STEP_FIELDS`, one new
+      module-level helper `_is_never_started` placed after `_load_job_recovery`, five in
+      `_aggregate_jobs`, seven in `_build_slurm_efficiency_html` and two in
+      `_resolve_all_efficiency_csvs`. None reaches the RO-Crate provenance summary, the
+      data-availability projection or the reproduction guide.
+      This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded
+      after the edit, so the exemption expires on the next change to this renderer.
+    justification_2026_11_02_consolidated_metadata: >-
+      Re-read 2026-11-02 against this renderer's diff (chunk 3a.2, consolidated metadata). The hunks replace two
+      xr.open_datatree(..., consolidated=False) calls with utils.open_store(tree_path, chunks=None), add its
+      import and correct one comment. The caption's claims (the provenance summary read from the co-located
+      ro-crate-metadata.json sidecar, the data-availability item projected from the Data availability check) are
+      untouched, and the producing-sha and group-name reads return the same values for a current index, so no
+      clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the
+      post-change renderer, so this exemption expires on the next change to the renderer.
+    justification_2026_10_28_root_store_resolver: >-
+      The renderer now takes its consolidated-store pick from the shared root-store resolver
+      instead of its own name walk. Caption RE-READ IN FULL (23 lines: the three displayed
+      sections, Provenance summary, Data availability and Reproduction guide, plus the
+      Sources block) against the diff. The diff of this renderer against HEAD is TWO hunks,
+      both inside `_resolve_consolidated_tree`: its docstring and its body, where the arm
+      branch and the name walk are replaced by one call to the shared resolver. Verified:
+      outside that function no line of the module moved, and the function's callers are
+      unchanged (`render()`, the data-dictionary projection and the source declaration).
+      WHAT THE BEHAVIOUR CHANGE IS. On a root carrying both the experiment store and the
+      retired analysis store, with no `cfg_analysis.yaml`, the function used to return the
+      experiment store; the shared resolver returns the analysis store on a regular analysis
+      (the producer's live one) and the experiment store when a `members/` directory marks a
+      sensitivity master. Measured over 42 (store subset, config, `members/`) cases, that one
+      case is the only one whose answer changed.
+      WHY THE CAPTION IS UNAFFECTED. The caption describes what the page shows, not which of
+      two stores the renderer reads: the one sentence that reaches the store is the
+      Provenance-summary bullet's "the consolidated outputs with their CF variable
+      dictionary", which names the dictionary's presence, and `grep -n -i -E
+      "resolv|datatree|store|tree"` over the caption matches no store name. The interpolated
+      Sources block renders whatever store path the renderer declares, so it stays true. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
+      the edit, so the exemption expires on the next change to this renderer.
+    justification_2026_10_28: >-
+      The renderer's change is a docstring rewrite of the consolidated-store resolver. Caption RE-READ IN
+      FULL (23 lines: the three displayed sections, Provenance summary, Data availability and
+      Reproduction guide, plus the Sources block) against the diff. The diff of this renderer
+      against HEAD is ONE hunk, 18 insertions and 4 deletions, and it lies inside the
+      docstring of `_resolve_consolidated_tree`. Verified: the module's syntax tree with every
+      docstring blanked is IDENTICAL before and after, and the same comparison reports a
+      difference when a return statement of that function is altered, so no executable line
+      moved, `source_paths` is unchanged and the interpolated Sources block renders as before.
+      WHY THE CAPTION IS UNAFFECTED. The caption describes what the page shows, not how the
+      consolidated store is located: `grep -n -i -E "resolv|datatree|store|tree"` over the
+      caption returns no line. The docstring change states which store that helper resolves
+      and in which order, which no caption sentence asserts. This is a PAIRING discharge on a
+      re-read, not a formatting exemption. Digest recorded after the edit, so the exemption
+      expires on the next change to this renderer.
+    justification_2026_10_01: >-
+      WP-3C.2 (the provenance half). Caption RE-READ IN FULL against the diff. The change is
+      ONE hunk in this renderer, in the same `parts.append` of the same `<p class='note'>`
+      data-dictionary string the 2026-09-29 entry below describes -- no other line of this
+      module moves.
+      WHAT THE HUNK DOES. It retires the INTERIM statement that entry flagged for exactly this
+      commit. Three clauses became false the moment the overlay landed and all three are
+      replaced: that the drift guard "compares the table against the CF variable map only"
+      (it now compares against the whole advertisable set); that a variable advertised from
+      outside that map "carries no descriptor and renders an em-dash in all three" (the
+      thirteen now carry descriptors); and the implicature that an em-dash there means a
+      forgotten descriptor (it now means the variable is advertised from outside the guarded
+      set entirely, which is the only remaining way to reach one). The replacement also states
+      what the `Operation` column now carries for those rows -- both reduced axes, the per-rank
+      sum over reporting timesteps and the maximum over ranks -- because `cell_methods` can
+      name only the second and this page is where the first is documented.
+      WHY THE CAPTION IS UNAFFECTED, re-derived rather than inherited from the entry below.
+      The caption describes three DISPLAYED sections plus a Sources block. (1) Only the
+      Provenance-summary bullet reaches this hunk, via "the consolidated outputs with their CF
+      variable dictionary". That phrase names the dictionary's PRESENCE; this hunk changes its
+      descriptor COVERAGE and the prose explaining the coverage rule, neither of which the
+      caption asserts. (2) Data availability and the Reproduction guide are byte-untouched --
+      the hunk does not leave the one `parts.append`. (3) `source_paths` is unchanged, so the
+      interpolated `source_paths_rst` block renders identically and the caption's Sources
+      promise still holds. (4) The table's COLUMN SET is unchanged: the same seven headers, the
+      same per-row keys; only thirteen rows that rendered three em-dashes now render prose.
+      THE ONE THING A REVIEWER SHOULD PROBE, named rather than left implicit: this paragraph is
+      no longer interim, so the pin that enforced it has been INVERTED rather than deleted --
+      `tests/test_metadata.py::test_every_advertised_performance_name_carries_a_provenance_descriptor`
+      now fails if any advertised performance name LACKS a descriptor, which is the direction
+      that can newly falsify this paragraph. Verified by mutation: dropping one descriptor, or
+      declining the mode-blind read, each turns it RED.
+      This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded
+      after the edit, so the exemption expires on the next change to this renderer.
+    justification_2026_09_29: >-
+      WP-3C chunk 1 (the advertisement half). Caption RE-READ IN FULL against the diff.
+      The change is ONE hunk in this renderer: the data-dictionary paragraph inside
+      `_provenance_outputs`. It rewrites two false sentences -- one pre-existing, one
+      newly falsified by the sibling `metadata.py` edit -- and makes the paragraph true
+      of the interim window before the `_QUANTITY_PROVENANCE_BY_MODE` overlay lands.
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning
+      rather than reconstruct it. The caption describes three DISPLAYED sections plus a
+      Sources block. (1) Only the Provenance-summary bullet reaches this hunk at all, via
+      "the consolidated outputs with their CF variable dictionary". That phrase names the
+      dictionary's PRESENCE, not its membership, its descriptor coverage, or its
+      `cell_methods`; the sibling edit widens membership on the gated path (13 performance
+      names now reach `variableMeasured`) and the paragraph edit corrects claims about
+      coverage, so each is a property the caption declines to assert. (2) Data availability
+      and the Reproduction guide are byte-untouched -- the hunk is confined to one
+      `parts.append` of a `<p class='note'>` string. (3) `source_paths` is unchanged, so
+      the interpolated `source_paths_rst` block renders identically and the caption's
+      Sources promise still holds.
+      THE ONE THING A REVIEWER SHOULD PROBE, named rather than left implicit: the page now
+      tells the reader that thirteen advertised columns render an em-dash in the three
+      provenance columns and stamp no `cell_methods`. That is an INTERIM statement, true at
+      this commit and false once the overlay and WP-3B land, and it is deliberately pinned
+      by `tests/test_metadata.py::test_advertised_performance_names_have_no_provenance_descriptor_yet`,
+      whose failure message instructs the next builder to update this paragraph. The caption
+      makes no claim about descriptor coverage, so it needs no interim qualifier of its own.
+      This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded
+      after the edit, so the exemption expires on the next change to this renderer.
+    justification_2026_09_21: >-
+      Grouped bundle-emit commit (INEF-4's 27 specs + EMIT-1's 5). Caption RE-READ IN FULL
+      against the diff, and its scope is DISJOINT from the change. The change is two hunks.
+      P2-5 introduces a `metadata_only_sources` list, appends the consolidated tree to it,
+      and threads it to the terminal `emit_plot_with_sources` call, so the bundle harvest
+      may carry that store's zarr metadata documents without its 326,747 chunk files unless
+      another figure declares the store in full. P5-2 corrects `_read_status_flag_payloads`'s
+      docstring, which claimed `_status/` is already copytree'd into every bundle; it is not
+      -- `_copy_supporting_files` copies only `_status/_du.json`.
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning
+      rather than have to reconstruct it. The caption describes three DISPLAYED sections plus
+      a Sources block, and each is measurably untouched. (1) `source_paths` is unchanged --
+      `tree_path` is still appended to it and no entry is removed, and `metadata_only_sources`
+      is a PARALLEL list consumed only by the harvest -- so the interpolated
+      `source_paths_rst` block renders identically and the caption's Sources promise still
+      holds. (2) None of the three sections' inputs moves: Provenance summary still reads the
+      co-located `ro-crate-metadata.json`; Data availability still reads the `Data
+      availability` check in `validation_report.json`; the Reproduction guide is still
+      config-SCHEMA introspection with no `analysis` argument. (3) The P5-2 hunk is a
+      docstring whose whole subject is BUNDLE CARRIAGE, which the caption never raises.
+      THE ONE THING A REVIEWER SHOULD PROBE, named rather than left implicit: qualifying the
+      consolidated store changes what a BUNDLE carries for a source the caption's Sources
+      block names, so "the caption is untouched" is not self-evident. It holds because the
+      caption makes no carriage or completeness claim about its sources, and because the
+      renderer-IO audit still sees the full-store PREFIX, so the page renders identically
+      in place and from a bundle for everything the caption describes.
+      ALSO CHECKED, because it rides the same commit and would have been the real defect:
+      the Provenance-summary bullet's "container environment and its SIF digest" is NOT
+      affected by EMIT-1's digest-keying of `_emit_sif_manifests`. That change is in
+      `bundle/_emit.py` and governs the BUNDLE's sif-manifest set; this page reads the SIF
+      sha256 out of `ro-crate-metadata.json`, which no spec in either set touches.
+      This is a PAIRING discharge on a re-read, not a formatting exemption: the change is
+      semantic (a new carriage channel), and the re-read found the caption's scope disjoint
+      from it. Digest recorded after the grouped apply, so the exemption expires on the next
+      change to this renderer.
+    justification_2026_09_21_d132_arm_classification: >-
+      `### D132` apply, the fifteen-spec arm-classification set. Caption RE-READ IN FULL
+      against the diff, which is the discharge this guard asks for -- it checks PAIRING,
+      not agreement, so the obligation is that someone looked, and someone did.
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning
+      rather than only with the conclusion: the change is confined to
+      `_resolve_consolidated_tree`'s new `analysis is None` branch, which recovers the ARM
+      from the root's own `cfg_analysis.yaml` and prepends the arm-correct store to the
+      candidate list, falling through to the unchanged name walk when no config is present.
+      It therefore changes WHICH ROOT STORE is resolved on a bundle or reconstituted path,
+      from the migration-time store to the arm-correct one. The caption asserts what the
+      three rendered sections CONTAIN and WHERE each is SOURCED -- the `ro-crate-metadata.json`
+      provenance sidecar, the `Data availability` check in `validation_report.json`, and the
+      configuration fields grouped supply/amend/keep. It makes NO claim about root-store
+      resolution, about which of two stores is read, or about any value whose identity the
+      resolver decides. The change makes the provenance panel MORE correct on exactly the
+      path where it could previously be stamped from a stale store while plots rendered from
+      the current one; nothing the caption says about content or source moves.
+      The guard fired CORRECTLY: `metadata.py`'s sha moved, and a reader who had not opened
+      the caption could not have known the scope was disjoint. Digest verified independently
+      with `sha256sum` rather than taken from the guard's message, and re-recorded, so the
+      exemption expires on the next change to this renderer.
+    justification_2026_09_19: >-
+      W7 Finding C. Caption RE-READ IN FULL against the diff, which is the discharge this
+      guard asks for -- it checks PAIRING, not agreement, so the obligation is that
+      someone looked, and someone did.
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning
+      rather than only with the conclusion: the caption describes three RENDERED OUTPUT
+      sections -- the provenance summary, data availability, and the reproduction guide --
+      and the change touches none of them. It lifts the inline tuple in
+      `_resolve_consolidated_tree` to a module constant `_DECLARED_TREE_PATH_ATTRS` with
+      IDENTICAL contents in IDENTICAL order, reads that constant instead of the literal,
+      and adds a field-contract assertion in the test suite. No rendered section, no
+      source list and no value shown on the page can move, because the resolver returns
+      the same path for the same inputs -- verified by the coordinator, P1 1->0 and
+      P2 0->1 over the same two names, with the three `test_metadata_*` nodes passing 3/3.
+      The guard nonetheless fired CORRECTLY: `metadata.py`'s sha moved, and a reader who
+      had not opened the caption could not have known the scope was disjoint.
+      Digest re-recorded after the change, so the exemption expires on the next change to
+      this renderer -- which is the property that makes these rows safe.
+    justification_2026_10_08_merge_digest: >-
+      MERGE DISCLOSURE, not a re-read claim. The docs-and-experiment-system merge makes this
+      renderer a THIRD artifact: develop tip hashed 84b7f6016c0ace57bac2ea647a0ae6ea1fbd2da4474d57844adf66625893c2b5
+      and the sibling tip 483c6eae370b2d83afaabafacc3be8986d4c3569ceb87c13c3e0b4f4aa377f36, so each
+      side's recorded digest was honest about its own branch and wrong about the merge. The digest
+      above is the merged content, computed with this guard's own chunked sha256 over the merged blob
+      and verified independently of the specialist round that proposed it. The module merged CLEANLY
+      (zero conflict markers); only the recorded digest had to move.
+      BOTH SIDES' JUSTIFICATION HISTORIES ARE RETAINED. The two branches each carried a
+      justification_2026_09_21 for this pair with DIFFERENT bodies -- develop's grouped bundle-emit
+      entry and the sibling's D132 arm-classification entry -- which a YAML mapping cannot hold twice.
+      The sibling's is preserved under justification_2026_09_21_d132_arm_classification rather than
+      dropped; the guard keys exemptions on the PAIR and does not read justification key names, so the
+      rename loses nothing. No caption was re-read for this entry and none is claimed to have been:
+      the exemption this row carries is the union of the two branches' prior discharges plus this
+      digest move, and it expires on the next change to this renderer.
+    justification_2026_09_07: >-
+      load-mode VMS commit. Caption RE-READ IN FULL against the diff, and its scope is
+      DISJOINT from the change. The change renames `_is_toolkit_owned` to
+      `_toolkit_clones_into` and re-keys it from the `toolkit_owned_output` sentinel to a
+      new `toolkit_clones_into` one, so the Reproduction Guide's REQUIREDNESS cell stops
+      inheriting a sentinel carried by four fields when only two of them are directories
+      the clone/build gate builds into. Without it `system_directory` would render as
+      "the toolkit clones/builds into it" (it does not -- outputs are written there) and
+      `analysis_dir` as Required (it is `Path | None`, default None, and its own
+      description says the run places it for you).
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning
+      rather than have to reconstruct it: the caption's Reproduction-guide bullet
+      describes the BUCKET axis and only that -- "grouped by what a reproducer must do
+      with it: supply / amend / keep" -- and bucket assignment comes from
+      `reprex_taxonomy.all_field_bucket`, which this change does not touch. The
+      REQUIREDNESS cell is a different column, and the caption is silent on it BEFORE
+      this change as well as after. So the change makes no caption claim false and leaves
+      none incomplete that was complete.
+      This is a PAIRING discharge on a re-read, not a formatting exemption: the change is
+      semantic, and the re-read found the caption's scope disjoint from it. Digest
+      recorded after the load-mode apply, so the exemption expires on the next change to
+      this renderer.
+    justification_2026_09_03b: >-
+      path-tree leaf-run collapse (four-spec set). Caption RE-READ IN FULL, and it makes
+      no claim this change can touch. The caption describes WHAT the Provenance summary
+      contains -- sidecar identity and license, toolkit git-SHA, container and SIF digest,
+      input digests, the per-run process graph, and the consolidated outputs with their CF
+      variable dictionary. This change alters only HOW the path tree DISPLAYS those
+      outputs: whether a run of sibling leaves collapses, what the sentinel label reads,
+      and the roster's own sentence about how membership is decided. The caption states
+      nothing about collapsing, sentinels, labels, or membership, and no value it
+      characterises changes.
+      SCOPE, recorded so a later reader need not re-derive it: the change is LEAVES ONLY.
+      Directory runs keep the subtree-only grouping, so the delivered crate -- whose
+      members are directories -- renders byte-identically today. The repair targets the
+      row explosion the RO-Crate member-reference repair will introduce by turning member
+      references into bare directories.
+      The caption COMPLETENESS gap recorded in the 2026-09-03 entry above is UNCHANGED and
+      NOT discharged here: the caption enumerates three sections while the page carries at
+      least a fourth. A caption rewrite is not part of a rendering change; it stays on the
+      work stack as its own item.
+      S8b consolidated-store rename, 2026-09-05. Caption RE-READ: it contains no reference
+      to any store filename (`grep -c datatree` returns 0), and every hunk in this renderer is
+      a RESOLUTION SUBSTITUTION -- a hardcoded `sensitivity_datatree.zarr` literal replaced by
+      `resolve_experiment_tree()` or by the `EXPERIMENT_TREE_NAME` / `ROOT_TREE_NAMES` constants.
+      The substitution changes WHICH STORE PATH is read, never what the figure computes, its
+      axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
+      the rename, so the exemption expires on the next change to this renderer.
+    justification_2026_09_03: >-
+      member-identity repair (case-8 Spec 2). Caption RE-READ IN FULL, and it makes no
+      claim this change can touch. The caption describes exactly three sections --
+      Provenance summary, Data availability, Reproduction guide. Spec 2 edits
+      _read_scenario_status, which feeds the scenario/efficiency JOIN consumed by
+      _enrich_efficiency_rows -- a section the caption does not describe at all. The
+      repair also changes no rendered VALUE the caption characterises: it restores the
+      member slot in a join key that was silently collapsing to "" on every row.
+      A FINDING the re-read produced, recorded because this guard cannot see it: the
+      caption enumerates three sections while the page carries at least a fourth (the
+      efficiency table). That is a caption COMPLETENESS gap, it predates this change,
+      and it is NOT discharged by this entry -- routed to the doc feedback tracker
+      rather than fixed here, because a caption rewrite is not part of a column repair.
+    justification: >-
+      V0020 vocabulary rename (spec S7). Caption RE-READ in full, and the finding is
+      that it makes no claim this change can touch. S7 edits ONE object:
+      _RULE_PREFIX_TO_PURPOSE, the rule-name-to-purpose label map. It adds an
+      experiment_consolidation entry, RETAINS the retired master_consolidation entry
+      deliberately (two on-disk carriers keep producing that name and V0020 renames
+      neither), and points both at the same label. That map feeds only the
+      SLURM-efficiency table.
+      The caption describes three sections -- Provenance summary, Data availability,
+      and Reproduction guide -- and does not describe the SLURM-efficiency table, name
+      any rule, or name any purpose label. So no column, unit, section, or claim it
+      makes changes. Verify by reading the caption against the S7 diff:
+      git diff -- src/hhemt/report_renderers/metadata.py
+      This is a PAIRING discharge on a re-read, not a formatting exemption: the change
+      is semantic, and the re-read found the caption's scope disjoint from it. Digest
+      recorded after S7, so the exemption expires on the next change to this renderer.
+    justification_2026_11_02_develop_merge: >-
+      Re-read 2026-11-02 against this renderer's diff on top of the merged origin/develop.
+      The diff changes one word in a code comment (the caret-branch comment now names total_inflow_vol
+      instead of its suffixed name); nothing the page prints changes. The caption (20 lines, read
+      in full) describes the Provenance, Data Availability and Reproduction Guide sections and names no
+      variable, so no clause is falsified, weakened or left ambiguous and there is no caption edit to
+      make.
+    justification_2026_11_02_stored_names: >-
+      Re-read 2026-11-02 against this renderer's diff (git diff HEAD), which renames stored variable names it reads or advertises; here one docstring bullet naming the SWMM node total inflow volume (total_inflow_vol_10e6_ltr -> total_inflow_vol); no emitted column, unit, row or panel moved. This caption was read in full and contains none of max_flow, cms, unit, velocity, depth, m3, 10e6 or flooding (matcher: grep -c -i -E on those alternatives, unit lines, result 0), so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the post-change renderer content, so this exemption expires on the next change to the renderer.
+  - renderer: per_analysis_summary
+    caption: src/hhemt/report_templates/captions/per_analysis_summary_table.rst
+    renderer_sha256: 7a04e51cbc02d9901d44ee12de740f0b4520e27ff1356c1892ca5291da3fa827
+    justification_2026_11_09_1e3_removed_scenarios_per_analysis_summary: >-
+      (Includes the later hunk that reaches the member enumeration through the helper all_members_for_reading_of and one import line; no displayed text moved.) Re-read 2026-11-09 against this renderer's diff (git diff HEAD -- src/hhemt/report_renderers/per_analysis_summary.py, 4 lines). The two hunks change the member loop to iterate every member including a removed one (a read-only view) and the scenario verdict to come from the recorded completion verdict once a scenario directory was removed. The caption was read in full. It says the page gives aggregate scenario status for the analysis, that Scenarios counts events with one scenario per event, and that source paths are relative to the analysis directory; a removed scenario is still counted as one event and still listed as completed, so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. PAIRING discharge on a re-read; the digest expires on the next change to this renderer.
+    justification_2026_09_03: >-
+      member-identity repair (case-8 Spec 9). Caption RE-READ IN FULL, and it makes no
+      claim this change can touch. The caption describes aggregate scenario status and
+      SWMM flow-routing continuity error parsed from each scenario's .rpt. Spec 9 edits
+      how MEMBER ROWS ARE SELECTED from status_df -- resolving the identity column
+      instead of subscripting a retired literal that raised KeyError on a post-rename
+      CSV. Selection is not a property the caption states, and the metrics it does
+      state (continuity error, their source and their threshold) are untouched. The
+      None-branch now yields an empty frame rather than raising, which changes a crash
+      into an empty section; the caption characterises neither.
+    justification: >-
+      docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
+      not by judgement. This renderer's abstract syntax tree, parsed from the working
+      tree, is IDENTICAL to its AST at MERGE_HEAD (and differs from HEAD, because the
+      merge took the other branch's version of this file wholesale). The only textual
+      difference from MERGE_HEAD is the whole-tree ruff-format pass riding this same
+      commit. A formatting change cannot alter a column, a unit, a section, or any
+      other claim a caption can make, so this caption cannot have gone stale and a
+      re-read has no possible finding. The renderer's semantics were reviewed on the
+      branch that authored them. Reproduce with:
+      python -c "import ast,subprocess;
+      f='src/hhemt/report_renderers/per_analysis_summary.py';
+      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
+      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
+      Digest recorded AFTER the reformat, so the exemption expires on the next real
+      change to this file rather than on arrival.
+  - renderer: scenario_status_appendix
+    caption: src/hhemt/report_templates/captions/scenario_status_appendix.rst
+    renderer_sha256: 3d7c2682cfbc438accfcf1d48f6b5507d62134be3d57788c4627fdee86b7e54e
+    justification: >-
+      docs-and-experiment-system merge. FORMATTING ONLY -- discharged by measurement,
+      not by judgement. This renderer's abstract syntax tree, parsed from the working
+      tree, is IDENTICAL to its AST at MERGE_HEAD (and differs from HEAD, because the
+      merge took the other branch's version of this file wholesale). The only textual
+      difference from MERGE_HEAD is the whole-tree ruff-format pass riding this same
+      commit. A formatting change cannot alter a column, a unit, a section, or any
+      other claim a caption can make, so this caption cannot have gone stale and a
+      re-read has no possible finding. The renderer's semantics were reviewed on the
+      branch that authored them. Reproduce with:
+      python -c "import ast,subprocess;
+      f='src/hhemt/report_renderers/scenario_status_appendix.py';
+      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
+      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
+      Digest recorded AFTER the reformat, so the exemption expires on the next real
+      change to this file rather than on arrival.
+  - renderer: system_overview
+    caption: src/hhemt/report_templates/captions/system_map.rst
+    renderer_sha256: 60a87a64e9499de9b8b271dc94c9868eb52c9738360489a2be63b644e9bcef40
+    justification_2026_11_09_1e3_removed_scenarios_system_overview: >-
+      (Includes the later hunk that reaches the member enumeration through the helper all_members_for_reading_of and one import line; no displayed text moved.) Re-read 2026-11-09 against this renderer's diff (git diff HEAD -- src/hhemt/report_renderers/system_overview.py, 35 lines). The hunks make the member enumeration cover removed members and add a fallback in the INP resolver: when no scenario directory holds a prepared SWMM input, the renderer reads the copies the directory removal kept beside the records. The caption was read in full. It names the TRITON DEM and Manning's n panels, the color-range and over-color treatment, and the CRS from system_config.crs.horizontal_epsg; it makes no claim about which file a SWMM panel's input comes from, and the panels drawn are the same, so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. PAIRING discharge on a re-read; the digest expires on the next change to this renderer.
+    justification_2026_11_04_develop_merge: >-
+      Re-read 2026-11-04 against this renderer as merged with develop at layout 28. The
+      merge brought in develop's edits to the file: the panel headings become named constants, the
+      Manning's n panel heading and colour-bar label are set after the shared plotter returns, the
+      conditional hydrology and hydraulics headings gain a descriptive line, and the document title
+      and the easting axis title change punctuation. The caption was read in full. It names the TRITON
+      DEM panel and the Manning's n panel, which carry the headings DEM_PANEL_TITLE and
+      MANNINGS_PANEL_TITLE, and it names no conditional panel, which the renderer's own comment states
+      is deliberate. The colour-range and over-color statements and the CRS statement are on lines the
+      diff leaves in place. No clause is falsified, weakened or left ambiguous, so the caption needs no
+      edit. Digest recorded at the merged renderer content, so this exemption expires on the next
+      change to the renderer.
+    justification_2026_11_03: >-
+      Re-read 2026-11-03 against this renderer's diff. The diff adds a helper that
+      draws a panel label and one call to it, both reached only when a publication static
+      configuration sets subplot_label; the report path passes no static configuration, so no
+      emitted panel, column, unit or colour range of the figure this caption describes moved. This
+      caption was read in full and no clause is falsified, weakened or left ambiguous, so there is
+      no caption edit to make. Digest recorded at the post-change renderer content.
+    justification_2026_10_18: >-
+      Re-read 2026-10-18. The caption described a watershed/DEM-extent/BC-marker/SWMM
+      overlay map this renderer does not draw; it was rewritten to the figure the renderer
+      emits -- the TRITON DEM and Manning's n panels, plus hydrology and hydraulics panels
+      when SWMM is rendered -- and to resolve_target_crs's precedence. Digest recorded against
+      the reporting-system change's post-image.
+    justification: >-
+      Vocabulary-rename fallout repair. THIS SUPERSEDES A FORMATTING-ONLY ENTRY AND ITS
+      DISCHARGE DOES NOT CARRY OVER. The prior entry recorded digest 43e350a7 and
+      discharged the re-read BY MEASUREMENT -- the AST was identical to MERGE_HEAD and
+      only a ruff-format pass differed -- while stating that the exemption "expires on the
+      next real change to this file rather than on arrival". This IS that next real
+      change, so the guard fired exactly as that entry predicted, and the AST-identity
+      argument is unavailable here: this change alters behaviour.
+      THE CHANGE IS ONE WORD, at _master_renders_swmm: the sensitivity branch read
+      getattr(getattr(analysis, "sensitivity", None), "analyses", {}), and
+      TRITONSWMM_sensitivity_analysis binds `members`, never `analyses`
+      (sensitivity_analysis.py:355). The getattr DEFAULT swallowed the miss, so `subs`
+      was always {} and the union over members never executed -- a defence that did not
+      defend, silent by construction rather than raising.
+      THE RE-READ WAS PERFORMED AND IS THE POINT OF THIS ENTRY, since this guard checks
+      PAIRING rather than agreement. The caption states what the map OVERLAYS: the
+      watershed polygon, the TRITON DEM extent, the boundary-condition shapefile
+      location, SWMM nodes and links from a representative scenario, and the CRS from
+      system_config.crs.horizontal_epsg. It makes NO claim about the master/member
+      predicate that decides WHETHER the SWMM overlay is drawn on a sensitivity master,
+      which is the only thing this change touches. Every claim the caption makes is
+      therefore unaffected and it is accurate as written.
+      HONEST BOUND ON WHAT CHANGED, so a later reader is not told more than was
+      established: the observable difference requires a master and its members to
+      DISAGREE on enabled models. A sensitivity analysis is single-model by a hard raise,
+      which bounds the master's enabled-set SIZE but NOT master/member agreement, and
+      validation.py::_validate_per_member_system_configs returns early unless the legacy
+      system_config_yaml column is present -- so a system.toggle_* overlay column reaches
+      an unchecked divergence. That path is reachable and rare; on every other path the
+      union was inert and the rendered output is unchanged.
+      Concurred: authored by hhemt-specialist, refuted to concurrence by
+      software-engineering-specialist over a per-spec ledger; the paired stub at
+      tests/test_system_overview_model_gate.py:19 lands in the same commit, verified by a
+      four-arm probe in which either half alone fails.
+      RE-RECORDED 2026-09-04 for a FORMATTING-ONLY ruff-format pass, and the entry above
+      PREDICTED this: it said its own exemption "expires on the next real change to this
+      file". This is NOT that next real change -- it is a reflow, so the discharge returns
+      to the AST-identity pattern the sibling entries in this file established, and the
+      behavioural argument recorded above still describes the last SEMANTIC change and is
+      retained rather than overwritten.
+      DISCHARGED BY MEASUREMENT, not judgement: ast.dump of the working-tree file is
+      IDENTICAL to ast.dump of the same path at HEAD. Measured across the whole reformat
+      batch -- 20 files whose BYTES all changed, 20 of 20 AST-identical to HEAD, 0
+      differing -- so no behaviour changed anywhere in the pass, this file included.
+      THE RE-READ WAS STILL PERFORMED, because this guard checks PAIRING and an
+      AST argument is a claim about the RENDERER rather than about the caption. The
+      caption names what the map OVERLAYS -- watershed polygon, TRITON DEM extent,
+      boundary-condition shapefile location, SWMM nodes and links via swmmio -- and the
+      CRS from system_config.crs.horizontal_epsg. A reflow cannot alter a column, a unit,
+      an overlay, or a CRS, so every claim it makes is unaffected and it is accurate as
+      written.
+      WHY THE REFORMAT HAPPENED AT ALL, since it is not this renderer's own work: the
+      pre-push ruff-format hook runs over the PUSH RANGE and failed on 20 files of
+      INHERITED debt (both files this branch touched were already format-dirty at
+      68ff2a85; repo-wide baseline 168). The developer chose to clear the 20 rather than
+      SKIP the hook. Digest recorded AFTER the reformat, so this exemption again expires
+      on the next real change to this file rather than on arrival.
+  - renderer: cross_experiment_compatibility
+    caption: src/hhemt/report_templates/captions/cross_experiment_compatibility.rst
+    renderer_sha256: aad9331b1ecaf4b0dbdc5bfd5665d910bd2b7d3de81e42a5cb3b77e4802c6ea2
+    justification_2026_11_02_develop_integration: >-
+      Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that the model label, the member count and the root attributes are read from `experiment_tree_summary` (metadata only, the union of models) instead of a full open, giving develop's label and count.
+      Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
+      This is a PAIRING discharge on a re-read, not a formatting exemption; the digest expires on the next change to this renderer.
+    justification_2026_11_03_arm_text: >-
+      The expected-divergence sentence for the model toggles and the sentence about pinned solvers say
+      experiment where they said arm, and the toggle sentence no longer names a rule. Caption RE-READ IN
+      FULL (5 lines): it quotes neither sentence and describes the page columns and the combine stop, which
+      these edits do not touch. Digest recorded after the last edit, so the exemption expires on the next
+      change to this renderer.
+    justification: >-
+      docs-and-experiment-system <- sidequest-clearing-08-30 merge. FORMATTING ONLY --
+      discharged by measurement, not by judgement, and following the AST-equivalence
+      pattern the sibling entries in this file established. This renderer's abstract
+      syntax tree, parsed from the working tree, is IDENTICAL to its AST at BOTH
+      MERGE_HEAD and HEAD -- a stronger result than the sibling entries, which differ
+      from HEAD because the merge took the other branch's file wholesale. Here the two
+      branches' versions are semantically the same file and differ only in the pinned
+      ruff-format v0.6.0 reflow (conditional expressions parenthesised, a string
+      concatenation and a set literal re-wrapped). A formatting change cannot alter a
+      column, a unit, a section, or any other claim a caption can make, so this caption
+      cannot have gone stale and a re-read has no possible finding. Reproduce with:
+      python -c "import ast,subprocess;
+      f='src/hhemt/report_renderers/cross_experiment_compatibility.py';
+      g=lambda r: ast.dump(ast.parse(subprocess.run(['git','show',r+':'+f],capture_output=True,text=True).stdout));
+      print(ast.dump(ast.parse(open(f).read()))==g('MERGE_HEAD'))"
+      Digest recorded AFTER the reformat, so the exemption expires on the next real
+      change to this file rather than on arrival. This renderer was the one the
+      authoring branch's own sweep missed; its siblings are allowlisted above.
+      S8b consolidated-store rename, 2026-09-05. Caption RE-READ: it contains no reference
+      to any store filename (`grep -c datatree` returns 0), and every hunk in this renderer is
+      a RESOLUTION SUBSTITUTION -- a hardcoded `sensitivity_datatree.zarr` literal replaced by
+      `resolve_experiment_tree()` or by the `EXPERIMENT_TREE_NAME` / `ROOT_TREE_NAMES` constants.
+      The substitution changes WHICH STORE PATH is read, never what the figure computes, its
+      axes, its aggregation or its rendering path, so no caption claim is reachable by it. This
+      is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded after
+      the rename, so the exemption expires on the next change to this renderer.
+      Experiment-tree summary, chunk 2b.3, 2026-11-02. Caption RE-READ in full against the
+      measured diff of this renderer: the only hunks replace a full `xr.open_datatree` plus two
+      `dt.groups` loops with `hhemt.utils.experiment_tree_summary(store)`, taking `n_subs` as
+      `len(summary.members)` and `model` from `summary.tier` by the same first-member-with-a-tier
+      rule, and the root attrs from `summary.attrs`. The caption states what each row records
+      (role, model, member count, toolkit and solver builds), that compatibility is enforced
+      upstream, and its read-model source; none of that moved, and it names no store-opening
+      mechanism. Looked; no change needed. Digest recorded after the change, so the exemption
+      expires on the next change to this renderer.
+  - renderer: cross_experiment_intercomparison
+    caption: src/hhemt/report_templates/captions/cross_experiment_intercomparison.rst
+    renderer_sha256: 801a266b2893eda088131064678016e7b0837823448d2462203cc61f5dde5b49
+    justification: >-
+      Tree-wide ruff pass over the merged file set. IMPORT-ONLY -- discharged by
+      measurement, not by judgement. The sibling entries in this file prove
+      formatting-only changes via whole-AST equivalence; that instrument cannot be
+      used here, because REMOVING an import necessarily changes the AST. The
+      correct proof is two-part and both parts were run. (1) The only imported name
+      that changed is `_html` (F401, `import html as _html`), REMOVED, and it has
+      ZERO references in the module: an ast.walk finds 0 Name nodes and 0 Attribute
+      value-nodes bearing that identifier. Note that a plain `grep -c _html`
+      returns 7 and is the WRONG instrument -- every hit is a substring of a
+      different identifier (`build_html_document`, `_build_intercomparison_html`,
+      `_plain_html`, `body_heading_html`), none of them the bare alias. (2) With
+      imports stripped from every body list, the module's AST is IDENTICAL to its
+      AST at HEAD, so no rendering statement moved. A caption cannot be falsified
+      by the removal of a name nothing reads. Digest recorded AFTER the
+      ruff-format pass riding this same commit, so the exemption expires on the
+      next real change to this renderer rather than on arrival.
+
+  - renderer: per_sim_peak_flood_depth
+    caption: src/hhemt/report_templates/captions/per_sim_peak_flood_depth.rst
+    renderer_sha256: 1effb1547cad8dff7f58c9f7981091c75844de536b4b968490ecdf6a4f03f1c9
+    justification_2026_10_18: >-
+      Re-read 2026-10-18 (general watershed wording). Two caption sentences were
+      false of this renderer and were rewritten: the per-cell maximum is taken by the
+      toolkit's post-processing, not by the TRITON solver, and the colormaps and quantile
+      clips come from report.per_sim.map, not report.per_sim.peak_flood_depth (which supplies
+      only figsize_inches). The watershed paragraph now names
+      system_config.watershed_gis_polygon rather than one case study's geography. The reporting-system
+      renderer change (the shared wall-threshold helper and the provenance transform strings)
+      touches no claim the caption makes.
+    justification: >-
+      Tree-wide ruff pass over the merged file set. IMPORT-ONLY -- discharged by
+      measurement, not by judgement. The change is an I001 REORDER of one
+      function-local import (`report_renderers._model_arms.resolve_arm_group`)
+      within its own block, so whole-AST equivalence cannot hold (node order moved)
+      even though nothing semantic did. Two measurements discharge it. (1) The SET
+      of imported names is identical before and after -- zero added, zero removed
+      -- so no name this module binds has changed. (2) With imports stripped from
+      every body list, the module's AST is IDENTICAL to its AST at HEAD, so no
+      panel, colour scale, tick derivation or emitted string moved. The caption
+      describes the three-panel depth / WSE / event-hydrology figure and its data
+      sources; none of that is reachable by reordering an import. Digest recorded
+      AFTER the ruff-format pass riding this same commit, so the exemption expires
+      on the next real change to this renderer rather than on arrival.
+    justification_2026_11_02_stored_names: >-
+      Re-read 2026-11-02 against this renderer's diff (git diff HEAD), which renames stored variable names it reads or advertises; here the renderer-data key depth_m_max -> depth_max in the two manifest_data dictionaries (a JSON key in the figure manifest, not a plotted quantity); no emitted figure, column, unit or panel moved. This caption was read in full and contains none of depth_max, max_flow, cms, unit, velocity, m3 or flooding (matcher: grep -c -i -E on those alternatives, unit lines, result 0), so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the post-change renderer content, so this exemption expires on the next change to the renderer.
+    justification_2026_11_03_renderer_data_keys: >-
+      Re-read 2026-11-03 against this renderer's diff (git diff HEAD), which
+      renames four keys of the renderer data written into the figure manifest, in the two manifest_data
+      dictionaries (wse_m_range -> wse_range, rainfall_max_mm_per_hr -> rainfall_max, bc_water_level_range_m ->
+      bc_water_level_range, depth_boundaries_m -> depth_boundaries) and adds a units companion key for each; the
+      configuration field depth_boundaries_m keeps its name. These are JSON keys in the manifest, not plotted
+      quantities: no emitted figure, panel, colorbar, column or unit moved. The caption (11 lines) was read in
+      full by the coder and none of those keys, nor rainfall_max, wse_range or a units word, appears in it (matcher:
+      grep -c -i -E on the alternatives wse_|rainfall_max|bc_water_level_range|depth_boundaries|units, unit lines,
+      result 0), so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. This
+      entry pairs the caption with the current renderer content. Caption RE-READ in full by a reviewer who is not the author
+      and reads true. This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded at the
+      post-change renderer content, so this exemption expires on the next change to the renderer.
+
+  - renderer: workflow_performance
+    caption: src/hhemt/report_templates/captions/workflow_performance.rst
+    renderer_sha256: 1b3b072feb5d29c39d62211cf58c3fd586ad12e0fa89ac59ab98566e05feb346
+    justification_2026_11_02_job_count_text: >-
+      The absent-report notice is rebuilt as one sentence that names the report file, and the
+      provenance note of the run timeline is reworded. The caption is edited in the same change
+      (its SLURM Efficiency bullet drops the list of source files and the section's absence
+      sentence), so this entry is not what satisfies the pairing guard for this change; it
+      records the digest of the file the caption was re-read against, in full (14 lines), with
+      the diff of this renderer against HEAD: four hunks, listed by
+      `git diff -U0 | grep '^@@'`: the import of `_SLURM_EFF_GLOB` and the removal of the
+      `_absent_banner` import, the run timeline's provenance note, and the replaced notice.
+      Digest recorded after the last edit, so the exemption expires on the next change to this
+      renderer.
+    justification_2026_11_01_member_set: >-
+      The renderer reads the member ids from the analysis's configuration and passes them to the
+      run timeline and to the purpose join, replaces the note shown when no status record exists,
+      and gains the function that reads the member ids. The caption is rewritten in the same
+      change: its Run timeline bullet states that records of members no longer in the analysis
+      are left out and counted and that a record naming no member has an empty Member cell, and
+      both bullets and the opening sentence follow the report style brief. Caption RE-READ IN
+      FULL (16 lines) against the diff and against the built page for a sweep, a plain analysis,
+      a sweep whose records are all left out, and an analysis with no status record. The diff of
+      this renderer against HEAD has six hunks, listed by `git diff -U0 | grep '^@@'`: two added
+      imports (`_code`, `_heading`); the new function that reads the member ids; the line that
+      calls it before the run timeline; the timeline call gaining the member ids; the replaced
+      notice for a missing status record, now built with `_code` so the file name prints as code;
+      and the purpose join call gaining the member ids. This is a PAIRING discharge on a re-read of
+      an edited caption, not a formatting exemption. Digest recorded after the edit, so the
+      exemption expires on the next change to this renderer.
+    justification_2026_11_01_invocation_labels: >-
+      The render call now passes the table builder one more argument, a mapping from each job
+      id a Snakemake log names to that log's file name without its ".snakemake.log" suffix, built
+      from the submit map the renderer already holds. Caption RE-READ IN FULL (15 lines: the
+      run-timeline bullet, the SLURM efficiency bullet, and the Sources block) against the diff.
+      The diff of this renderer against HEAD is ONE hunk, `git diff -U0 | grep '^@@'` returns
+      `@@ -223,0 +224,5 @@`, five added lines inside `render()`, at the call to the table builder.
+      The caption names no column of the table and says only that each row is one SLURM job read
+      from the submit records, the reports and the recovery store, which this argument makes
+      truer in practice and does not change. The earlier edit of this renderer that changed the
+      job set was paired with its caption edit in its own commit. This is a PAIRING discharge on
+      a re-read, not a formatting exemption. Digest recorded after the edit, so the exemption
+      expires on the next change to this renderer.
+    justification_2026_09_21: >-
+      Grouped bundle-emit commit (INEF-4's 27 specs + EMIT-1's 5). Caption RE-READ IN FULL
+      against the diff. COMMENT-AND-FORMAT ONLY -- discharged by measurement, not by
+      judgement. The change is three hunks. P5-1's first block rewrites the
+      `_status/*.flag.json` comment, whose prior text claimed `_status/` is already
+      copytree'd into the render bundle so the declaration "adds manifest rows and no
+      payload bytes"; that was false, `_copy_supporting_files` copies only
+      `_status/_du.json`, and the corrected text records that the declaration IS the carry
+      (22,794 sidecars on a 3,798-event campaign) and names the scrubbed-read-model
+      follow-up. P5-1's second block renames `_harvest_and_copy_sources` to
+      `_harvest_sources` inside a comment and restates it as streaming rather than copying.
+      P5-1's third block is a pure `ruff format` reflow of the `fragments` list
+      comprehension onto one line, a finding that pre-existed this commit on this file.
+      THE MEASUREMENT THAT DISCHARGES IT: the module's AST is IDENTICAL before and after
+      (`ast.dump(ast.parse(...))` over the HEAD blob and the working file compare equal,
+      17,524 characters each). Not merely equivalent -- identical. So no emitted string,
+      no column, no source declaration and no branch can have moved, and nothing the
+      caption describes is reachable by this change.
+      WHY THE CAPTION IS UNAFFECTED, stated so a reviewer can disagree with the reasoning.
+      Its two bullets describe the Run timeline's source (the per-rule `_status/*.flag.json`
+      sidecars, appended one file at a time, covering setup through consolidation) and the
+      SLURM-efficiency union (`slurm_efficiency_report_*.csv` across all submissions,
+      finalized at teardown AFTER this page renders and therefore expected absent on the
+      producing run). Both remain exactly true: the declared set is unchanged, and what was
+      corrected is only the COMMENT explaining what that declaration costs a bundle.
+      THE ONE THING A REVIEWER SHOULD PROBE: the corrected comment now discloses that this
+      declaration carries 22,794 payload files into a bundle. Had the caption promised a
+      small page or a cheap bundle, that disclosure would make it misleading. It does not --
+      the caption makes no size, cost or carriage claim anywhere, and bundle carriage is a
+      subject it never raises.
+      First exemption for this pair; there was no prior entry. Digest recorded after the
+      grouped apply INCLUDING the ruff-format reflow riding it, so the exemption expires on
+      the next real change to this renderer rather than on arrival.
+  - renderer: scenario_status_appendix
+    caption: src/hhemt/report_templates/captions/scenario_status_appendix.rst
+    renderer_sha256: 25442751300defe41cd98ca14082cf156adccec5aedda6ee96dd5d07d7d6ca35
+    justification: >-
+      SUPERSEDES the formatting-only entry recorded at 3d7c2682, whose discharge does
+      NOT carry over -- this is a semantic change to the renderer, and it was re-read
+      rather than measured away.
+      THE RE-READ WAS PERFORMED AND HAS A FINDING: none. The renderer change replaces
+      the column-hide predicate's inline cardinality lambda with a named `_keep_column`
+      dispatching three branches, so that one column -- perf_column_set_across_allocations
+      -- is now decided by reading its VALUES instead of counting how many distinct ones
+      the column holds. It therefore changes WHICH COLUMNS APPEAR in the rendered table
+      for that one column, in both directions (it now hides on a single-solver analysis
+      carrying legacy members, and shows when every member reports the same
+      heterogeneity).
+      THE CAPTION MAKES NO CLAIM ABOUT COLUMN VISIBILITY. Its four content clauses are:
+      the analysis_id, that each ROW is one scenario x model_type combination, the four
+      row-level quantities (exit status, runtime, continuity error, per-row notes), and
+      the provenance of the CSV (export_scenario_status.py at workflow close). Every one
+      is a statement about rows or about the source; none enumerates, bounds, or
+      otherwise describes the column set. No clause is falsified, weakened, or left
+      ambiguous by a change to which columns survive the hide pass, so there is no
+      caption edit to make and inventing one would add a claim the caption did not
+      previously carry.
+      Digest recorded at the post-change renderer content, so this exemption expires on
+      the NEXT change to the renderer and the re-read is owed again then.
+      RE-RECORDED for chunk 3b.3 (round 3): the renderer's only change is that the
+      not-shown notice prints the file name scenario_status.csv inside a code element
+      (style brief rule 7); the caption makes no claim about the notice's markup, so no
+      caption edit follows.
+  - renderer: eda_compute_sensitivity
+    caption: src/hhemt/report_templates/captions/eda_dem_resolution_cost_error.rst
+    renderer_sha256: d1b2d838c8f295570df32832931d37859e1e622fbf49a81af688133dfd22cd4c
+    justification_2026_11_05: >-
+      Re-read 2026-11-05 (repair of an adapter keyword). The adapter's change is one keyword
+      argument, cfg_system, passed through to render_eda_plots (the system object the rule's --system-
+      config loaded), plus a comment. It adds no column, unit, panel or text of its own. This caption
+      (x axis compute cost on a log scale, y axis the 95th-percentile depth error against the finest
+      run, one labeled point per rung, the finest run as reference) describes the figure's axes and
+      points. On the real layout the figure used to fail before it drew; with the object supplied it
+      draws those axes and points from the stored tree, and the object supplies only the EPSG code the
+      regrid kernel needs. No clause is falsified, weakened or left ambiguous; no caption edit. Digest
+      recorded at the post-change renderer content, so this exemption expires on the next change to
+      the renderer.
+  - renderer: eda_compute_sensitivity
+    caption: src/hhemt/report_templates/captions/eda_dem_resolution_coupling_table.rst
+    renderer_sha256: d1b2d838c8f295570df32832931d37859e1e622fbf49a81af688133dfd22cd4c
+    justification_2026_11_05: >-
+      Re-read 2026-11-05 (repair of an adapter keyword). The adapter's change is one keyword
+      argument, cfg_system, passed through to render_eda_plots (the system object the rule's --system-
+      config loaded), plus a comment. It adds no column, unit, panel or text of its own. This caption
+      (one row per rung; columns resolution, cells, coupling junctions, peaks, and the over- and
+      under-estimates of depth and flow versus the finest run) lists the table's columns. The object
+      also supplies the watershed polygon, so the depth delta columns are restricted to the polygon on
+      the real layout, as they are wherever a root carries the system file; the figure states that
+      scope in its own annotation, and the caption makes no claim about which cells the deltas cover.
+      No emitted column, unit or panel moved; no caption edit. Digest recorded at the post-change
+      renderer content, so this exemption expires on the next change to the renderer.
+  - renderer: eda_compute_sensitivity
+    caption: src/hhemt/report_templates/captions/eda_dem_resolution_diff_maps.rst
+    renderer_sha256: d1b2d838c8f295570df32832931d37859e1e622fbf49a81af688133dfd22cd4c
+    justification_2026_11_05: >-
+      Re-read 2026-11-05 (repair of an adapter keyword). The adapter's change is one keyword
+      argument, cfg_system, passed through to render_eda_plots (the system object the rule's --system-
+      config loaded), plus a comment. It adds no column, unit, panel or text of its own. This caption
+      (panel A the finest run in absolute depth, then a signed-difference row and a percent-difference
+      row per coarser rung, the tau floor, the newly-wet count) describes the panels. The object
+      supplies the EPSG code and the watershed polygon, so on the real layout the depth maps and their
+      colorbar ranges are masked to the polygon, as they are wherever a root carries the system file;
+      the caption makes no claim about the mask, and no panel, unit or colour rule moved. No caption
+      edit. Digest recorded at the post-change renderer content, so this exemption expires on the next
+      change to the renderer.
+  - renderer: eda_compute_sensitivity
+    caption: src/hhemt/report_templates/captions/eda_dem_resolution_error_ecdf.rst
+    renderer_sha256: d1b2d838c8f295570df32832931d37859e1e622fbf49a81af688133dfd22cd4c
+    justification_2026_11_05: >-
+      Re-read 2026-11-05 (repair of an adapter keyword). The adapter's change is one keyword
+      argument, cfg_system, passed through to render_eda_plots (the system object the rule's --system-
+      config loaded), plus a comment. It adds no column, unit, panel or text of its own. This caption
+      (one curve per coarser rung, absolute depth error on x, cumulative fraction of union-wet cells
+      on y, the p95 legend line, the flooded-area table below) describes the curves and the table. The
+      object supplies only the EPSG code; the tolerance line comes from the EDA configuration, not
+      from the adapter. No clause is falsified, weakened or left ambiguous; no caption edit. Digest
+      recorded at the post-change renderer content, so this exemption expires on the next change to
+      the renderer.
+  - renderer: eda_compute_sensitivity
+    caption: src/hhemt/report_templates/captions/raw_byte_identity.rst
+    renderer_sha256: d1b2d838c8f295570df32832931d37859e1e622fbf49a81af688133dfd22cd4c
+    justification_2026_11_05: >-
+      Re-read 2026-11-05 (repair of an adapter keyword). The adapter's change is one keyword
+      argument, cfg_system, passed through to render_eda_plots (the system object the rule's --system-
+      config loaded), plus a comment. It adds no column, unit, panel or text of its own. This caption
+      (raw TRITON output rasters compared timestep by timestep within each hardware family, the CPU
+      and GPU references, green for identical cells, white to vermillion by the largest absolute
+      difference, the verdict sentence) describes the raw byte-identity figure. That renderer accepts
+      the keyword and ignores it, so the figure is unchanged. No caption edit. Digest recorded at the
+      post-change renderer content, so this exemption expires on the next change to the renderer.
+  - renderer: eda_compute_sensitivity
+    caption: src/hhemt/report_templates/captions/eda_compute_sensitivity.rst
+    renderer_sha256: d1b2d838c8f295570df32832931d37859e1e622fbf49a81af688133dfd22cd4c
+    justification_2026_11_05: >-
+      Re-read 2026-11-05 (repair of an adapter keyword). The adapter's change is one keyword
+      argument, cfg_system, passed through to render_eda_plots (the system object the rule's --system-
+      config loaded), plus a comment. It adds no column, unit, panel or text of its own. This caption
+      (a table of each configuration's identity and absolute difference from the serial-CPU baseline,
+      then signed-difference and percent-difference maps per group of byte-identical configurations,
+      labels from each member's compute configuration) describes the config-diff figure. That renderer
+      accepts the keyword and ignores it, so the figure is unchanged. No caption edit. Digest recorded
+      at the post-change renderer content, so this exemption expires on the next change to the
+      renderer.
+  - renderer: cross_experiment_errors_and_warnings
+    caption: src/hhemt/report_templates/captions/cross_experiment_errors_and_warnings.rst
+    renderer_sha256: ffc705d5da36ace171b55a10d5ca60086fd9c25dcb3af263fbc7e093f1cb9ad8
+    justification_2026_10_28: >-
+      Re-read 2026-10-28 against this renderer's diff. The change is whitespace and line wrapping
+      only: one blank line before _INLINE_STYLE, two adjacent f-string literals in
+      _compat_divergence_finding joined into one literal (same characters), and _render_rollup_html's
+      signature on one line; the module's AST, docstrings included, is identical to HEAD (ast.dump
+      equality), so no emitted column, unit, row or panel moved. This caption was read in full: it
+      describes the per-experiment pass/fail roll-up, hover text for a FAIL and the
+      derived-across-experiments rows, and none of those is touched by the diff, so no clause is
+      falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at
+      the post-change renderer content, so this exemption expires on the next change to the renderer.
+    justification_2026_11_02_develop_merge: >-
+      Re-read 2026-11-02 against this renderer's diff on top of the merged origin/develop.
+      The diff renames the stored variable names the renderer matches in the combined comparison records
+      (max_wlevel_m to max_flood_depth, max_flow_cms to max_flow) in code, two f-string findings and
+      comments; the table it emits is unchanged. The caption (one paragraph, read in full) describes one
+      experiment's result per check, hover text and the derived-across-experiments marker, and names
+      neither variable, so no clause is falsified, weakened or left ambiguous and there is no caption edit
+      to make.
+    justification_2026_11_02: >-
+      Re-read 2026-11-02 against this renderer's diff (git diff HEAD). The change renames the
+      stored variable it filters on (max_wlevel_m -> max_flood_depth) in one docstring, one
+      comprehension, one f-string and one comment; the comparison is by the stored name, so the
+      rename keeps the same pairs selected. No emitted column, unit, row or panel moved. This
+      caption was read in full: it describes the per-experiment pass/fail roll-up, hover text for
+      a FAIL and the derived-across-experiments rows, and contains none of water.level, wlevel,
+      flood depth, peak, maximum, timestep or max_ (matcher: grep -c -i -E on those alternatives,
+      unit lines, result 0), so no clause is falsified, weakened or left ambiguous and there is no
+      caption edit to make. Digest recorded at the post-change renderer content, so this exemption
+      expires on the next change to the renderer.
+    justification_2026_11_02_stored_names: >-
+      Re-read 2026-11-02 against this renderer's diff (git diff HEAD), which renames stored variable names it reads or advertises; here the SWMM link maximum flow (max_flow_cms -> max_flow) in a docstring, one comprehension and one f-string. The comparison is by the stored name, so the same pairs are selected. This caption was read in full: it describes the per-experiment pass/fail roll-up, hover text for a FAIL and the derived-across-experiments rows, and contains none of max_flow, cms, unit, velocity, depth, m3 or flooding (matcher: grep -c -i -E on those alternatives, unit lines, result 0), so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the post-change renderer content, so this exemption expires on the next change to the renderer.
+  - renderer: disk_utilization
+    caption: src/hhemt/report_templates/captions/disk_utilization.rst
+    renderer_sha256: 6e7de8ed6b77156e4736d3f78fad50ef8b9fb7a13212333a54f1fed5d3522315
+    justification_2026_10_28: >-
+      Re-read 2026-10-28 against this renderer's diff. The only change is that one build_columns_spec
+      call in _du_table_html has its three keyword arguments split one per line; the module's AST,
+      docstrings included, is identical to HEAD (ast.dump equality), so no emitted column, unit or
+      panel moved. This caption was read in full: it describes the total and per-sub-path breakdown in
+      MiB, the _status/_du.json sentinel source and the re-run prompt when the sentinel is absent, and
+      none of those is touched by the diff, so no clause is falsified, weakened or left ambiguous and
+      there is no caption edit to make. Digest recorded at the post-change renderer content, so this
+      exemption expires on the next change to the renderer.
+  - renderer: per_sim_conduit_flow
+    caption: src/hhemt/report_templates/captions/per_sim_conduit_flow.rst
+    renderer_sha256: 669ccfeb1af2360514dddc51ab137732b75c0fd529e1828a6693f8891e699acb
+    justification_2026_11_03: >-
+      Re-read 2026-11-03 against this renderer's diff. The diff adds a panel label and a
+      quantile upper bound for the peak-flow colour bar, both reached only when a publication static
+      configuration sets subplot_label or vmin_vmax_strategy; the report path passes no static
+      configuration, and a static figure carries no report caption, so the panels, the max / full flow
+      and peak flow descriptions, the watershed overlay note and the Flood Drivers note of this caption
+      stay true. This caption was read in full and no clause is falsified, weakened or left ambiguous,
+      so there is no caption edit to make. Digest recorded at the post-change renderer content.
+  - renderer: per_sim_event_page
+    caption: src/hhemt/report_templates/captions/per_sim_event_page.rst
+    renderer_sha256: 2ee0c70a1f2f046a0d0c7301e2dd2b2e2fe89a60a2ac08f708e0ea3b97029937
+    justification_2026_11_10_chunk_1e10: >-
+      Re-read 2026-11-10 against this renderer's diff. The diff replaces the page's run-object read of the geometry .inp with `event_hydraulics_inp` (live scenario unchanged; a removed scenario answers from the .inp kept beside the removal records). The caption (read in full) describes the depth, water-surface, conduit-flow and Flood Drivers panels and names no source of the geometry file. No clause is falsified, weakened or left ambiguous, so there is no caption edit to make. Digest recorded at the post-change renderer content.
+    justification: >-
+      Chunk 3e.2 round 2, re-read against this renderer's diff (4 hunks, `git diff -U0 HEAD --
+      src/hhemt/report_renderers/per_sim_event_page.py`). The diff changes four strings the page
+      prints: the document title ("Simulation results - {event}" to "Results for {event}"), the
+      section heading join (a spaced hyphen to a colon), and the two omission notices (now "The event
+      page is not shown: {reason}."). The caption (15 lines, read in full) opens "Results for event",
+      describes the depth, conduit-flow and Flood Drivers panels, and names none of the four changed
+      strings, so no clause is falsified, weakened or left ambiguous and there is no caption edit to
+      make. Digest recorded after the last edit, so this exemption expires on the next change to the
+      renderer.
+  - renderer: per_sim_conduit_flow
+    caption: src/hhemt/report_templates/captions/per_sim_conduit_flow.rst
+    renderer_sha256: b3dbe7ea36acbb260ff8c10bcf428e5d81f8ddd5a0cbfd49d1011e818b2c1057
+    justification_2026_11_10_chunk_1e10: >-
+      Re-read 2026-11-10 against this renderer's diff. The diff adds `event_hydraulics_inp`, which answers the conduit geometry file for a removed scenario from the .inp kept beside the removal records and for a live scenario exactly as before, and drops the two run-object constructions that raised for a removed scenario. The caption (read in full) describes the max/full-flow and peak-flow panels, colormaps and bounds, the watershed overlay and the Flood Drivers panel; it names no source of the geometry file, and every analysis shares one network, so what the figure shows is unchanged. No clause is falsified, weakened or left ambiguous, so there is no caption edit to make. Digest recorded at the post-change renderer content.
+    justification_2026_11_02_develop_merge: >-
+      Re-read 2026-11-02 against this renderer's diff on top of the merged origin/develop (the SWMM link
+      maximum flow it reads is named max_flow, not max_flow_cms, in
+      four code lines and a comment; origin/develop reworded two hover notes, the bin text and the
+      watershed legend label). The caption (11 lines, read in full) calls Max / full flow the ratio of
+      maximum flow to full-pipe capacity and Peak flow the peak flow magnitude per conduit, names the
+      legend label watershed polygon, and the Flood Drivers rainfall and boundary-condition panels;
+      none of the changed lines alters those statements, so no clause is falsified, weakened or left
+      ambiguous and there is no caption edit to make.
+    justification_2026_11_03_renderer_data_keys: >-
+      Re-read 2026-11-03 against this renderer's diff (git diff HEAD), which
+      renames one key of the renderer data written into the figure manifest (peak_flow_max_cms -> peak_flow_max)
+      and adds the companion key peak_flow_max_units. It is a JSON key in the manifest, not a plotted quantity: no
+      emitted figure, panel, colorbar, column or unit moved. The caption (11 lines) was read in full;
+      it calls Peak flow the peak flow magnitude per conduit and names no manifest key (matcher: grep -c -i -E on
+      the alternatives peak_flow_max|_cms|_units, unit lines, result 0), so no clause is falsified, weakened or
+      left ambiguous and there is no caption edit to make. Caption RE-READ in full by a reviewer who is not the
+      author and reads true. This is a PAIRING discharge on a re-read, not a formatting exemption. Digest recorded
+      at the post-change renderer content, so this exemption expires on the next change to the renderer.
+    justification_2026_11_04_develop_merge: >-
+      Re-read 2026-11-04 against this renderer as merged with develop at layout 28. The
+      merge brought in develop's edits to the file: the link maximum flow is read under the name
+      max_flow, two hover notes and the bin note are reworded, the manifest key peak_flow_max gains a
+      units key, and the watershed trace takes its name from WATERSHED_LEGEND_LABEL, whose value in
+      src/hhemt/figure_panels.py is "watershed polygon". The caption was read in full. It names the
+      legend label watershed polygon, which the constant states; it defines Max / full flow and Peak
+      flow as the ratio of maximum flow to full-pipe capacity and the peak flow magnitude per conduit,
+      which the two arrays max_over_full_flow and max_flow carry; and it names the Flood Drivers
+      rainfall and boundary-condition panels, which the diff leaves in place. No clause is falsified,
+      weakened or left ambiguous, so the caption needs no edit. Digest recorded at the merged renderer
+      content, so this exemption expires on the next change to the renderer.

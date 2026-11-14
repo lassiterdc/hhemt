@@ -1,6 +1,8 @@
+<!-- hhemt:repo-internal exempt=prose -->
+
 # Architecture
 
-Reference document for the TRITON-SWMM toolkit codebase. Tool-agnostic — load this alongside `CONTRIBUTING.md` at the start of any AI-assisted session.
+Reference document for the TRITON-SWMM toolkit codebase, covering project structure, key modules, and data flow.
 
 ---
 
@@ -40,7 +42,7 @@ TRITONSWMM_scenario (scenario.py)
 | `workflow.py` | Dynamic Snakefile generation for parallel execution |
 | `execution.py` | Execution strategies: SerialExecutor, LocalConcurrentExecutor, SlurmExecutor |
 | `resource_management.py` | CPU/GPU/memory allocation for HPC |
-| `sensitivity_analysis.py` | Parameter sweep orchestration with sub-analyses |
+| `sensitivity_analysis.py` | Parameter sweep orchestration with members |
 | `paths.py` | Dataclasses: SysPaths, AnalysisPaths, ScenarioPaths |
 | `log.py` | JSON-persisted logging with LogField[T] pattern |
 
@@ -135,8 +137,32 @@ Note: `environment.yaml` at the repo root and the `conda:` directives in generat
 ## Testing Quick Reference
 
 - `test_PC_*.py` — local; `test_UVA_*.py` — UVA HPC; `test_frontier_*.py` — Frontier. Tests auto-skip by platform.
-- Fixtures use `GetTS_TestCases` from `examples.py`. Use `start_from_scratch=False` for cached/fast iteration.
+- Fixtures use `GetTS_TestCases` from `tests/fixtures/test_case_catalog.py`. Use `start_from_scratch=False` for cached/fast iteration.
 - Use assertion helpers from `tests/utils_for_testing.py` (`assert_scenarios_run`, `assert_model_outputs_exist`, etc.) — not raw property checks.
+
+---
+
+## DOI kind convention
+
+Two published surfaces carry a Zenodo DOI. At a release tag they carry the same one, and they differ only after the release is published.
+
+- `CITATION.cff` carries the CONCEPT DOI (`10.5281/zenodo.21359151`), which always resolves to the latest release.
+- `docs/index.md`'s printed citation carries the same CONCEPT DOI (`10.5281/zenodo.21359151`) at the tag. After the tag, a docs-only commit on `develop` adds the version DOI of the release to the page, and the `latest` build of the page, which is built from `develop`, shows it. The `stable` build, which is built from the tag, keeps naming only the concept DOI. The version DOI of the previous release (`10.5281/zenodo.21359152`, v0.1.0) pins that release permanently, and the page prints no version DOI before that backfill.
+
+The rule that makes both correct: a surface carries the most precise identifier that
+
+1. EXISTS at the moment the surface is written, and
+2. remains true of that surface's referent for as long as the surface is readable.
+
+`CITATION.cff` fails (1). Zenodo mints a version DOI in response to a published release, so at the moment the file is written and the tag is cut, that release's version DOI does not yet exist. Measured: `git show v0.1.0:CITATION.cff` carries no DOI at all, and the commit that added one is not an ancestor of the tag — its own subject calls it a backfill.
+
+Note which way the two conditions point, because it is not obvious. Condition (2) taken alone argues FOR the version DOI here: the file ships inside one specific release tarball, so a version DOI would stay true of it forever. Condition (1) wins because it is a hard constraint and (2) is a preference. **That is why this is stated as impossibility rather than as advice.** There is no counter-argument to a value that does not exist, whereas advice gets argued back by anyone weighting precision — and this project's own citation guidance weights precision, so advice would lose.
+
+`docs/index.md` fails (1) for the same reason at the tag, because the page built from the tag is written before the version DOI exists, so it names the concept DOI there. The `latest` build is rebuilt from `develop` after the release is published, so the version DOI exists by the time the docs-only commit writes it, and (1) holds for that build.
+
+**This is a recorded convention and nothing checks it.** The two surfaces carry the same concept DOI at the tag, and the version DOI appears only in the `latest` build of `docs/index.md` after the backfill. A future editor who adds a check that equates the two surfaces, or who writes a version DOI into a page that is built from the tag, has either blocked the backfill or put a value into the tag that did not exist when the tag was cut.
+
+Falsifier worth knowing: Zenodo supports reserving a DOI before publication. A reserve-then-tag release workflow would make the version DOI exist at write time, (1) would pass, and this convention would need revisiting. That is a change to how releases are made, not a Zenodo setting.
 
 ---
 

@@ -40,7 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def validate_resource_usage(analysis, logger=None):
+def validate_resource_usage(analysis, logger=None, *, df_status=None):
     """
     Validate that actual resource usage matches expected configuration.
 
@@ -71,7 +71,8 @@ def validate_resource_usage(analysis, logger=None):
     else:
         print("Validating actual vs expected resource usage...")
 
-    df_status = analysis.df_status
+    if df_status is None:
+        df_status = analysis.df_status
 
     # Skip validation if no log.out files were found (all actual values are None)
     if df_status["actual_nTasks"].isna().all():
@@ -90,6 +91,8 @@ def validate_resource_usage(analysis, logger=None):
     # For regular analysis, use the analysis config
     mismatches = []
     issues_flat: list[dict] = []  # structured per-mismatch records for downstream renderers
+    unmeasured_gpu_rows = 0  # GPU rows with no binding measurement (disclosed in the summary; never a pass)
+    examined_gpu_rows = 0
 
     for _idx, row in df_status.iterrows():
         if not row["run_completed"]:
@@ -98,14 +101,20 @@ def validate_resource_usage(analysis, logger=None):
         scenario_dir = row["scenario_directory"]
         issues = []
 
-        # Get expected values from row if available (sensitivity analysis),
-        # otherwise from analysis config (regular analysis)
-        if "run_mode" in df_status.columns:
-            # Sensitivity analysis: each row has its own config
-            run_mode = row["run_mode"]
-            expected_nTasks = row.get("n_mpi_procs", 1) or 1
-            expected_omp_threads = row.get("n_omp_threads", 1) or 1
-            expected_gpus = row.get("n_gpus", 0) or 0
+        # Get expected values from the row when it carries them, otherwise from the analysis
+        # config. A row built by `df_status` carries bare `run_mode`, `n_mpi_procs`,
+        # `n_omp_threads` and `n_gpus` columns holding the model-specific expectation (a SWMM
+        # row says serial or openmp, never the table's MPI width), so those win. A frame that
+        # carries only the sensitivity table's `analysis.`-prefixed columns, the one spelling
+        # `_retrieve_df_setup` accepts, takes each row's expectation from them.
+        _prefix = (
+            "analysis." if "run_mode" not in df_status.columns and "analysis.run_mode" in df_status.columns else ""
+        )
+        if "run_mode" in df_status.columns or _prefix:
+            run_mode = row[f"{_prefix}run_mode"]
+            expected_nTasks = row.get(f"{_prefix}n_mpi_procs", 1) or 1
+            expected_omp_threads = row.get(f"{_prefix}n_omp_threads", 1) or 1
+            expected_gpus = row.get(f"{_prefix}n_gpus", 0) or 0
         else:
             # Regular analysis: use analysis config
             cfg = analysis.cfg_analysis
@@ -120,6 +129,8 @@ def validate_resource_usage(analysis, logger=None):
         # never compared), so a backend-agnostic sentinel is behavior-preserving and
         # needs no cfg_hpc_system/partition dependency.
         expected_gpu_backend = "gpu" if run_mode == "gpu" else "none"
+        if run_mode == "gpu":
+            examined_gpu_rows += 1
 
         # Check nTasks
         if pd.notna(row["actual_nTasks"]) and row["actual_nTasks"] != expected_nTasks:
@@ -151,16 +162,56 @@ def validate_resource_usage(analysis, logger=None):
 
         # Check GPUs (for GPU mode)
         if run_mode == "gpu":
-            if pd.notna(row["actual_total_gpus"]) and row["actual_total_gpus"] < expected_gpus:
-                issues.append(f"  - Total GPUs: expected >={expected_gpus}, actual {row['actual_total_gpus']}")
+            # MEASURED binding (hhemt.gpu_bind_guard), NOT TRITON's "Total GPUs" (== MPI size,
+            # tautological against nTasks -- it PASSED the 2026-09-21 member-40 3+1 mis-bind).
+            _verdict = row.get("gpu_binding_verdict")
+            _distinct = row.get("actual_distinct_gpus")
+            _failing = {"short_step", "shared_device", "watchdog_bind_error", "short_step_by_signature"}
+            if _verdict in _failing or (pd.notna(_distinct) and int(_distinct) < expected_gpus):
+                _actual = f"{_verdict}" + (f" (distinct={int(_distinct)})" if pd.notna(_distinct) else "")
+                issues.append(f"  - GPU binding: expected {expected_gpus} distinct GPUs, actual {_actual}")
                 issues_flat.append(
                     {
                         "scenario_dir": str(scenario_dir),
                         "scenario": Path(str(scenario_dir)).name,
-                        "resource": "Total GPUs",
-                        "expected": f">={int(expected_gpus)}",
-                        "actual": int(row["actual_total_gpus"]),
-                        "detail": f"Total GPUs: expected >={expected_gpus}, actual {row['actual_total_gpus']}",
+                        "resource": "GPU binding",
+                        "expected": f"{int(expected_gpus)} distinct GPUs",
+                        "actual": _actual,
+                        "detail": f"GPU binding: expected {expected_gpus} distinct GPUs, actual {_actual}",
+                    }
+                )
+            elif (pd.isna(_verdict) or _verdict == "not_evaluated") and expected_gpus >= 2:
+                # Absence is NOT a pass: surface as an informational row and count it.
+                unmeasured_gpu_rows += 1
+                issues_flat.append(
+                    {
+                        "scenario_dir": str(scenario_dir),
+                        "scenario": Path(str(scenario_dir)).name,
+                        "resource": "GPU binding",
+                        "expected": f"{int(expected_gpus)} distinct GPUs",
+                        "actual": "not measured" if pd.isna(_verdict) else "not_evaluated (L2 wait expired)",
+                        "detail": (
+                            "GPU binding not measured for this row (attempt predates the binding guard, "
+                            "or L2 could not evaluate); not a pass."
+                        ),
+                        "severity": "info",
+                    }
+                )
+            elif _verdict == "pass_by_negative_signature":
+                # Inferred, not measured (Diagnosis claim 17): disclose it so the summary can
+                # separate measured passes from signature-classified ones (C-S10 iii).
+                issues_flat.append(
+                    {
+                        "scenario_dir": str(scenario_dir),
+                        "scenario": Path(str(scenario_dir)).name,
+                        "resource": "GPU binding",
+                        "expected": f"{int(expected_gpus)} distinct GPUs",
+                        "actual": "pass_by_negative_signature (last exec; pre-guard row)",
+                        "detail": (
+                            "GPU binding classified from the absence of the SLURM short-step signature in the "
+                            "last execution's model log; not an in-step measurement."
+                        ),
+                        "severity": "info",
                     }
                 )
 
@@ -213,6 +264,8 @@ def validate_resource_usage(analysis, logger=None):
             "  2. Machine files overrode configuration (use TRITON_IGNORE_MACHINE_FILES)\n"
             "  3. Compilation used different backend than runtime configuration\n"
             "  4. Environment variables affected runtime behavior\n"
+            "  5. SLURM Ticket 24862 (25.05.x): an --overlap GPU step received fewer GPUs than the job\n"
+            f"GPU rows examined: {examined_gpu_rows}; without a binding measurement: {unmeasured_gpu_rows}\n"
             f"{'=' * 70}"
         )
         if logger:
@@ -221,12 +274,99 @@ def validate_resource_usage(analysis, logger=None):
             print(f"WARNING: {summary}")
         return False, issues_flat  # Validation failed
     else:
-        msg = "✓ All scenarios used expected compute resources"
+        msg = (
+            f"✓ All scenarios used expected compute resources (GPU rows examined: {examined_gpu_rows}; "
+            f"without a binding measurement: {unmeasured_gpu_rows})"
+        )
         if logger:
             logger.info(msg)
         else:
             print(msg)
-        return True, []  # Validation passed
+        # Validation passed. issues_flat carries ONLY severity="info" rows here (every FAIL append is
+        # paired with a `mismatches` append, and non-empty `mismatches` takes the branch above), so the
+        # caller (analysis_validation.check_resource_usage) can disclose the unmeasured / by-signature
+        # counts in its summary without reading `passed` off the list length.
+        return True, issues_flat
+
+
+def count_examined_gpu_rows(analysis, *, df_status=None) -> int | None:
+    """Number of completed scenario rows run in GPU mode, as `validate_resource_usage` counts them.
+
+    `validate_resource_usage` returns no issue row for a GPU run that passes, so an empty
+    issue list cannot tell a CPU-only analysis from a clean GPU one. This count can. It
+    applies the same two conditions the validator applies before it counts a row (the row
+    completed, and its run mode is "gpu", read from the row for a sweep and from the
+    analysis configuration otherwise). Returns None when the validator would skip
+    validation because no log.out was found: the count is then unknown, not zero.
+    """
+    if df_status is None:
+        df_status = analysis.df_status
+    if df_status["actual_nTasks"].isna().all():
+        return None
+    n = 0
+    for _idx, row in df_status.iterrows():
+        if not row["run_completed"]:
+            continue
+        run_mode = row["run_mode"] if "run_mode" in df_status.columns else analysis.cfg_analysis.run_mode
+        if run_mode == "gpu":
+            n += 1
+    return n
+
+
+def reclaim_unconsolidated_scenarios(analysis, enabled_models, scoped, analysis_dir) -> dict[str, dict[str, bool]]:
+    """Run the scenario-scoped reclaim for events the per-scenario barrier did not cover.
+
+    TWO SKIPS, AND THEY ARE ASYMMETRIC -- do not simplify one away.
+
+    SKIP 1 (the flag) is an INTERLOCK, not a convention: `rule consolidate_scenario`'s
+    shell runs the reclaim, then the DU sentinel, then writes
+    `f_consolidate_scenario_evt-{id}_complete.flag` LAST, so flag presence entails the
+    reclaim completed and a reclaim FAILURE leaves no flag to skip on.
+
+    SKIP 2 (the summaries) is the one whose absence made this loop unsafe. This walks
+    `df_sims` -- the FULL event set -- while `rule consolidate` fans in on SIM_IDS, which
+    on the reprocess path `_available_event_ids` has FILTERED to events whose
+    per-enabled-model summaries all exist. So an event this run deliberately EXCLUDED has
+    no flag, and SKIP 1 alone would let it fall through and reclaim -- for a scenario
+    whose summaries are absent, which is the Gotcha-34 c_run-present/summary-absent
+    divergence an operator is mid-recovery on. That inverts the mechanism's own
+    precondition: `remove_after_processing` fires "ONLY after the per-model summary
+    outputs are verified present AND openable on disk". `scenario_summaries_present` is
+    that precondition restated as a path-only probe -- the SAME function object
+    `_available_event_ids` filters SIM_IDS with, so the predicate cannot drift between
+    the two sites.
+
+    An interlock's coverage is the PRODUCING RULE'S INSTANTIATION SET, never the
+    consumer's iteration set. That is the general form of why SKIP 1 alone is not enough
+    here, and it is the sentence to keep if this docstring is ever compressed.
+
+    Returns a per-event outcome map so the caller can summarise and a test can assert on
+    which events were acted upon.
+    """
+    from hhemt.process_simulation import reclaim_scenario_scoped_classes
+    from hhemt.scenario import TRITONSWMM_scenario, compute_event_id_slug
+    from hhemt.summary_paths import scenario_summaries_present
+
+    outcomes: dict[str, dict[str, bool]] = {}
+    status_dir = Path(analysis_dir) / "_status"
+    for _iloc in analysis.df_sims.index:
+        _eid = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(_iloc))
+        if (status_dir / f"f_consolidate_scenario_evt-{_eid}_complete.flag").exists():
+            continue  # SKIP 1 -- the per-scenario barrier already reclaimed this event
+        if not scenario_summaries_present(analysis, _eid, enabled_models):
+            continue  # SKIP 2 -- precondition unmet; this event is mid-recovery
+        _scen = TRITONSWMM_scenario(_iloc, analysis)
+        _outcome = reclaim_scenario_scoped_classes(_scen, scoped, verbose=True)
+        # Disclosure printed UNCONDITIONALLY; the log write is the seam to the deferred
+        # log-schema migration and skips while the fields are absent. Mirrors the
+        # --event-id arm's block so there is ONE disclosure shape.
+        logger.info(f"Scenario-scoped reclaim fallback for {_eid}: {_outcome}")
+        for _klass, _did in _outcome.items():
+            _field = getattr(_scen.log, f"{_klass}_reclaimed", None)
+            if _did and _field:
+                _field.set(True)
+        outcomes[_eid] = _outcome
+    return outcomes
 
 
 def main() -> int:
@@ -268,7 +408,7 @@ def main() -> int:
         "--consolidate-sensitivity-analysis-outputs",
         action="store_true",
         default=False,
-        help="If True, consolidate subanalysis-level outputs into master analysis outputs (for sensitivity analysis)",
+        help="If True, consolidate member-level outputs into master analysis outputs (for sensitivity analysis)",
     )
     parser.add_argument(
         "--allow-incomplete",
@@ -294,16 +434,28 @@ def main() -> int:
         help="Snakemake rule name for the flag sidecar payload",
     )
     parser.add_argument(
-        "--sa-id",
+        "--member-id",
         type=str,
         default=None,
-        help="Sub-analysis id for the flag sidecar payload (sensitivity per-sa consolidate)",
+        help="Member id for the flag sidecar payload (sensitivity per-member consolidate)",
     )
     parser.add_argument(
         "--event-id",
         type=str,
         default=None,
         help="Event id for the flag sidecar payload AND the per-scenario consolidate dispatch arm (multisim per-scenario consolidate; writes {scenario_dir}/_status/_du.json via du_sentinels.compute_and_write_scope_sentinel).",  # noqa: E501
+    )
+    parser.add_argument(
+        "--event-iloc",
+        type=int,
+        default=None,
+        help=(
+            "Integer scenario index for the --event-id arm. PASSED rather than reverse-resolved: "
+            "no event_id -> event_iloc resolver exists (compute_event_id_slug runs iloc-to-id only), "
+            "and enumerating ilocs inside a rule that runs once per scenario is O(n_sims^2) across a "
+            "campaign. The emitter already holds ILOC_BY_EVENT_ID. Required for the scenario-scoped "
+            "reclaim; when absent the arm writes the DU sentinel and declines the reclaim loudly."
+        ),
     )
     try:
         args = parser.parse_args()
@@ -355,7 +507,59 @@ def main() -> int:
             if not scenario_dir.exists():
                 logger.error(f"Per-scenario consolidate target does not exist: {scenario_dir}")
                 return 1
+
+            # SCENARIO-SCOPED RECLAIM, and it MUST precede the DU sentinel write below:
+            # the sentinel records this scenario's on-disk total, so reclaiming after it
+            # publishes a total stale by exactly the reclaimed bytes. That ordering used to
+            # be an unstated cross-rule invariant (reclaim in process_tritonswmm, sentinel
+            # here) held only by the DAG; co-locating them makes it local and checkable.
+            #
+            # This rule fans in on d_process_{m} for EVERY enabled model, and both that flag
+            # and the c_run_{m} it depends on are SUCCESS markers -- each runner refuses to
+            # write its flag and returns 1 on failure -- so arrival here entails that every
+            # enabled model both RAN and PROCESSED. That is what retired the _unrun guard.
+            from hhemt.process_simulation import (
+                TRITONSWMM_sim_post_processing,
+                reclaim_scenario_scoped_classes,
+            )
+            from hhemt.scenario import TRITONSWMM_scenario
+
+            _classes = TRITONSWMM_sim_post_processing._reclaim_classes(
+                getattr(analysis.cfg_analysis, "remove_after_processing", "none")
+            )
+            _scoped = tuple(c for c in _classes if c in ("hydro_out", "prep_inputs", "hydrographs", "standalone_rpt"))
+            if _scoped and args.event_iloc is None:
+                logger.error(
+                    f"Scenario-scoped reclaim classes {list(_scoped)} are elected but --event-iloc was not "
+                    "passed; declining the reclaim rather than reverse-resolving the index. Re-emit the "
+                    "Snakefile so rule consolidate_scenario passes --event-iloc."
+                )
+                return 1
+            if _scoped:
+                _scen = TRITONSWMM_scenario(args.event_iloc, analysis)
+                _outcome = reclaim_scenario_scoped_classes(
+                    _scen,
+                    _scoped,
+                    verbose=True,
+                )
+                # Disclosure, printed UNCONDITIONALLY and written to the scenario log when the
+                # fields exist. The getattr guard is the seam to the log-schema migration: while
+                # the four LogFields are absent it skips, so this set is correct without that
+                # round; the print is what keeps the record honest in the interval.
+                logger.info(f"Scenario-scoped reclaim for {args.event_id}: {_outcome}")
+                for _klass, _did in _outcome.items():
+                    _field = getattr(_scen.log, f"{_klass}_reclaimed", None)
+                    if _did and _field:
+                        _field.set(True)
+            if not scenario_dir.exists():
+                logger.error(f"Per-scenario consolidate target does not exist: {scenario_dir}")
+                return 1
             try:
+                # CLAUSE 10 -- THE RECONCILIATION POINT. This is the ONE place a scenario's
+                # DU is re-derived from scratch (a bounded own-walk of this scenario only),
+                # once per scenario per campaign. The delta chain that
+                # du_sentinels.delete_and_account maintains between consolidations is
+                # corrected here; nothing else in the toolkit walks a scenario.
                 compute_and_write_scope_sentinel(
                     scenario_dir,
                     scope="scenario",
@@ -391,9 +595,23 @@ def main() -> int:
         else:
             logger.info("All simulations completed successfully")
 
-        # Validate resource usage (skipped for subanalysis)
-        if not analysis.cfg_analysis.is_subanalysis:
-            validate_resource_usage(analysis, logger)
+        # Validate resource usage (skipped for member)
+        # ONE snapshot, built here and threaded to both consumers. It is built INSIDE
+        # this branch rather than above it so the member path -- which skips resource
+        # validation -- gains no build it did not already have; on that path the value
+        # stays None and the assembly resolves its own, exactly as before.
+        #
+        # The log line below is LOAD-BEARING, not decoration. validate_resource_usage
+        # logs its own phase banner and THEN builds, so moving the build to this caller
+        # would otherwise collapse the only timed phase this rule has ever had to ~0 and
+        # bury the walk in an unlogged gap -- in the change that exists to make the rule
+        # finish. Bounding the build here keeps it measurable and in fact separates it
+        # from the comparison loop, which the single banner never did.
+        _df_status = None
+        if not analysis.cfg_analysis.is_experiment_member:
+            logger.info("Building analysis status table (whole-population walk)...")
+            _df_status = analysis.df_status
+            validate_resource_usage(analysis, logger, df_status=_df_status)
 
         # Check if all timeseries were processed. The all_*_timeseries_processed log fields are computed
         # over the full sensitivity definition just like all_sims_run, so under --allow-incomplete the
@@ -424,7 +642,7 @@ def main() -> int:
 
         # Phase 3b: Consolidate outputs
         if args.consolidate_sensitivity_analysis_outputs:
-            logger.info("Consolidating subanalysis-level outputs into master sensitivity DataTree...")
+            logger.info("Consolidating member-level outputs into master sensitivity DataTree...")
             try:
                 analysis.sensitivity.consolidate_sensitivity_datatree(
                     verbose=True,
@@ -436,60 +654,153 @@ def main() -> int:
                 logger.error(traceback.format_exc())
                 return 1
         else:
+            # SCENARIO-SCOPED RECLAIM FALLBACK -- companion to the per-scenario call in
+            # the --event-id arm above. `rule consolidate_scenario` is emitted by exactly
+            # ONE generator (the multisim PRODUCTION path, workflow.py:3232). The multisim
+            # REPROCESS generator, the sensitivity PRODUCTION master and the sensitivity
+            # REPROCESS master emit no such rule, so without this block the four
+            # scenario-scoped classes reclaim on one path and silently stop reclaiming on
+            # three -- including the paths an operator reaches for when disk is short.
+            #
+            # WHY HERE AND NOT IN A NEW RULE. All three orphaned seams reach this branch:
+            # the multisim `rule consolidate` (no --event-id, no --member-id) and the
+            # sensitivity per-member `consolidate_member_*` (--member-id, no --event-id)
+            # both fall through to it. One call site covers all three, edits no Snakefile
+            # generator, and therefore cannot perturb the sensitivity generators'
+            # `subanalysis_flags == _expected_subanalysis_flags` equality assertion or
+            # change any existing rule's `input:` set.
+            #
+            # WHY THE BARRIER HOLDS ON EVERY ARM THAT REACHES HERE. start_with='process':
+            # this rule's input: is d_process_{m} for every enabled model over SIM_IDS, and
+            # both d_process and the c_run it depends on are SUCCESS markers, so arrival
+            # entails every model ran AND processed. start_with='consolidate': the input: is
+            # c_run_{m} (run-completion only), but SIM_IDS is itself filtered to events whose
+            # per-enabled-model SUMMARIES exist, and summary existence entails a completed
+            # process -- the enumeration supplies what the flag does not. start_with='render':
+            # no consolidate rule is emitted at all, so this block is unreachable, which is
+            # correct because nothing being reclaimed was regenerated. No start_with
+            # conditional is added here; the generators' rule-emission gate already is one.
+            #
+            # TWO SKIPS, AND BOTH ARE ON-DISK FACTS RATHER THAN MODE INFERENCES.
+            #
+            # SKIP 1 -- the flag. f_consolidate_scenario_evt-{id}_complete.flag is the record
+            # that the tighter per-scenario barrier already ran for that event, and it is an
+            # INTERLOCK rather than a convention: that rule's shell runs the reclaim, then the
+            # DU sentinel, then writes this flag LAST, so flag presence entails the reclaim
+            # completed and a reclaim FAILURE leaves no flag to skip on.
+            #
+            # SKIP 2 -- the summaries, and it is the one whose absence made this loop UNSAFE.
+            # This loop walks df_sims (the FULL event set) while `rule consolidate` fans in on
+            # SIM_IDS, which on the reprocess path _available_event_ids has FILTERED to events
+            # whose per-enabled-model summaries all exist. So an event this run deliberately
+            # EXCLUDED has no flag, and skip 1 alone would let it fall through and reclaim --
+            # for a scenario whose summaries are absent, which is precisely the Gotcha-34
+            # c_run-present/summary-absent divergence an operator is mid-recovery on. That
+            # inverts the mechanism's own precondition: remove_after_processing fires "ONLY
+            # after the per-model summary outputs are verified present AND openable on disk",
+            # and for these events they are verifiably absent. scenario_summaries_present is
+            # that precondition restated as a path-only probe, so this is the reclaim's
+            # existing contract enforced at a site that had lost it, not a new rule.
+            #
+            # TOGETHER they make this block a provable no-op on EVERY multisim path: in
+            # SIM_IDS -> flag present -> skip 1; not in SIM_IDS -> summaries absent -> skip 2.
+            # Neither skip subsumes the other and removing either re-opens a live case.
+            #
+            # The skips are load-bearing rather than tidy because of what construction costs:
+            # TRITONSWMM_scenario.__init__ runs _create_directories(), which re-creates the
+            # dats/ and extbc/ directories prep_inputs empties, so constructing one per event
+            # unconditionally would undo part of the reclaim it just performed.
+            # KNOWN GAP, with an existing remedy: a tree consolidated BEFORE the operator
+            # enabled a scenario-scoped class carries the flag and is skipped here. The
+            # remedy already exists -- a force-rerun at stage `consolidate` deletes those
+            # flags (analysis.py::_delete_flags_for_force_rerun), after which this fires.
+            from hhemt.process_simulation import TRITONSWMM_sim_post_processing as _P
+
+            _scoped = tuple(
+                c
+                for c in _P._reclaim_classes(getattr(analysis.cfg_analysis, "remove_after_processing", "none"))
+                if c in ("hydro_out", "prep_inputs", "hydrographs", "standalone_rpt")
+            )
+            if _scoped:
+                # ENABLED-MODEL DERIVATION, DUPLICATED ON PURPOSE AND NAMED SO IT IS NOT
+                # MISTAKEN FOR AN OVERSIGHT. reprocess_snakefile_generator._enabled_models
+                # runs this identical three-toggle sequence in this identical order, and it
+                # is module-private, so importing it here would widen that module's surface
+                # for one caller. THE TWO MUST AGREE: _enabled_models builds the list that
+                # filters SIM_IDS via scenario_summaries_present, and the list below is what
+                # SKIP 2 passes to that SAME function object (summary_paths:44, aliased into
+                # workflow.py:68 and re-imported at reprocess_snakefile_generator.py:58). The
+                # predicate is therefore shared by construction and cannot drift; THIS
+                # derivation is the only place the two populations still can. A third and
+                # fourth copy live on TRITONSWMM_run.model_types_enabled and
+                # TRITONSWMM_scenario.model_types_enabled; consolidating all four is a
+                # separate refactor and deliberately not this change.
+                _cfg_sys = system.cfg_system
+                _enabled = []
+                if _cfg_sys.toggle_triton_model:
+                    _enabled.append("triton")
+                if _cfg_sys.toggle_tritonswmm_model:
+                    _enabled.append("tritonswmm")
+                if _cfg_sys.toggle_swmm_model:
+                    _enabled.append("swmm")
+                reclaim_unconsolidated_scenarios(analysis, _enabled, _scoped, analysis.analysis_paths.analysis_dir)
+
             logger.info("Assembling per-scenario summaries into master DataTree...")
             try:
                 analysis.process.consolidate_to_datatree(
                     verbose=True,
                     compression_level=args.compression_level,
+                    df_status=_df_status,
                 )
                 logger.info("DataTree consolidation completed successfully")
-                # D6 — when this is a per-sub-analysis consolidate (--sa-id is passed
-                # by the sensitivity-master `consolidate_{prefix}{sa_id}` rule, which
+                # D6 — when this is a per-member consolidate (--member-id is passed
+                # by the sensitivity-master `consolidate_{prefix}{member_id}` rule, which
                 # relies on fall-through to this branch), write a correctly-labeled
-                # scope="sub_analysis" DU sentinel at the sub-analysis root. The
+                # scope="member" DU sentinel at the member root. The
                 # runner's `analysis` is built from the sub's config, so
-                # `analysis.analysis_paths.analysis_dir` IS the sub-analysis dir.
+                # `analysis.analysis_paths.analysis_dir` IS the member dir.
                 # Without this, the sub root carries a mislabeled scope="analysis"
                 # sentinel written by consolidate_to_datatree
-                # (processing_analysis.py:184). No separate `rule consolidate_subanalysis`
+                # (processing_analysis.py:184). No separate `rule consolidate_member`
                 # is needed — folding the write into the existing per-sub rule's
                 # invocation avoids the NEW_RULE first-run rerun cost.
-                if args.sa_id is not None:
+                if args.member_id is not None:
                     from hhemt.du_sentinels import (
                         compute_and_write_scope_sentinel,
+                        sum_child_sentinels,
                     )
 
-                    sub_analysis_dir = analysis.analysis_paths.analysis_dir
-                    compute_and_write_scope_sentinel(
-                        sub_analysis_dir,
-                        scope="sub_analysis",
-                        include_breakdown=True,
-                    )
-                    logger.info(
-                        f"Sub-analysis DU sentinel written at "
-                        f"{sub_analysis_dir}/_status/_du.json"
-                    )
+                    analysis_dir = analysis.analysis_paths.analysis_dir
+                    # CLAUSE 10 on the sensitivity path: no `rule consolidate_scenario` is
+                    # emitted for a members tree (workflow.py:3531 is multisim-only), so this
+                    # arm is the ONE place a member's scenarios are re-derived from scratch --
+                    # one bounded own-walk per scenario per member-consolidate, the same files
+                    # the retired member full-walk visited. Without it a scenario sentinel on a
+                    # members tree is only ever seeded (near-empty) and decremented.
+                    for _scen_dir in sorted(p for p in (analysis_dir / "sims").iterdir() if p.is_dir()):
+                        compute_and_write_scope_sentinel(_scen_dir, scope="scenario")
+                    # Clause 7: a member's total is the SUM of its scenarios' sentinels,
+                    # never a walk of the member tree (which contains sims/). Same rule as
+                    # sensitivity_analysis.py:941. Scenario sentinels exist because clause 3
+                    # (scenario.py::_create_directories) seeds them at creation -- this hunk
+                    # is applied in the SAME commit as that one, never before it.
+                    sum_child_sentinels(analysis_dir, scope="member", child_scope_dirs=["sims"])
+                    logger.info(f"Member DU sentinel written at {analysis_dir}/_status/_du.json")
             except Exception as e:
                 logger.error(f"Failed to consolidate to DataTree: {e}")
                 logger.error(traceback.format_exc())
                 return 1
 
         logger.info("Consolidation workflow completed successfully")
-        # Option D (Class-Y resolution, renderer_io_provenance_audit): persist the
-        # whole-tree ValidationReport as a single read-model artifact
-        # ({analysis_dir}/validation_report.json) so errors_and_warnings.render() (and
-        # the bundle re-render) reads ONE file instead of re-inspecting the tree at
-        # render time. Runs at every analysis-level consolidation (sensitivity-master,
-        # regular, and per-sa); the per-scenario --event-id path returned early above,
-        # so no scenario-level report is written. Non-fatal: a persist failure must
-        # never block an otherwise-successful consolidation.
-        try:
-            from hhemt.analysis_validation import persist_validation_report
-
-            persist_validation_report(analysis)
-            logger.info("Persisted validation_report.json read-model artifact")
-        except Exception as e:
-            logger.warning(f"validation_report.json persist failed (non-fatal): {e}")
+        # The whole-tree ValidationReport read-model ({analysis_dir}/validation_report.json)
+        # is NOT persisted here. It was, and the artifact that produced was KNOWN-WRONG at
+        # the moment it was written: `check_scenario_status_csv` looks for
+        # scenario_status.csv, which `rule export_scenario_status` has not yet produced, so
+        # the report baked a false "missing" failure on every fresh run -- which is why that
+        # rule re-persists, and says so at its own call site. That rule DECLARES the artifact
+        # as an output and is the only reader's producer, so writing it here bought four
+        # uncached whole-population df_status builds inside a walltime-capped rule for a file
+        # nothing read before it was overwritten.
         _emit_runner_flag(args)
         return 0
 

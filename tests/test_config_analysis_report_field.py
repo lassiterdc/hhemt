@@ -1,9 +1,13 @@
 """Tests for the F2-introduced `analysis_config.report` field (R7, R12)."""
+
 from __future__ import annotations
+
 from pathlib import Path
-import yaml
+
 import pytest
+import yaml
 from pydantic import ValidationError
+
 from hhemt.config.analysis import analysis_config
 from hhemt.config.loaders import yaml_to_model
 
@@ -44,7 +48,8 @@ def _minimum_valid_cfg_analysis_dict(stub_root: Path) -> dict:
         "TRITON_reporting_timestep_s": 10.0,
         "open_boundaries": 1,
         "analysis_dir": str(stub_root),
-        "is_subanalysis": False,
+        "is_experiment_member": False,
+        "hhemt_sha": "0" * 40,  # schema-only tests; never compared to a running identity
     }
 
 
@@ -69,24 +74,28 @@ def test_analysis_config_accepts_inline_report(tmp_path, stubbed_paths):
 
 
 def test_analysis_config_rejects_missing_report(tmp_path, stubbed_paths):
-    """R12 (rev v2): A cfg_analysis.yaml without a `report:` key raises
-    pydantic ValidationError at yaml_to_model load time. The field is
-    required-no-default; pre-F2 yaml files do not load post-F2."""
+    """R12 (rev v2): A cfg_analysis.yaml without a `report:` key does not load:
+    yaml_to_model raises ConfigurationError wrapping pydantic's ValidationError
+    (`__cause__`). The field is required-no-default; pre-F2 yaml files do not load
+    post-F2."""
     base = _minimum_valid_cfg_analysis_dict(stubbed_paths)
     # Intentionally omit `report:` from base.
     cfg_path = tmp_path / "cfg_analysis.yaml"
     cfg_path.write_text(yaml.safe_dump(base))
-    with pytest.raises(ValidationError) as excinfo:
+    from hhemt.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError) as excinfo:
         yaml_to_model(cfg_path, analysis_config)
-    missing = {
-        e["loc"][0] for e in excinfo.value.errors() if e["type"] == "missing"
-    }
+    assert excinfo.value.config_path == cfg_path
+    cause = excinfo.value.__cause__
+    assert isinstance(cause, ValidationError)
+    missing = {e["loc"][0] for e in cause.errors() if e["type"] == "missing"}
     assert "report" in missing
 
 
 def test_analysis_config_rejects_unknown_report_subkey(tmp_path, stubbed_paths):
     """extra='forbid' on cfgBaseModel propagates into the nested report
-    model — unknown keys raise ValidationError."""
+    model: unknown keys do not load (ConfigurationError wrapping pydantic's error)."""
     base = _minimum_valid_cfg_analysis_dict(stubbed_paths)
     base["report"] = {
         "interactive": {"static_backend": "plotly"},
@@ -94,5 +103,26 @@ def test_analysis_config_rejects_unknown_report_subkey(tmp_path, stubbed_paths):
     }
     cfg_path = tmp_path / "cfg_analysis.yaml"
     cfg_path.write_text(yaml.safe_dump(base))
-    with pytest.raises(ValidationError):
+    from hhemt.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError) as excinfo:
         yaml_to_model(cfg_path, analysis_config)
+    # Discriminate, rather than accept ANY ValidationError: a bare `raises` over this
+    # hand-enumerated dict is satisfied by any unrelated failure -- measured 2026-09-12,
+    # when `hhemt_sha` became required this test stayed green while checking nothing about
+    # `extra='forbid'`. Narrowing keeps it discriminating the next time the required-field
+    # set moves. FIRST-and-LAST rather than the whole loc tuple, which buys both directions:
+    # it still REJECTS a top-level `bogus_key` (loc ('bogus_key',) -- loc[0] is not 'report'),
+    # which a bare loc[-1] test would have accepted on an input where the NESTED propagation
+    # this test is about was never exercised; and it TOLERATES an interposed model name if
+    # `report` is ever union-ized (loc ('report','report_config','bogus_key')), which an
+    # exact-tuple test would red on without the contract having changed.
+    # WHAT IT GIVES UP, stated here because this comment is what a future reader trusts: it
+    # does NOT distinguish a bogus key nested DEEPER than `report` itself. Measured --
+    # `report: {interactive: {static_backend: ..., bogus_key: True}}` yields loc
+    # ('report','interactive','bogus_key'), which the exact-tuple form REJECTS and this form
+    # ACCEPTS, so `report_config` could stop forbidding while a grandchild still forbids and
+    # this assertion would still pass. Unreachable without editing this test's own literal
+    # payload (nothing parametrizes it), which is why it is disclosed rather than closed.
+    forbidden = {e["loc"] for e in excinfo.value.__cause__.errors() if e["type"] == "extra_forbidden"}
+    assert any(loc[0] == "report" and loc[-1] == "bogus_key" for loc in forbidden)

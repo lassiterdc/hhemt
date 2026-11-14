@@ -1,0 +1,6 @@
+source: src/hhemt/report_renderers/errors_and_warnings.py
+entries:
+- rule: retired_word
+  string: sa_id
+  status: permitted
+  reason: Dictionary key written by the validation layer, which forbids renaming it; the page prints the member id it holds, never the key.

@@ -5,8 +5,13 @@ scrollable-HTML composer.
 assembler over a Jinja2 template — so the parked scrollable-singlepage-report idea
 can reuse it. The Plotly bundle is inlined EXACTLY ONCE via `_figure_divs`
 (first-figure-inline + rest include_plotlyjs=False; full_html=False).
-`cross_sim_identity_figure_from_root` rebuilds the EDA figure from its carried
-eda/<plot_id>.zarr (reused by the notebook seed cell, ADR-14). The former
+The `*_figure_from_root` helpers rebuild an EDA figure from its carried
+eda/<plot_id>.zarr (reused by the notebook seed cell, ADR-14):
+`config_diff_maps_figure_from_root` for the compute-sensitivity family and
+`dem_resolution_*_figure_from_root` for the four DEM-resolution figures. (This
+docstring previously named `cross_sim_identity_figure_from_root`, a symbol that
+has never existed in this module — a stale reference left by the same rename D7
+traces.) The former
 `assemble_eda_report` wrapper was trimmed at Phase 5 — the notebook + best-effort
 nbconvert HTML export supersedes the standalone-HTML doc path (ADR-14).
 """
@@ -15,15 +20,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jinja2
 import plotly.graph_objects as go
 import plotly.io as pio
 
+if TYPE_CHECKING:
+    from hhemt.config.eda import eda_config
+
 
 # FigureSpec + _figure_divs: the data-visualization-specialist FQ1 VMS (the
-# first-figure-inline single-bundle mechanism). Applied verbatim from the master
+# first-figure-inline single-bundle mechanism). Applied verbatim from the primary
 # plan's Implementation Research; this is the single place the bundle-once
 # invariant lives.
 @dataclass
@@ -97,8 +105,16 @@ def render_scrollable_report(
     # INSIDE divs[0] (first figure carries include_plotlyjs=True), NOT returned
     # separately — so figure_divs[0] (emitted in <body>) carries the bundle.
     # Do NOT inject the second return value into <head>: it is the mode string,
-    # not bundle HTML (master FQ1 VMS: _figure_divs -> tuple[list[str], str]).
+    # not bundle HTML (primary FQ1 VMS: _figure_divs -> tuple[list[str], str]).
     fig_divs, _js_mode_used = _figure_divs(figures, plotly_js_mode=plotly_js_mode)
+    # Pair each rendered div with its FigureSpec.title so the template can emit a
+    # section header above the figure. Before this change `FigureSpec.title` was
+    # declared (:39) and read NOWHERE: `_figure_divs` returns only strings and the
+    # template looped `figure_divs` directly, so the field had no reader anywhere
+    # in the tree. The per-figure header is the mechanism a model-sectioned
+    # per-scenario page depends on. `strict=True` fails loudly rather than
+    # silently truncating if the two lists ever diverge.
+    figure_blocks = [{"title": spec.title, "div": div} for spec, div in zip(figures, fig_divs, strict=True)]
     env = jinja2.Environment(
         loader=jinja2.PackageLoader("hhemt", "report_templates"),
         autoescape=jinja2.select_autoescape(["html"]),
@@ -107,7 +123,7 @@ def render_scrollable_report(
     return template.render(
         title=title,
         brand=brand or {},
-        figure_divs=fig_divs,
+        figure_blocks=figure_blocks,
         tables=tables,
         tabulator_js_mode=tabulator_js_mode,
     )
@@ -116,11 +132,49 @@ def render_scrollable_report(
 def config_diff_maps_figure_from_root(root: Path) -> go.Figure:
     """Re-build the config-diff-maps figure from the carried sensitivity_datatree.zarr.
 
-    The scrollable doc is RE-RENDERED from the consolidated tree (NOT assembled from
-    the saved standalone plots/eda/*.html fragments, which are full_html=True documents
-    that cannot be concatenated). Delegates to the same builder the per-figure renderer
+    The scrollable doc is RE-RENDERED from the consolidated tree and NOT assembled from
+    the saved standalone plots/eda/*.html fragments, because the fragments are full_html=True documents
+    and full HTML documents do not concatenate. Delegates to the same builder the per-figure renderer
     uses so the doc figure matches the standalone artifact.
     """
     from hhemt.eda._config_diff import build_config_diff_figure
 
     return build_config_diff_figure(root)
+
+
+def dem_resolution_cost_error_figure_from_root(root: Path) -> go.Figure:
+    """Re-build DEM figure 1, cost versus error, from the carried sensitivity_datatree.zarr.
+
+    Same contract as config_diff_maps_figure_from_root. The function delegates to the builder
+    the standalone renderer uses, so the notebook figure matches the artifact.
+    """
+    from hhemt.eda._dem_resolution_plots import build_dem_resolution_cost_error_figure
+
+    return build_dem_resolution_cost_error_figure(root)
+
+
+def dem_resolution_error_ecdf_figure_from_root(root: Path, *, eda_cfg: eda_config | None = None) -> go.Figure:
+    """Re-build DEM figure 2, the depth-error ECDF, from the carried sensitivity_datatree.zarr.
+
+    ``eda_cfg`` carries ``dem_resolution_tolerance_m``, the tolerance the figure draws as
+    a vertical line. Pass the same config the standalone renderer receives, or the
+    notebook figure and the standalone artifact disagree about the line. ``None`` draws
+    no line.
+    """
+    from hhemt.eda._dem_resolution_plots import build_dem_resolution_error_ecdf_figure
+
+    return build_dem_resolution_error_ecdf_figure(root, eda_cfg=eda_cfg)
+
+
+def dem_resolution_diff_maps_figure_from_root(root: Path) -> go.Figure:
+    """Re-build DEM figure 3, the signed diff maps, from the carried sensitivity_datatree.zarr."""
+    from hhemt.eda._dem_resolution_plots import build_dem_resolution_diff_maps_figure
+
+    return build_dem_resolution_diff_maps_figure(root)
+
+
+def dem_resolution_coupling_table_figure_from_root(root: Path) -> go.Figure:
+    """Re-build DEM artifact 4, the coupling table, from the carried sensitivity_datatree.zarr."""
+    from hhemt.eda._dem_resolution_plots import build_dem_resolution_coupling_table_figure
+
+    return build_dem_resolution_coupling_table_figure(root)

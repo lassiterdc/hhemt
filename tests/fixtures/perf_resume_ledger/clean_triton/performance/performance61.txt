@@ -1,0 +1,3 @@
+%Rank, Compute, MPI, IO, Resize, SWMM, Other, Simulation, Init, Total
+0, 169.2, 0, 1.544, 0, 0, 0.7756, 171.5, 0.03352, 171.5
+Average, 169.2, 0, 1.544, 0, 0, 0.7756, 171.5, 0.03352, 171.5

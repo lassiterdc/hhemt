@@ -47,10 +47,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from hhemt.report_plot_ids import plot_output_template as _plot_output_template
+from hhemt.report_plot_ids import (
+    LABEL_GLOBALS_BLOCK,
+)
+from hhemt.report_plot_ids import (
+    plot_output_template as _plot_output_template,
+)
 from hhemt.workflow import (
+    _render_target_plan,
     _resolve_rule_all_extensions,
     _scenario_summaries_present,
+    _shape_report_cfg,
 )
 
 if TYPE_CHECKING:
@@ -110,6 +117,7 @@ def generate_reprocess_snakefile(
     builder: SnakemakeWorkflowBuilder,
     *,
     start_with: Literal["process", "consolidate", "render"],
+    override_report_formats: list[str] | None = None,
 ) -> str:
     """Generate the reprocess Snakefile body as a string.
 
@@ -122,6 +130,10 @@ def generate_reprocess_snakefile(
     start_with
         Stage to start reprocessing from. Determines which downstream rule
         families are emitted (see module docstring).
+    override_report_formats
+        Report formats the render rule targets. ``None`` reads
+        ``report.interactive.report_html_mode``: ``auto`` targets the format-neutral
+        marker file, ``html`` and ``zip`` target that format. A list overrides it.
 
     Notes
     -----
@@ -166,6 +178,13 @@ def generate_reprocess_snakefile(
         enabled_models=enabled_models,
         all_event_ids=all_event_ids,
     )
+    # REPORT_EVENT_IDS keeps every event with its summaries present, removed events included (the predicate reads
+    # the analysis-level record, D23(d)); SIM_IDS drops the removed ones so no per-event rule is planned for them
+    # (D24 (g)). A pending record reads as removed and nothing is deleted at generation.
+    from hhemt.scenario_records import event_ids_for_plan
+
+    report_event_ids = list(available_event_ids)
+    available_event_ids = event_ids_for_plan(builder.analysis_paths.analysis_dir, report_event_ids)
 
     # Resource blocks (mirror source-side shapes; reprocess uses the same
     # processing/consolidation partitions because the work is identical).
@@ -176,6 +195,17 @@ def generate_reprocess_snakefile(
         nodes=1,
         tasks=1,
         cpus_per_task=2,
+    )
+    # Mirrors the production site's values (workflow.py:3224-3231) so the restored rule
+    # requests the same allocation it does there: the work is one DU walk over one
+    # scenario plus a handful of unlinks.
+    consolidate_scenario_resources = builder._build_resource_block(
+        partition=cfg_analysis.hpc_setup_and_analysis_processing_partition,
+        runtime_min=10,
+        mem_mb=2048,
+        nodes=1,
+        tasks=1,
+        cpus_per_task=1,
     )
     consolidate_resources = builder._build_resource_block(
         partition=cfg_analysis.hpc_setup_and_analysis_processing_partition,
@@ -194,22 +224,56 @@ def generate_reprocess_snakefile(
     # Report extension resolution (matches source-side via _resolve_rule_all_extensions).
     static_backend = builder._get_report_cfg_static_backend()
     _ext = _resolve_rule_all_extensions(static_backend)
-    report_formats: list[str] = ["zip"]
-    render_targets_in_rule_all = "".join(f',\n        "analysis_report.{fmt}"' for fmt in report_formats)
+    _render_plan = _render_target_plan(
+        override_report_formats, _shape_report_cfg(builder.analysis).interactive.report_html_mode
+    )
+    render_targets_in_rule_all = "".join(f",\n        {target}" for target in _render_plan.rule_all_targets)
 
     # ADR-2 (OE-1 anti-drift): the reprocess rule_all / render_report per-sim
     # input stems derive from the same single-source helper as the rule OUTPUTS,
     # so a future stem-grammar change cannot desync inputs from outputs.
-    _pfd_per_sim = _plot_output_template(
-        renderer_kind="peak_flood_depth",
+    #
+    # ONE composite page per event (renderer_kind "event_page") replaces the two
+    # per-figure entries. `_build_plot_rule_block_per_sim` -- the SHARED producer
+    # this generator calls below -- emits exactly that one rule, so naming the
+    # retired peak_flood_depth / conduit_flow stems here demanded files no rule
+    # produced and failed DAG build with MissingInputException. The composite is
+    # NON-SENSITIVITY-ONLY: the per-member rules still emit two separate figures.
+    _ep_per_sim = _plot_output_template(
+        renderer_kind="event_page",
         subdir="plots/per_sim/{event_id}",
         event_id="{event_id}",
-    ).replace("__OUTPUT_EXT__", _ext["per_sim_peak_flood_depth"])
-    _cf_per_sim = _plot_output_template(
-        renderer_kind="conduit_flow",
-        subdir="plots/per_sim/{event_id}",
-        event_id="{event_id}",
-    ).replace("__OUTPUT_EXT__", _ext["per_sim_conduit_flow"])
+    ).replace("__OUTPUT_EXT__", _ext["per_sim_event_page"])
+
+    # Per-plot disable parity with the production generator (workflow.py's
+    # `_plot_items`). Built ONCE, in the standard set's renderer order, filtered by
+    # report_config.disabled_renderers -- then interpolated into BOTH `rule all`
+    # and `render_report` so enumeration and emission cannot drift. This generator
+    # has now failed that way three times (Gotcha 37 subs/events, Gotcha 39
+    # Snakefile selection, and the stem mismatch above); building the list once is
+    # what makes a fourth structurally impossible.
+    from hhemt.report_renderers._reporting_sets import renderer_active
+
+    _disabled = builder._resolve_disabled_renderers(builder.analysis)
+    _plot_items: list[str] = []
+    if renderer_active("system_overview", _disabled):
+        _plot_items.append(f'"plots/system_overview{_ext["system_overview"]}"')
+    if renderer_active("per_sim", _disabled):
+        _plot_items.append(f'expand("{_ep_per_sim}", event_id=REPORT_EVENT_IDS)')
+    if renderer_active("per_analysis_summary", _disabled):
+        _plot_items.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
+    if renderer_active("scenario_status_appendix", _disabled):
+        _plot_items.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
+    if renderer_active("errors_and_warnings", _disabled):
+        _plot_items.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+    if renderer_active("disk_utilization", _disabled):
+        _plot_items.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
+    if renderer_active("metadata", _disabled):
+        _plot_items.append(f'"plots/metadata{_ext["metadata"]}"')
+    if renderer_active("workflow_performance", _disabled):
+        _plot_items.append(f'"plots/workflow_performance{_ext["workflow_performance"]}"')
+    _rule_all_plot_block = ",\n        ".join(_plot_items)
+    _render_report_input_block = ",\n        ".join([*_plot_items, '"scenario_status.csv"'])
 
     # Determine which `which` value to pass to consolidate's shell based on
     # which models are enabled (mirror generate_snakefile_content's logic).
@@ -235,34 +299,36 @@ from datetime import datetime as _dt
 from hhemt.report_renderers._figure_emission import format_sources_rst as _fmt_sources_rst
 
 try:
-    from importlib.metadata import version as _pkg_version
-    _toolkit_version = _pkg_version("hhemt")
+    # Was importlib.metadata, which returns the static pyproject pin "0.1.0" and so
+    # printed the same banner on every report ever generated. Routed through the
+    # single ADR-15 minter so the report banner, the zarr coordinate, and the
+    # provenance table all state ONE version -- three surfaces disagreeing about
+    # which code produced a report is the failure this consolidation prevents.
+    from hhemt.provenance import _describe_version
+    _toolkit_version = _describe_version()
 except Exception:
     _toolkit_version = "unknown"
 
 # Config dict consumed by report_templates/workflow_description.rst.j2
 config["analysis_id"] = {analysis_id_str!r}
 config["toolkit_version"] = _toolkit_version
-config["n_sims"] = {len(available_event_ids)}
+config["n_sims"] = {len(report_event_ids)}
 config["is_sensitivity"] = False
 config["report"] = {{"generated_at": _dt.now().isoformat(timespec="seconds")}}
 
 report: "report/workflow_description.rst"
 
 SIM_IDS = {available_event_ids!r}
+REPORT_EVENT_IDS = {report_event_ids!r}
 ILOC_BY_EVENT_ID = {iloc_by_event_id!r}
+{LABEL_GLOBALS_BLOCK}
 
 rule all:
     input:
         "_status/e_consolidate_complete.flag",
         "scenario_status.csv",
         "workflow_summary.md",
-        "plots/system_overview{_ext["system_overview"]}",
-        expand("{_pfd_per_sim}", event_id=SIM_IDS),
-        expand("{_cf_per_sim}", event_id=SIM_IDS),
-        "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
-        "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
-        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"{render_targets_in_rule_all},
+        {_rule_all_plot_block}{render_targets_in_rule_all},
 
 onerror:
     # Reprocess does not re-fire the sim driver, so the only failure modes are
@@ -307,11 +373,46 @@ onerror:
             flag_prefix = "d_process"
         else:
             flag_prefix = "c_run"
-        consolidate_inputs = []
-        for model_type in enabled_models:
-            flag_pattern = f"{flag_prefix}_{model_type}_evt-{{event_id}}_complete.flag"
-            consolidate_inputs.append(f'expand("_status/{flag_pattern}", event_id=SIM_IDS)')
-        consolidate_input_str = " + ".join(consolidate_inputs)
+        # PER-SCENARIO CONSOLIDATE -- the ONLY post-simulation rule-block builder the
+        # production multisim generator calls that this one did not. The omission was not
+        # a scoping choice and it already cost something before the reclaim work found it:
+        # compute_and_write_scope_sentinel(..., scope="scenario") has exactly ONE call site
+        # in the tree (consolidate_workflow.py's --event-id arm), reachable only from this
+        # rule, so no reprocess has ever re-stamped a per-scenario DU sentinel -- including
+        # the regenerate_existing arm, which deletes and rewrites every per-scenario summary.
+        #
+        # INERT WHERE THE WORK IS DONE. _invalidate_downstream_flags never deletes
+        # f_consolidate_scenario_* on any arm, so a scenario a production run already
+        # consolidated is satisfied and skipped. The rule fires exactly on the scenarios
+        # where the work is genuinely outstanding.
+        #
+        # WHY flag_prefix IS THREADED. On the consolidate arm the process rules are not
+        # emitted, so demanding d_process here would re-open the MissingRuleException the
+        # comment above guards against; this rule takes the same prefix the consolidate
+        # rule takes. c_run is the weaker flag, but SIM_IDS is filtered by
+        # _available_event_ids to events whose per-enabled-model SUMMARIES all exist, and
+        # summary existence entails a completed process -- the enumeration supplies the
+        # certification the flag does not.
+        snakefile_content += builder._build_consolidate_scenario_rule_block(
+            enabled_models=enabled_models,
+            config_args=config_args,
+            log_dir_str=log_dir_str,
+            conda_env_path=conda_env_path,
+            consolidate_scenario_resources=consolidate_scenario_resources,
+            compression_level=compression_level,
+            flag_prefix=flag_prefix,
+        )
+        # Analysis-level consolidate now fans in on the per-scenario flags, matching the
+        # production generator (workflow.py:3250). This CONVERGES the two rather than
+        # diverging them: e_consolidate_complete.flag is ONE output whose metadata records
+        # whichever generator last produced it, so today an alternating production/reprocess
+        # sequence flips its declared input set on every run and fires the INPUT trigger
+        # each time. After this they agree and that churn source is gone.
+        # PLAIN string, not an f-string: {event_id} must reach the emitted Snakefile as a
+        # wildcard rather than being interpolated here.
+        consolidate_input_str = (
+            'expand("_status/f_consolidate_scenario_evt-{event_id}_complete.flag", event_id=SIM_IDS)'
+        )
         snakefile_content += builder._build_consolidate_rule_block(
             consolidate_input_str=consolidate_input_str,
             which=which,
@@ -323,13 +424,29 @@ onerror:
             allow_incomplete=True,
         )
 
-    # ---- Plot rules (always emitted; their mtime trigger handles re-firing) ----
-    snakefile_content += builder._build_plot_rule_block_system_overview()
-    snakefile_content += builder._build_plot_rule_block_per_sim()
-    snakefile_content += builder._build_plot_rule_block_per_analysis_summary()
-    snakefile_content += builder._build_plot_rule_block_scenario_status_appendix()
-    snakefile_content += builder._build_plot_rule_block_errors_and_warnings()
-    snakefile_content += builder._build_plot_rule_block_disk_utilization()
+    # ---- Plot rules (mtime trigger handles re-firing) ----
+    # Emission is gated by the SAME `renderer_active` predicate that gated the
+    # enumeration above: a site that filters one without the other yields
+    # MissingInputException (_reporting_sets.renderer_active docstring). `metadata`
+    # is emitted here for the first time -- it was absent from this generator
+    # entirely, so a reprocess-rendered report carried no Metadata sidebar page and
+    # therefore no SLURM-efficiency / queue-time table.
+    if renderer_active("system_overview", _disabled):
+        snakefile_content += builder._build_plot_rule_block_system_overview()
+    if renderer_active("per_sim", _disabled):
+        snakefile_content += builder._build_plot_rule_block_per_sim()
+    if renderer_active("per_analysis_summary", _disabled):
+        snakefile_content += builder._build_plot_rule_block_per_analysis_summary()
+    if renderer_active("scenario_status_appendix", _disabled):
+        snakefile_content += builder._build_plot_rule_block_scenario_status_appendix()
+    if renderer_active("errors_and_warnings", _disabled):
+        snakefile_content += builder._build_plot_rule_block_errors_and_warnings()
+    if renderer_active("disk_utilization", _disabled):
+        snakefile_content += builder._build_plot_rule_block_disk_utilization()
+    if renderer_active("metadata", _disabled):
+        snakefile_content += builder._build_plot_rule_block_metadata()
+    if renderer_active("workflow_performance", _disabled):
+        snakefile_content += builder._build_plot_rule_block_workflow_performance()
 
     # ---- Export scenario status (always emitted) ----
     snakefile_content += builder._build_export_scenario_status_rule(
@@ -348,28 +465,16 @@ onerror:
     snakefile_content += f'''
 rule render_report:
     input:
-        "plots/system_overview{_ext["system_overview"]}",
-        expand("{_pfd_per_sim}", event_id=SIM_IDS),
-        expand("{_cf_per_sim}", event_id=SIM_IDS),
-        "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
-        "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
-        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
-        "plots/disk_utilization{_ext["disk_utilization"]}",
-        "scenario_status.csv",
-    output:
-        "analysis_report.{{format}}"
-    wildcard_constraints:
-        format="zip|html"
-    log: "{log_dir_str}/render_report_{{format}}.log"
+        {_render_report_input_block},
+{_render_plan.rule_head(log_dir_str)}
     resources:
 {render_resources}
     shell:
         """
         {builder.python_executable} -m hhemt.render_report_runner \\
-            {config_args} \\
-            --format {{wildcards.format}} \\
-            --reprocess \\
-            > {{log}} 2>&1
+            {config_args}{builder._report_config_args()} \\
+{_render_plan.format_shell_line}            --reprocess \\
+            2>&1 | tee {{log}}
         """
 '''
 
@@ -380,6 +485,7 @@ def write_reprocess_snakefile(
     builder: SnakemakeWorkflowBuilder,
     *,
     start_with: Literal["process", "consolidate", "render"],
+    override_report_formats: list[str] | None = None,
 ) -> Path:
     """Generate the reprocess Snakefile and write it to ``Snakefile.reprocess``.
 
@@ -387,7 +493,14 @@ def write_reprocess_snakefile(
     normal ``Snakefile`` so the two can coexist). Overwrites any existing
     file at that path.
     """
-    text = generate_reprocess_snakefile(builder, start_with=start_with)
+    from hhemt.workflow import _write_snakefile_atomic
+
+    text = generate_reprocess_snakefile(builder, start_with=start_with, override_report_formats=override_report_formats)
     out = builder.analysis_paths.analysis_dir / "Snakefile.reprocess"
-    out.write_text(text)
+    # Atomic + one-deep archive. Gotcha 39: render_report(reprocess=True) runs
+    # `snakemake --report` against THIS file, so a clobber here reaches a
+    # rendered report rather than only an operator diagnosis. Function-local
+    # import: this module is imported BY workflow.py, so a module-top import
+    # would be circular.
+    _write_snakefile_atomic(out, text)
     return out

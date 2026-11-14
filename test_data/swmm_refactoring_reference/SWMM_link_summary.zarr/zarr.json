@@ -2,9 +2,12 @@
   "attributes": {
     "analysis_end_datetime": "2026-01-27 18:01:07",
     "flow_units": "cms",
-    "runoff_continuity_error_perc": NaN,
-    "flow_continuity_error_perc": 5.241,
-    "system_flooding_10e6_ltr": 0.0,
+    "runoff_continuity_error": NaN,
+    "runoff_continuity_error_units": "percent",
+    "flow_continuity_error": 5.241,
+    "flow_continuity_error_units": "percent",
+    "system_flooding": 0.0,
+    "system_flooding_units": "10^6 L",
     "sim_date": "2026-01-27T18:00:44-05:00",
     "output_creation_date": "2026-01-27T18:01:40-05:00",
     "paths": {

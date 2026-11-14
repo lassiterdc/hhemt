@@ -1,0 +1,10 @@
+# Outside the cleft frame (F4Cleft grades 'is what'). The two headings the suite exempts, 'See what 
+# would be built' and 'Ask what the toolkit thinks happened', are exempted by a line-start lookbehind, 
+# so a body line that starts 'See what' or 'Ask what' is also unflagged here.
+extends: existence
+message: 'Cut ''what'' outside the cleft frame; two headings keep it.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '(?<![-\w])what(?![-\w])(?<!(?:\bis|\bare|\bwas|\bwere)\swhat)(?<!(?:^|\n)(?:\d+\.\s+)?(?:See|Ask)\swhat)'

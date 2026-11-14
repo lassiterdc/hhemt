@@ -1,6 +1,8 @@
-Benchmarking-mode sensitivity plot for independent variable **{{ snakemake.wildcards.independent_var }}**.
+Time against ``{{ snakemake.wildcards.independent_var }}``, as set by ``report.sensitivity.dependent_var``.
 
-The dependent variable (default ``performance.Total`` from the per-scenario performance summary, slowest-rank wallclock (max across MPI ranks of per-rank cumulative deltas; per stipulation ``wallclock reduction uses max over rank``), restart-safe) is aggregated per sub-analysis using the ``aggregation`` mode declared in ``report_config.yaml`` under ``sensitivity``. SWMM-only sub-analyses route to ``swmm_full_rpt_file`` Total elapsed time (parsed via ``swmm_output_parser.parse_total_elapsed``).
+The top panel plots that time, and its y-axis title names the measure. For a TRITON or TRITON-SWMM member the value is the wall-clock time of the slowest MPI rank, summed over restarts, for the phase the variable names; the default ``performance.Total`` is the whole run. With the ``plotly`` static backend, the default, the ``aggregation`` statistic under ``report.sensitivity`` in ``cfg_analysis.yaml`` (``mean`` by default; ``median``, ``min`` or ``max``) collapses the replicates of each configuration before the best configuration at each device count is chosen; the ``matplotlib`` backend takes the minimum over the individual runs.
+
+Each report scales its y-axes to its own data, so compare values by the axis tick labels and not by position.
 
 **Sources:**
 

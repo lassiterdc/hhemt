@@ -21,6 +21,31 @@ class TRITONSWMMError(Exception):
     pass
 
 
+class StalePlotsError(TRITONSWMMError):
+    """A report is being rendered from figures produced by a different toolkit build.
+
+    Equality on the (sha, dirty) tuple, never an ordering: shas are unordered in general
+    and the read path often has no object DB. Absent is never equal -- including absent
+    on both sides -- so a regression in the capture site fails LOUD.
+    """
+
+    pass
+
+
+class StaleReadModelError(TRITONSWMMError):
+    """A rendered figure predates the persisted read-model it transcribes.
+
+    Raised at bundle-emission time, before any staging copy, when the
+    Errors-and-Warnings figure is OLDER than validation_report.json. Shipping that
+    pair publishes a figure one generation behind its own data.
+
+    Subclasses TRITONSWMMError directly rather than ProcessingError: the latter takes
+    (operation, filepath, reason) and this error carries a single composed message.
+    """
+
+    pass
+
+
 class ConfigurationError(TRITONSWMMError):
     """Invalid configuration values or toggle conflicts.
 
@@ -29,19 +54,25 @@ class ConfigurationError(TRITONSWMMError):
     - Mutually exclusive options are both enabled
     - Configuration values fail validation rules
 
-    Attributes:
-        field: The configuration field that failed validation
-        config_path: Optional path to the configuration file
+    Attributes
+    ----------
+    field : str
+        The configuration field that failed validation.
+    config_path : Path or None
+        Path to the configuration file, when one was given.
     """
 
-    def __init__(self, field: str, message: str, config_path: Path | None = None):
+    def __init__(self, field: str, message: str, config_path: Path | None = None, fix_hint: str = ""):
         self.field = field
         self.config_path = config_path
+        self.fix_hint = fix_hint
 
         lines = [f"Configuration error in field '{field}'"]
         if config_path:
             lines.append(f"  Config: {config_path}")
         lines.append(f"  {message}")
+        if fix_hint:
+            lines.append(f"  Fix: {fix_hint}")
 
         super().__init__("\n".join(lines))
 
@@ -51,11 +82,16 @@ class CompilationError(TRITONSWMMError):
 
     Raised when CMake build or make compilation fails for any model type.
 
-    Attributes:
-        model_type: Which model failed ('triton', 'tritonswmm', 'swmm')
-        backend: Compilation backend ('cpu', 'gpu', 'openmp', etc.)
-        logfile: Path to compilation log file with detailed error output
-        return_code: Process return code from compilation command
+    Attributes
+    ----------
+    model_type : str
+        The model that failed, one of ``triton``, ``tritonswmm``, or ``swmm``.
+    backend : str
+        Compilation backend, such as ``cpu``, ``gpu`` or ``openmp``.
+    logfile : Path
+        Path to the compilation log file carrying the detailed error output.
+    return_code : int
+        Process return code from the compilation command.
     """
 
     def __init__(self, model_type: str, backend: str, logfile: Path, return_code: int):
@@ -77,10 +113,14 @@ class SimulationError(TRITONSWMMError):
 
     Raised when a TRITON/SWMM simulation process fails during execution.
 
-    Attributes:
-        event_iloc: Index of the weather event that failed
-        model_type: Which model failed ('triton', 'tritonswmm', 'swmm')
-        logfile: Optional path to simulation log file
+    Attributes
+    ----------
+    event_iloc : int
+        Index of the weather event that failed.
+    model_type : str
+        The model that failed, one of ``triton``, ``tritonswmm``, or ``swmm``.
+    logfile : Path or None
+        Path to the simulation log file, when one was given.
     """
 
     def __init__(self, event_iloc: int, model_type: str, logfile: Path | None = None):
@@ -98,13 +138,17 @@ class SimulationError(TRITONSWMMError):
 class ProcessingError(TRITONSWMMError):
     """Output processing failure.
 
-    Raised when post-simulation processing operations fail (parsing
-    outputs, compressing files, generating summaries).
+    Raised when post-simulation processing operations fail, such as parsing
+    outputs, compressing files, or generating summaries.
 
-    Attributes:
-        operation: Description of the operation that failed
-        filepath: Optional path to the file being processed
-        reason: Optional detailed error reason
+    Attributes
+    ----------
+    operation : str
+        Description of the operation that failed.
+    filepath : Path or None
+        Path to the file being processed, when one was given.
+    reason : str
+        Detailed error reason. Empty when none was given.
     """
 
     def __init__(self, operation: str, filepath: Path | None = None, reason: str = ""):
@@ -124,13 +168,17 @@ class ProcessingError(TRITONSWMMError):
 class WorkflowError(TRITONSWMMError):
     """Snakemake workflow failure.
 
-    Raised when Snakemake workflow execution fails during any phase
-    (setup, preparation, execution, processing, consolidation).
+    Raised when Snakemake workflow execution fails during any phase,
+    including setup, preparation, execution, processing, and consolidation.
 
-    Attributes:
-        phase: Which workflow phase failed
-        return_code: Process return code from Snakemake
-        stderr: Optional stderr output from Snakemake
+    Attributes
+    ----------
+    phase : str
+        The workflow phase that failed.
+    return_code : int
+        Process return code from Snakemake.
+    stderr : str
+        Standard-error output from Snakemake. Empty when none was captured.
     """
 
     def __init__(self, phase: str, return_code: int, stderr: str = ""):
@@ -153,13 +201,17 @@ class WorkflowError(TRITONSWMMError):
 class SLURMError(TRITONSWMMError):
     """SLURM job submission or execution failure.
 
-    Raised when SLURM operations fail (job submission, resource
-    allocation, job monitoring).
+    Raised when SLURM operations fail during job submission, resource
+    allocation, or job monitoring.
 
-    Attributes:
-        operation: Which SLURM operation failed ('submit', 'monitor', 'allocate')
-        job_id: Optional SLURM job ID
-        reason: Optional detailed error reason
+    Attributes
+    ----------
+    operation : str
+        The SLURM operation that failed, one of ``submit``, ``monitor``, or ``allocate``.
+    job_id : str or None
+        SLURM job ID, when one was assigned.
+    reason : str
+        Detailed error reason. Empty when none was given.
     """
 
     def __init__(self, operation: str, job_id: str | None = None, reason: str = ""):
@@ -182,10 +234,14 @@ class ResourceAllocationError(TRITONSWMMError):
     Raised when CPU/GPU/memory resource allocation fails or is
     inconsistent with configuration.
 
-    Attributes:
-        resource_type: Which resource failed ('cpu', 'gpu', 'memory')
-        requested: Requested resource amount
-        available: Available resource amount (if known)
+    Attributes
+    ----------
+    resource_type : str
+        The resource that failed, one of ``cpu``, ``gpu``, or ``memory``.
+    requested : str
+        Requested resource amount.
+    available : str or None
+        Available resource amount, when the amount is known.
     """
 
     def __init__(self, resource_type: str, requested: str, available: str | None = None):
@@ -201,15 +257,18 @@ class ResourceAllocationError(TRITONSWMMError):
 
 
 class CLIValidationError(TRITONSWMMError):
-    """CLI argument validation failure (exit code 2).
+    """CLI argument validation failure with exit code 2.
 
     Raised when command-line arguments fail business logic validation,
     such as mutually exclusive flags, conditional requirements, or
     invalid argument combinations.
 
-    Attributes:
-        argument: The argument(s) that failed validation
-        fix_hint: Optional hint for how to fix the issue
+    Attributes
+    ----------
+    argument : str
+        The argument or arguments that failed validation.
+    fix_hint : str
+        Hint for how to fix the issue. Empty when none was given.
     """
 
     def __init__(self, argument: str, message: str, fix_hint: str = ""):
@@ -228,10 +287,14 @@ class GlobusTransferError(TRITONSWMMError):
 
     Raised when a Globus transfer task fails, is cancelled, or times out.
 
-    Attributes:
-        task_id: Globus task ID
-        status: Terminal task status ('FAILED', 'CANCELLED', etc.)
-        detail_url: URL to view task details on app.globus.org
+    Attributes
+    ----------
+    task_id : str
+        Globus task ID.
+    status : str
+        Terminal task status, such as ``FAILED`` or ``CANCELLED``.
+    detail_url : str
+        URL to view the task details on app.globus.org, derived from ``task_id``.
     """
 
     def __init__(
@@ -253,19 +316,21 @@ class GlobusTransferError(TRITONSWMMError):
 
 
 class WorkflowPlanningError(TRITONSWMMError):
-    """Workflow planning/build failure (exit code 3).
+    """Workflow planning/build failure with exit code 3.
 
     Raised when Snakemake workflow generation or DAG planning fails,
     typically due to invalid target specifications or missing dependencies.
 
-    Attributes:
-        phase: The planning phase that failed
+    Attributes
+    ----------
+    phase : str
+        The planning phase that failed.
     """
 
     def __init__(self, phase: str, reason: str):
         self.phase = phase
 
-        super().__init__(f"Workflow planning failed during {phase}\n" f"  Reason: {reason}")
+        super().__init__(f"Workflow planning failed during {phase}\n  Reason: {reason}")
 
 
 class PublishError(TRITONSWMMError):
@@ -276,3 +341,15 @@ class PublishError(TRITONSWMMError):
         self.doi = doi
         self.status = status
         super().__init__(f"publish to {target} failed (doi={doi}): {status}")
+
+
+# Standalone errors that do NOT extend TRITONSWMMError (they predate / stand apart from
+# the toolkit hierarchy). BundleSchemaError lives HERE (not in bundle/__init__) so that
+# cli_utils.py can import it for exit-code mapping without dragging the eager
+# bundle -> _emit/_combine -> xarray/zarr import graph into `hhemt --help`. It is
+# re-exported from hhemt.bundle for the existing `from hhemt.bundle import
+# BundleSchemaError` call sites.
+class BundleSchemaError(ValueError):
+    """A bundle's bundle_schema_version differs from the locally-installed
+    toolkit's BUNDLE_SCHEMA_VERSION. Distinct from generic malformed-manifest
+    errors so callers can branch on a schema-version mismatch."""

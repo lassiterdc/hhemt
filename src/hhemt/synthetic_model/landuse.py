@@ -22,9 +22,7 @@ def build_landuse(params, dest: Path) -> Path:
     arr = np.full((n_rows, n_cols), PERVIOUS_ID, dtype=np.int32)
     arr[: n_rows // 2, :] = IMPERVIOUS_ID
 
-    transform = Affine.translation(params.xllcorner, params.yllcorner + n_rows * cs) * Affine.scale(
-        cs, -cs
-    )
+    transform = Affine.translation(params.xllcorner, params.yllcorner + n_rows * cs) * Affine.scale(cs, -cs)
     da = xr.DataArray(
         arr,
         dims=("y", "x"),

@@ -14,6 +14,12 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from hhemt.process_simulation import (
+    NAME_SET_UNKNOWN,
+    PERF_COLUMN_SET_COORD,
+    UNIFORM_COLUMN_SET_VERDICT,
+)
+from hhemt.report_plot_ids import EVENT_LABEL_COLUMN
 from hhemt.report_renderers._tabulator_defaults import (
     build_columns_spec,
     build_html_document,
@@ -47,6 +53,7 @@ def render(
         from hhemt.report_renderers._static_backend_warning import (
             warn_no_plotly_branch,
         )
+
         warn_no_plotly_branch("scenario_status_appendix")
 
     from hhemt.report_renderers._figure_emission import (
@@ -84,9 +91,7 @@ def render(
     weather_event_indices: list[str] = list(
         getattr(getattr(analysis, "cfg_analysis", None), "weather_event_indices", []) or []
     )
-    html_text = _build_tabulator_html(
-        df, report_cfg, csv_present, analysis_id, weather_event_indices
-    )
+    html_text = _build_tabulator_html(df, report_cfg, csv_present, analysis_id, weather_event_indices)
 
     # Declare the expected source unconditionally (ADR-6 D3): scenario_status.csv
     # is the canonical source even when absent — _validate_source_path accepts
@@ -126,8 +131,7 @@ def _build_tabulator_html(
     if not csv_present or df is None:
         placeholder = (
             "<h2>Scenario Status</h2>\n"
-            "<p><em>scenario_status.csv not yet written — workflow may have "
-            "been killed before the onsuccess/onerror Snakemake hook ran.</em></p>"
+            "<p><em>The status table is not shown: <code>scenario_status.csv</code> is not written.</em></p>"
         )
         return (
             "<!DOCTYPE html>\n"
@@ -139,14 +143,12 @@ def _build_tabulator_html(
 
     tab_cfg = report_cfg.scenario_status_appendix.interactive
 
-    # Drop constant columns (single unique value, including all-NaN) to cut
-    # clutter in single-model / single-event analyses. nunique(dropna=False) <= 1
-    # catches both all-equal and all-NaN columns. Co-design (P2): an all-zero
-    # n_resumes column (no hotstart resumes occurred) is auto-hidden here —
-    # deliberate and correct (the CSV/df_status still carries it).
+    # Hide columns that carry nothing for a reader. The rule is NOT uniform across
+    # columns -- three of them apply, and `_keep_column` is the single place that
+    # dispatches between them. Read its docstring before changing anything here; one
+    # branch exists because a cardinality test is PROVABLY unable to decide its column.
     if report_cfg.scenario_status_appendix.hide_constant_columns:
-        nunique = df.apply(lambda s: s.nunique(dropna=False))
-        df = df[[c for c in df.columns if nunique[c] > 1]]
+        df = df[[c for c in df.columns if _keep_column(c, df[c])]]
 
     # iter 9.4 — Compute column_groups FIRST, then reorder df columns to
     # match the group order so the table's left-to-right column display
@@ -203,14 +205,16 @@ def _build_tabulator_html(
     )
 
     js_mode = getattr(
-        getattr(report_cfg, "interactive", None), "tabulator_js_mode", "cdn",
+        getattr(report_cfg, "interactive", None),
+        "tabulator_js_mode",
+        "cdn",
     )
 
     # Deterministic prefix-dispatch column grouping per /design-recommendation
     # Option A (iter 4, agreed at scratch L4150). Algorithm: first-match-wins
     # over (1) prefix dispatch (perf_/actual_/snakemake_), (2) Scenario ID base
     # set ∪ cfg_analysis.weather_event_indices (config-derived), (3) Status set,
-    # (4) elimination-fallback "Independent variables / Other".
+    # (4) elimination-fallback "Configuration".
     #
     # Provenance citations:
     #   - perf_*  → analysis.py:2418 (PERF_VARS_ORDERED loop) + export_scenario_status.py:8-9 docstring
@@ -223,7 +227,7 @@ def _build_tabulator_html(
     #     (`self.backend = "gpu" if cfg_analysis.run_mode == "gpu" else "cpu"`) →
     #     scenario.py:632 (logged at scenario-setup) → analysis.py:2519/2525 (read back
     #     into df_status). backend_used is a REQUESTED-config value despite its
-    #     misleading name; it belongs in Independent variables / Other.
+    #     misleading name; it belongs in Configuration.
     # iter 9.4 — column_groups is computed earlier (before build_columns_spec)
     # so we can reorder df columns to match the group order. It's reused
     # here for the sidebar payload.
@@ -242,18 +246,76 @@ def _build_tabulator_html(
 # Reserved Scenario ID base (row-identifier subset of analysis.py:2409-2417
 # fixed_identity, with the two workflow-status columns lifted out into the
 # Status set below).
-_SCENARIO_ID_BASE_FIELDS = frozenset({
-    "event_iloc",
-    "model_type",
-    "scenario_directory",
-    "sa_id",
-    "subanalysis_id",
-    "sub_analysis_iloc",
-})
+_SCENARIO_ID_BASE_FIELDS = frozenset(
+    {
+        "event_iloc",
+        "model_type",
+        "scenario_directory",
+        "sa_id",
+        "member_id",
+        "sub_analysis_iloc",
+        EVENT_LABEL_COLUMN,
+    }
+)
 
 # Reserved Status set (workflow-execution-state subset of analysis.py
 # fixed_identity).
 _STATUS_FIELDS = frozenset({"scenario_setup", "run_completed"})
+
+# b4: resume-health fields surfaced at the HEAD of Performance Breakdown. n_resumes
+# (how many hotstart resumes) + run_completed (did the sim finish) are the interpretation
+# context for the perf_* fields, whose group footnote warns they are invalid for resumed
+# runs. Kept visible even when constant (a single-arm sweep has a constant n_resumes) so
+# the reader always sees the resume posture. Order: n_resumes first, then run_completed.
+_RESUME_HEALTH_FIELDS: tuple[str, ...] = ("n_resumes", "run_completed")
+
+#: The columns whose visibility is decided by READING their values rather than by
+#: counting how many distinct ones they hold. See ``_keep_column`` branch 2.
+_SEMANTIC_VISIBILITY_COLUMNS: frozenset[str] = frozenset({PERF_COLUMN_SET_COORD})
+
+#: The two column-set verdicts that report "nothing here for a reader": a measured
+#: no-heterogeneity result, and a member whose column set was never measured. Any OTHER
+#: non-null verdict IS the heterogeneity sentence, which is the thing worth rendering.
+#: Both names are IMPORTED from the module that writes them rather than restated here, so
+#: a reworded verdict cannot leave this predicate silently matching nothing.
+_COLUMN_SET_QUIET_VERDICTS: frozenset[str] = frozenset({UNIFORM_COLUMN_SET_VERDICT, NAME_SET_UNKNOWN})
+
+
+def _keep_column(name: str, series: pd.Series) -> bool:
+    """Decide whether one column survives the hide pass. Three branches, first match wins.
+
+    1. ALWAYS SHOW -- ``_RESUME_HEALTH_FIELDS``. A single-arm sweep has a constant
+       ``n_resumes``, and the reader still needs to see the resume posture (v8/b4).
+    2. SEMANTIC -- ``_SEMANTIC_VISIBILITY_COLUMNS``. Show iff some member actually has
+       something to report: a non-null verdict that is neither quiet verdict.
+    3. GENERIC -- every other column keeps the cardinality test. A column whose values
+       are all identical (all-NaN included) is clutter in a single-model / single-event
+       analysis.
+
+    WHY BRANCH 2 EXISTS, because it reads as an ad-hoc exception beside branch 1 and is a
+    different kind of thing. A cardinality test is a function of HOW MANY distinct values
+    a column holds and of nothing else, so it necessarily returns the same answer for any
+    two populations with the same count. ``perf_column_set_across_allocations`` has two
+    ONE-member shapes that collide there and require OPPOSITE outcomes: a lone uniform
+    member (HIDE -- no heterogeneity exists anywhere in the analysis, which the developer
+    ruled out of this column explicitly) and a lone heterogeneous member (SHOW -- that is
+    the entire reason the column was added). Both are cardinality 1. So no
+    cardinality-only predicate is correct on both, and this column's rule is value-reading
+    BY NECESSITY rather than by convenience. The collision is not confined to one member:
+    it recurs at cardinality 2 in both directions -- a uniform member beside a legacy
+    (null) one must hide, a uniform member beside a heterogeneous one must show.
+
+    DO NOT "SIMPLIFY" THIS BACK into branch 3 by changing what
+    ``process_simulation.column_set_verdict`` returns. Remapping the null, ignoring
+    nulls, or collapsing the verdicts differently all change WHICH values appear; none of
+    them can change how many DISTINCT values a one-member analysis has, which is one
+    either way. The whole value-domain family is excluded, not merely untried.
+    """
+    if name in _RESUME_HEALTH_FIELDS:
+        return True
+    if name in _SEMANTIC_VISIBILITY_COLUMNS:
+        return any(value not in _COLUMN_SET_QUIET_VERDICTS for value in series.dropna())
+    return series.nunique(dropna=False) > 1
 
 
 def _build_column_groups(
@@ -266,10 +328,10 @@ def _build_column_groups(
       1. Prefix dispatch: ``perf_*``, ``actual_*``, ``snakemake_*`` → 3 groups.
       2. Scenario ID = ``_SCENARIO_ID_BASE_FIELDS`` ∪ ``cfg_analysis.weather_event_indices``.
       3. Status = ``_STATUS_FIELDS``.
-      4. Elimination fallback → "Independent variables / Other".
+      4. Elimination fallback → "Configuration".
 
     The output preserves declared group order (Scenario ID first, then Status,
-    Independent variables / Other, Performance breakdown, Actual resource
+    Configuration, Performance breakdown, Actual resource
     utilization, Snakemake derived resource allocation). Within a group,
     columns appear in df.columns order — so the sidebar reflects the CSV's
     canonical column ordering (from ``analysis.py::_reorder_df_status_columns``).
@@ -287,8 +349,13 @@ def _build_column_groups(
     status_cols: list[str] = []
     other_cols: list[str] = []
 
+    # b4: lift the resume-health fields OUT of their natural groups (n_resumes ->
+    # Configuration, run_completed -> Status) and PREPEND them to Performance Breakdown below.
+    resume_health_cols = [c for c in _RESUME_HEALTH_FIELDS if c in df.columns]
     for col in df.columns:
         col_str = str(col)
+        if col_str in _RESUME_HEALTH_FIELDS:
+            continue  # placed at the head of Performance Breakdown below
         if col_str.startswith("perf_"):
             perf_cols.append(col_str)
         elif col_str.startswith("actual_"):
@@ -301,46 +368,60 @@ def _build_column_groups(
             status_cols.append(col_str)
         else:
             other_cols.append(col_str)
+    perf_cols = resume_health_cols + perf_cols
 
     groups: list[tuple[str, list[str], str | None]] = []
 
     if scenario_id_cols:
-        groups.append((
-            "ID",
-            scenario_id_cols,
-            "Scenario identifiers from analysis yaml and sensitivity analysis .xlsx.",
-        ))
+        groups.append(
+            (
+                "ID",
+                scenario_id_cols,
+                "Scenario identifiers from analysis yaml and sensitivity analysis .xlsx.",
+            )
+        )
     if status_cols:
-        groups.append((
-            "Status",
-            status_cols,
-            "Workflow execution state per scenario.",
-        ))
+        groups.append(
+            (
+                "Status",
+                status_cols,
+                "Workflow execution state per scenario.",
+            )
+        )
     if other_cols:
-        groups.append((
-            "Configuration",
-            other_cols,
-            "User input fields (analysis config fields, sensitivity analysis .xlsx fields) "
-            "or fields derived directly from user input.",
-        ))
+        groups.append(
+            (
+                "Configuration",
+                other_cols,
+                "User input fields (analysis config fields, sensitivity analysis .xlsx fields) "
+                "or fields derived directly from user input.",
+            )
+        )
     if perf_cols:
-        groups.append((
-            "Performance Breakdown",
-            perf_cols,
-            "From the simulation's performance.txt. Invalid for hotstart-resumed runs — "
-            "reflects only the resumed timestep range.",
-        ))
+        groups.append(
+            (
+                "Performance Breakdown",
+                perf_cols,
+                "The resume count and run completion head this group. The perf_* fields "
+                "come from the simulation's performance.txt files. On a resumed run they add up "
+                "every allocation of the run.",
+            )
+        )
     if actual_cols:
-        groups.append((
-            "Actual Resource Utilization",
-            actual_cols,
-            "Parsed from TRITON-SWMM-generated log file.",
-        ))
+        groups.append(
+            (
+                "Actual Resource Utilization",
+                actual_cols,
+                "Parsed from TRITON-SWMM-generated log file.",
+            )
+        )
     if snakemake_cols:
-        groups.append((
-            "Snakemake Assigned Resources",
-            snakemake_cols,
-            "Parsed from the Snakemake job's SLURM env at runtime.",
-        ))
+        groups.append(
+            (
+                "Snakemake Assigned Resources",
+                snakemake_cols,
+                "Parsed from the Snakemake job's SLURM env at runtime.",
+            )
+        )
 
     return groups

@@ -25,13 +25,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from hhemt.config.base import cfgBaseModel
 from hhemt.exceptions import ConfigurationError
 
 
 class synthetic_experiment_config(cfgBaseModel):
+    # `model_arms` collides with pydantic's default `model_` protected namespace
+    # (the pinned pydantic 2.7 still protects the whole `model_` prefix). The field
+    # shadows no pydantic API, and the token is fixed by the estate experiment YAML,
+    # so relax the namespace for THIS model only rather than repo-wide. Merges with
+    # cfgBaseModel's ConfigDict(extra="forbid"), which is preserved.
+    model_config = ConfigDict(protected_namespaces=())
+
     # --- synthetic model knobs (grid + forcing) ---
     cell_size_m: float = Field(
         default=3.5, description="Synthetic DEM cell size (m). Finer -> more cells -> longer per-sim wallclock."
@@ -40,8 +47,11 @@ class synthetic_experiment_config(cfgBaseModel):
     n_rows: int = Field(
         default=120,
         description=(
-            "Synthetic grid rows (N-S). MUST be divisible by every rank in rank_sweep "
-            "(coupling-deadlock invariant); default 120 covers ranks {2,4,8}."
+            "Synthetic grid rows (N-S). MUST be divisible by every rank the experiment "
+            "matrix EMITS -- not merely those in rank_sweep, because the fixed GPU and "
+            "hybrid config rows carry their own n_mpi_procs (coupling-deadlock "
+            "invariant). Default 120 covers the default emitted set {1,2,3,4,8}; note "
+            "128 would NOT, because 128 % 3 != 0 and 3 is emitted by the fixed GPU row."
         ),
     )
     rainfall_peak_mm_per_hr: float = Field(
@@ -50,6 +60,39 @@ class synthetic_experiment_config(cfgBaseModel):
     )
 
     # --- experiment matrix ---
+    model_arms: tuple[str, ...] = Field(
+        default=("tritonswmm",),
+        description=(
+            "Model arms to run as SIBLING sensitivity masters. Each arm is a separate "
+            "master with an identical matrix, differing only in system model toggles "
+            "(workflow.py's sensitivity generator raises on >1 enabled model). The "
+            "default ('tritonswmm',) reproduces the historical single-arm experiment "
+            "byte-for-byte. Set ('tritonswmm', 'triton') for the coupled + uncoupled pair."
+        ),
+    )
+
+    @field_validator("model_arms", mode="after")
+    @classmethod
+    def _validate_model_arms(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        """Reject an empty, duplicated, or unknown arm set at config-load.
+
+        ``model_arm_toggles``'s KeyError remains the last-resort guard, but a bare
+        KeyError surfacing from inside ``_build_case`` gives the operator no field
+        name — this rejection names both the field and the offending value.
+        """
+        # Function-local: a module-top import would create a
+        # config.synthetic_experiment -> synthetic_experiment -> config.synthetic_experiment cycle.
+        from hhemt.synthetic_experiment import _MODEL_ARMS
+
+        if not v:
+            raise ValueError("model_arms cannot be empty; supply at least one arm, e.g. ('tritonswmm',)")
+        if len(v) != len(set(v)):
+            raise ValueError(f"model_arms contains duplicates: {list(v)}")
+        unknown = [arm for arm in v if arm not in _MODEL_ARMS]
+        if unknown:
+            raise ValueError(f"model_arms contains unknown arm(s) {unknown}; known arms are {sorted(_MODEL_ARMS)}")
+        return v
+
     rank_sweep: tuple[int, ...] = Field(
         default=(2, 4, 8),
         description=(
@@ -57,8 +100,14 @@ class synthetic_experiment_config(cfgBaseModel):
             "The default (2,4,8) reproduces the fixed baseline mpi rows byte-for-byte."
         ),
     )
-    include_resume: bool = Field(
-        default=True, description="Emit the clean+resume (kill-and-hotstart) combined experiment."
+    dem_resolution_ladder: tuple[float, ...] = Field(
+        default=(),
+        description=(
+            "Cell sizes (m) for the DEM-resolution sweep, FINEST FIRST. Empty (the "
+            "default) means this config drives a compute-config experiment, not a "
+            "resolution sweep -- the two are mutually exclusive axes. Validated "
+            "divisor-only AND constant-ratio by _validate_dem_ladder."
+        ),
     )
 
     # --- HPC targeting (partition-as-axis) ---
@@ -80,10 +129,52 @@ class synthetic_experiment_config(cfgBaseModel):
     def _validate_coupling_invariant(self) -> synthetic_experiment_config:
         """Reject (n_rows, rank_sweep) combos that would deadlock the TRITON-SWMM
         coupling collective (a rank owning zero coupling junctions)."""
+        from hhemt.synthetic_experiment import _DEM_FIXED_CONFIG, _configs
         from hhemt.synthetic_model import SyntheticModelParams
         from hhemt.synthetic_model.swmm_template import _N_COUPLING_NODES, _node_matrix_rows
 
-        ranks = sorted({int(r) for r in self.rank_sweep})
+        # Ranks are DERIVED from the matrix THIS config actually emits. Nothing is
+        # exempt: every emitted rank is guarded, and a config that emits fewer ranks is
+        # guarded against fewer because it will run fewer -- not because its path is
+        # excused. Deriving from rank_sweep alone was the blind spot: _GPU_CONFIGS and
+        # _HYBRID_CONFIGS carry their own n_mpi_procs that never passed through here.
+        # Measured on the default compute config, emitted {1,2,3,4,8} vs sweep {2,4,8},
+        # so ranks 1 and 3 were unguarded. The default n_rows=120 happens to be divisible
+        # by 3, so rank 3 clears guard (2) today by coincidence rather than by design; an
+        # n_rows tuned to the sweep alone (e.g. 128) leaves it unexamined. What the
+        # widening buys is that rank 3 REACHES the guards -- NOT a claim that any
+        # particular unguarded config hangs (see guard (2)'s note).
+        #
+        # The two experiment kinds are mutually exclusive (see dem_resolution_ladder's
+        # own description) and have SEPARATE row builders, so the emitted rank set is
+        # read from whichever one applies. The resolution sweep is the transpose of the
+        # compute sweep -- ONE fixed config across N cell sizes -- and that config is
+        # _DEM_FIXED_CONFIG, pinned at 1 rank (corroborated at swmm_template.py: "
+        # dem_resolution_matrix_rows pins a 1-rank _DEM_FIXED_CONFIG"). Rank 1 clears
+        # all three guards for any n_rows, so this is a real check that passes, not a
+        # skipped one.
+        if self.dem_resolution_ladder:
+            _emitted = [_DEM_FIXED_CONFIG]
+        else:
+            _emitted = _configs(tuple(self.rank_sweep))
+        _rank_origin: dict[int, set[str]] = {}
+        for _row in _emitted:
+            _rank_origin.setdefault(int(_row[2]), set()).add(str(_row[0]))
+        ranks = sorted(_rank_origin)
+
+        def _origin(r: int) -> str:
+            """Where a rank came from, so the message is actionable for an operator who
+            never typed it.
+
+            On the resolution sweep, rank_sweep generates no rows at all, so naming it
+            would send the operator to a knob that cannot fix the error.
+            """
+            if self.dem_resolution_ladder:
+                return "the fixed DEM-resolution config row (_DEM_FIXED_CONFIG)"
+            if r in {int(x) for x in self.rank_sweep}:
+                return "rank_sweep"
+            return "the fixed " + "/".join(sorted(_rank_origin[r])) + " config row(s)"
+
         if not ranks:
             return self
 
@@ -95,23 +186,34 @@ class synthetic_experiment_config(cfgBaseModel):
                 message=(
                     f"max rank {max(ranks)} exceeds the fixed number of SWMM coupling "
                     f"junctions (_N_COUPLING_NODES={_N_COUPLING_NODES}); a rank would own "
-                    f"zero coupling nodes and deadlock the coupling collective. Reduce the "
-                    f"largest rank in rank_sweep to <= {_N_COUPLING_NODES}."
+                    f"zero coupling nodes and deadlock the coupling collective. That rank "
+                    f"comes from {_origin(max(ranks))}. Reduce it to <= {_N_COUPLING_NODES}."
                 ),
                 config_path=None,
             )
 
         # (2) n_rows divisible by every rank -> TRITON row-strips are exactly equal
         # (k*n_rows/rank), independent of TRITON's remainder distribution.
+        #
+        # This is guard (3)'s PRECONDITION, not a redundant net beside it: guard (3)
+        # walks k*strip..(k+1)*strip with strip = n_rows // r, which covers the whole
+        # grid only when the division is exact. Divisibility is what makes guard (3)'s
+        # model sound. It is a CONSERVATIVE precondition, NOT a demonstrated hang -- a
+        # non-divisible n_rows does not by itself starve a strip (measured at n_rows=128,
+        # r=3: 3/2/3 nodes under equal division, 3/3/2 with the remainder spread), and
+        # 3-GPU runs have completed cleanly. Whether this should be an error or a warning
+        # turns on TRITON's actual remainder rule, which is unread; do not demote it
+        # without first making guard (3) remainder-aware.
         bad_div = [r for r in ranks if self.n_rows % r != 0]
         if bad_div:
             raise ConfigurationError(
                 field="n_rows",
                 message=(
-                    f"n_rows={self.n_rows} is not divisible by rank(s) {bad_div} in rank_sweep; "
+                    f"n_rows={self.n_rows} is not divisible by rank(s) "
+                    f"{ {r: _origin(r) for r in bad_div} }; "
                     f"TRITON's row-strip decomposition would be uneven and a rank could own "
                     f"zero coupling nodes -> ENSIFY_COMM_WORLD deadlock. Choose an n_rows "
-                    f"divisible by every rank in rank_sweep."
+                    f"divisible by EVERY rank the matrix emits, not only those in rank_sweep."
                 ),
                 config_path=None,
             )
@@ -119,6 +221,12 @@ class synthetic_experiment_config(cfgBaseModel):
         # (3) Every equal row-strip must own >= 1 coupling node. Reuse the
         # solver-authoritative placement helper (it also asserts the interior span
         # is large enough for _N_COUPLING_NODES nodes).
+        #
+        # COVERAGE NOTE: the walk below is EQUAL-DIVISION ONLY. With strip = n_rows // r
+        # it examines rows 0..(r*strip - 1) and never the n_rows % r remainder rows --
+        # at n_rows=128, r=3 that is rows 126..127. Guard (2) is what keeps that gap
+        # empty by requiring exact division. Anyone making this walk remainder-aware
+        # must do so BEFORE relaxing guard (2), or the remainder rows go unexamined.
         params = SyntheticModelParams(n_cols=self.n_cols, n_rows=self.n_rows, cell_size_m=self.cell_size_m)
         try:
             node_mrs = sorted(_node_matrix_rows(params))
@@ -178,14 +286,14 @@ class synthetic_experiment_config(cfgBaseModel):
                 raise ConfigurationError(
                     field="hpc.partition",
                     message=(
-                        f"matrix row '{row['sa_id']}' targets undeclared partition "
+                        f"matrix row '{row['member_id']}' targets undeclared partition "
                         f"'{part_name}'; declared: {sorted(hpc.partitions)}."
                     ),
                     config_path=None,
                 )
-            n_nodes = int(row["n_nodes"])
-            n_gpus = int(row["n_gpus"])
-            n_tasks = int(row["n_mpi_procs"]) * max(int(row["n_omp_threads"]), 1)
+            n_nodes = int(row["analysis.n_nodes"])
+            n_gpus = int(row["analysis.n_gpus"])
+            n_tasks = int(row["analysis.n_mpi_procs"]) * max(int(row["analysis.n_omp_threads"]), 1)
 
             if spec.max_nodes is not None and n_nodes > spec.max_nodes:
                 _raise_cap(row, part_name, "n_nodes", n_nodes, "max_nodes", spec.max_nodes)
@@ -209,9 +317,50 @@ class synthetic_experiment_config(cfgBaseModel):
                     "cpus_per_node*n_nodes",
                     spec.cpus_per_node * n_nodes,
                 )
-            runtime = row.get("hpc_time_min_per_sim")
+            runtime = row.get("analysis.hpc_time_min_per_sim")
             if runtime is not None:
                 hpc.check_runtime_within_cap(part_name, int(runtime))
+        return self
+
+    @model_validator(mode="after")
+    def _validate_dem_ladder(self):
+        """Divisor-only + constant-ratio. Both are correctness constraints, not style.
+
+        Divisor-only: `.rio.reproject(resolution=R)` rounds the grid UP to cover the
+        source, so a non-divisor R yields partial-coverage edge cells that average
+        only their covered fraction while carrying FULL coarse-cell area weight.
+        gis-specialist measured the consequence: volume error +7.276% at 2.5 m and
+        5 m, +30.222% at 7 m, vs +0.000% at every divisor. Silent -- every run
+        completes.
+
+        Constant-ratio: keeps the rungs exactly nested, so grids are co-registered
+        for free (coarsen_georaster's resolution-only branch preserves the top-left
+        origin) and no alignment machinery is needed.
+        """
+        if not self.dem_resolution_ladder:
+            return self
+        ladder = self.dem_resolution_ladder
+        if list(ladder) != sorted(ladder):
+            raise ValueError(f"dem_resolution_ladder must be FINEST FIRST (ascending); got {ladder}")
+        extent_x = self.n_cols * self.cell_size_m
+        extent_y = self.n_rows * self.cell_size_m
+        for res in ladder:
+            for name, extent in (("x", extent_x), ("y", extent_y)):
+                n = extent / res
+                if abs(n - round(n)) > 1e-9:
+                    raise ValueError(
+                        f"dem_resolution_ladder rung {res} m is not an integer divisor of the "
+                        f"{name}-extent ({extent} m). Non-divisor rungs inflate area-integrated "
+                        f"metrics by +7% to +30% (measured) via partial-coverage edge cells, and "
+                        f"every run completes successfully, so the error is silent."
+                    )
+        ratios = [round(b / a, 9) for a, b in zip(ladder, ladder[1:], strict=False)]
+        if len(set(ratios)) > 1:
+            raise ValueError(
+                f"dem_resolution_ladder must use a CONSTANT refinement ratio; got ratios {ratios} "
+                f"from {ladder}. A constant ratio keeps the rungs exactly nested (co-registered "
+                f"grids, no alignment machinery)."
+            )
         return self
 
 
@@ -219,7 +368,7 @@ def _raise_cap(row, part_name, req_field, req_val, cap_field, cap_val) -> None:
     raise ConfigurationError(
         field="rank_sweep/partition caps",
         message=(
-            f"matrix row '{row['sa_id']}' requests {req_field}={req_val} on partition "
+            f"matrix row '{row['member_id']}' requests {req_field}={req_val} on partition "
             f"'{part_name}', exceeding its {cap_field}={cap_val}."
         ),
         config_path=None,

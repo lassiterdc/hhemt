@@ -1,6 +1,6 @@
 # Auto-generated reprocess-scoped master Snakefile for sensitivity analysis
-# Re-runs downstream stages (per-sa consolidate + master consolidation +
-# plots + render) against existing per-sa sim completion flags. No
+# Re-runs downstream stages (per-member consolidate + master consolidation +
+# plots + render) against existing per-member sim completion flags. No
 # simulation or scenario-preparation rules are emitted.
 
 import os
@@ -8,8 +8,8 @@ from datetime import datetime as _dt
 from hhemt.report_renderers._figure_emission import format_sources_rst as _fmt_sources_rst
 
 try:
-    from importlib.metadata import version as _pkg_version
-    _toolkit_version = _pkg_version("hhemt")
+    from hhemt.provenance import _describe_version
+    _toolkit_version = _describe_version()
 except Exception:
     _toolkit_version = "unknown"
 
@@ -17,13 +17,13 @@ config["analysis_id"] = 'synth_sensitivity'
 config["toolkit_version"] = _toolkit_version
 config["n_sims"] = 4
 config["is_sensitivity"] = True
-config["n_sub_analyses"] = 4
+config["n_members"] = 4
 config["independent_vars"] = ['n_devices']
-config["group_by_var"] = 'run_mode'
+config["group_by_var"] = 'analysis.run_mode'
 config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}
 
-SA_EVENT_PAIRS_SA = []
-SA_EVENT_PAIRS_EVT = []
+MEMBER_EVENT_PAIRS_MEMBER = []
+MEMBER_EVENT_PAIRS_EVT = []
 
 report: "report/workflow_description.rst"
 
@@ -41,12 +41,12 @@ onerror:
 
 rule all:
     input:
-        "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
+        "_status/f_consolidate_experiment_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "plots/workflow_performance.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.format"
 
-rule master_consolidation:
+rule experiment_consolidation:
     input: 
-    output: "_status/f_consolidate_master_complete.flag"
-    log: "{PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/master_consolidation.log"
+    output: "_status/f_consolidate_experiment_complete.flag"
+    log: "{PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/experiment_consolidation.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
         slurm_partition="None",
@@ -66,13 +66,13 @@ rule master_consolidation:
             --which both \
             --compression-level 5 \
             --flag-output {output} \
-            --rule-name master_consolidation \
-            > {log} 2>&1
+            --rule-name experiment_consolidation \
+            2>&1 | tee {log}
         """
 
 rule plot_system_overview:
     input:
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/system_overview.html",
@@ -81,8 +81,7 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/boundary.geojson', 'variables': []}],
-        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/boundary.geojson``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
@@ -92,13 +91,13 @@ rule plot_system_overview:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_per_analysis_summary_table:
     input:
         "scenario_status.csv",
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/per_analysis/summary_table.html",
@@ -108,8 +107,7 @@ rule plot_per_analysis_summary_table:
             labels={"figure": "Summary table"},
         )
     params:
-        source_paths = [{'path': 'subanalyses/sa_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_0/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'subanalyses/sa_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_1/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'subanalyses/sa_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_2/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'subanalyses/sa_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_3/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}],
-        source_paths_rst = '- ``subanalyses/sa_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_0/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``subanalyses/sa_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_1/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``subanalyses/sa_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_2/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``subanalyses/sa_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_3/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/per_analysis_summary_table.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=5
@@ -119,13 +117,13 @@ rule plot_per_analysis_summary_table:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_scenario_status_appendix:
     input:
         "scenario_status.csv",
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/appendix/scenario_status.html",
@@ -135,8 +133,7 @@ rule plot_scenario_status_appendix:
             labels={"figure": "Per-scenario status table"},
         )
     params:
-        source_paths = [{'path': 'scenario_status.csv', 'variables': ['event_id', 'model_type', 'status', 'runtime_s', 'continuity_error_pct', 'notes']}],
-        source_paths_rst = '- ``scenario_status.csv``\n\n  - ``event_id``\n  - ``model_type``\n  - ``status``\n  - ``runtime_s``\n  - ``continuity_error_pct``\n  - ``notes``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/scenario_status_appendix.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -146,13 +143,14 @@ rule plot_scenario_status_appendix:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_errors_and_warnings:
     input:
         "scenario_status.csv",
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        "validation_report.json",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/errors_and_warnings/validation_report.html",
@@ -162,8 +160,7 @@ rule plot_errors_and_warnings:
             labels={"figure": "Validation report"},
         )
     params:
-        source_paths = [{'path': 'scenario_status.csv', 'variables': ['scenario_setup', 'run_completed', 'actual_nTasks', 'actual_omp_threads', 'actual_total_gpus', 'actual_gpu_backend']}, {'path': 'sims/<event_id>/log_<model_type>.json', 'variables': ['simulation_completed (per scenario × model_type)']}, {'path': '../system_log.json', 'variables': ['compilation_successful', 'compilation_triton_only_successful', 'compilation_swmm_successful']}],
-        source_paths_rst = '- ``scenario_status.csv``\n\n  - ``scenario_setup``\n  - ``run_completed``\n  - ``actual_nTasks``\n  - ``actual_omp_threads``\n  - ``actual_total_gpus``\n  - ``actual_gpu_backend``\n\n- ``sims/<event_id>/log_<model_type>.json``\n\n  - ``simulation_completed (per scenario × model_type)``\n\n- ``../system_log.json``\n\n  - ``compilation_successful``\n  - ``compilation_triton_only_successful``\n  - ``compilation_swmm_successful``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/errors_and_warnings.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -173,12 +170,12 @@ rule plot_errors_and_warnings:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_disk_utilization:
     input:
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/disk_utilization.html",
@@ -187,8 +184,7 @@ rule plot_disk_utilization:
             labels={"figure": "Disk Utilization"},
         )
     params:
-        source_paths = [{'path': '_status/_du.json', 'variables': ['disk_utilization_bytes', 'sub_path_breakdown']}],
-        source_paths_rst = '- ``_status/_du.json``\n\n  - ``disk_utilization_bytes``\n  - ``sub_path_breakdown``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/disk_utilization.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -198,12 +194,14 @@ rule plot_disk_utilization:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_metadata:
     input:
-        consolidated = "_status/f_consolidate_master_complete.flag",
+        "scenario_status.csv",
+        "validation_report.json",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/metadata.html",
@@ -212,8 +210,7 @@ rule plot_metadata:
             labels={"figure": "Metadata"},
         )
     params:
-        source_paths = [{'path': 'ro-crate-metadata.json', 'variables': ['provenance']}],
-        source_paths_rst = '- ``ro-crate-metadata.json``\n\n  - ``provenance``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/metadata.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -223,16 +220,66 @@ rule plot_metadata:
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
+        """
+
+rule plot_workflow_performance:
+    input:
+        "scenario_status.csv",
+        consolidated = "_status/f_consolidate_experiment_complete.flag",
+    output:
+        report(
+            "plots/workflow_performance.html",
+            caption="report/captions/workflow_performance.rst",
+            category="Workflow Performance",
+            labels={"figure": "Workflow performance"},
+        )
+    params:
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
+    log: "logs/plots/workflow_performance.log"
+    conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    resources: mem_mb=1000, time_min=5
+    shell:
+        """
+        {PYTHON} -m hhemt.report_renderers._cli workflow_performance \
+            --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
+            --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
+            --output {output} \
+            2>&1 | tee {log}
         """
 
 localrules: export_scenario_status
 
 rule export_scenario_status:
-    input: "_status/f_consolidate_master_complete.flag"
+    input:
+        "_status/f_consolidate_experiment_complete.flag",
+        "_status/toolkit_build.stamp",
     output:
         csv = "scenario_status.csv",
         md  = "workflow_summary.md",
+        # The read-model is written by THIS rule's shell (the post-CSV
+        # persist_validation_report call in export_scenario_status.main) and was previously
+        # undeclared. Snakemake builds its DAG from declared interfaces, so an undeclared
+        # side-effect write to a file that plot_errors_and_warnings declares as an INPUT
+        # (_build_plot_rule_block_errors_and_warnings) cannot propagate: the plot
+        # rule is evaluated against the JSON's mtime at BUILD time, classified up to date,
+        # excluded -- and then this rule rewrites the JSON after the DAG is fixed, creating
+        # an inversion with no scheduled consumer.
+        #
+        # SAFETY (measured): two rules declaring one output is NOT a silent smell
+        # -- Snakemake raises AmbiguousRuleException at DAG BUILD naming both rules. This
+        # declaration does not create that case: no other rule declares or writes the
+        # read-model; its only other writer, TRITONSWMM_analysis.eda, runs in-process
+        # outside the workflow and declares nothing. The invariant this rests on is that the
+        # read-model stays declared in EXACTLY ONE rule; break it and the failure is loud.
+        #
+        # SCOPE, stated so this is not over-read: declaring the output is a real fix for a
+        # real defect. It is NOT established as the cause of the 2026-08-13 failures --
+        # run 3's job stats ("all 1, render_report 1, total 2") show this rule never ran,
+        # so something else wrote the read-model at 01:44:50, and that writer is
+        # analysis.eda(), which calls persist_validation_report in-process, outside the
+        # workflow.
+        read_model = "validation_report.json",
     log: "{PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/export_scenario_status.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
@@ -247,36 +294,27 @@ rule export_scenario_status:
         {PYTHON} -m hhemt.export_scenario_status \
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 INDEPENDENT_VARS = ['n_devices']
 
-def _sensitivity_source_paths(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_sensitivity_source_paths,
-    )
-    return collect_sensitivity_source_paths(
-        wildcards.independent_var,
-        swmm_only_rpt_rel_paths=[],
-    )
-
 rule plot_sensitivity_benchmarking:
     input:
-        master = "_status/f_consolidate_master_complete.flag",
+        "scenario_status.csv",
+        master = "_status/f_consolidate_experiment_complete.flag",
     output:
         report(
             "plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html",
             caption="report/captions/sensitivity_benchmarking.rst",
             category="Key Results",
             subcategory="Benchmarking",
-            labels={"independent_var": "{independent_var}", "figure": "vs Total runtime"},
+            labels={"independent_var": "{independent_var}", "figure": "vs Total runtime", "models": "TRITON-SWMM"},
         )
     wildcard_constraints:
         independent_var="[A-Za-z0-9_.]+",
     params:
-        source_paths = _sensitivity_source_paths,
-        source_paths_rst = lambda w: _fmt_sources_rst(_sensitivity_source_paths(w)),
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/sensitivity_benchmarking_{independent_var}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=4000, time_min=10
@@ -287,7 +325,7 @@ rule plot_sensitivity_benchmarking:
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --independent-var {wildcards.independent_var} \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule render_report:
@@ -298,14 +336,13 @@ rule render_report:
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
         "plots/metadata.html",
+        "plots/workflow_performance.html",
         "scenario_status.csv",
         "workflow_summary.md",
         expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices'])
     output:
-        "analysis_report.{format}"
-    wildcard_constraints:
-        format="zip|html"
-    log: "{PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/render_report_{format}.log"
+        "analysis_report.format"
+    log: "{PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/render_report.log"
     resources:
         slurm_partition="None",
         runtime=30,
@@ -318,7 +355,6 @@ rule render_report:
         python -m hhemt.render_report_runner \
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
-            --format {wildcards.format} \
             --reprocess \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """

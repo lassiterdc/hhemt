@@ -1,0 +1,7 @@
+# An emoji that marks an item as allowed or forbidden stands in for a sentence that says so in words.
+extends: existence
+message: "Write the status in words; do not mark it with '%s'."
+level: warning
+nonword: true
+raw:
+  - '[❌✅⚠🚫❗⛔✔✖]'

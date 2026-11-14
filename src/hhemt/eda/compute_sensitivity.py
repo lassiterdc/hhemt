@@ -1,6 +1,6 @@
 """Sensitivity + magnitude EDA calc members (ADR-9 members 2-4).
 
-Three pure-function calc members over a SENSITIVITY MASTER, mirroring
+Three pure-function calc members over a SENSITIVITY PRIMARY, mirroring
 ``cross_sim_identity.py``:
 
 - ``check_rank_sensitivity`` — WITHIN-family byte-identity + magnitude for the mpi
@@ -8,7 +8,7 @@ Three pure-function calc members over a SENSITIVITY MASTER, mirroring
   within-family (R10): the %-metric anchors to the ``n_mpi_procs == 1`` mpi
   reference WITHIN each partition family; a family with no rank-1 mpi reference is
   skipped with a disclosed ``CheckResult`` reason (NEVER the global
-  lexicographically-first ``sa_id`` anchor, which would cross run_modes).
+  lexicographically-first ``member_id`` anchor, which would cross run_modes).
 - ``check_resume_sensitivity`` — clean-vs-resume byte-identity + magnitude, paired
   per compute-config. ``n_resumes`` is read from ``df_status`` (R9): a sub whose
   ``n_resumes == 0`` is the clean member, ``> 0`` the resume member of a pair.
@@ -40,18 +40,26 @@ from typing import TYPE_CHECKING
 import numpy as np
 import xarray as xr
 
-from hhemt.analysis_validation import CheckResult, _iter_subanalyses_or_self
+from hhemt.analysis_validation import CheckResult, _iter_members_or_self
+from hhemt.cf_conventions import apply_cf_attributes
 from hhemt.eda._result import EdaResult
-from hhemt.eda.cross_sim_identity import TRACKED_VARS, _enabled_modes, compare_variable_exact
+from hhemt.eda.cross_sim_identity import (
+    TRACKED_VARS,
+    _enabled_modes,
+    _summary_paths,
+    compare_variable_exact,
+)
+from hhemt.member_identity import resolve_member_id_column, warn_missing_member_id_column
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_data_artifact_with_sources
+from hhemt.utils import write_zarr
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
 
-#: The single peak-DEPTH field the magnitude metrics operate on (metres). NaN at
+#: The single peak-DEPTH field the magnitude metrics operate on (meters). NaN at
 #: nodata, finite ~0 at in-watershed dry cells, ``> dry_threshold_m`` = wet.
-_DEPTH_VAR = "max_wlevel_m"
+_DEPTH_VAR = "max_flood_depth"
 
 #: Default wetting predicate for the union-footprint abs metrics. Mirrors
 #: ``report.dry_threshold_m`` (per_sim_peak_flood_depth.py). DISTINCT from ``_TAU_M``.
@@ -75,7 +83,7 @@ def compute_magnitude(
     dry_threshold_m: float = _DRY_THRESHOLD_M,
     domain_mask: np.ndarray | None = None,
     tau_m: float = _TAU_M,
-) -> dict[str, float | int | str]:
+) -> dict[str, float | int | str | None]:
     """Pure D-MAG magnitude-divergence metrics between two peak-DEPTH grids (m).
 
     ``depth_base`` is the reference run; both are 2-D ``(ny, nx)``, NaN at nodata,
@@ -113,13 +121,13 @@ def compute_magnitude(
     n_extent = int(extent_disagree.sum())
 
     if diff_wet.size == 0:
-        max_abs_diff_m = 0.0
-        rmse_wetted_m = 0.0
+        max_abs_depth_diff = 0.0
+        rmse_wetted_depth = 0.0
         p95_abs_diff_m = 0.0
         frac_extent = 0.0
     else:
-        max_abs_diff_m = float(diff_wet.max())
-        rmse_wetted_m = float(np.sqrt(np.mean(diff_wet**2)))
+        max_abs_depth_diff = float(diff_wet.max())
+        rmse_wetted_depth = float(np.sqrt(np.mean(diff_wet**2)))
         p95_abs_diff_m = float(np.percentile(diff_wet, 95))
         frac_extent = n_extent / n_union if n_union else 0.0
 
@@ -129,24 +137,42 @@ def compute_magnitude(
     with np.errstate(invalid="ignore", divide="ignore"):
         pct = (test[tau_mask] - base[tau_mask]) / base[tau_mask] * 100.0
     if pct.size:
-        pct_diff_p95 = float(np.nanpercentile(np.abs(pct), 95, method=_PCT_METHOD))
+        relative_depth_diff_p95 = float(np.nanpercentile(np.abs(pct), 95, method=_PCT_METHOD))
         pct_diff_median_signed = float(np.nanmedian(pct))
+        pct_diff_p05_signed = float(np.nanpercentile(pct, 5, method=_PCT_METHOD))
+        pct_diff_p95_signed = float(np.nanpercentile(pct, 95, method=_PCT_METHOD))
     else:
-        pct_diff_p95 = 0.0
+        relative_depth_diff_p95 = 0.0
         pct_diff_median_signed = 0.0
+        pct_diff_p05_signed = 0.0
+        pct_diff_p95_signed = 0.0
 
     # dry->wet newly-flooded-area complement (base dry below τ, test wet at/above τ).
     n_newly_wet = int(np.count_nonzero(domain & (base < tau_m) & (test >= tau_m)))
 
+    # CSI (critical success index) over the wet/dry footprint. EXACTLY recoverable from
+    # fields already computed -- no new reduction pass, no new array, no new I/O:
+    # n_extent_disagree = FP+FN and n_wet_union = TP+FP+FN, so
+    # 1 - frac_extent_disagree = TP/(TP+FP+FN) = CSI identically.
+    # EDGE CASE (must not be simplified away): when n_union == 0 the branch above sets
+    # frac_extent = 0.0, which would render CSI = 1.0 -- a FALSE "perfect agreement" for
+    # a domain where BOTH runs are entirely dry. A resolution whose run failed to flood
+    # anything would then plot at perfect agreement and appear to be the BEST choice.
+    # CSI is UNDEFINED with no wet cells; report None, never 1.0.
+    csi = None if n_union == 0 else 1.0 - frac_extent
+
     return {
-        "max_abs_diff_m": max_abs_diff_m,
-        "rmse_wetted_m": rmse_wetted_m,
+        "max_abs_depth_diff": max_abs_depth_diff,
+        "rmse_wetted_depth": rmse_wetted_depth,
         "p95_abs_diff_m": p95_abs_diff_m,
         "n_wet_union": n_union,
         "n_extent_disagree": n_extent,
         "frac_extent_disagree": frac_extent,
-        "pct_diff_p95": pct_diff_p95,
+        "relative_depth_diff_p95": relative_depth_diff_p95,
         "pct_diff_median_signed": pct_diff_median_signed,
+        "pct_diff_p05_signed": pct_diff_p05_signed,
+        "pct_diff_p95_signed": pct_diff_p95_signed,
+        "csi": csi,
         "n_newly_wet": n_newly_wet,
         "n_baseline_wet": n_baseline_wet,
         "tau_m": float(tau_m),
@@ -156,11 +182,11 @@ def compute_magnitude(
 
 
 def _aligned_depth_grids(ds_ref: xr.Dataset, ds_cmp: xr.Dataset, event_iloc: int) -> tuple[np.ndarray, np.ndarray]:
-    """Read+align ONE 2-D ``(event, max_wlevel_m)`` slice per run; fail-closed.
+    """Read+align ONE 2-D ``(event, max_flood_depth)`` slice per run; fail-closed.
 
     Materializes exactly one grid per run (``.to_numpy()``), never the full lazy
     graph — honors Gotcha-24's spirit (bounded RSS) without per-chunk streaming, since
-    ``max_wlevel_m`` is already a time-reduced 2-D field. Align the DataArray, NOT the
+    ``max_flood_depth`` is already a time-reduced 2-D field. Align the DataArray, NOT the
     Dataset (whose ``data_vars`` / ``event_id`` coord differ across runs).
     """
     da_r = ds_ref[_DEPTH_VAR].sel(event_iloc=event_iloc)
@@ -174,6 +200,11 @@ def _dry_threshold(cfg_analysis) -> float:
     """Resolve the wetting predicate from the report config, else the default."""
     report = getattr(cfg_analysis, "report", None)
     return float(getattr(report, "dry_threshold_m", _DRY_THRESHOLD_M))
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    """The noun form a count takes, for the summaries a reader sees."""
+    return one if n == 1 else many
 
 
 def _tau(eda_cfg) -> float:
@@ -198,6 +229,25 @@ def _partition(sub) -> str:
     return str(getattr(_cfg(sub), "hpc_ensemble_partition", "") or "")
 
 
+def _model_arm(sub) -> str:
+    """The enabled model arm for one member, as an identity component.
+
+    Mirrors `_run_mode` / `_partition`: a single string read off the sub's system
+    config. Falls back to the empty string so a sub with no resolvable toggle sorts
+    deterministically rather than raising inside a grouping loop.
+    """
+    _sys = getattr(sub, "_system", None)
+    _c = getattr(_sys, "cfg_system", None)
+    for _tok, _attr in (
+        ("tritonswmm", "toggle_tritonswmm_model"),
+        ("triton", "toggle_triton_model"),
+        ("swmm", "toggle_swmm_model"),
+    ):
+        if bool(getattr(_c, _attr, False)):
+            return _tok
+    return ""
+
+
 def _config_identity(sub) -> tuple:
     """Compute-config identity for clean/resume pairing (excludes the resume knob).
 
@@ -212,30 +262,37 @@ def _config_identity(sub) -> tuple:
         int(getattr(c, "n_gpus", 0) or 0),
         int(getattr(c, "n_nodes", 0) or 0),
         _partition(sub),
+        # DEFENCE-IN-DEPTH, not a live-bug fix (primary R12). `_config_identity` is
+        # called only over ONE primary's members (`:519`), and under the sibling-
+        # primary architecture each primary carries exactly one arm, so two arms can
+        # never reach the same bucket today. The component makes the identity correct
+        # if the single-model restriction is ever lifted.
+        _model_arm(sub),
     )
 
 
-def _resumes_by_sa_id(master: TRITONSWMM_analysis, sa_ids: list[str]) -> dict[str, int]:
-    """Max ``n_resumes`` per ``sa_id`` from ``master.df_status`` (R9).
+def _resumes_by_member_id(primary: TRITONSWMM_analysis, member_ids: list[str]) -> dict[str, int]:
+    """Max ``n_resumes`` per ``member_id`` from ``primary.df_status`` (R9).
 
-    ``df_status``'s ``sa_id`` may carry the ``sa_`` prefix while
-    ``sub_analyses`` keys are bare — normalize both directions so the mapping is
+    ``df_status``'s ``member_id`` may carry the ``member_`` prefix while
+    ``members`` keys are bare — normalize both directions so the mapping is
     robust to either convention.
     """
-    out: dict[str, int] = {sa: 0 for sa in sa_ids}
+    out: dict[str, int] = {member: 0 for member in member_ids}
     try:
-        df = master.df_status
+        df = primary.df_status
     except Exception:  # noqa: BLE001 — df_status is best-effort; absence -> all clean
         return out
     if df is None or "n_resumes" not in getattr(df, "columns", []):
         return out
-    id_col = "sa_id" if "sa_id" in df.columns else None
+    id_col = resolve_member_id_column(df.columns)
     if id_col is None:
+        warn_missing_member_id_column("df_status (compute_sensitivity resume census)", df.columns)
         return out
 
     def _norm(v: str) -> str:
         v = str(v)
-        return v[3:] if v.startswith("sa_") else v
+        return v[len("member_") :] if v.startswith("member_") else v
 
     grouped = df.groupby(id_col)["n_resumes"].max()
     for raw_id, val in grouped.items():
@@ -249,8 +306,8 @@ def _resumes_by_sa_id(master: TRITONSWMM_analysis, sa_ids: list[str]) -> dict[st
 
 
 def _present_subs(sub_items) -> dict:
-    """Sorted ``{sa_id: sub}`` for subs whose FLAT summaries are present on disk."""
-    subs = dict(sorted(((str(sa), sub) for sa, sub in sub_items), key=lambda kv: kv[0]))
+    """Sorted ``{member_id: sub}`` for subs whose FLAT summaries are present on disk."""
+    subs = dict(sorted(((str(member), sub) for member, sub in sub_items), key=lambda kv: kv[0]))
     return subs
 
 
@@ -299,43 +356,59 @@ def _compare_pair(
     return records
 
 
-def _emit(master: TRITONSWMM_analysis, renderer_kind: str, ds_vars: dict, source_subs: dict) -> tuple[Path, str]:
+def _emit(primary: TRITONSWMM_analysis, renderer_kind: str, ds_vars: dict, source_subs: dict) -> tuple[Path, str]:
     """Persist ``{analysis_dir}/eda/<plot_id>.zarr`` + manifest sidecar; return (path, plot_id)."""
-    eda_dir = Path(master.analysis_paths.analysis_dir) / "eda"
+    eda_dir = Path(primary.analysis_paths.analysis_dir) / "eda"
     eda_dir.mkdir(parents=True, exist_ok=True)
     plot_id = canonical_plot_id(renderer_kind)
     artifact_path = eda_dir / f"{plot_id}.zarr"
-    xr.Dataset(ds_vars).to_zarr(artifact_path, mode="w", consolidated=False)
-    # Declare each contributing sub's consolidated zarr as the provenance source
-    # (a real .zarr dir that passes _validate_source_path), mirroring
-    # cross_sim_identity — the artifact reads FLAT summaries but declares the
-    # consolidated store because the emit gate rejects a bare non-zarr directory.
-    source_paths = [Path(sub.analysis_paths.analysis_dir) / "analysis_datatree.zarr" for sub in source_subs.values()]
+    # DTYPE CONTRACT: eda/{plot_id}.zarr is a cross-phase/cross-bundle read-model (Phases
+    # 4-5). Pin every variable's on-disk dtype explicitly so an inferred dtype / implicit
+    # _FillValue round-trip cannot introduce a divergence-vs-NaN ambiguity when the store
+    # is read across a bundle boundary. _artifact_vars builds all variables as float64
+    # (identical is cast to float there); pin that so it is contractual, not incidental.
+    ds = xr.Dataset(ds_vars)
+    # The artifact is written without `_write_output`, so its variables' units are stamped here.
+    apply_cf_attributes(ds, "eda_compute_sensitivity")
+    encoding = {v: {"dtype": "float64"} for v in ds.data_vars}
+    write_zarr(ds, artifact_path, chunks=None, encoding=encoding)
+    # Declare the FLAT per-scenario summary files this member actually read
+    # (_retrieve_combined_output, per the flat-summary stipulation), not the consolidated
+    # store — which this member is forbidden to open and which the old declaration named
+    # anyway. _validate_source_path accepts files; only a bare non-zarr DIRECTORY is refused.
+    source_paths = [p for sub in source_subs.values() for p in _summary_paths(sub)]
     emit_data_artifact_with_sources(
         artifact_path=artifact_path,
         source_paths=source_paths,
-        analysis_dir=Path(master.analysis_paths.analysis_dir),
+        analysis_dir=Path(primary.analysis_paths.analysis_dir),
         plot_id=plot_id,
     )
     return artifact_path, plot_id
 
 
-def _persist_verdict(master: TRITONSWMM_analysis, plot_id: str, verdict: CheckResult) -> None:
+def _persist_verdict(primary: TRITONSWMM_analysis, plot_id: str, verdict: CheckResult) -> None:
     """Write ``<plot_id>.verdict.json`` (``dataclasses.asdict(CheckResult)`` shape)."""
-    verdict_path = Path(master.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.verdict.json"
+    verdict_path = Path(primary.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.verdict.json"
     verdict_path.write_text(json.dumps(dataclasses.asdict(verdict), indent=2, default=str))
 
 
 def _scalar_grid(
-    records: list[tuple[str, list[dict]]], key: str, *, from_magnitude: bool = False
+    records: list[tuple[str, list[dict]]], key: str, *, from_magnitude: bool = False, reduce: str = "max"
 ) -> xr.DataArray | None:
-    """Assemble an ``(sa_id, event_iloc)`` grid of one scalar across comparison records.
+    """Assemble an ``(member_id, event_iloc)`` grid of one scalar across comparison records.
 
-    ``records`` are ``(sa_id, [per-event record])`` pairs. Returns None when no record
+    ``records`` are ``(member_id, [per-event record])`` pairs. Returns None when no record
     carries the key (e.g. no magnitude computed).
+
+    One member and event carries SEVERAL records (one per enabled mode and tracked
+    variable), so the cell is the ``reduce`` of them: ``"min"`` for the ``identical`` grid
+    (a cell reads bit-identical only when EVERY record is) and ``"max"`` for the magnitude
+    grids (the worst divergence). Writing each record over the last, as an earlier version
+    did, made the cell depend on record order: a member whose peak depth differed but whose
+    last-compared variable matched drew as byte-identical.
     """
     cells: list[tuple[str, int, float]] = []
-    for sa_id, recs in records:
+    for member_id, recs in records:
         for rec in recs:
             if from_magnitude:
                 mag = rec.get("magnitude")
@@ -346,18 +419,20 @@ def _scalar_grid(
                 if key not in rec:
                     continue
                 val = rec[key]
-            cells.append((sa_id, rec["event_iloc"], float(val)))
+            cells.append((member_id, rec["event_iloc"], float(val)))
     if not cells:
         return None
-    sa_ids = sorted({c[0] for c in cells})
+    member_ids = sorted({c[0] for c in cells})
     events = sorted({c[1] for c in cells})
     out = xr.DataArray(
-        np.full((len(sa_ids), len(events)), np.nan, dtype="float64"),
+        np.full((len(member_ids), len(events)), np.nan, dtype="float64"),
         dims=("sa_id", "event_iloc"),
-        coords={"sa_id": sa_ids, "event_iloc": events},
+        coords={"sa_id": member_ids, "event_iloc": events},
     )
-    for sa_id, e, val in cells:
-        out.loc[{"sa_id": sa_id, "event_iloc": e}] = val
+    combine = np.fmin if reduce == "min" else np.fmax
+    for member_id, e, val in cells:
+        loc = {"sa_id": member_id, "event_iloc": e}
+        out.loc[loc] = combine(float(out.loc[loc]), val)
     return out
 
 
@@ -365,11 +440,19 @@ def _artifact_vars(labeled_records: list[tuple[str, list[dict]]]) -> dict[str, x
     """Build the plottable-artifact variables from labeled comparison records."""
     ds_vars: dict[str, xr.DataArray] = {}
     identical = _scalar_grid(
-        [(sa, [{**r, "identical": float(r["identical"])} for r in recs]) for sa, recs in labeled_records], "identical"
+        [(member, [{**r, "identical": float(r["identical"])} for r in recs]) for member, recs in labeled_records],
+        "identical",
+        reduce="min",
     )
     if identical is not None:
         ds_vars["identical"] = identical
-    for key in ("max_abs_diff_m", "rmse_wetted_m", "pct_diff_p95", "n_newly_wet", "n_extent_disagree"):
+    for key in (
+        "max_abs_depth_diff",
+        "rmse_wetted_depth",
+        "relative_depth_diff_p95",
+        "n_newly_wet",
+        "n_extent_disagree",
+    ):
         grid = _scalar_grid(labeled_records, key, from_magnitude=True)
         if grid is not None:
             ds_vars[key] = grid
@@ -377,68 +460,84 @@ def _artifact_vars(labeled_records: list[tuple[str, list[dict]]]) -> dict[str, x
 
 
 def _skipped(name: str, summary: str) -> EdaResult:
+    # A check that examined nothing has not PASSED -- it did not apply. `applicable`
+    # is the third state analysis_validation.py's docstring says exists for exactly
+    # this, and `errors_and_warnings._status_of` tests it FIRST, returning
+    # ("na", "N/A", "") before it reaches the instrument branch. That ordering is why
+    # this needs no coordination with the instrument/detection_floor stamping: a
+    # skipped check must never be stamped (stamping it would assert a tier-verified
+    # identity for a comparison that did not happen), and with applicable=False it
+    # cannot reach that branch at all.
     return EdaResult(
         skipped=True,
-        verdict=CheckResult(name=name, level="aggregate", passed=True, summary=summary),
+        verdict=CheckResult(
+            name=name,
+            level="aggregate",
+            passed=True,
+            summary=summary,
+            applicable=False,
+        ),
     )
 
 
-def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
-    """WITHIN-family mpi rank-sensitivity: rank N vs rank 1 byte-identity + magnitude.
+def check_rank_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
+    """WITHIN-family mpi rank-sensitivity, covering rank N versus rank 1 byte-identity and magnitude.
 
     Returns a skipped ``EdaResult`` on a non-sensitivity analysis. On a sensitivity
-    master, groups the ``run_mode == "mpi"`` subs by ``hpc_ensemble_partition`` family
-    and, within each family, anchors to the ``n_mpi_procs == 1`` reference (R10); a
+    primary, groups the ``run_mode == "mpi"`` subs by ``hpc_ensemble_partition`` family
+    and, within each family, anchors to the ``n_mpi_procs == 1`` reference. A
     family with no rank-1 mpi reference is skipped with a disclosed reason. Bit-
-    identity is asserted within-family (a divergence is ``passed=False``); the
+    identity is asserted within-family, and a divergence is ``passed=False``. The
     magnitude metrics characterize any divergence.
     """
     name = "Rank sensitivity"
-    sub_items = list(_iter_subanalyses_or_self(master))
+    sub_items = list(_iter_members_or_self(primary))
     if len(sub_items) == 1 and sub_items[0][0] is None:
-        return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
+        return _skipped(name, "N/A: not a sweep, so each event has one model run")
 
     subs = _present_subs(sub_items)
     dry = _dry_threshold(cfg_analysis)
     tau = _tau(eda_cfg)
 
     # mpi subs only, grouped by partition family.
-    mpi_subs = {sa: sub for sa, sub in subs.items() if _run_mode(sub) == "mpi" and _enabled_modes(sub)}
+    mpi_subs = {member: sub for member, sub in subs.items() if _run_mode(sub) == "mpi" and _enabled_modes(sub)}
     families: dict[str, dict] = {}
-    for sa, sub in mpi_subs.items():
-        families.setdefault(_partition(sub), {})[sa] = sub
+    for member, sub in mpi_subs.items():
+        families.setdefault(_partition(sub), {})[member] = sub
 
     details: list[dict] = []
     labeled: list[tuple[str, list[dict]]] = []
     contributing: dict[str, object] = {}
     all_identical = True
     any_compared = False
+    n_dropped = 0
 
     for partition, members in sorted(families.items()):
-        ref_id = next((sa for sa, sub in sorted(members.items()) if _n_mpi(sub) == 1), None)
+        ref_id = next((member for member, sub in sorted(members.items()) if _n_mpi(sub) == 1), None)
         if ref_id is None:
             details.append(
-                {"family": partition, "detail": f"no n_mpi_procs==1 mpi reference in family '{partition}' — skipped"}
+                {"family": partition, "detail": f"family '{partition}' has no 1-rank MPI reference, so it is skipped"}
             )
             continue
         ref_sub = members[ref_id]
         ref_modes = _enabled_modes(ref_sub)
         contributing[ref_id] = ref_sub
-        for sa, sub in sorted(members.items()):
-            if sa == ref_id:
+        for member, sub in sorted(members.items()):
+            if member == ref_id:
                 continue
             recs = _compare_pair(ref_sub, sub, ref_modes, dry_threshold_m=dry, tau_m=tau)
             if not recs:
+                n_dropped += 1
                 continue
             any_compared = True
-            contributing[sa] = sub
-            labeled.append((sa, recs))
+            contributing[member] = sub
+            labeled.append((member, recs))
             for rec in recs:
                 if not rec["identical"]:
                     all_identical = False
                     details.append(
                         {
-                            "sa_id": sa,
+                            "sa_id": member,
                             "family": partition,
                             "event_iloc": rec["event_iloc"],
                             "variable": rec["variable"],
@@ -447,59 +546,82 @@ def check_rank_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg
                     )
 
     if not any_compared:
-        return _skipped(name, "N/A — no within-family mpi rank pair with a rank-1 reference")
+        return _skipped(name, "N/A: no MPI rank pair in a family has a 1-rank reference")
 
     passed = all_identical
     n_pairs = len(labeled)
     n_div = len([d for d in details if "variable" in d])
-    summary = (
-        f"All {n_pairs} within-family rank-N vs rank-1 mpi pair(s) bit-identical."
-        if all_identical
-        else f"{n_div} (sa, event, variable) tuple(s) diverged from the rank-1 reference."
+    dropped_note = (
+        f" ({n_dropped} {_plural(n_dropped, 'pair', 'pairs')} dropped for absent/unreadable outputs)"
+        if n_dropped
+        else ""
     )
-    verdict = CheckResult(name=name, level="aggregate", passed=passed, summary=summary, details=details)
+    summary = (
+        f"All {n_pairs} within-family rank-N vs rank-1 MPI "
+        f"{_plural(n_pairs, 'pair is', 'pairs are')} bit-identical{dropped_note}."
+        if all_identical
+        else f"{n_div} (member, event, variable) {_plural(n_div, 'tuple', 'tuples')} "
+        f"diverged from the rank-1 reference{dropped_note}."
+    )
+    verdict = CheckResult(
+        name=name,
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+        # SELF-REPORTED from the path actually taken (`analysis_validation.py::CheckResult`):
+        # this check compares the FLAT per-scenario summaries via _compare_pair, whose
+        # max_flood_depth is stored float32 while the SWMM-side variables are float64, so
+        # float32 eps is the coarsest floor across the variables actually compared.
+        # Leaving these None is what stopped `errors_and_warnings._status_of` from
+        # qualifying the pass. Never derive from cfg_analysis.clear_raw: that records
+        # configured intent, not the path taken.
+        instrument="summary_tier",
+        detection_floor=float(np.finfo(np.float32).eps),
+    )
 
     ds_vars = _artifact_vars(labeled)
-    _, plot_id = _emit(master, "eda_rank_sensitivity", ds_vars, contributing)
-    _persist_verdict(master, plot_id, verdict)
-    artifact_path = Path(master.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.zarr"
+    _, plot_id = _emit(primary, "eda_rank_sensitivity", ds_vars, contributing)
+    _persist_verdict(primary, plot_id, verdict)
+    artifact_path = Path(primary.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.zarr"
     return EdaResult(verdict=verdict, artifact_path=artifact_path, plot_id=plot_id)
 
 
-def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
-    """Clean-vs-resume byte-identity + magnitude, paired per compute-config (R9).
+def check_resume_sensitivity(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
+    """Clean-vs-resume byte-identity + magnitude, paired per compute-config.
 
-    Reads ``n_resumes`` from ``master.df_status`` to classify each sub as clean
-    (``n_resumes == 0``) or resume (``> 0``); pairs a clean and a resume sub sharing a
-    compute-config identity and compares them (a resumed sim MUST reproduce its clean
-    counterpart bit-for-bit). A config lacking BOTH a clean and a resume member is
+    Reads ``n_resumes`` from ``primary.df_status`` to classify each sub as clean,
+    with ``n_resumes == 0``, or resume, with ``> 0``. Pairs a clean and a resume sub sharing a
+    compute-config identity and compares the pair, because a resumed sim MUST reproduce the clean
+    counterpart bit-for-bit. A config lacking BOTH a clean and a resume member is
     skipped with a disclosed reason. Returns a skipped ``EdaResult`` on a non-
-    sensitivity analysis, or when no clean/resume pair exists in the master.
+    sensitivity analysis, or when no clean/resume pair exists in the primary.
     """
     name = "Resume sensitivity"
-    sub_items = list(_iter_subanalyses_or_self(master))
+    sub_items = list(_iter_members_or_self(primary))
     if len(sub_items) == 1 and sub_items[0][0] is None:
-        return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
+        return _skipped(name, "N/A: not a sweep, so each event has one model run")
 
-    subs = {sa: sub for sa, sub in _present_subs(sub_items).items() if _enabled_modes(sub)}
+    subs = {member: sub for member, sub in _present_subs(sub_items).items() if _enabled_modes(sub)}
     if not subs:
-        return _skipped(name, "N/A — no sub-analysis has present summaries")
+        return _skipped(name, "N/A: no member has summaries")
     dry = _dry_threshold(cfg_analysis)
     tau = _tau(eda_cfg)
-    resumes = _resumes_by_sa_id(master, list(subs.keys()))
+    resumes = _resumes_by_member_id(primary, list(subs.keys()))
 
     # Group by compute-config identity; within each, split clean (0) vs resume (>0).
     groups: dict[tuple, dict[str, list[str]]] = {}
-    for sa, sub in subs.items():
+    for member, sub in subs.items():
         cid = _config_identity(sub)
         bucket = groups.setdefault(cid, {"clean": [], "resume": []})
-        bucket["resume" if resumes.get(sa, 0) > 0 else "clean"].append(sa)
+        bucket["resume" if resumes.get(member, 0) > 0 else "clean"].append(member)
 
     details: list[dict] = []
     labeled: list[tuple[str, list[dict]]] = []
     contributing: dict[str, object] = {}
     all_identical = True
     any_compared = False
+    n_dropped = 0
 
     for cid, bucket in sorted(groups.items(), key=lambda kv: str(kv[0])):
         clean_ids = sorted(bucket["clean"])
@@ -507,29 +629,30 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
         if not clean_ids or not resume_ids:
             if resume_ids:
                 details.append(
-                    {"config": str(cid), "detail": "resume run(s) present but no clean counterpart — skipped"}
+                    {"config": str(cid), "detail": "a resume run has no clean counterpart, so it is skipped"}
                 )
             continue
         ref_id = clean_ids[0]
         ref_sub = subs[ref_id]
         ref_modes = _enabled_modes(ref_sub)
         contributing[ref_id] = ref_sub
-        for sa in resume_ids:
-            sub = subs[sa]
+        for member in resume_ids:
+            sub = subs[member]
             recs = _compare_pair(ref_sub, sub, ref_modes, dry_threshold_m=dry, tau_m=tau)
             if not recs:
+                n_dropped += 1
                 continue
             any_compared = True
-            contributing[sa] = sub
-            labeled.append((sa, recs))
+            contributing[member] = sub
+            labeled.append((member, recs))
             for rec in recs:
                 if not rec["identical"]:
                     all_identical = False
                     details.append(
                         {
-                            "sa_id": sa,
+                            "sa_id": member,
                             "config": str(cid),
-                            "n_resumes": resumes.get(sa, 0),
+                            "n_resumes": resumes.get(member, 0),
                             "event_iloc": rec["event_iloc"],
                             "variable": rec["variable"],
                             "detail": f"resume diverged from clean {ref_id} (max_abs_diff={rec['max_abs_diff']:.6g})",
@@ -537,55 +660,76 @@ def check_resume_sensitivity(master: TRITONSWMM_analysis, *, cfg_analysis, eda_c
                     )
 
     if not any_compared:
-        return _skipped(name, "N/A — no clean/resume pair sharing a compute-config in this master")
+        return _skipped(name, "N/A: no clean and resume pair shares a compute configuration in this sweep")
 
     passed = all_identical
     n_pairs = len(labeled)
     n_div = len([d for d in details if "variable" in d])
-    summary = (
-        f"All {n_pairs} resume-vs-clean pair(s) bit-identical."
-        if all_identical
-        else f"{n_div} (sa, event, variable) tuple(s) diverged from the clean counterpart."
+    dropped_note = (
+        f" ({n_dropped} {_plural(n_dropped, 'pair', 'pairs')} dropped for absent/unreadable outputs)"
+        if n_dropped
+        else ""
     )
-    verdict = CheckResult(name=name, level="aggregate", passed=passed, summary=summary, details=details)
+    summary = (
+        f"All {n_pairs} resume-vs-clean {_plural(n_pairs, 'pair is', 'pairs are')} bit-identical{dropped_note}."
+        if all_identical
+        else f"{n_div} (member, event, variable) {_plural(n_div, 'tuple', 'tuples')} "
+        f"diverged from the clean counterpart{dropped_note}."
+    )
+    verdict = CheckResult(
+        name=name,
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+        # SELF-REPORTED from the path actually taken (`analysis_validation.py::CheckResult`):
+        # this check compares the FLAT per-scenario summaries via _compare_pair, whose
+        # max_flood_depth is stored float32 while the SWMM-side variables are float64, so
+        # float32 eps is the coarsest floor across the variables actually compared.
+        # Leaving these None is what stopped `errors_and_warnings._status_of` from
+        # qualifying the pass. Never derive from cfg_analysis.clear_raw: that records
+        # configured intent, not the path taken.
+        instrument="summary_tier",
+        detection_floor=float(np.finfo(np.float32).eps),
+    )
 
     ds_vars = _artifact_vars(labeled)
-    _, plot_id = _emit(master, "eda_resume_sensitivity", ds_vars, contributing)
-    _persist_verdict(master, plot_id, verdict)
-    artifact_path = Path(master.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.zarr"
+    _, plot_id = _emit(primary, "eda_resume_sensitivity", ds_vars, contributing)
+    _persist_verdict(primary, plot_id, verdict)
+    artifact_path = Path(primary.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.zarr"
     return EdaResult(verdict=verdict, artifact_path=artifact_path, plot_id=plot_id)
 
 
-def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
-    """ADR-4 CROSS-hardware characterized-divergence: 1-GPU vs 1-rank serial-CPU (D-XHW).
+def check_cross_hardware_magnitude(primary: TRITONSWMM_analysis, *, cfg_analysis, eda_cfg) -> EdaResult:
+    """Cross-hardware characterized-divergence between a 1-GPU run and a 1-rank serial-CPU run.
 
-    Uses the SAME ``compute_magnitude`` kernel as the within-family members but does
-    NOT assert equality — cross-family (e.g. GPU vs CPU) bit-identity is not
-    achievable, so the DISCLOSED divergence bounds ARE the contribution
-    (``passed=True``). Reference = the 1-rank serial-CPU run; test = each 1-GPU run
-    (one per GPU partition). Surfaced distinctly for the Phase-4 cross-hardware panel.
+    Uses the SAME ``compute_magnitude`` kernel as the within-family members but asserts
+    NO equality. Cross-family bit-identity between GPU and CPU is not
+    achievable, so the DISCLOSED divergence bounds ARE the contribution,
+    with ``passed=True``. The reference is the 1-rank serial-CPU run. Each 1-GPU run is a test,
+    with a single run per GPU partition. Surfaced distinctly for the cross-hardware panel.
     Returns a skipped ``EdaResult`` when either endpoint is absent.
     """
     name = "Cross-hardware magnitude"
-    sub_items = list(_iter_subanalyses_or_self(master))
+    sub_items = list(_iter_members_or_self(primary))
     if len(sub_items) == 1 and sub_items[0][0] is None:
-        return _skipped(name, "N/A — single sim per event iloc (non-sensitivity)")
+        return _skipped(name, "N/A: not a sweep, so each event has one model run")
 
-    subs = {sa: sub for sa, sub in _present_subs(sub_items).items() if _enabled_modes(sub)}
+    subs = {member: sub for member, sub in _present_subs(sub_items).items() if _enabled_modes(sub)}
     dry = _dry_threshold(cfg_analysis)
     tau = _tau(eda_cfg)
 
     serial_id = next(
-        (sa for sa, sub in sorted(subs.items()) if _run_mode(sub) == "serial" and _n_mpi(sub) == 1),
+        (member for member, sub in sorted(subs.items()) if _run_mode(sub) == "serial" and _n_mpi(sub) == 1),
         None,
     )
     gpu_ids = [
-        sa
-        for sa, sub in sorted(subs.items())
+        member
+        for member, sub in sorted(subs.items())
         if _run_mode(sub) == "gpu" and int(getattr(_cfg(sub), "n_gpus", 0) or 0) == 1
     ]
     if serial_id is None or not gpu_ids:
-        return _skipped(name, "N/A — need both a 1-rank serial-CPU run and a 1-GPU run for the cross-hardware panel")
+        return _skipped(name, "N/A: the cross-hardware panel needs both a 1-rank serial-CPU run and a 1-GPU run")
 
     ref_sub = subs[serial_id]
     ref_modes = _enabled_modes(ref_sub)
@@ -593,48 +737,74 @@ def check_cross_hardware_magnitude(master: TRITONSWMM_analysis, *, cfg_analysis,
     labeled: list[tuple[str, list[dict]]] = []
     contributing: dict[str, object] = {serial_id: ref_sub}
     any_compared = False
+    n_dropped = 0
 
-    for sa in gpu_ids:
-        sub = subs[sa]
+    for member in gpu_ids:
+        sub = subs[member]
         recs = _compare_pair(ref_sub, sub, ref_modes, dry_threshold_m=dry, tau_m=tau)
         if not recs:
+            n_dropped += 1
             continue
         any_compared = True
-        contributing[sa] = sub
-        labeled.append((sa, recs))
+        contributing[member] = sub
+        labeled.append((member, recs))
         for rec in recs:
             mag = rec.get("magnitude")
             details.append(
                 {
-                    "sa_id": sa,
+                    "sa_id": member,
                     "partition": _partition(sub),
                     "event_iloc": rec["event_iloc"],
                     "variable": rec["variable"],
-                    "max_abs_diff_m": (mag or {}).get("max_abs_diff_m"),
-                    "pct_diff_p95": (mag or {}).get("pct_diff_p95"),
+                    "max_abs_depth_diff": (mag or {}).get("max_abs_depth_diff"),
+                    "relative_depth_diff_p95": (mag or {}).get("relative_depth_diff_p95"),
                     "n_newly_wet": (mag or {}).get("n_newly_wet"),
                 }
             )
 
     if not any_compared:
-        return _skipped(name, "N/A — no comparable 1-GPU vs 1-rank serial-CPU pair")
+        return _skipped(name, "N/A: no comparable pair of a 1-GPU run and a 1-rank serial-CPU run")
 
     # ADR-4: disclosed bounds ARE the verdict; passed=True regardless of magnitude.
     bounds = [
-        f"{d['sa_id']}@evt{d['event_iloc']}={d['max_abs_diff_m']:.6g}"
+        f"{d['sa_id']}@evt{d['event_iloc']}={d['max_abs_depth_diff']:.6g}"
         for d in details
-        if d.get("max_abs_diff_m") is not None and d["variable"] == _DEPTH_VAR
+        if d.get("max_abs_depth_diff") is not None and d["variable"] == _DEPTH_VAR
     ]
+    n_gpu_compared = len(labeled)
+    dropped_note = (
+        f" ({n_dropped} GPU {_plural(n_dropped, 'pair', 'pairs')} dropped for absent/unreadable outputs)"
+        if n_dropped
+        else ""
+    )
     summary = (
-        f"Characterized cross-hardware divergence (1-GPU vs 1-rank serial-CPU; disclosed, ref sa_id={serial_id}): "
+        f"Characterized cross-hardware divergence (1-GPU vs 1-rank serial-CPU; disclosed, ref member_id={serial_id}): "
+        f"{n_gpu_compared} GPU {_plural(n_gpu_compared, 'pair', 'pairs')} compared{dropped_note}; "
         f"max_abs_depth_diff_m {', '.join(bounds)}."
         if bounds
-        else f"Characterized cross-hardware divergence: no comparable depth field (ref sa_id={serial_id})."
+        else f"Characterized cross-hardware divergence: no comparable depth field "
+        f"(ref member_id={serial_id}; {n_gpu_compared} GPU "
+        f"{_plural(n_gpu_compared, 'pair', 'pairs')} compared{dropped_note})."
     )
-    verdict = CheckResult(name=name, level="aggregate", passed=True, summary=summary, details=details)
+    verdict = CheckResult(
+        name=name,
+        level="aggregate",
+        passed=True,
+        summary=summary,
+        details=details,
+        # SELF-REPORTED from the path actually taken (`analysis_validation.py::CheckResult`):
+        # this check compares the FLAT per-scenario summaries via _compare_pair, whose
+        # max_flood_depth is stored float32 while the SWMM-side variables are float64, so
+        # float32 eps is the coarsest floor across the variables actually compared.
+        # Leaving these None is what stopped `errors_and_warnings._status_of` from
+        # qualifying the pass. Never derive from cfg_analysis.clear_raw: that records
+        # configured intent, not the path taken.
+        instrument="summary_tier",
+        detection_floor=float(np.finfo(np.float32).eps),
+    )
 
     ds_vars = _artifact_vars(labeled)
-    _, plot_id = _emit(master, "eda_cross_hardware_magnitude", ds_vars, contributing)
-    _persist_verdict(master, plot_id, verdict)
-    artifact_path = Path(master.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.zarr"
+    _, plot_id = _emit(primary, "eda_cross_hardware_magnitude", ds_vars, contributing)
+    _persist_verdict(primary, plot_id, verdict)
+    artifact_path = Path(primary.analysis_paths.analysis_dir) / "eda" / f"{plot_id}.zarr"
     return EdaResult(verdict=verdict, artifact_path=artifact_path, plot_id=plot_id)

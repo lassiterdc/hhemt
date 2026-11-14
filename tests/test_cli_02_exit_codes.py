@@ -18,33 +18,13 @@ runner = CliRunner()
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Exit Code 0: Success
-# ═══════════════════════════════════════════════════════════════════════
-
-
-def test_exit_code_0_list_testcases():
-    """Test --list-testcases exits with code 0."""
-    result = runner.invoke(app, ["run",
-        "--list-testcases",
-        "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
-    ])
-    assert result.exit_code == 0
-
-
-def test_exit_code_0_list_case_studies():
-    """Test --list-case-studies exits with code 0."""
-    result = runner.invoke(app, ["run",
-        "--list-case-studies",
-        "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
-    ])
-    assert result.exit_code == 0
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # Exit Code 2: CLIValidationError, ConfigurationError
 # ═══════════════════════════════════════════════════════════════════════
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_exit_code_2_cli_validation_error_mutually_exclusive(tmp_path):
     """Test CLIValidationError (mutually exclusive flags) exits with code 2."""
     system_config = tmp_path / "system.yaml"
@@ -52,17 +32,25 @@ def test_exit_code_2_cli_validation_error_mutually_exclusive(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, ["run",
-        "--profile", "production",
-        "--system-config", str(system_config),
-        "--analysis-config", str(analysis_config),
-        "--from-scratch",
-        "--resume",
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--system-config",
+            str(system_config),
+            "--analysis-config",
+            str(analysis_config),
+            "--verbose",
+            "--quiet",
+        ],
+    )
     assert result.exit_code == 2
     assert "Argument Error" in result.output
 
 
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     analysis_config.write_text("version: 1\n")
 def test_exit_code_2_cli_validation_error_invalid_enum(tmp_path):
     """Test CLIValidationError (invalid enum value) exits with code 2."""
     system_config = tmp_path / "system.yaml"
@@ -70,61 +58,39 @@ def test_exit_code_2_cli_validation_error_invalid_enum(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, ["run",
-        "--profile", "invalid_profile",
-        "--system-config", str(system_config),
-        "--analysis-config", str(analysis_config),
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--model",
+            "invalid_model",
+            "--system-config",
+            str(system_config),
+            "--analysis-config",
+            str(analysis_config),
+        ],
+    )
     assert result.exit_code == 2
-    assert "Argument Error" in result.output or "Invalid profile" in result.output
+    assert "Argument Error" in result.output or "Invalid model" in result.output
 
 
-def test_exit_code_2_cli_validation_error_conditional_requirement(tmp_path):
-    """Test CLIValidationError (missing conditional requirement) exits with code 2."""
-    system_config = tmp_path / "system.yaml"
-    analysis_config = tmp_path / "analysis.yaml"
-    system_config.write_text("version: 1\n")
-    analysis_config.write_text("version: 1\n")
-
-    result = runner.invoke(app, ["run",
-        "--profile", "testcase",
-        "--system-config", str(system_config),
-        "--analysis-config", str(analysis_config),
-        # Missing --testcase NAME
-    ])
-    assert result.exit_code == 2
-    assert "Argument Error" in result.output
-
-
-def test_exit_code_2_missing_required_argument():
-    """Test missing required argument exits with code 2."""
-    result = runner.invoke(app, ["run",
-        "--system-config", "system.yaml",
-        "--analysis-config", "analysis.yaml",
-        # Missing --profile
-    ])
-    assert result.exit_code == 2
-
-
+# R2 exclusion: retained, not converted — the run refuses before running, so no analysis tree is consumed and
+# no completed-tree fixture applies. Evidence:
+#     "/nonexistent/system.yaml",
 def test_exit_code_2_configuration_error_nonexistent_file():
     """Test ConfigurationError (nonexistent file) exits with code 2."""
-    result = runner.invoke(app, ["run",
-        "--profile", "production",
-        "--system-config", "/nonexistent/system.yaml",
-        "--analysis-config", "/nonexistent/analysis.yaml",
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--system-config",
+            "/nonexistent/system.yaml",
+            "--analysis-config",
+            "/nonexistent/analysis.yaml",
+        ],
+    )
     # Typer catches file validation first, but still exit code 2
     assert result.exit_code == 2
-
-
-def test_exit_code_2_configuration_error_invalid_catalog_path():
-    """Test ConfigurationError (invalid catalog) exits with code 2."""
-    result = runner.invoke(app, ["run",
-        "--list-testcases",
-        "--tests-case-config", "/nonexistent/catalog.yaml",
-    ])
-    assert result.exit_code == 2
-    assert "Error loading catalog" in result.output or "does not exist" in result.output
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -190,10 +156,10 @@ def test_exit_code_mapping_utility():
     from hhemt.cli_utils import map_exception_to_exit_code
     from hhemt.exceptions import (
         CLIValidationError,
-        ConfigurationError,
         CompilationError,
-        SimulationError,
+        ConfigurationError,
         ProcessingError,
+        SimulationError,
         WorkflowError,
         WorkflowPlanningError,
     )
@@ -204,6 +170,7 @@ def test_exit_code_mapping_utility():
 
     # Exit code 3: Workflow/Compilation errors
     from pathlib import Path
+
     assert map_exception_to_exit_code(CompilationError("triton", "cpu", Path("/tmp/log"), 1)) == 3
     assert map_exception_to_exit_code(WorkflowError("phase", 1)) == 3
     assert map_exception_to_exit_code(WorkflowPlanningError("phase", "msg")) == 3
@@ -214,6 +181,41 @@ def test_exit_code_mapping_utility():
     # Exit code 5: Processing errors
     assert map_exception_to_exit_code(ProcessingError("op", None, "msg")) == 5
 
+    # Exit code 6: BundleSchemaError (a ValueError, not a TRITONSWMMError) — MUST NOT
+    # fall through to the exit-10 catch-all (Gotcha 27; R2).
+    from hhemt.exceptions import BundleSchemaError
+
+    assert map_exception_to_exit_code(BundleSchemaError("schema skew")) == 6
+    # A plain ValueError still resolves to the catch-all — the 6 is scoped to the
+    # BundleSchemaError subclass, not to ValueError generally.
+    assert map_exception_to_exit_code(ValueError("unrelated")) == 10
+
     # Exit code 10: Unexpected exceptions
     assert map_exception_to_exit_code(ValueError("unexpected")) == 10
     assert map_exception_to_exit_code(RuntimeError("unexpected")) == 10
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Exit Code 6: BundleSchemaError via `hhemt ingest` (R2 — CLI contract)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_exit_code_6_ingest_bundle_schema_error(monkeypatch):
+    """`hhemt ingest` maps a BundleSchemaError (bundle emitted by a different toolkit
+    version) to exit code 6 via the CLI's map_exception_to_exit_code, not the exit-10
+    catch-all."""
+    from hhemt.exceptions import BundleSchemaError
+    from hhemt.experiments import TRITON_SWMM_experiment
+
+    def _raise_schema_error(*args, **kwargs):
+        raise BundleSchemaError("bundle_schema_version mismatch")
+
+    monkeypatch.setattr(TRITON_SWMM_experiment, "from_doi", classmethod(_raise_schema_error))
+    result = runner.invoke(app, ["ingest", "--doi", "10.5281/zenodo.1", "--host", "zenodo"])
+    assert result.exit_code == 6
+
+
+def test_exit_code_2_ingest_missing_doi_and_pid():
+    """`hhemt ingest` with neither --doi nor --pid is a CLI validation error (exit 2)."""
+    result = runner.invoke(app, ["ingest", "--host", "zenodo"])
+    assert result.exit_code == 2

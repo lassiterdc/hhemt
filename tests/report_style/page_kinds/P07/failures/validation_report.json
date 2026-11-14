@@ -1,0 +1,35 @@
+{
+  "checks": [
+    {
+      "name": "check_system_setup",
+      "level": "system",
+      "passed": true,
+      "summary": "compiled",
+      "details": []
+    },
+    {
+      "name": "check_scenarios_run",
+      "level": "aggregate",
+      "passed": false,
+      "summary": "1 of 3 scenarios did not run",
+      "details": [
+        {
+          "scenario": "event 2",
+          "detail": "no log"
+        }
+      ]
+    },
+    {
+      "name": "check_resource_usage",
+      "level": "resource",
+      "passed": false,
+      "summary": "1 mismatch",
+      "details": [
+        {
+          "scenario": "event 1",
+          "detail": "2 of 4 ranks"
+        }
+      ]
+    }
+  ]
+}

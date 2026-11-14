@@ -1,8 +1,9 @@
-"""Mock-HTTP unit tests for the C6 publishing subsystem (ADR-11).
+"""Mock-HTTP unit tests for ``hhemt.publishing``, which deposits an analysis to a DOI-minting repository.
 
 The Zenodo/HydroShare live deposits are behind the ``publish_e2e`` marker; these tests
-mock the HTTP layer and pin the two-phase control flow + payload shapes so live-API field
-drift (plan Assumption A4 / Risk X4) cannot silently break the contract.
+mock the HTTP layer and pin the two-phase control flow + payload shapes, so that drift in
+the deposit APIs (whose endpoints and payloads ``publishing`` does not verify against a
+pinned API copy) cannot silently break the contract.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -23,7 +25,13 @@ from hhemt.exceptions import PublishError
 
 
 class _Model:
-    """Stand-in pydantic-like config exposing model_dump(mode=...)."""
+    """Stand-in pydantic-like config exposing model_dump(mode=...).
+
+    ``model_fields`` is empty on purpose: the deposit set rewrites every Path field of a real
+    config model, and a stand-in with no model fields has none to rewrite.
+    """
+
+    model_fields: dict = {}
 
     def __init__(self, payload=None):
         self._payload = payload or {}
@@ -36,7 +44,16 @@ class _FakeAnalysis:
     def __init__(self, analysis_dir):
         self.analysis_paths = SimpleNamespace(analysis_dir=analysis_dir)
         self.cfg_analysis = _Model({"analysis_id": "a1"})
+        # publish_analysis reads this on every path that reaches the license comparison. A
+        # real analysis_config always has the attribute (optional field, default None, so
+        # "CC0-1.0" here is this fake's choice, not the real default). _Model exposes no
+        # __getattr__, so it is set as an instance attribute rather than through the payload dict --
+        # model_dump() reads _payload and is deliberately left unchanged, which keeps
+        # test_deposit_set_contains_configs_sidecar_and_zarr asserting what it did before.
+        self.cfg_analysis.dataset_license = "CC0-1.0"
         self._system = SimpleNamespace(cfg_system=_Model({"system_id": "s1"}))
+        # The deposit set relativizes against the system directory as well as the analysis one.
+        self._system.cfg_system.system_directory = Path(analysis_dir)
 
 
 def _write_sidecar(analysis_dir, spdx="CC0-1.0"):
@@ -45,7 +62,7 @@ def _write_sidecar(analysis_dir, spdx="CC0-1.0"):
         "@context": "https://w3id.org/ro/crate/1.1/context",
         "@graph": [
             {"@id": "ro-crate-metadata.json", "@type": "CreativeWork"},
-            {"@id": "./", "@type": "Dataset", "license": {"@id": uri}},
+            {"@id": "./", "@type": "Dataset", "name": "Test Analysis", "license": {"@id": uri}},
         ],
     }
     (analysis_dir / "ro-crate-metadata.json").write_text(json.dumps(doc))
@@ -68,7 +85,7 @@ class _Resp:
 class _RecordingSession:
     """Records (method, url, json) and returns canned InvenioRDM-shaped responses."""
 
-    RESERVED_DOI = "10.5281/zenodo.12345"
+    MINTED_DOI = "10.5281/zenodo.12345"
 
     def __init__(self):
         self.headers = {}
@@ -82,13 +99,38 @@ class _RecordingSession:
         self.calls.append(("PUT", url, json))
         return self._respond(url)
 
+    def get(self, url, timeout=None):
+        self.calls.append(("GET", url, None))
+        return self._respond(url)
+
     def _respond(self, url):
         if url.endswith("/api/records"):
             return _Resp(201, {"id": "12345", "links": {"self_html": "https://zenodo.org/records/12345"}})
-        if url.endswith("/draft/pids/doi"):
-            return _Resp(200, {"pids": {"doi": {"identifier": self.RESERVED_DOI}}})
+        if url.endswith("/api/records/12345"):
+            # Record GET after publish. Verified sandbox shape (record 565599,
+            # 2026-07-15): the minted DOI is at top-level ``doi`` / ``metadata.doi``,
+            # ``pids`` is null. This is what the round-trip reads the DOI from.
+            return _Resp(
+                200,
+                {
+                    "id": "12345",
+                    "doi": self.MINTED_DOI,
+                    "metadata": {"doi": self.MINTED_DOI},
+                    "pids": None,
+                    "links": {"self_html": "https://zenodo.org/records/12345"},
+                },
+            )
         if url.endswith("/actions/publish"):
-            return _Resp(202, {"id": "12345", "links": {"self_html": "https://zenodo.org/records/12345"}})
+            # Sandbox publish-action response does NOT carry an extractable DOI
+            # (``pids`` null); the DOI is authoritative on the record GET above.
+            return _Resp(
+                202,
+                {
+                    "id": "12345",
+                    "pids": None,
+                    "links": {"self_html": "https://zenodo.org/records/12345"},
+                },
+            )
         return _Resp(200, {})
 
 
@@ -101,7 +143,7 @@ def _patch_zenodo_session(monkeypatch):
 
 
 # --------------------------------------------------------------------------------------
-# Shared DataCite builders
+# Shared rights / related-identifier builders (DataCite and InvenioRDM shapes)
 # --------------------------------------------------------------------------------------
 
 
@@ -133,6 +175,17 @@ def test_related_empty_when_no_dois():
     assert publishing.build_datacite_related(software_doi=None) == []
 
 
+def test_inveniordm_rights_is_lowercased_spdx_vocab_id():
+    assert publishing.build_inveniordm_rights("CC0-1.0") == [{"id": "cc0-1.0"}]
+    assert publishing.build_inveniordm_rights("CC-BY-NC-4.0") == [{"id": "cc-by-nc-4.0"}]
+
+
+def test_inveniordm_related_uses_lowercase_relation_vocab():
+    edges = publishing.build_inveniordm_related(software_doi="10.x/soft")
+    assert edges == [{"identifier": "10.x/soft", "scheme": "doi", "relation_type": {"id": "iscompiledby"}}]
+    assert publishing.build_inveniordm_related(software_doi=None) == []
+
+
 # --------------------------------------------------------------------------------------
 # Sidecar license read-back
 # --------------------------------------------------------------------------------------
@@ -159,12 +212,19 @@ def test_deposit_set_contains_configs_sidecar_and_zarr(tmp_path):
     _write_sidecar(tmp_path)
     (tmp_path / "analysis_datatree.zarr").mkdir()
     analysis = _FakeAnalysis(tmp_path)
-    deposit = publishing._deposit_set(analysis, "analysis_datatree.zarr")
+    # A staging folder DISTINCT from the live analysis directory, which is what makes the
+    # live-root assertions below mean something.
+    staging = tmp_path / "deposit_staging"
+    staging.mkdir()
+    deposit = publishing._deposit_set(analysis, "analysis_datatree.zarr", staging=staging)
     names = {p.name for p in deposit}
     assert names == {"ro-crate-metadata.json", "analysis_datatree.zarr", "cfg_analysis.yaml", "cfg_system.yaml"}
-    # Configs are materialized from the config models (eda() precedent).
-    assert (tmp_path / "cfg_analysis.yaml").exists()
-    assert (tmp_path / "cfg_system.yaml").exists()
+    # The configs are written into the deposit's own staging folder, never into the live
+    # analysis directory, where they are the toolkit's own working copies.
+    assert (staging / "cfg_analysis.yaml").exists()
+    assert (staging / "cfg_system.yaml").exists()
+    assert not (tmp_path / "cfg_analysis.yaml").exists()
+    assert not (tmp_path / "cfg_system.yaml").exists()
 
 
 # --------------------------------------------------------------------------------------
@@ -187,54 +247,181 @@ def test_override_license_match_is_accepted(tmp_path, monkeypatch):
     _patch_zenodo_session(monkeypatch)
     # Matching override must NOT raise; adapter runs against the mocked session.
     result = publishing.publish_analysis(analysis, target="zenodo", override_dataset_license="CC0-1.0")
-    assert result["data_doi"] == _RecordingSession.RESERVED_DOI
+    assert result["data_doi"] == _RecordingSession.MINTED_DOI
+
+
+def test_config_license_mismatch_raises(tmp_path):
+    """A crate whose license disagrees with the config REFUSES the deposit.
+
+    The reachable state: dataset_license is absent from the consolidation fingerprint
+    (processing_analysis._consolidation_inputs_fingerprint hashes consolidation_version,
+    toggle_consolidate_timeseries, enabled_model_types and the scenario-id set only, and
+    its maintenance contract excludes provenance values), so editing it triggers no
+    rebuild, the consolidate early-return fires, and the sidecar keeps the previous license.
+
+    Asserted on PublishError being raised AND on the message naming
+    ``regenerate_existing=True``: without that flag the suggested re-emit early-returns
+    and writes nothing, so a message that omits it leaves the user stuck.
+    """
+    _write_sidecar(tmp_path, "CC0-1.0")
+    analysis = _FakeAnalysis(tmp_path)
+    analysis.cfg_analysis.dataset_license = "CC-BY-NC-4.0"
+    with pytest.raises(PublishError) as ei:
+        publishing.publish_analysis(analysis, target="zenodo")
+    assert "regenerate_existing=True" in ei.value.status
+
+
+def _write_unlicensed_sidecar(analysis_dir):
+    doc = {
+        "@context": "https://w3id.org/ro/crate/1.1/context",
+        "@graph": [
+            {"@id": "ro-crate-metadata.json", "@type": "CreativeWork"},
+            {"@id": "./", "@type": "Dataset", "name": "Test Analysis"},
+        ],
+    }
+    (analysis_dir / "ro-crate-metadata.json").write_text(json.dumps(doc))
+
+
+@pytest.mark.parametrize("cfg_license", [None, "CC-BY-SA-4.0"])
+def test_unlicensed_results_are_refused_before_any_deposit_with_the_fix(tmp_path, monkeypatch, cfg_license):
+    """Property: publish refuses results that carry no license, naming the field and the re-emit step.
+
+    Class: every analysis whose consolidated crate has no root license, whether the config
+    still has none (never chosen) or gained one after consolidating. Why required: a deposit
+    must carry a license, and publish never writes one into archived results, so the only
+    fix is to set the field and re-consolidate; a message that does not say so leaves the
+    user with no path. Killed by: depositing anyway, or refusing without naming
+    `dataset_license` and `regenerate_existing=True`. Second correct implementation: the
+    check placed inside `_read_license_from_sidecar` with the same message, instead of
+    before it.
+    """
+    _write_unlicensed_sidecar(tmp_path)
+    analysis = _FakeAnalysis(tmp_path)
+    analysis.cfg_analysis.dataset_license = cfg_license
+    called = []
+    monkeypatch.setitem(publishing._TARGETS, "zenodo", lambda: SimpleNamespace(publish=lambda **kw: called.append(kw)))
+    with pytest.raises(PublishError) as ei:
+        publishing.publish_analysis(analysis, target="zenodo")
+    assert "dataset_license" in ei.value.status
+    assert "regenerate_existing=True" in ei.value.status
+    assert called == []
+
+
+def test_blank_config_against_licensed_results_names_setting_the_license_back(tmp_path, monkeypatch):
+    """Property: a cleared license against licensed results is refused, naming the no-rebuild fix first.
+
+    Class: a config whose `dataset_license` is blank while the archived results carry a
+    license. Why required: re-consolidating with a blank config writes UNLICENSED results,
+    which publish then refuses again, so a message offering only re-consolidation sends the
+    user in a circle; setting the field back to the results' license publishes them with no
+    rebuild. Killed by: depositing anyway, or a message that does not name the results'
+    license as the value to set. Second correct implementation: the same instruction placed
+    in a separate branch for the blank case rather than in the shared mismatch message.
+    """
+    _write_sidecar(tmp_path, "CC0-1.0")
+    analysis = _FakeAnalysis(tmp_path)
+    analysis.cfg_analysis.dataset_license = None
+    called = []
+    monkeypatch.setitem(publishing._TARGETS, "zenodo", lambda: SimpleNamespace(publish=lambda **kw: called.append(kw)))
+    with pytest.raises(PublishError) as ei:
+        publishing.publish_analysis(analysis, target="zenodo")
+    assert "set analysis_config.dataset_license to 'CC0-1.0'" in ei.value.status
+    assert "regenerate_existing=True" in ei.value.status
+    assert called == []
+
+
+def test_every_named_license_reaches_each_rights_builder():
+    """Property: each of the seven named ids builds a DataCite, Zenodo and HydroShare rights entry.
+
+    Class: every key of the single license table. Why required: two of the three builders
+    (`build_datacite_rightslist` and `_hydroshare_rights`) look the id up in the table, so an id
+    the config accepts but a builder cannot map would fail only at deposit; the third,
+    `build_inveniordm_rights`, only lower-cases the id, so for it this pins the lower-casing.
+    Killed by: a table entry missing `name` or `uri`, or a builder keyed on a different table.
+    Second correct implementation: builders that derive the URI from the id.
+    """
+    assert len(publishing._SPDX_LICENSE_TABLE) == 7
+    for spdx in publishing._SPDX_LICENSE_TABLE:
+        assert publishing.build_datacite_rightslist(spdx)[0]["rightsIdentifier"] == spdx
+        assert publishing.build_inveniordm_rights(spdx) == [{"id": spdx.lower()}]
+        assert publishing._hydroshare_rights(spdx)["url"] == f"https://spdx.org/licenses/{spdx}"
+
+
+def test_publish_analysis_reprex_bundle_defaults_container_defs_none(tmp_path, monkeypatch):
+    """Native-mode regression: omitting ``container_defs`` passes ``None`` to ``emit_bundle``
+    (the same call as before ``container_defs`` existed — the deposit path is default-preserving)."""
+    _write_sidecar(tmp_path, "CC0-1.0")
+    real_zip = tmp_path / "bundle.zip"
+    real_zip.write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+    analysis = _FakeAnalysis(tmp_path)
+    captured: dict = {}
+
+    def _spy_emit(a, *, container_defs=None, **kw):
+        captured["container_defs"] = container_defs
+        return real_zip
+
+    monkeypatch.setattr("hhemt.bundle.emit_bundle", _spy_emit)
+    _patch_zenodo_session(monkeypatch)
+
+    publishing.publish_analysis(analysis, target="zenodo", deposit_source="reprex_bundle")
+    assert captured["container_defs"] is None
 
 
 # --------------------------------------------------------------------------------------
-# Zenodo two-phase control-flow + payload-shape test (master FQ3)
+# Zenodo two-phase control-flow + payload-shape test
 # --------------------------------------------------------------------------------------
 
 
-def test_zenodo_two_phase_call_order_and_payloads(tmp_path, monkeypatch):
+def test_zenodo_lets_zenodo_mint_and_embeds_native_metadata(tmp_path, monkeypatch):
     sess = _patch_zenodo_session(monkeypatch)
-    f1 = tmp_path / "ro-crate-metadata.json"
-    f1.write_text("{}")
+    # Sidecar root name -> metadata.title (InvenioRDM-mandatory).
+    _write_sidecar(tmp_path, "CC0-1.0")
     result = publishing._ZenodoTarget().publish(
-        deposit=[f1],
+        deposit=[tmp_path / "ro-crate-metadata.json"],
         license_spdx="CC0-1.0",
         software_doi="10.5281/zenodo.999",
         analysis_dir=tmp_path,
     )
 
-    # Milestone call order (subsequence over the recorded calls).
+    # Milestone call order (subsequence over the recorded calls). NO reserve step.
     seq = [(m, u) for (m, u, _b) in sess.calls]
 
     def idx(pred):
         return next(i for i, (m, u) in enumerate(seq) if pred(m, u))
 
     i_create = idx(lambda m, u: m == "POST" and u.endswith("/api/records"))
-    i_reserve = idx(lambda m, u: m == "POST" and u.endswith("/draft/pids/doi"))
     i_embed = idx(lambda m, u: m == "PUT" and u.endswith("/records/12345/draft"))
     i_upload = idx(lambda m, u: m == "PUT" and u.endswith("/content"))
     i_publish = idx(lambda m, u: m == "POST" and u.endswith("/actions/publish"))
     i_backfill = idx(lambda m, u: m == "PUT" and u.endswith("/records/999/draft"))
-    assert i_create < i_reserve < i_embed < i_upload < i_publish < i_backfill
+    assert i_create < i_embed < i_upload < i_publish < i_backfill
 
-    # Embed payload carries the reserved data-DOI, IsCompiledBy edge, and 5-field rightsList.
+    # NO reserve-DOI call: Zenodo mints on publish (self-supplying pids caused the 400).
+    assert not any(u.endswith("/draft/pids/doi") for (_m, u) in seq)
+
+    # Embed carries the four InvenioRDM-mandatory fields + native rights/related, NO pids.
     embed_body = next(b for (m, u, b) in sess.calls if m == "PUT" and u.endswith("/records/12345/draft"))
-    assert embed_body["pids"]["doi"]["identifier"] == _RecordingSession.RESERVED_DOI
-    rl = embed_body["metadata"]["rightsList"]
-    assert len(rl[0]) == 5 and rl[0]["rightsIdentifierScheme"] == "SPDX"
-    rel = embed_body["metadata"]["relatedIdentifiers"]
-    assert rel[0]["relationType"] == "IsCompiledBy" and rel[0]["relatedIdentifier"] == "10.5281/zenodo.999"
+    md = embed_body["metadata"]
+    assert md["title"] == "Test Analysis"
+    assert md["creators"][0]["person_or_org"]["type"] in ("personal", "organizational")
+    assert md["publication_date"]  # EDTF Level 0 date string
+    assert md["resource_type"] == {"id": "dataset"}
+    assert md["publisher"] == "Zenodo"  # DataCite-mandatory for DOI registration
+    assert md["rights"] == [{"id": "cc0-1.0"}]
+    assert md["related_identifiers"] == [
+        {"identifier": "10.5281/zenodo.999", "scheme": "doi", "relation_type": {"id": "iscompiledby"}}
+    ]
+    assert "pids" not in embed_body
 
-    # Backfill payload writes the reciprocal IsSourceOf edge onto the software record.
+    # Backfill writes the reciprocal issourceof edge (native shape) onto the software record.
     backfill_body = next(b for (m, u, b) in sess.calls if m == "PUT" and u.endswith("/records/999/draft"))
-    assert backfill_body["metadata"]["relatedIdentifiers"][0]["relationType"] == "IsSourceOf"
+    assert backfill_body["metadata"]["related_identifiers"][0]["relation_type"] == {"id": "issourceof"}
 
+    # The minted DOI comes from the record GET: the fake publish response carries no
+    # extractable DOI (``pids`` null), so the target falls back to re-reading the record.
     assert result == {
         "target": "zenodo",
-        "data_doi": _RecordingSession.RESERVED_DOI,
+        "data_doi": _RecordingSession.MINTED_DOI,
         "software_doi": "10.5281/zenodo.999",
         "record_url": "https://zenodo.org/records/12345",
     }
@@ -243,9 +430,7 @@ def test_zenodo_two_phase_call_order_and_payloads(tmp_path, monkeypatch):
 def test_zenodo_missing_token_raises(tmp_path, monkeypatch):
     monkeypatch.delenv("HHEMT_ZENODO_TOKEN", raising=False)
     with pytest.raises(PublishError) as ei:
-        publishing._ZenodoTarget().publish(
-            deposit=[], license_spdx="CC0-1.0", software_doi=None, analysis_dir=tmp_path
-        )
+        publishing._ZenodoTarget().publish(deposit=[], license_spdx="CC0-1.0", software_doi=None, analysis_dir=tmp_path)
     assert "HHEMT_ZENODO_TOKEN" in ei.value.status
 
 
@@ -257,14 +442,12 @@ def test_zenodo_http_error_raises_publisherror(tmp_path, monkeypatch):
     monkeypatch.setattr(publishing.requests, "Session", lambda: _FailSession())
     monkeypatch.setenv("HHEMT_ZENODO_TOKEN", "tok")
     with pytest.raises(PublishError) as ei:
-        publishing._ZenodoTarget().publish(
-            deposit=[], license_spdx="CC0-1.0", software_doi=None, analysis_dir=tmp_path
-        )
+        publishing._ZenodoTarget().publish(deposit=[], license_spdx="CC0-1.0", software_doi=None, analysis_dir=tmp_path)
     assert "create draft failed" in ei.value.status
 
 
 # --------------------------------------------------------------------------------------
-# HydroShare two-invocation adapter — stops before DOI mint
+# HydroShare two-step adapter — stops before DOI mint
 # --------------------------------------------------------------------------------------
 
 
@@ -343,3 +526,74 @@ def test_zenodo_sandbox_e2e():  # pragma: no cover - live-credential path
     # Skeleton: exercise the Zenodo sandbox against a real deposit set.
     # Set HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org and HHEMT_ZENODO_TOKEN.
     pytest.skip("e2e skeleton — provide a real analysis_dir + sandbox credentials to exercise")
+
+
+# ---------------------------------------------------------------------------
+# Pre-upload size validator (documented limits, warn-only) + attempt-and-surface backstop.
+# ---------------------------------------------------------------------------
+
+
+def test_size_validator_sums_directory_trees_not_inode_size(tmp_path):
+    """Guards a green check that certifies nothing: the size validator must sum directory trees.
+
+    ``Path.stat().st_size`` on a DIRECTORY returns the ~4 KB inode size. The deposit set's
+    heavyweight member is the consolidated zarr STORE — a directory. Stat-ing it would
+    report a 20 GB deposit as fitting comfortably inside HydroShare's 20 GB quota.
+    """
+    from hhemt.publishing import _path_size_bytes, validate_deposit_size
+
+    store = tmp_path / "analysis_datatree.zarr"
+    (store / "chunks").mkdir(parents=True)
+    for i in range(4):
+        (store / "chunks" / f"c{i}").write_bytes(b"x" * 1000)
+
+    assert _path_size_bytes(store) == 4000  # summed, not stat()'d
+    assert store.stat().st_size != 4000  # the trap this guards
+
+    report = validate_deposit_size([store], "hydroshare")
+    assert report["total_bytes"] == 4000
+    assert report["fits"] is True
+
+
+def test_size_validator_reports_overflow_and_remediation(tmp_path):
+    from hhemt.publishing import _TARGET_LIMITS, validate_deposit_size
+
+    big = tmp_path / "big.zip"
+    big.write_bytes(b"x" * 16)
+    # Shrink the documented limit rather than writing 20 GB to disk.
+    original = _TARGET_LIMITS["hydroshare"]["max_total_bytes"]
+    _TARGET_LIMITS["hydroshare"]["max_total_bytes"] = 8
+    try:
+        report = validate_deposit_size([big], "hydroshare")
+    finally:
+        _TARGET_LIMITS["hydroshare"]["max_total_bytes"] = original
+
+    assert report["fits"] is False
+    assert report["overflow_bytes"] == 8
+    assert report["as_of"]  # the constant carries its verification date
+    assert any("exclude" in r for r in report["remediation"])
+
+
+def test_classify_storage_error_reframes_quota_signal_and_passes_others_through():
+    """Attempt-and-surface backstop: a quota rejection is reframed with the emit-side delta; a NON-storage
+    failure is passed through (returns None) so the caller re-raises it verbatim — a
+    mislabelled auth error would send the operator hunting a disk-space problem."""
+    from hhemt.publishing import _classify_storage_error
+
+    quota = _classify_storage_error("Request Entity Too Large: user quota exceeded", 30 * 1000**3, 20 * 1000**3)
+    assert quota is not None
+    assert "STORAGE/QUOTA" in quota
+    assert "over by 10.00 GB" in quota
+
+    assert _classify_storage_error("401 Unauthorized: bad token", 1, 100) is None
+
+
+def test_check_body_window_is_wide_enough_for_a_quota_signal():
+    """``_check`` truncates the server body, and ``_classify_storage_error``
+    string-matches that already-captured body. A quota message sitting past the old 300-char
+    window was invisible, silently degrading the backstop to a verbatim passthrough."""
+    import inspect
+
+    from hhemt.publishing import _check
+
+    assert "resp.text[:1000]" in inspect.getsource(_check)

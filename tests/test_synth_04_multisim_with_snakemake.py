@@ -1,14 +1,15 @@
 """Synthetic-model multi-sim + Snakemake tier. Mirror of test_PC_04 using synth fixtures."""
 
+from pathlib import Path
+
 import pytest
 
 import tests.utils_for_testing as tst_ut
+from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV, retrieve_synth_TRITON_SWMM_test_case
+from tests.utils_dry_run_plan import job_names_from_log, stats_total
 
 pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
-    pytest.mark.skipif(
-        tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-    ),
 ]
 
 
@@ -25,7 +26,7 @@ def test_snakemake_local_workflow_generation_and_write(synth_multi_sim_analysis)
 
     snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
     )
@@ -53,7 +54,6 @@ def test_snakemake_local_workflow_generation_and_write(synth_multi_sim_analysis)
             "/workflow/envs/hhemt.yaml",
             "setup_workflow",
             "--process-system-inputs",
-            "--compile-triton-swmm",
             "prepare_scenario_runner",
             "run_simulation_runner",
             "process_timeseries_runner",
@@ -91,7 +91,7 @@ def test_reprocess_render_report_rule_carries_reprocess_flag(synth_multi_sim_ana
     reprocess_content = generate_reprocess_snakefile(builder, start_with="render")
     production_content = builder.generate_snakefile_content(
         process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
     )
@@ -124,7 +124,7 @@ def test_snakemake_workflow_config_generation(synth_multi_sim_analysis):
 
     snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=False,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
         which="both",
@@ -146,6 +146,7 @@ def test_snakemake_workflow_config_generation(synth_multi_sim_analysis):
     assert "SIM_IDS = [" in snakefile_content
     assert "ILOC_BY_EVENT_ID = {" in snakefile_content
     import re as _re
+
     m = _re.search(r"^SIM_IDS = (\[[^\]]*\])", snakefile_content, _re.MULTILINE)
     assert m is not None
     assert len(eval(m.group(1))) == n_sims
@@ -157,28 +158,26 @@ def test_snakemake_workflow_config_generation(synth_multi_sim_analysis):
         (
             {
                 "process_system_level_inputs": True,
-                "compile_TRITON_SWMM": True,
+                "run_setup_phase": True,
                 "prepare_scenarios": False,
                 "process_timeseries": False,
             },
-            ["--process-system-inputs", "--compile-triton-swmm"],
-            ["prepare_scenario_runner", "process_timeseries_runner"],
+            ["--process-system-inputs"],
+            ["prepare_scenario_runner", "process_timeseries_runner", "--compile-triton-swmm"],
         ),
         (
             {
                 "process_system_level_inputs": True,
-                "compile_TRITON_SWMM": True,
+                "run_setup_phase": True,
                 "prepare_scenarios": True,
                 "process_timeseries": True,
             },
             ["prepare_scenario_runner", "process_timeseries_runner"],
-            [],
+            ["--compile-triton-swmm"],
         ),
     ],
 )
-def test_snakemake_multiple_configurations(
-    synth_multi_sim_analysis, config, expected_flags, forbidden_flags
-):
+def test_snakemake_multiple_configurations(synth_multi_sim_analysis, config, expected_flags, forbidden_flags):
     """
     Test Snakemake generation with different parameter combinations.
 
@@ -210,7 +209,7 @@ def test_snakemake_workflow_dry_run(synth_multi_sim_analysis):
         mode="local",
         process_system_level_inputs=True,
         overwrite_system_inputs=False,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         recompile_if_already_done_successfully=False,
         prepare_scenarios=True,
         overwrite_scenario_if_already_set_up=True,
@@ -224,9 +223,7 @@ def test_snakemake_workflow_dry_run(synth_multi_sim_analysis):
         verbose=True,
     )
 
-    assert result.get(
-        "success"
-    ), f"Snakemake dry-run failed: {result.get('message', '')}"
+    assert result.get("success"), f"Snakemake dry-run failed: {result.get('message', '')}"
     assert result.get("mode") == "local"
 
     df_status = analysis.df_status
@@ -275,15 +272,13 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
     # requirement is satisfied by every run of this test.
     from hhemt.workflow import SnakemakeDiagnostics
 
-    diagnostic_log_path = (
-        analysis.analysis_paths.analysis_dir / ".snakemake" / "log" / "test_diagnose.log"
-    )
+    diagnostic_log_path = analysis.analysis_paths.analysis_dir / ".snakemake" / "log" / "test_diagnose.log"
 
     result = analysis.submit_workflow(
         mode="local",
         process_system_level_inputs=True,
         overwrite_system_inputs=False,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         recompile_if_already_done_successfully=False,
         prepare_scenarios=True,
         overwrite_scenario_if_already_set_up=True,
@@ -303,6 +298,26 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
 
     assert result.get("success"), result.get("message", "Workflow failed")
     assert result.get("mode") == "local"
+
+    # F3 (v9): the "scenario_status.csv created" check no longer bakes a false "missing" failure.
+    # persist_validation_report runs at consolidation (BEFORE the CSV exists) AND again at export
+    # (AFTER the CSV write, per the F3 fix), so the persisted validation_report.json the
+    # errors_and_warnings figure reads carries the check as passing. Going-forward regression guard
+    # (the pre-F3 demo baked a spurious "scenario_status.csv missing" failure here).
+    _vr_path = analysis.analysis_paths.analysis_dir / "validation_report.json"
+    if _vr_path.exists():
+        import json as _json
+
+        _checks = _json.loads(_vr_path.read_text()).get("checks", [])
+        _csv_created = [
+            c for c in _checks if str(c.get("name", "")).strip().lower().startswith("scenario_status.csv created")
+        ]
+        if _csv_created:
+            assert _csv_created[0].get("passed") is True, (
+                "F3: 'scenario_status.csv created' check should pass after export re-persists "
+                f"validation_report.json; got {_csv_created[0]}"
+            )
+
     assert diagnostic_log_path.exists(), (
         f"SnakemakeDiagnostics log_path was not honored — expected {diagnostic_log_path}"
     )
@@ -315,8 +330,7 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
     # where every job runs from scratch, the verbose-mode "Job " markers
     # for executing jobs).
     assert "reason:" in log_text.lower() or "job " in log_text.lower(), (
-        "expected --verbose-mode rerun-reason annotations in diagnostic log; "
-        f"got log of length {len(log_text)} chars"
+        f"expected --verbose-mode rerun-reason annotations in diagnostic log; got log of length {len(log_text)} chars"
     )
 
     tst_ut.assert_analysis_workflow_completed_successfully(analysis)
@@ -334,27 +348,35 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
         tst_ut.assert_swmm_compiled(analysis)
 
     expected_threads = analysis.cfg_analysis.n_omp_threads
-    assert (
-        expected_threads >= 1
-    ), f"n_omp_threads must be >= 1, but got {expected_threads}"
+    assert expected_threads >= 1, f"n_omp_threads must be >= 1, but got {expected_threads}"
 
     for event_iloc in analysis.df_sims.index:
         proc = analysis._retrieve_sim_run_processing_object(event_iloc)
         paths = proc.scen_paths
 
-        if paths.swmm_hydro_inp.exists():
-            with open(paths.swmm_hydro_inp) as fp:
-                content = fp.read()
-                assert (
-                    f"THREADS              {expected_threads}" in content
-                ), f"hydro.inp for event {event_iloc} should have THREADS={expected_threads}"
+        assert paths.swmm_hydro_inp.exists(), (
+            f"hydro.inp missing for event {event_iloc} at {paths.swmm_hydro_inp}; "
+            "toggle_use_swmm_for_hydrology is True on this fixture and "
+            "assert_analysis_workflow_completed_successfully passed above, so scenario "
+            "preparation must have written it"
+        )
+        with open(paths.swmm_hydro_inp) as fp:
+            content = fp.read()
+            assert f"THREADS              {expected_threads}" in content, (
+                f"hydro.inp for event {event_iloc} should have THREADS={expected_threads}"
+            )
 
-        if paths.swmm_full_inp.exists():
-            with open(paths.swmm_full_inp) as fp:
-                content = fp.read()
-                assert (
-                    f"THREADS              {expected_threads}" in content
-                ), f"full.inp for event {event_iloc} should have THREADS={expected_threads}"
+        assert paths.swmm_full_inp.exists(), (
+            f"full.inp missing for event {event_iloc} at {paths.swmm_full_inp}; "
+            "toggle_swmm_model is True on this fixture and "
+            "assert_analysis_workflow_completed_successfully passed above, so scenario "
+            "preparation must have written it"
+        )
+        with open(paths.swmm_full_inp) as fp:
+            content = fp.read()
+            assert f"THREADS              {expected_threads}" in content, (
+                f"full.inp for event {event_iloc} should have THREADS={expected_threads}"
+            )
 
     if "swmm" in enabled_models and "tritonswmm" in enabled_models:
         for event_iloc in analysis.df_sims.index:
@@ -385,13 +407,9 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
             missing_links = swmm_link_ids - tritonswmm_link_ids
 
             if missing_nodes:
-                pytest.fail(
-                    f"TRITON-SWMM node_ids missing {len(missing_nodes)} SWMM-only nodes."
-                )
+                pytest.fail(f"TRITON-SWMM node_ids missing {len(missing_nodes)} SWMM-only nodes.")
             if missing_links:
-                pytest.fail(
-                    f"TRITON-SWMM link_ids missing {len(missing_links)} SWMM-only links."
-                )
+                pytest.fail(f"TRITON-SWMM link_ids missing {len(missing_links)} SWMM-only links.")
 
             # Known upstream bug: TRITON-SWMM coupled mode emits one fewer SWMM
             # reporting period than SWMM-only mode whenever the external BC is
@@ -414,25 +432,14 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
                 "If delta == 1 this is the documented upstream bug; >1 is a "
                 "new regression."
             )
-            node_delta = abs(
-                len(ds_swmm_nodes["date_time"])
-                - len(ds_tritonswmm_nodes["date_time"])
-            )
+            node_delta = abs(len(ds_swmm_nodes["date_time"]) - len(ds_tritonswmm_nodes["date_time"]))
             if node_delta > 1:
                 pytest.fail(_BC_TRUNCATION_KNOWN_BUG.format(delta=node_delta))
-            link_delta = abs(
-                len(ds_swmm_links["date_time"])
-                - len(ds_tritonswmm_links["date_time"])
-            )
+            link_delta = abs(len(ds_swmm_links["date_time"]) - len(ds_tritonswmm_links["date_time"]))
             if link_delta > 1:
-                pytest.fail(
-                    _BC_TRUNCATION_KNOWN_BUG.replace("Node", "Link").format(
-                        delta=link_delta
-                    )
-                )
+                pytest.fail(_BC_TRUNCATION_KNOWN_BUG.replace("Node", "Link").format(delta=link_delta))
 
-            if set(ds_swmm_nodes.data_vars) != set(ds_tritonswmm_nodes.data_vars):
-                pytest.fail("Node time series data variables do not match")
+            tst_ut.assert_node_vars_consistent(ds_swmm_nodes, ds_tritonswmm_nodes, synth_multi_sim_analysis)
             swmm_link_vars = set(ds_swmm_links.data_vars)
             tritonswmm_link_vars = set(ds_tritonswmm_links.data_vars)
 
@@ -484,7 +491,7 @@ def test_snakemake_workflow_concurrency_and_process_monitoring(
             mode="local",
             process_system_level_inputs=True,
             overwrite_system_inputs=False,
-            compile_TRITON_SWMM=True,
+            run_setup_phase=True,
             recompile_if_already_done_successfully=False,
             prepare_scenarios=True,
             overwrite_scenario_if_already_set_up=True,
@@ -511,9 +518,7 @@ def test_snakemake_workflow_concurrency_and_process_monitoring(
     runner_report = runner_monitor.get_detailed_report()
     runner_monitor.print_summary()
 
-    timeline_path = (
-        analysis.analysis_paths.analysis_dir / "runner_concurrency_timeline.csv"
-    )
+    timeline_path = analysis.analysis_paths.analysis_dir / "runner_concurrency_timeline.csv"
     runner_monitor.export_timeline(str(timeline_path))
 
     assert runner_report["max_total_runners"] <= cores * 2, (
@@ -523,10 +528,7 @@ def test_snakemake_workflow_concurrency_and_process_monitoring(
 
     for runner_type, max_count in runner_report["max_concurrent"].items():
         if runner_type != "total":
-            assert max_count <= cores + 2, (
-                f"{runner_type} exceeded concurrency limit: "
-                f"{max_count} > {cores + 2}"
-            )
+            assert max_count <= cores + 2, f"{runner_type} exceeded concurrency limit: {max_count} > {cores + 2}"
 
     assert runner_report["avg_total_runners"] <= cores, (
         f"Average concurrent runners ({runner_report['avg_total_runners']:.1f}) "
@@ -560,30 +562,40 @@ def test_run_and_render_report(synth_multi_sim_analysis_cached):
     # Resolve backend-dependent extensions via the canonical helper so the
     # assertions match the per-rule emission regardless of static_backend.
     from hhemt.workflow import _output_ext_for
+
     backend = analysis._workflow_builder._get_report_cfg_static_backend()
     so_ext = _output_ext_for(backend, "system_overview")
-    pfd_ext = _output_ext_for(backend, "per_sim_peak_flood_depth")
-    cf_ext = _output_ext_for(backend, "per_sim_conduit_flow")
+    ep_ext = _output_ext_for(backend, "per_sim_event_page")
     pas_ext = _output_ext_for(backend, "per_analysis_summary")
     assert (plots_dir / f"system_overview{so_ext}").exists()
     assert (plots_dir / "per_analysis" / f"summary_table{pas_ext}").exists()
     for event_iloc in analysis.df_sims.index:
         ev = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
         from hhemt.scenario import compute_event_id_slug
+
         event_id = compute_event_id_slug(ev)
         # ADR-2: figures carry the canonical plot ID as their stem
-        # (peak_flood_depth__evt.{event_id}); the manifest carries the same id as
-        # a first-class plot_id field, equal to the stem by construction (R2/R4).
+        # (event_page__evt.{event_id}); the manifest carries the same id as a
+        # first-class plot_id field, equal to the stem by construction (R2/R4).
         import json
 
-        pfd_stem = f"peak_flood_depth__evt.{event_id}"
-        cf_stem = f"conduit_flow__evt.{event_id}"
-        assert (plots_dir / "per_sim" / event_id / f"{pfd_stem}{pfd_ext}").exists()
-        assert (plots_dir / "per_sim" / event_id / f"{cf_stem}{cf_ext}").exists()
-        pfd_manifest = json.loads(
-            (plots_dir / "per_sim" / event_id / f"{pfd_stem}.manifest.json").read_text()
-        )
-        assert pfd_manifest["plot_id"] == pfd_stem
+        ep_stem = f"event_page__evt.{event_id}"
+        ep_dir = plots_dir / "per_sim" / event_id
+        assert (ep_dir / f"{ep_stem}{ep_ext}").exists()
+        ep_manifest = json.loads((ep_dir / f"{ep_stem}.manifest.json").read_text())
+        assert ep_manifest["plot_id"] == ep_stem
+        # The composite RETIRED the two separately-addressable per-sim figures on
+        # the NON-SENSITIVITY path: per_sim_event_page.render calls both builders
+        # in-process and writes exactly ONE output. Asserting their ABSENCE pins the
+        # retirement itself, so a partial revert that re-emits them fails here
+        # instead of silently restoring a two-manifest shape the rule_all / bundle
+        # enumeration no longer knows about. (The per-member sensitivity path still
+        # emits both files; that path is exercised in test_synth_05.)
+        for _retired in ("peak_flood_depth", "conduit_flow"):
+            assert not list(ep_dir.glob(f"{_retired}__evt.*")), (
+                f"{_retired} re-emitted as a standalone per-sim figure; the composite "
+                f"event_page is the sole non-sensitivity per-sim output"
+            )
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
@@ -605,8 +617,30 @@ def test_render_report_idempotent(synth_multi_sim_analysis_cached):
     assert second_html == first_html
     assert elapsed < 30  # generous bound for R11 design target
     plots_dir = analysis.analysis_paths.analysis_dir / "plots"
-    for plot in plots_dir.rglob("*.png"):
-        assert plot.stat().st_mtime <= t0 + 1  # 1s clock-skew grace
+    # R11's PROPERTY: a re-render must not re-execute the rules that produce the
+    # figures, so no figure-output mtime may move across the second render_report().
+    #
+    # This guard globbed "*.png" from 8a9410ae (2026-05-02) until 2026-08-27 and was
+    # VACUOUS for most of that span: report.interactive.static_backend defaults to
+    # "plotly", whose renderers emit .html/.svg, so the population was measured at
+    # 0 png / 10 html / 1 svg and the loop body never ran. A default flip in
+    # config/report.py silently emptied an assertion's population in this file, and
+    # nothing reported it -- the disclosed-denominator class (Gotcha 71(d)): a loop
+    # over an empty set is indistinguishable from one that checked everything.
+    #
+    # The non-emptiness assert is the load-bearing half. Without it this guard
+    # re-dies silently on the next extension change; with it, the same change fails
+    # LOUDLY here instead. Do not "simplify" it away, and do not narrow the suffix
+    # set to whichever backend is current -- both restore the original defect.
+    checked = [p for p in plots_dir.rglob("*") if p.suffix in {".png", ".svg", ".html"}]
+    assert checked, (
+        f"R11 mtime guard globbed an EMPTY population under {plots_dir}; the figure "
+        f"extension set has drifted and this assertion is no longer checking anything"
+    )
+    for plot in checked:
+        assert plot.stat().st_mtime <= t0 + 1, (  # 1s clock-skew grace
+            f"R11 VIOLATED: {plot.name} mtime moved during render_report()"
+        )
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
@@ -640,8 +674,7 @@ def test_synth_render_report_interactive_html(synth_multi_sim_analysis_cached):
         html,
     )
     assert len(data_uris) >= 6, (
-        f"Expected >= 6 data:text/html figure URIs, got {len(data_uris)}: "
-        f"{[name for name, _ in data_uris]}"
+        f"Expected >= 6 data:text/html figure URIs, got {len(data_uris)}: {[name for name, _ in data_uris]}"
     )
     marker_hits = 0
     for _name, payload in data_uris:
@@ -649,20 +682,15 @@ def test_synth_render_report_interactive_html(synth_multi_sim_analysis_cached):
         if ("Plotly.newPlot" in inner) or ("new Tabulator" in inner):
             marker_hits += 1
     assert marker_hits >= 6, (
-        f"Expected >= 6 figures with Plotly/Tabulator markers in decoded "
-        f"payload, got {marker_hits} of {len(data_uris)}"
+        f"Expected >= 6 figures with Plotly/Tabulator markers in decoded payload, got {marker_hits} of {len(data_uris)}"
     )
 
     plots_dir = analysis.analysis_paths.analysis_dir / "plots"
     html_files = list(plots_dir.rglob("*.html"))
     per_figure_max = max((p.stat().st_size for p in html_files), default=0)
     total = sum(p.stat().st_size for p in html_files)
-    assert per_figure_max < 5_000_000, (
-        f"Per-figure max {per_figure_max / 1e6:.1f} MB exceeds 5 MB budget"
-    )
-    assert total < 15_000_000, (
-        f"Total plots/*.html {total / 1e6:.1f} MB exceeds 15 MB budget"
-    )
+    assert per_figure_max < 5_000_000, f"Per-figure max {per_figure_max / 1e6:.1f} MB exceeds 5 MB budget"
+    assert total < 15_000_000, f"Total plots/*.html {total / 1e6:.1f} MB exceeds 15 MB budget"
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
@@ -787,6 +815,7 @@ def test_cleanup_stale_metadata_auto_applies_after_rule_rename(
     orphan_paths = analysis._enumerate_stale_metadata_paths()
     assert "plots/system_overview.png" in orphan_paths
     from hhemt.scenario import compute_event_id_slug
+
     for event_iloc in analysis.df_sims.index:
         ev = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
         event_id = compute_event_id_slug(ev)
@@ -802,15 +831,23 @@ def test_cleanup_stale_metadata_auto_applies_after_rule_rename(
     metadata_dir = analysis.analysis_paths.analysis_dir / ".snakemake" / "metadata"
     metadata_dir.mkdir(parents=True, exist_ok=True)
 
-    # Gate fires with cleanup_stale_metadata=True (default).
+    # Gate fires with cleanup_stale_metadata=True (default) on a real (non-dry) run.
     with (
         patch.object(analysis, "_invoke_snakemake_cleanup_metadata") as mock_inv,
         patch.object(analysis, "submit_workflow"),
     ):
-        analysis.run(cleanup_stale_metadata=True, dry_run=True, verbose=False)
+        analysis.run(cleanup_stale_metadata=True, dry_run=False, verbose=False)
     mock_inv.assert_called_once()
     called_paths = mock_inv.call_args[0][0]
     assert called_paths == orphan_paths
+
+    # Under dry_run the gate reports and deletes nothing: the cleanup is not invoked.
+    with (
+        patch.object(analysis, "_invoke_snakemake_cleanup_metadata") as mock_inv_dry,
+        patch.object(analysis, "submit_workflow"),
+    ):
+        analysis.run(cleanup_stale_metadata=True, dry_run=True, verbose=False)
+    mock_inv_dry.assert_not_called()
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
@@ -826,7 +863,7 @@ def test_cleanup_stale_metadata_disabled_skips_invocation(
         patch.object(analysis, "_invoke_snakemake_cleanup_metadata") as mock_inv,
         patch.object(analysis, "submit_workflow"),
     ):
-        analysis.run(cleanup_stale_metadata=False, dry_run=True, verbose=False)
+        analysis.run(cleanup_stale_metadata=False, dry_run=False, verbose=False)
     mock_inv.assert_not_called()
 
 
@@ -861,11 +898,7 @@ def test_scenario_status_csv_disk_utilization_column(synth_multi_sim_analysis_ca
         )
 
     # At least one row should have a non-empty integer-valued cell.
-    int_cells = [
-        r["disk_utilization_bytes"]
-        for r in rows
-        if r.get("disk_utilization_bytes") not in ("", None)
-    ]
+    int_cells = [r["disk_utilization_bytes"] for r in rows if r.get("disk_utilization_bytes") not in ("", None)]
     assert int_cells, "All disk_utilization_bytes cells were empty"
     for cell in int_cells:
         assert int(cell) >= 0
@@ -887,6 +920,7 @@ def test_render_report_includes_disk_utilization_card(synth_multi_sim_analysis_c
 
     plots_dir = analysis.analysis_paths.analysis_dir / "plots"
     from hhemt.workflow import _output_ext_for
+
     backend = analysis._workflow_builder._get_report_cfg_static_backend()
     du_ext = _output_ext_for(backend, "disk_utilization")
     du_path = plots_dir / f"disk_utilization{du_ext}"
@@ -895,7 +929,7 @@ def test_render_report_includes_disk_utilization_card(synth_multi_sim_analysis_c
     # Either the populated table or the missing-sentinel banner is a valid
     # rendered output (both are emitted by the same renderer). On a
     # successful end-to-end run the analysis-level sentinel must be present.
-    assert "du-table" in du_html, (
+    assert 'id="disk-utilization"' in du_html, (
         f"Disk Utilization card did not render the populated table; got: {du_html[:200]!r}"
     )
 
@@ -922,7 +956,7 @@ def test_slurm_config_reads_hpc_system_config(synth_multi_sim_analysis, tmp_path
     hpc_yaml.write_text(
         _yaml.safe_dump(
             {
-                "system_name": "synth-cluster",
+                "hpc_name": "synth-cluster",
                 "default_account": "synth_acct",
                 "gpu_allocation_flavor": "gres",
                 "max_concurrent_jobs": 4,
@@ -1062,9 +1096,7 @@ def test_render_survives_missing_backing_file(
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_errors_and_warnings_declares_exactly_validation_report(
-    synth_multi_sim_analysis_cached, tmp_path
-):
+def test_errors_and_warnings_declares_exactly_validation_report(synth_multi_sim_analysis_cached, tmp_path):
     """Option D (Class-Y resolution) core regression guard: errors_and_warnings
     reads ONLY the persisted ``validation_report.json`` — NOT validate_analysis()'s
     whole-analysis-tree surface — so its declared source set is EXACTLY
@@ -1092,3 +1124,126 @@ def test_errors_and_warnings_declares_exactly_validation_report(
         "errors_and_warnings must declare EXACTLY validation_report.json under the "
         f"Option D Class-Y resolution (no validate_analysis() whole-tree read); got {declared}"
     )
+
+
+def test_generated_snakefile_plans_no_rule_for_a_removed_event(synth_multi_sim_analysis):
+    """Compile tier (Rivanna). Property: with one event's record ``done`` the production Snakefile leaves it out of
+    ``SIM_IDS`` and keeps it in ``REPORT_EVENT_IDS``; with the record ``pending`` the same (and nothing is deleted at
+    generation); with the record ``superseded`` it is back in ``SIM_IDS``. Class: NEW CAPABILITY.
+    Wrong implementation: filter on directory presence. Control: with no record every event is in both lists.
+    """
+    import ast
+
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.scenario_records import write_scenario_record
+
+    analysis = synth_multi_sim_analysis
+    analysis_dir = analysis.analysis_paths.analysis_dir
+    events = [
+        compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(i))
+        for i in range(len(analysis.df_sims))
+    ]
+
+    def lists():
+        text = analysis._workflow_builder.generate_snakefile_content(
+            process_system_level_inputs=True, run_setup_phase=True, prepare_scenarios=True, process_timeseries=True
+        )
+        found = {}
+        for line in text.splitlines():
+            for name in ("SIM_IDS", "REPORT_EVENT_IDS"):
+                if line.startswith(f"{name} = "):
+                    found[name] = ast.literal_eval(line.split(" = ", 1)[1])
+        return found
+
+    assert lists() == {"SIM_IDS": events, "REPORT_EVENT_IDS": events}  # control
+    sims_before = sorted(p.name for p in (analysis_dir / "sims").iterdir())
+    for state, in_sim in (("done", False), ("pending", False), ("superseded", True)):
+        write_scenario_record(analysis_dir, events[0], {"state": state})
+        got = lists()
+        assert (events[0] in got["SIM_IDS"]) is in_sim
+        assert got["REPORT_EVENT_IDS"] == events
+    assert sorted(p.name for p in (analysis_dir / "sims").iterdir()) == sims_before
+
+
+@pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_completed_default_run_leaves_no_scenario_directory_and_replans_nothing(synth_multi_sim_new_defaults_analysis):
+    """Compile tier (Rivanna; NOT run on the laptop). Property: after a completed run with the package defaults for
+    consolidation, clearing, ``clear_raw`` and ``remove_after_processing``, no child remains under ``sims/``, and a
+    second invocation's dry run plans zero jobs and creates no directory under ``sims/``. The fixture undoes the
+    synthetic factory's pinned old values and leaves the clearing switch unset (it resolves to the consolidation
+    toggle). Must-fire control, owed to the same Rivanna run: the pinned fixture (``synth_multi_sim_analysis``) with
+    ``clear_raw: none`` leaves one directory per event.
+    """
+    analysis = synth_multi_sim_new_defaults_analysis
+    sims = analysis.analysis_paths.simulation_directory
+    result = analysis.run(execution_mode="local", from_scratch=True, verbose=False)
+    assert result.success, result.message
+    assert [p for p in sims.iterdir()] == [], "a completed default run must leave no scenario directory"
+    dry = analysis.submit_workflow(mode="local", dry_run=True, verbose=False)
+    assert dry["success"], dry["message"]
+    # The plan is read from the dry run's own log. An empty job set alone is also what an empty or foreign-format log
+    # parses to, so the log must additionally be recognised as a Snakemake plan: it says nothing is left to do, or its
+    # job-statistics table totals zero.
+    log_lines = Path(dry["snakemake_logfile"]).read_text().splitlines()
+    assert job_names_from_log(log_lines) == frozenset(), "a completed default run must replan no job"
+    assert any("Nothing to be done" in line for line in log_lines) or stats_total(log_lines) == 0, (
+        "the dry-run log is not a recognised Snakemake plan"
+    )
+    assert [p for p in sims.iterdir()] == []
+
+
+@pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_export_scenario_status_is_read_only_against_a_removed_analysis(synth_multi_sim_new_defaults_analysis):
+    """Compile tier (Rivanna; NOT run on the laptop). Property: ``export_scenario_status.main`` run against an analysis
+    whose scenarios were removed by a completed run with the package defaults returns one row per event and model with
+    ``run_completed`` as captured, and creates no path under ``sims/`` (a before/after walk). Class: NEW CAPABILITY.
+    The analysis is run first, so its scenario directories are removed before the walk.
+    """
+    from unittest import mock
+
+    from hhemt import export_scenario_status as ess
+
+    analysis = synth_multi_sim_new_defaults_analysis
+    sims = analysis.analysis_paths.simulation_directory
+    result = analysis.run(execution_mode="local", from_scratch=True, verbose=False)
+    assert result.success, result.message
+    assert [p for p in sims.iterdir()] == [], "precondition: the completed default run removed every scenario"
+    before = sorted(str(p) for p in sims.rglob("*"))
+    argv = [
+        "export_scenario_status",
+        "--analysis-config",
+        str(analysis.analysis_config_yaml),
+        "--system-config",
+        str(analysis._system.system_config_yaml),
+    ]
+    with mock.patch("sys.argv", argv):
+        ess.main()
+    assert sorted(str(p) for p in sims.rglob("*")) == before
+    csv = analysis.analysis_paths.analysis_dir / "scenario_status.csv"
+    assert csv.exists() and len(csv.read_text().splitlines()) > 1
+
+
+@pytest.fixture
+def synth_multi_sim_new_defaults_analysis(tmp_path, monkeypatch):
+    """The synthetic multi-sim analysis built with the package defaults for consolidation, ``clear_raw`` and
+    ``remove_after_processing`` instead of the factory's pinned old values.
+
+    The shared synthetic factory pins ``toggle_consolidate_timeseries: False``, ``clear_raw: "none"`` and
+    ``remove_after_processing: "none"`` so that tests reading per-scenario stores keep their meaning; a row that
+    asserts what a run with nothing configured leaves behind must undo the pin. The clearing switch is left unset, so
+    it resolves to the consolidation toggle. The tree is built under ``tmp_path`` so the wipe cannot touch the shared
+    synthetic cache."""
+    monkeypatch.setenv(_TEST_RUNS_ROOT_OVERRIDE_ENV, str(tmp_path))
+    case = retrieve_synth_TRITON_SWMM_test_case(
+        analysis_name="synth_multi_sim",
+        n_events=3,
+        start_from_scratch=True,
+        additional_analysis_configs={
+            "toggle_consolidate_timeseries": True,
+            "clear_raw": "all",
+            "remove_after_processing": "all",
+        },
+    )
+    return case.analysis

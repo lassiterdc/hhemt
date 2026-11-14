@@ -1,0 +1,7 @@
+source: src/hhemt/eda/_plotting.py
+entries:
+- rule: retired_word
+  string: compute_config
+  status: permitted
+  reason: dimension name of the stored eda/raw_byte_identity.zarr, read back by key; not printed on a page
+  count: 6

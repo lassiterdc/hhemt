@@ -1,44 +1,45 @@
 """
 Test suite for SWMM output parser refactoring.
 
-This module verifies that refactored code produces identical outputs to the
-reference data stored in test_data/swmm_refactoring_reference/.
+This module verifies that the parser produces the series of the reference data stored in
+test_data/swmm_refactoring_reference/. The reference stores were written when the coupled family's series were read
+from the text report, which prints every value rounded to three decimals; the parser now reads every series from the
+binary output (``hydraulics.out``, one stock SWMM 5.2.4 run of the committed ``hydraulics.inp``, single precision), so
+the comparison tolerance is the report's print rounding (0.0005) and the stores are a reference for the series, not
+for the variables the binary output and the new report tables added.
 
 The tests ensure:
-1. Output equivalence - refactored code produces same results as original
+1. Output equivalence - the series equal the reference within the report's print rounding
 2. Warning suppression - no UnstableSpecificationWarning during execution
 3. Performance - no significant regression in execution time
+
+Every test that needs ``hydraulics.out`` asserts inside its body that the file exists, so while the file is not yet
+committed they FAIL with an assertion that names the missing file and how it is produced, rather than erroring in a
+fixture.
 """
 
-import pytest
-import warnings
-import time
-from pathlib import Path
-import numpy as np
-import xarray as xr
-import pandas as pd
-from importlib.resources import files
-import tests.fixtures.test_case_catalog as cases
-
+import functools
 import tempfile
-from hhemt.utils import write_zarr
+import time
+import warnings
+from importlib.resources import files
+from pathlib import Path
 
-from hhemt.swmm_output_parser import (
-    retrieve_SWMM_outputs_as_datasets,
-    convert_swmm_tdeltas_to_minutes,
-    return_swmm_outputs,
-    return_node_time_series_results_from_rpt,
-    format_rpt_section_into_dataframe,
-    return_data_from_rpt,
-    parse_total_elapsed,
-)
+import numpy as np
+import pandas as pd
+import pytest
+import xarray as xr
+
 from hhemt.constants import (
-    LST_COL_HEADERS_NODE_FLOOD_SUMMARY,
-    LST_COL_HEADERS_NODE_FLOW_SUMMARY,
-    LST_COL_HEADERS_LINK_FLOW_SUMMARY,
     APP_NAME,
 )
-
+from hhemt.swmm_output_parser import (
+    convert_swmm_tdeltas_to_minutes,
+    parse_total_elapsed,
+    retrieve_SWMM_outputs_as_datasets,
+    return_data_from_rpt,
+)
+from hhemt.utils import write_zarr
 
 # =============================================================================
 # Test Configuration
@@ -52,35 +53,35 @@ REFERENCE_DATA_DIR = (
 # Reference files
 REF_INP = REFERENCE_DATA_DIR / "hydraulics.inp"
 REF_HYDRAULICS_RPT = REFERENCE_DATA_DIR / "hydraulics.rpt"
+#: The binary reference lives in its own directory because the report above came from a coupled run that kept no
+#: binary output and cannot be reproduced from the model file. ``test_data/swmm_binary_reference/`` holds ONE stock
+#: SWMM run of ``hydraulics.inp`` (``make_reference.py``): its report (which supplies the summary tables), its binary
+#: output, and the series stores below, which the report reader that preceded the binary-output reader wrote from that
+#: same report. The parser reads the report beside the ``.out`` it is given, so this directory's report is the one used.
+BINARY_REFERENCE_DIR = REFERENCE_DATA_DIR.parent / "swmm_binary_reference"
+REF_HYDRAULICS_OUT = BINARY_REFERENCE_DIR / "hydraulics.out"
 
 # Reference zarr outputs
-REF_LINK_TSERIES_ZARR = REFERENCE_DATA_DIR / "SWMM_link_tseries.zarr"
-REF_NODE_TSERIES_ZARR = REFERENCE_DATA_DIR / "SWMM_node_tseries.zarr"
+REF_LINK_TSERIES_ZARR = BINARY_REFERENCE_DIR / "SWMM_link_tseries.zarr"
+REF_NODE_TSERIES_ZARR = BINARY_REFERENCE_DIR / "SWMM_node_tseries.zarr"
 
-# Tolerance for numeric comparisons
-RTOL = 1e-5  # Relative tolerance
-ATOL = 1e-8  # Absolute tolerance
+# Tolerance for numeric comparisons: the reference stores hold the report's three-decimal prints, and the binary
+# output holds the unrounded single-precision value, so a series differs from its print by at most half a unit of the
+# last printed digit (the epsilon absorbs float32-to-float64 conversion).
+RTOL = 0.0
+ATOL = 5e-4 + 1e-6
 
 # Baseline performance (seconds) for retrieve_SWMM_outputs_as_datasets
-# Captured on 2026-01-27 using:
+# Captured on 2026-01-27 using the text-report reader:
 #   ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(REF_INP, REF_HYDRAULICS_RPT)
+# It is the report reader's figure on the coupled report; re-measure it with the binary-output reader
+# (the reader makes one pyswmm call per element and variable, a cost the report's bulk read did not have).
 BASELINE_RETRIEVE_SECONDS = 20.295690
 
 
 # =============================================================================
 # Fixtures
 # =============================================================================
-
-
-@pytest.fixture(scope="module")
-def test_case_analysis():
-    nrflk_multisim_ensemble = (
-        cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-            start_from_scratch=False
-        )
-    )
-    analysis = nrflk_multisim_ensemble.analysis
-    return analysis
 
 
 @pytest.fixture(scope="module")
@@ -132,18 +133,28 @@ def reference_node_tseries():
     return ds_nodes.drop_vars([var for var in drop_vars if var in ds_nodes.data_vars])
 
 
-def wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis):
+def _require_reference_out():
+    """Fail, naming the producing step, while the reference binary output is not committed."""
+    assert REF_HYDRAULICS_OUT.exists(), (
+        f"{REF_HYDRAULICS_OUT} is not committed. Produce it with `python make_reference.py` in "
+        f"{BINARY_REFERENCE_DIR.name}/ (one stock SWMM run of {REF_INP.name}; laptop-runnable)."
+    )
+
+
+def wrap_retrieve_SWMM_outputs_as_datasets():
+    _require_reference_out()
     ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(
         REF_INP,
-        REF_HYDRAULICS_RPT,
+        REF_HYDRAULICS_OUT,
+        family="tritonswmm",
     )
     return ds_nodes, ds_links
 
 
-@pytest.fixture(scope="module")
-def parsed_outputs(test_case_analysis):
-    """Parse SWMM outputs using the current implementation."""
-    ds_nodes, ds_links = wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis)
+@functools.lru_cache(maxsize=1)
+def _parsed_outputs():
+    """Parse the reference run once, write and re-read it through zarr as the pipeline does."""
+    ds_nodes, ds_links = wrap_retrieve_SWMM_outputs_as_datasets()
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
 
@@ -186,6 +197,11 @@ def compare_zarr_datasets(
         (is_equivalent: bool, differences: dict)
     """
     differences = {}
+
+    # The reference holds the variables the report reader produced; the parser now also writes the variables the
+    # binary output and the new report tables add, which a reference store cannot hold, so the comparison is over the
+    # reference's own variables.
+    ds_new = ds_new[[v for v in ds_ref.data_vars if v in ds_new.data_vars]]
 
     # Check dimensions match
     if ds_new.sizes != ds_ref.sizes:
@@ -258,13 +274,9 @@ def compare_zarr_datasets(
             # Compare non-NaN values
             mask = ~ref_nan
             if mask.any():
-                if not np.allclose(
-                    new_vals[mask], ref_vals[mask], rtol=rtol, atol=atol
-                ):
+                if not np.allclose(new_vals[mask], ref_vals[mask], rtol=rtol, atol=atol):
                     max_diff = np.max(np.abs(new_vals[mask] - ref_vals[mask]))
-                    differences[f"var_{var}"] = (
-                        f"numeric values differ (max diff: {max_diff})"
-                    )
+                    differences[f"var_{var}"] = f"numeric values differ (max diff: {max_diff})"
         else:
             # String/object comparison
             try:
@@ -284,17 +296,10 @@ def compare_zarr_datasets(
             except Exception as e:
                 differences[f"var_{var}"] = f"comparison failed: {e}"
 
-    # Check for extra variables in new dataset
-    for var in ds_new.data_vars:
-        if var not in ds_ref.data_vars:
-            differences[f"extra_var_{var}"] = True
-
     return len(differences) == 0, differences
 
 
-def assert_datasets_equivalent(
-    ds_new: xr.Dataset, ds_ref: xr.Dataset, name: str = "dataset"
-):
+def assert_datasets_equivalent(ds_new: xr.Dataset, ds_ref: xr.Dataset, name: str = "dataset"):
     """
     Assert that two datasets are equivalent, with detailed error messages.
 
@@ -322,23 +327,21 @@ def assert_datasets_equivalent(
 class TestOutputEquivalence:
     """Tests to verify refactored output matches reference data."""
 
-    def test_node_timeseries_equivalence(self, parsed_outputs, reference_node_tseries):
-        """Verify node time series output matches reference."""
-        ds_nodes, _ = parsed_outputs
+    def test_node_timeseries_equivalence(self, reference_node_tseries):
+        """Verify node time series output matches reference within the report's print rounding."""
+        ds_nodes, _ = _parsed_outputs()
 
         assert_datasets_equivalent(ds_nodes, reference_node_tseries, "Node time series")
 
-    def test_link_timeseries_equivalence(self, parsed_outputs, reference_link_tseries):
-        """Verify link time series output matches reference."""
-        _, ds_links = parsed_outputs
+    def test_link_timeseries_equivalence(self, reference_link_tseries):
+        """Verify link time series output matches reference within the report's print rounding."""
+        _, ds_links = _parsed_outputs()
 
         assert_datasets_equivalent(ds_links, reference_link_tseries, "Link time series")
 
-    def test_numeric_values_not_nan_where_reference_has_values(
-        self, parsed_outputs, reference_node_tseries, reference_link_tseries
-    ):
+    def test_numeric_values_not_nan_where_reference_has_values(self, reference_node_tseries, reference_link_tseries):
         """Ensure we don't introduce NaN values where reference has valid data."""
-        ds_nodes, ds_links = parsed_outputs
+        ds_nodes, ds_links = _parsed_outputs()
 
         # Check node data
         for var in reference_node_tseries.data_vars:
@@ -354,10 +357,7 @@ class TestOutputEquivalence:
                     invalid_nans = ref_valid & new_nan
                     if invalid_nans.any():
                         count = invalid_nans.sum()
-                        pytest.fail(
-                            f"Node variable '{var}': {count} values became NaN "
-                            f"that were valid in reference"
-                        )
+                        pytest.fail(f"Node variable '{var}': {count} values became NaN that were valid in reference")
 
         # Check link data
         for var in reference_link_tseries.data_vars:
@@ -372,10 +372,38 @@ class TestOutputEquivalence:
                     invalid_nans = ref_valid & new_nan
                     if invalid_nans.any():
                         count = invalid_nans.sum()
-                        pytest.fail(
-                            f"Link variable '{var}': {count} values became NaN "
-                            f"that were valid in reference"
-                        )
+                        pytest.fail(f"Link variable '{var}': {count} values became NaN that were valid in reference")
+
+
+class TestSeriesFromTheBinaryOutput:
+    """The reference model's series, read from its binary output, equal the committed reference stores."""
+
+    def test_the_reference_binary_output_is_committed(self):
+        """Property: ``hydraulics.out`` exists beside the reference report.
+
+        Class: the committed reference files. Why: every equivalence test reads it, and it can only be produced by
+        running stock SWMM once (`make_reference.py`). What kills it: the file not being
+        committed. Second correct implementation: none; this is a presence check.
+        """
+        _require_reference_out()
+
+    def test_series_equal_the_reference_stores_and_a_perturbed_value_fails(self, reference_node_tseries):
+        """Property: the node series read from the binary output equal the reference within 0.0005; one value
+        offset by 0.001 fails the same comparison.
+
+        Class: the four coupled node series. Why: the stores hold the report's three-decimal print and the binary
+        file holds the unrounded value, so the tolerance is the print rounding. What kills it: reading the report
+        instead of the binary file would give differences of exactly zero, which the offset control cannot tell apart,
+        so the compile-tier test checks that at least one value differs. Second correct implementation: comparing
+        through pandas.
+        """
+        ds_nodes, _ = _parsed_outputs()
+        ok, differences = compare_zarr_datasets(ds_nodes, reference_node_tseries)
+        assert ok, differences
+        perturbed = ds_nodes.copy(deep=True)
+        perturbed["depth"].values[0, 0] += 0.001
+        ok, differences = compare_zarr_datasets(perturbed, reference_node_tseries)
+        assert not ok and "var_depth" in differences
 
 
 # =============================================================================
@@ -409,11 +437,10 @@ class TestWarningSuppression:
             write_zarr(ds, output_path, compression_level=5)
 
         assert len(caught_warnings) == 0, (
-            f"Found {len(caught_warnings)} warning(s): "
-            f"{[str(w.message) for w in caught_warnings]}"
+            f"Found {len(caught_warnings)} warning(s): {[str(w.message) for w in caught_warnings]}"
         )
 
-    def test_full_pipeline_no_warnings(self, test_case_analysis):
+    def test_full_pipeline_no_warnings(self):
         """Verify full parsing pipeline produces no warnings."""
         # if not REF_INP.exists() or not REF_HYDRAULICS_RPT.exists():
         #     pytest.skip("Reference input files not found")
@@ -421,11 +448,10 @@ class TestWarningSuppression:
         with warnings.catch_warnings(record=True) as caught_warnings:
             warnings.simplefilter("always")
 
-            wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis)
+            wrap_retrieve_SWMM_outputs_as_datasets()
 
         assert len(caught_warnings) == 0, (
-            f"Found {len(caught_warnings)} warning(s): "
-            f"{[str(w.message) for w in caught_warnings]}"
+            f"Found {len(caught_warnings)} warning(s): {[str(w.message) for w in caught_warnings]}"
         )
 
 
@@ -449,7 +475,7 @@ class TestConvertSwmmTdeltasToMinutes:
         result = convert_swmm_tdeltas_to_minutes(test_input)
 
         assert len(result) == len(expected)
-        for r, e in zip(result, expected):
+        for r, e in zip(result, expected, strict=True):
             assert abs(r - e) < 0.01, f"Expected {e}, got {r}"
 
     def test_handles_nan_values(self):
@@ -475,7 +501,7 @@ class TestConvertSwmmTdeltasToMinutes:
 
         result = convert_swmm_tdeltas_to_minutes(test_input)
 
-        for r, e in zip(result, expected):
+        for r, e in zip(result, expected, strict=True):
             assert abs(r - e) < 0.01
 
 
@@ -518,10 +544,10 @@ class TestPerformance:
     """Tests to ensure no performance regression."""
 
     @pytest.mark.slow
-    def test_retrieve_swmm_outputs_baseline(self, test_case_analysis):
+    def test_retrieve_swmm_outputs_baseline(self):
         """Track retrieve_SWMM_outputs_as_datasets baseline timing across phases."""
         start_time = time.time()
-        wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis)
+        wrap_retrieve_SWMM_outputs_as_datasets()
         elapsed = time.time() - start_time
 
         savings = BASELINE_RETRIEVE_SECONDS - elapsed
@@ -541,9 +567,7 @@ class TestPerformance:
         """Test that vectorized tdelta conversion is fast."""
         # Create large test input
         n = 10000
-        test_input = pd.Series(
-            [f"{i % 10}  {(i % 24):02d}:{(i % 60):02d}" for i in range(n)]
-        )
+        test_input = pd.Series([f"{i % 10}  {(i % 24):02d}:{(i % 60):02d}" for i in range(n)])
 
         start_time = time.time()
         result = convert_swmm_tdeltas_to_minutes(test_input)
@@ -552,21 +576,7 @@ class TestPerformance:
         assert len(result) == n
         # Relaxed timing constraint - current implementation is iterative
         # Will be improved in Phase 1 with vectorization
-        assert (
-            elapsed < 5.0
-        ), f"Conversion of {n} values took {elapsed:.2f}s (should be < 5s)"
-
-
-# =============================================================================
-# Marker Configuration
-# =============================================================================
-
-
-def pytest_configure(config):
-    """Configure custom pytest markers."""
-    config.addinivalue_line(
-        "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
-    )
+        assert elapsed < 5.0, f"Conversion of {n} values took {elapsed:.2f}s (should be < 5s)"
 
 
 # =============================================================================

@@ -1,30 +1,112 @@
 from __future__ import annotations
+
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
+
+import pydantic
 import yaml
-from hhemt.config.system import system_config
+
 from hhemt.config.analysis import analysis_config
 from hhemt.config.brand_theme import brand_theme
 from hhemt.config.globus import GlobusTransferSpec
 from hhemt.config.hpc_system import hpc_system_config
+from hhemt.config.system import system_config
+from hhemt.exceptions import ConfigurationError
 
 _M = TypeVar("_M")
 
+# The document-level LOAD MODE vocabulary. Three values, each a claim that is TRUE OF THE
+# READ and needs no later discharge -- deliberately NOT a value meaning "someone else will
+# check", because a context value cannot enforce that and reads as a guarantee it is not.
+# An obligation lives as an explicit call at the site that owes it (experiments.py's
+# post-download load, and _assert_declared_inputs_exist), never in this vocabulary.
+ExistenceMode = Literal["runnable", "template", "metadata"]
+EXISTENCE_CONTEXT_KEY = "existence"
 
-def _load_config(cfg_yaml: Path, model_cls: type[_M]) -> _M:
-    raw = yaml.safe_load(cfg_yaml.read_text())
+
+def _node_local_roots() -> set[Path]:
+    """The roots whose contents a compute node cannot be assumed to share with the login node.
+
+    ``gettempdir()`` is resolved at call time because under SLURM it can be a per-job directory.
+    """
+    import tempfile
+
+    return {Path(tempfile.gettempdir()).resolve(), Path("/tmp"), Path("/var/tmp")}
+
+
+def _missing_config_message(cfg_yaml: Path, exc: FileNotFoundError) -> str:
+    """Explain a missing config path when it sits on a node-local filesystem.
+
+    A LEGIBLE DIAGNOSTIC, never a second guard. The login-node preflight
+    ``validation.assert_configs_visible_cross_node`` refuses the cases it can SEE;
+    it cannot see a path a rule builds at runtime, a caller that reaches a builder
+    without passing a guarded facade, or a run whose operator set the
+    acknowledgement env var. In each of those the rule still dies on a compute
+    node, and it dies naming a path the operator knows exists on the login node --
+    which reads as a broken filesystem rather than a cross-node visibility failure.
+    This does not prevent the death; it explains it.
+
+    Attributed rather than unconditional: appending this to an ordinary typo, whose
+    message is already complete, teaches operators to skim. Roots include ``/tmp``
+    and ``/var/tmp`` beyond ``gettempdir()`` because under SLURM a compute node's
+    ``$TMPDIR`` is often a per-job directory, so ``gettempdir()`` there can return
+    something else entirely while the offending path is still under ``/tmp``.
+    A node-local root that is neither (``/local``, ``/scratch-local``) gets the
+    unaugmented message, which is no worse than the pre-existing behaviour.
+    """
+    resolved = cfg_yaml.resolve()
+    if not any(resolved.is_relative_to(root) for root in _node_local_roots()):
+        return str(exc)
+    return (
+        f"{exc}\n"
+        f"This path is on a NODE-LOCAL filesystem. If it exists on the login node but "
+        f"not here, the config was staged where this compute node cannot see it, every "
+        f"rule reading it will fail identically, and the allocation is already spent. "
+        f"Stage on a shared filesystem (e.g. /scratch/$USER/...), or re-run with "
+        f"execution_mode='local'. The login-node preflight that normally refuses this "
+        f"is validation.assert_configs_visible_cross_node; it does not see paths a rule "
+        f"builds at runtime, and it is bypassed by HHEMT_ALLOW_NODE_LOCAL_CONFIGS=1."
+    )
+
+
+def _load_config(cfg_yaml: Path, model_cls: type[_M], *, existence: ExistenceMode = "runnable") -> _M:
+    try:
+        text = cfg_yaml.read_text()
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(_missing_config_message(cfg_yaml, exc)) from exc
+    raw = yaml.safe_load(text)
     if raw is None:
         raise ValueError(
             f"YAML config at {cfg_yaml} parsed to None (file empty or top-level null). "
             "Under high parallel I/O this can indicate a concurrent-write race; "
-            "see sensitivity_analysis.py::_create_sub_analyses."
+            "see sensitivity_analysis.py::_create_members."
         )
-    return model_cls.model_validate(raw)
+    # A schema violation is born HERE with the file it came from. pydantic's own error
+    # names the model and the field but never the path, and the CLI maps ConfigurationError
+    # (exit 2, `Configuration Error`) while a bare ValidationError reached the catch-all.
+    # ONLY the model_validate call is wrapped: the FileNotFoundError and parsed-to-None
+    # branches above keep their classes, which existing tests pin. The `context` argument
+    # is what ARMS cfgBaseModel._check_paths_exist for this document's load mode; dropping
+    # it would re-inert the validator ce2bcc57 exists to arm, and nothing would raise.
+    try:
+        return model_cls.model_validate(raw, context={EXISTENCE_CONTEXT_KEY: existence})
+    except pydantic.ValidationError as exc:
+        raise ConfigurationError(
+            field=cfg_yaml.name,
+            message=f"schema violation: {exc}",
+            config_path=cfg_yaml,
+        ) from exc
 
 
-def yaml_to_model(cfg_yaml: Path, model_cls: type[_M]) -> _M:
-    """Load a YAML file and validate it against a Pydantic model class."""
-    return _load_config(cfg_yaml, model_cls)
+def yaml_to_model(cfg_yaml: Path, model_cls: type[_M], *, existence: ExistenceMode = "runnable") -> _M:
+    """Load a YAML file and validate it against a Pydantic model class.
+
+    ``existence`` is the document-level LOAD MODE (see ``ExistenceMode``). It is
+    keyword-only and defaults to the STRICT intent deliberately: a caller that has not
+    thought about the document's class gets the check, and only a caller that has
+    thought about it can turn it off.
+    """
+    return _load_config(cfg_yaml, model_cls, existence=existence)
 
 
 def load_system_config_from_dict(cfg_dict: dict) -> system_config:

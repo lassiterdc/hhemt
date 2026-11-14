@@ -1,28 +1,32 @@
 # Capabilities
 
-The H&H Ensemble Modeling Toolkit (hhemt) orchestrates coupled TRITON-SWMM flood simulations as embarrassingly-parallel ensembles across local workstations and HPC clusters, using configurable CPU or GPU resources per simulation on both NVIDIA and AMD hardware. It manages the full lifecycle — preprocessing, compilation, execution, and post-processing — producing analysis-ready datasets and an interactive report.
+## Supported experiments
 
-## Three classes of study
+The `toggle_sensitivity_analysis` field of the analysis configuration selects between an **[event ensemble](../reference/glossary.md#event-ensemble)**, whose members are weather events, and a **[sensitivity analysis](../reference/glossary.md#sensitivity-analysis)**, whose members are the rows of a parameter table. A [benchmarking](../reference/glossary.md#benchmarking) experiment is a sensitivity analysis.
 
-From a single codebase, the toolkit makes three classes of study tractable: **model comparison** across TRITON, SWMM, and the coupled TRITON-SWMM; **ensemble flood studies** over many events; and **sensitivity analysis**, including the fully built-out benchmarking study type. A fourth, cross-cutting capability — **hardware portability** — lets any of these run unchanged on CPU or on NVIDIA or AMD GPUs, on a workstation or on HPC.
+```yaml
+toggle_sensitivity_analysis: false  # event ensemble; true selects a sensitivity analysis
+```
 
-## Model comparison across TRITON, SWMM, and coupled TRITON-SWMM
+Both types run the same event through any model type and run unchanged on any supported hardware.
 
-The toolkit compiles and runs any combination of the three model types — TRITON alone, SWMM alone, or the coupled TRITON-SWMM — as independently toggled options, keeping each model's outputs in its own store. Running the same event through more than one model produces a direct intermodel comparison, so you can measure how much the tight two-way coupling between surface flooding and stormwater hydraulics changes results — and decide whether the added cost of coupling is warranted.
+### Ensemble flood studies
 
-## Ensemble flood studies
+Simulations run in parallel. Outputs consolidate into hierarchical `DataTree` zarr stores stamped with CF-1.13 conventions, ready for objective-function computation and analysis across the full population of simulated events. Snakemake, the open-source workflow manager, uses the allocated resources and skips completed work, so re-running an analysis repeats only the steps whose inputs changed or whose outputs are missing.
 
-The toolkit parallelizes simulations rather than running them in sequence, so large ensembles of events — for flood studies and uncertainty assessment — are tractable. Outputs consolidate into hierarchical `DataTree` zarr stores stamped with CF-1.13 conventions, ready for objective-function computation and analysis across the full population of simulated events. Snakemake, the open-source workflow manager, maximizes utilization of the allocated resources and skips work that has already completed, so re-running an analysis never repeats finished steps.
+### Sensitivity analysis
+
+A parameter table turns each row into a [member](../reference/glossary.md#member), a separate analysis. A sensitivity analysis can vary the SWMM hydraulic model, Manning's roughness, the grid resolution, the compute configuration, and other inputs. [Benchmarking](../reference/glossary.md#benchmarking) produces a report with standard verification metrics and hydraulic-output visualizations, plus benchmarking-specific figures for run time, compute cost, and strong-scaling speedup. A benchmarking experiment on your own machine or HPC system finds the compute configuration that best fits your hardware and the system you intend to simulate.
+
+### Inter-model comparison
+
+The toolkit compiles and runs any combination of TRITON alone, SWMM alone, and the coupled TRITON-SWMM as independently toggled options, and keeps the outputs of each model in a separate store. Running the same event through more than one model gives a direct comparison. The comparison measures how much the bidirectional coupling between surface flooding and stormwater hydraulics changes results and shows whether coupling justifies the added cost.
 
 ## Hardware portability
 
-GPU code compiles against either the CUDA (NVIDIA) or HIP/ROCm (AMD) backend, selected through configuration YAML files; CPU-only execution is also supported. The toolkit runs on both ORNL's Frontier (AMD) and UVA's Rivanna (NVIDIA), which both use the SLURM scheduler. It can run a large ensemble as one big SLURM allocation (typical on Frontier) or as a batch of many fit-to-purpose SLURM jobs, one per workflow step (typical on Rivanna).
-
-## Sensitivity analysis and benchmarking
-
-A parameter table you provide turns each row into a modeled scenario, so almost any input can be varied across a study — the SWMM hydraulic model, Manning's roughness, the grid resolution, and the compute configuration among them. Benchmarking is the first fully built-out sensitivity-analysis type: it produces a report with standard verification metrics and hydraulic-output visualizations, plus benchmarking-specific figures for run time, compute cost, and strong-scaling speedup. Run a benchmarking study on your own machine or HPC system to find the compute configuration that best fits your hardware and the system you intend to simulate.
+GPU code compiles against the CUDA backend for NVIDIA or the HIP/ROCm backend for AMD, selected through configuration YAML files. CPU-only execution is also supported. The toolkit runs on SLURM clusters with AMD GPUs and on SLURM clusters with NVIDIA GPUs. A large ensemble runs as one big SLURM allocation through `multi_sim_run_method: 1_job_many_srun_tasks`, or as a batch of many fit-to-purpose SLURM jobs, one per workflow step, through `multi_sim_run_method: batch_job`.
 
 ## See also
 
-- [Quickstart](../tutorials/quickstart.md) — try it.
-- [Example interactive report](../reference/example-report.md) — see a rendered report.
+- The [Quickstart](../quickstart.md) starts a first simulation.
+- The [example interactive report](../reference/example-report.md) shows a rendered report.

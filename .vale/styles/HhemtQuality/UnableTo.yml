@@ -1,0 +1,8 @@
+# 'is unable to' is a longer form of 'cannot', which BanCannot rejects.
+extends: existence
+message: "Replace '%s' with a verb that states the limit, such as 'refuses', 'stops' or 'needs'."
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\b(?:(?:is|are|was|were|be)\s+)?(?:un|not\s+)able\s+to\b'

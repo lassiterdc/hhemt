@@ -28,6 +28,7 @@ from typing import Literal
 
 import yaml
 
+from hhemt.report_plot_ids import LABEL_GLOBALS_BLOCK
 from hhemt.workflow import (
     RuleEmissionContext,
     RuleSpec,
@@ -61,7 +62,9 @@ def generate_regeneration_snakefile(
         cfg_analysis=cfg_analysis,
     )
     preamble = _build_preamble()
-    config_block = _build_config_block(cfg_analysis=cfg_analysis, is_sensitivity=is_sensitivity)
+    config_block = _build_config_block(
+        cfg_analysis=cfg_analysis, is_sensitivity=is_sensitivity, bundle_root=bundle_root
+    )
     report_directive = 'report: "report/workflow_description.rst"\n'
 
     plot_output_paths = tuple(
@@ -78,7 +81,13 @@ def generate_regeneration_snakefile(
         render_report_targets=render_report_targets,
         ctx=ctx,
     )
-    plot_rule_blocks = "".join(_emit_plot_rule(spec, ctx) for spec in rule_specs)
+    refused = _rule_names_declaring_omitted_zarrs(bundle_root, rule_specs)
+    plot_rule_blocks = "".join(
+        _refuse_rule_shell(_emit_plot_rule(spec, ctx), refused[spec.rule_name])
+        if spec.rule_name in refused
+        else _emit_plot_rule(spec, ctx)
+        for spec in rule_specs
+    )
     render_report_block = _emit_render_report_rule(
         plot_output_paths=plot_output_paths,
         ctx=ctx,
@@ -114,6 +123,99 @@ def write_regeneration_snakefile(
     return out
 
 
+def _omitted_output_zarrs(bundle_root: Path) -> list[str]:
+    """The stores ``emit_bundle(omit_output_zarrs=True)`` left out, read from the bundle's own
+    ``bundle_manifest.json`` (``omitted_output_zarrs``). ``[]`` when the manifest is absent,
+    unreadable, or lacks the key -- a default bundle, for which nothing here changes."""
+    from hhemt.version_migration.constants import BUNDLE_MANIFEST_FILENAME
+
+    manifest = bundle_root / BUNDLE_MANIFEST_FILENAME
+    if not manifest.is_file():
+        return []
+    try:
+        return list(json.loads(manifest.read_text()).get("omitted_output_zarrs", []) or [])
+    except (OSError, ValueError):
+        return []
+
+
+def _rule_names_declaring_omitted_zarrs(bundle_root: Path, rule_specs: tuple[RuleSpec, ...]) -> dict[str, list[str]]:
+    """Map each rule name whose figure family declared an omitted store IN FULL to those stores.
+
+    A rule re-run inside a bundle that omitted a store would open it for data and read the
+    array's FILL VALUE rather than raise (measured, zarr 3.1.5), drawing a figure of fill
+    values without an error; the rule therefore refuses instead. A sidecar that qualifies the
+    store metadata-only is not a full declarant. The match is by sidecar stem (the rule's
+    ``output_path_template`` with ``__OUTPUT_EXT__`` read as ``.manifest.json``, wildcards
+    globbed), so a rule is refused when ANY sidecar of its family declares an omitted store in
+    full. Empty when no store was omitted, so a default bundle's Snakefile is unchanged.
+    """
+    import re as _re
+
+    from hhemt.report_renderers._figure_emission import _iter_manifest_declarations
+
+    omitted = _omitted_output_zarrs(bundle_root)
+    plots_dir = bundle_root / "plots"
+    if not omitted or not plots_dir.is_dir():
+        return {}
+    root_resolved = bundle_root.resolve()
+    omitted_by_resolved = {(bundle_root / store).resolve(): store for store in omitted}
+    full_declarants: dict[str, set[str]] = {}
+    for stem, declared, qualified in _iter_manifest_declarations(plots_dir, bundle_root):
+        for path in set(declared) - qualified:
+            # A declaration outside the bundle root keeps its emit-time spelling in the sidecar
+            # (``../outside/x.zarr``) while the emit carried the store as ``external/{name}``
+            # (``_emit._source_rel``), so it is matched through that entry as well.
+            candidates = [path]
+            if not path.is_relative_to(root_resolved):
+                candidates.append((root_resolved / "external" / path.name).resolve())
+            for candidate in candidates:
+                if candidate in omitted_by_resolved:
+                    full_declarants.setdefault(stem, set()).add(omitted_by_resolved[candidate])
+    out: dict[str, list[str]] = {}
+    for spec in rule_specs:
+        glob_pat = _re.sub(r"\{[^{}]+\}", "*", spec.output_path_template.replace("__OUTPUT_EXT__", ".manifest.json"))
+        stores: set[str] = set()
+        for sidecar in bundle_root.glob(glob_pat):
+            stores |= full_declarants.get(sidecar.name.removesuffix(".manifest.json"), set())
+        if stores:
+            out[spec.rule_name] = sorted(stores)
+    return out
+
+
+def _refuse_rule_shell(rule_block: str, stores: list[str]) -> str:
+    """Replace a plot rule's ``shell:`` body with a refusal that exits non-zero.
+
+    The message names ``--omit-output-zarrs`` and each omitted store. It carries no ``{`` or
+    ``}`` (Snakemake formats the shell string) and no single quote (it sits in single quotes).
+    """
+    head, sep, _tail = rule_block.partition('    shell:\n        """\n')
+    assert sep, "plot rule block has no shell section to replace"
+    message = (
+        "REFUSED: this bundle was emitted with --omit-output-zarrs, so the store(s) "
+        + ", ".join(stores)
+        + " carry no chunk data and this figure would be drawn from fill values. "
+        "Re-emit the bundle without --omit-output-zarrs to re-render it."
+    )
+    return head + sep + f"        echo '{message}' >&2\n        exit 1\n" + '        """\n'
+
+
+def _bundle_arm_label(bundle_root: Path) -> str:
+    """The benchmarking arm label, read from the bundle's own cfg_system.yaml.
+
+    Reads the same REQUIRED `toggle_*_model` fields this module already reads for
+    `has_swmm_link_outputs` (see the predicate-evaluation comment below), so it inherits
+    that argued safety property: absence of those fields is impossible, which is what
+    makes reading them here admissible where reading an OPTIONAL cfg_analysis key would
+    not be. A missing cfg_system.yaml yields "", which the emitter turns into a dropped
+    label key rather than an empty facet value.
+    """
+    from hhemt.report_renderers._model_arms import arm_label
+
+    _sys_path = bundle_root / "cfg_system.yaml"
+    _cfg = (yaml.safe_load(_sys_path.read_text()) if _sys_path.is_file() else {}) or {}
+    return arm_label([m for m in ("tritonswmm", "triton", "swmm") if _cfg.get(f"toggle_{m}_model")])
+
+
 def _make_rule_emission_context(
     *,
     bundle_root: Path,
@@ -129,6 +231,7 @@ def _make_rule_emission_context(
         python_executable="python",
         log_dir_rel="_logs",
         conda_env_path="",
+        model_arm=_bundle_arm_label(bundle_root),
         config_args_str=("--system-config cfg_system.yaml \\\n            --analysis-config cfg_analysis.yaml"),
         is_sensitivity=is_sensitivity,
         static_backend=static_backend,
@@ -155,29 +258,97 @@ def _harvest_rule_specs(
     paths are glob-expanded downstream) and input_flags=() (regeneration-scoped --
     the bundle carries no _status/*.flag inputs).
 
-    is_sensitivity selects the shipped set, mirroring
-    config.report.resolve_active_reporting_set_name for reporting_set="default"
-    (default -> benchmarking when sensitivity, else the standard set).
+    The active set NAME is read from cfg_analysis["report"]["reporting_set"] and
+    resolved through config.report.resolve_reporting_set_names -- the shared
+    sentinel-plus-validation helper that config.report's own config-object
+    resolver wraps. The value may be one name or a LIST of names, and a bundle's
+    cfg_analysis.yaml is dumped from the VALIDATED model, so this site receives a
+    list even when the source config was written with a bare string. A
+    non-"default" name is taken verbatim (so a "dem_resolution" bundle regenerates
+    the DEM set); the "default" sentinel and an absent or empty field resolve to
+    "benchmarking" when is_sensitivity else the standard set; an unknown name
+    raises a field-named ConfigurationError.
     """
-    from hhemt.report_renderers._reporting_sets import get_reporting_set
+    from hhemt.config.report import resolve_reporting_set_names
+    from hhemt.report_renderers._reporting_sets import (
+        compose_reporting_sets,
+        renderer_active,
+    )
 
-    active_set = get_reporting_set("benchmarking" if is_sensitivity else "default")
+    # Read the active reporting-set selection from config rather than hardcoding
+    # the default→benchmarking/default resolution: a bundle whose source run
+    # selected a non-default set (e.g. "compute_sensitivity") must regenerate the
+    # SAME renderer set the source side emitted, or the bundle Snakefile diverges
+    # from the source Snakefile. Resolution DELEGATES to
+    # config.report.resolve_reporting_set_names -- the single implementation the
+    # config-object resolver also wraps -- rather than reimplementing the sentinel
+    # rule here. Delegating is what keeps the bundle path's VALIDATION: the helper
+    # raises a field-named ConfigurationError on an unknown set, whereas a
+    # hand-inlined sentinel followed by the bare get_reporting_set accessor
+    # surfaces a typo'd reporting_set as an opaque KeyError.
+    _report = (cfg_analysis or {}).get("report") or {}
+    active_set = compose_reporting_sets(
+        resolve_reporting_set_names(
+            _report.get("reporting_set"),
+            is_sensitivity=is_sensitivity,
+        )
+    )
+    # Phase 3: per-plot disable. Filtering the harvest's renderer_selection drops
+    # the renderer's RuleSpec(s), which in turn drops its plot_output_paths from
+    # BOTH rule all and render_report (both derive from rule_specs in
+    # generate_regeneration_snakefile), so the bundle stays in emission/enumeration
+    # lockstep in one place.
+    _disabled = _report.get("disabled_renderers") or []
+
+    # Predicate gates, BOTH fields. The registry declares predicate_key at two levels —
+    # RendererSelection.predicate_key (whole selection) and RuleSpecTemplate.predicate_key
+    # (one figure within a selection) — and the SOURCE-side dispatcher honours both.
+    # Without the same gates here the bundle Snakefile carries rules its own source
+    # Snakefile never had, and those figure families then glob-expand to nothing.
+    #
+    # ONLY a predicate whose backing field CANNOT be absent may be evaluated. That is the
+    # whole rule, and it admits exactly one key today: has_swmm_link_outputs reads the
+    # toggle_*_model fields, which are REQUIRED, so absence is impossible.
+    #
+    # Every other predicate reads an OPTIONAL cfg_analysis key — eda.enabled_plots,
+    # clear_raw, independent_vars, n_members — and for those, absence is
+    # indistinguishable from false. Reading an absent field as false converts a missing
+    # RECORD into a positive gating DECISION, which silently drops a figure family that is
+    # present on disk. Measured: the checked-in sensitivity_master fixture carries no `eda`
+    # block, so evaluating has_eda_artifact gates out the EDA selection and reintroduces
+    # the exact silent omission tests/test_bundle_snakefile_generator.py already guards.
+    # Unlisted keys therefore fail OPEN via the .get(..., True) default below, and the
+    # on-disk glob plus _expand_wildcards_to_existing_files' omission handles those
+    # families instead.
+    _sys_path = bundle_root / "cfg_system.yaml"
+    _cfg_system = yaml.safe_load(_sys_path.read_text()) if _sys_path.is_file() else {}
+    _predicate_inputs = {
+        "has_swmm_link_outputs": bool(
+            (_cfg_system or {}).get("toggle_tritonswmm_model") or (_cfg_system or {}).get("toggle_swmm_model")
+        ),
+    }
+
+    def _predicate_passes(key: str | None) -> bool:
+        """True when `key` is absent, unlisted (fail-open), or evaluates True."""
+        return key is None or bool(_predicate_inputs.get(key, True))
 
     specs: list[RuleSpec] = []
     for sel in active_set.renderer_selection:
+        if not renderer_active(sel.builder_key, _disabled):
+            continue
+        if not _predicate_passes(sel.predicate_key):
+            continue
         for tmpl in sel.rule_spec_template:
-            if tmpl.wildcards:
-                source_paths: tuple[str, ...] = ()
-            else:
-                sidecar = bundle_root / tmpl.output_path_template.replace("__OUTPUT_EXT__", ".manifest.json")
-                source_paths = tuple(_load_source_paths(sidecar))
+            if not _predicate_passes(tmpl.predicate_key):
+                continue
             specs.append(
                 RuleSpec(
                     rule_name=tmpl.rule_name,
                     renderer_module=tmpl.renderer_module,
                     input_flags=(),  # bundle-side regen-only: no status flag input
                     output_path_template=tmpl.output_path_template,
-                    source_paths=source_paths,
+                    source_paths=(),
+                    sources_from_manifest=True,
                     wildcards=tmpl.wildcards,
                     extra_cli_flags=(),
                     extra_params=(),
@@ -218,28 +389,59 @@ def _build_preamble() -> str:
         "    from importlib.metadata import version as _pkg_version\n"
         '    _toolkit_version = _pkg_version("hhemt")\n'
         "except Exception:\n"
-        '    _toolkit_version = "unknown"\n'
+        '    _toolkit_version = "unknown"\n' + LABEL_GLOBALS_BLOCK
     )
 
 
-def _build_config_block(*, cfg_analysis: dict, is_sensitivity: bool) -> str:
-    """Emit the config[...] assignment block matching the source-side shape."""
-    n_sims = int(cfg_analysis.get("n_sims", 0))
+def _counts_from_scenario_status(bundle_root: Path) -> tuple[int | None, int | None]:
+    """(scenarios, members) counted from the bundled ``scenario_status.csv``; ``None`` where unknown.
+
+    A scenario is one event in one analysis or member, so scenarios are the distinct
+    (member, event) pairs of the file and members are its distinct member ids. The
+    analysis configuration carries neither count, so a bundle without the file has no
+    source for them and the front page omits them.
+    """
+    import pandas as pd
+
+    from hhemt.member_identity import resolve_member_id_column
+
+    csv = bundle_root / "scenario_status.csv"
+    if not csv.is_file():
+        return None, None
+    try:
+        df = pd.read_csv(csv)
+    except (OSError, ValueError):
+        return None, None
+    if "event_iloc" not in df.columns:
+        return None, None
+    member_col = resolve_member_id_column(df.columns)
+    keys = [member_col, "event_iloc"] if member_col else ["event_iloc"]
+    n_scenarios = int(len(df[keys].drop_duplicates()))
+    n_members = int(df[member_col].nunique()) if member_col else None
+    return n_scenarios, n_members
+
+
+def _build_config_block(*, cfg_analysis: dict, is_sensitivity: bool, bundle_root: Path | None = None) -> str:
+    """Emit the config[...] assignment block matching the source-side form.
+
+    Counts come from the bundled ``scenario_status.csv``; a count with no source is
+    assigned ``None`` and the front page template omits it.
+    """
+    n_sims, n_members = _counts_from_scenario_status(bundle_root) if bundle_root is not None else (None, None)
     analysis_id = cfg_analysis.get("analysis_id", "unknown")
     lines = [
         "# Config dict consumed by report_templates/workflow_description.rst.j2",
         f'config["analysis_id"] = {analysis_id!r}',
         'config["toolkit_version"] = _toolkit_version',
-        f'config["n_sims"] = {n_sims}',
+        f'config["n_sims"] = {n_sims!r}',
         f'config["is_sensitivity"] = {is_sensitivity}',
         'config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}',
     ]
     if is_sensitivity:
-        n_sub = int(cfg_analysis.get("n_sub_analyses", 0))
-        independent_vars = cfg_analysis.get("independent_vars", [])
-        lines.append(f'config["n_sub_analyses"] = {n_sub}')
-        lines.append(f'config["independent_vars"] = {independent_vars!r}')
-        group_by = cfg_analysis.get("group_by_var")
+        independent_vars = ((cfg_analysis.get("report") or {}).get("sensitivity") or {}).get("independent_vars") or []
+        lines.append(f'config["n_members"] = {n_members!r}')
+        lines.append(f'config["independent_vars"] = {list(independent_vars)!r}')
+        group_by = ((cfg_analysis.get("report") or {}).get("sensitivity") or {}).get("group_by_var")
         if group_by:
             lines.append(f'config["group_by_var"] = {group_by!r}')
     return "\n".join(lines) + "\n"
@@ -265,8 +467,11 @@ def _expand_wildcards_to_existing_files(template: str, bundle_root: Path) -> tup
     globbing against the corresponding ``.manifest.json`` sidecar
     (since bundle fixtures may carry only the manifest sidecars, not
     the rendered plot files). Each wildcard match yields one expanded
-    path. If neither matches, return the template verbatim so the
-    Snakefile remains parseable for empty plot subsets.
+    path. If neither matches, return ``()`` — the family is OMITTED from
+    rule_all and render_report. Returning the template verbatim is NOT an
+    option: it is wildcarded, which the first paragraph rules out, and the
+    emitted Snakefile then fails to parse (measured: WildcardError in rule
+    all on a pure-TRITON bundle whose conduit family has no files).
     """
     import re as _re
 
@@ -280,12 +485,34 @@ def _expand_wildcards_to_existing_files(template: str, bundle_root: Path) -> tup
     # stem with the originally-templated extension.
     ext_match = _re.search(r"\.[^./{}]+$", template)
     if not ext_match:
-        return (template,)
+        # Same omission rule as the sidecar miss below: a wildcarded template can never be
+        # returned to rule_all / render_report. Unreachable today (every registry
+        # output_path_template carries __OUTPUT_EXT__, which _resolve_output_path
+        # substitutes before this call), but repaired so the class cannot re-open when a
+        # template is added without the token.
+        return ()
     ext = ext_match.group(0)
     manifest_glob = glob_pat[: -len(ext)] + ".manifest.json"
     sidecars = sorted(bundle_root.glob(manifest_glob))
     if not sidecars:
-        return (template,)
+        # OMIT, never return the wildcarded template: rule_all and render_report cannot
+        # carry wildcards (see this function's own contract above), so returning it emits
+        # an unparseable Snakefile — measured as WildcardError in rule all on a
+        # pure-TRITON bundle. With the harvest's predicate gate in place, a family that
+        # reaches here is UNEXPECTEDLY absent (its predicate passed, or it has none, yet
+        # no file and no sidecar exists) — the failed-render state, not the empty-by-
+        # design one. Warn rather than omit silently: this runs in-process from
+        # Bundle.regenerate_report, not inside a rule shell, so the warning is seen.
+        import warnings as _warnings
+
+        _warnings.warn(
+            f"Bundle regeneration: no files and no manifest sidecars matched "
+            f"{glob_pat!r}; this figure family is omitted from rule all and "
+            f"render_report. If the family was expected, its figures failed to render "
+            f"or were deleted.",
+            stacklevel=2,
+        )
+        return ()
     return tuple(str(s.relative_to(bundle_root)).removesuffix(".manifest.json") + ext for s in sidecars)
 
 

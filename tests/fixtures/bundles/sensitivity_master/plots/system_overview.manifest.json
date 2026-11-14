@@ -12,8 +12,8 @@
   "preview_size_bytes": 39760,
   "source_paths_relative": [
     "../elevation_10.00m.dem",
-    "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
-    "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+    "members/member_0/sims/event_index.0/swmm/hydro.inp",
+    "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
     "../../../synthetic_test_models/23e859ea50fa19b1/boundary.geojson"
   ],
   "emitted_at_utc": "2026-05-11T19:08:18.775795+00:00",
@@ -99,7 +99,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "subcatchment_polygon",
             "attrs": {},
             "selection": {
@@ -112,7 +112,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "subcatchment_polygon",
             "attrs": {},
             "selection": {
@@ -132,7 +132,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "subcatchment_outlet",
             "attrs": {},
             "selection": {
@@ -145,7 +145,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "subcatchment_outlet",
             "attrs": {},
             "selection": {
@@ -165,7 +165,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "subcatchment_polygon",
             "attrs": {},
             "selection": {
@@ -178,7 +178,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "subcatchment_polygon",
             "attrs": {},
             "selection": {
@@ -198,7 +198,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "subcatchment_outlet",
             "attrs": {},
             "selection": {
@@ -211,7 +211,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "subcatchment_outlet",
             "attrs": {},
             "selection": {
@@ -231,7 +231,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "subcatchment_polygon",
             "attrs": {},
             "selection": {
@@ -244,7 +244,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "subcatchment_polygon",
             "attrs": {},
             "selection": {
@@ -264,7 +264,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "subcatchment_outlet",
             "attrs": {},
             "selection": {
@@ -277,7 +277,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "subcatchment_outlet",
             "attrs": {},
             "selection": {
@@ -297,7 +297,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "outlet_node_coords",
             "attrs": {},
             "selection": null,
@@ -308,7 +308,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydro.inp",
             "variable": "outlet_node_coords",
             "attrs": {},
             "selection": null,
@@ -326,7 +326,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
             "variable": "conduit_coords",
             "attrs": {},
             "selection": {
@@ -339,7 +339,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
             "variable": "conduit_coords",
             "attrs": {},
             "selection": {
@@ -359,7 +359,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
             "variable": "conduit_coords",
             "attrs": {},
             "selection": {
@@ -372,7 +372,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
             "variable": "conduit_coords",
             "attrs": {},
             "selection": {
@@ -392,7 +392,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
             "variable": "conduit_coords",
             "attrs": {},
             "selection": {
@@ -405,7 +405,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
             "variable": "conduit_coords",
             "attrs": {},
             "selection": {
@@ -425,7 +425,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
             "variable": "conduit_coords",
             "attrs": {},
             "selection": {
@@ -438,7 +438,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
             "variable": "conduit_coords",
             "attrs": {},
             "selection": {
@@ -458,7 +458,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
             "variable": "junction_coords",
             "attrs": {},
             "selection": null,
@@ -469,7 +469,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
             "variable": "junction_coords",
             "attrs": {},
             "selection": null,
@@ -487,7 +487,7 @@
         {
           "channel": "x",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
             "variable": "outfall_coords",
             "attrs": {},
             "selection": null,
@@ -498,7 +498,7 @@
         {
           "channel": "y",
           "ref": {
-            "source_path": "subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp",
+            "source_path": "members/member_0/sims/event_index.0/swmm/hydraulics.inp",
             "variable": "outfall_coords",
             "attrs": {},
             "selection": null,

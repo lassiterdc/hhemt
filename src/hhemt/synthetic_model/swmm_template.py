@@ -28,9 +28,10 @@ Topology (iteration-2 mid-iteration revision 2026-04-26 — 5 junctions + 1 dumm
     placed in an inconspicuous interior cell. SWMM requires at least one
     outfall for parsing semantics.
 
-    Pipe geometry (Geom1 = 0.2 m circular) is intentionally undersized so
-    runoff from S1/S2/S3 surcharges the network and forces flow into TRITON
-    via the rim/cell coupling — per iteration-2 scenario constraints.
+    Pipes are circular with Geom1 = `_CONDUIT_DIAMETER_M` (1.0 m), and every
+    node's depth equals that crown, so each rim sits on the DEM under SWMM's own
+    crown rule. Runoff from S1/S2/S3 surcharges the network and forces flow into
+    TRITON via the rim/cell coupling — per iteration-2 scenario constraints.
 """
 
 from __future__ import annotations
@@ -119,12 +120,27 @@ Units      None
 # cols right of J3, producing diagonal C1/C2 covering 4 cols × 9 rows each.
 # J3, J4, sewer_outflow share col 7 (centered), so C3+C4 form the vertical
 # stem of the Y. dummy_outfall stays disconnected at col 7.
-# Number of in-line coupling junctions. MUST be >= the largest MPI rank count
-# the experiment matrix exercises (8, from hhemt.synthetic_experiment's rank_sweep
-# default (2,4,8) max = 8 / hybrid rows) so that under a row-strip static
-# decomposition EVERY rank owns >= 1 coupling node and participates in the
-# TRITON-SWMM ENSIFY_COMM_WORLD collective. Fewer nodes than ranks => a
-# node-free top rank => coupling-collective deadlock (triton.h:2363-2404).
+# _N_COUPLING_NODES is THE MAXIMUM MPI RANK COUNT this synthetic model supports.
+# It is the number of in-line coupling junctions placed on the conduit centerline
+# ({J1..J(n-1), collector}, one per even band by _node_matrix_rows). WHY the node
+# count == the rank cap: TRITON statically decomposes the domain into top-to-bottom
+# row-strips, one strip per MPI rank (mpi_utils.h create_local_dims). Every rank
+# MUST own >= 1 coupling node or it never enters the TRITON-SWMM ENSIFY_COMM_WORLD
+# coupling collective, so ALL ranks block forever — a HANG, the worst HPC failure
+# shape (triton.h:2363-2404). Therefore rank_count can never exceed node_count.
+#
+# 8 supports runs up to 8 ranks (the rank_sweep default (2,4,8) tops out at 8).
+# TO SUPPORT AN N-RANK RUN: raise this to N *and* pick an n_rows divisible by N
+# whose interior conveyance span (_node_matrix_rows) is >= N. You do NOT get more
+# ranks by editing rank_sweep alone — this cap is enforced at config-load by
+# config.synthetic_experiment._validate_coupling_invariant (guard 1:
+# max(rank_sweep) <= _N_COUPLING_NODES), which FAILS FAST. The companion geometric
+# precheck synthetic_experiment.assert_coupling_nodes_distinct (no two in-line
+# nodes share a coarsened DEM cell) runs in synthetic_experiment.build_experiment_matrix
+# whenever dem_resolution_ladder is set, so every ladder that reaches an emitted
+# matrix has passed it. dem_resolution_matrix_rows pins a 1-rank _DEM_FIXED_CONFIG,
+# so no rung strands a rank; the precheck guards the retained in-line node count
+# at each rung. See the knowledge doc "synth coupling-node count taxonomy".
 # (2026-06-14: replaced the hardcoded-for-16x30 _NODES list with this
 # n_rows-driven generator — the old list clustered all nodes in the bottom
 # ~22% of the 64x120 experiment grid, deadlocking every multi-rank run.)
@@ -236,8 +252,10 @@ def _nodes(params):
     col = _centerline_col(params)
     mrs = _node_matrix_rows(params)
     rfb = [params.n_rows - 1 - mr for mr in mrs]  # matrix-row -> row_from_bottom
-    # 8 upstream coupling junctions spread one-per-band (MPI rank coverage):
-    # J1..J7 + `collector` (southernmost, just upstream of the full-width sea wall).
+    # The _N_COUPLING_NODES upstream coupling junctions, spread one-per-band for
+    # MPI rank coverage (see the _N_COUPLING_NODES def): J1..J(n-1) then `collector`
+    # (southernmost, just upstream of the full-width sea wall). Count is n-driven —
+    # do NOT hardcode it here; it tracks _N_COUPLING_NODES.
     names = [f"J{i + 1}" for i in range(len(mrs) - 1)] + ["collector"]
     nodes = [(names[i], col, rfb[i]) for i in range(len(mrs))]
     # Interaction junction: in the BC shelf, just DOWNSTREAM of the sea wall. The
@@ -261,44 +279,20 @@ def _nodes(params):
 # name-prefix-based filter.
 _OUTFALL_NAMES = {"dummy_outfall"}
 
-# Iter-8 peak_flood_depth (2026-04-28): with the sloped upstream gradient
-# (3.0 m at top → 1.5 m at sea-wall row) and the 0.5 m buffer-lowering on
-# swale cells, swale rims at each junction are:
-#   J1, J2 (matrix_row 7):     2.174  (gradient 2.674 − 0.5)
-#   J3     (matrix_row 16):    1.587  (gradient 2.087 − 0.5)
-#   J4     (matrix_row 25):    1.000  (gradient 1.500 − 0.5)
-#   sewer_outflow (mr 27):     0.000  (dropoff 0.500 − 0.5)
-#   dummy_outfall (matrix_row 3, disconnected): 2.370 (gradient 2.870 − 0.5)
-# Junction depths cascade so all inverts step down across the network;
-# slopes 2.0% on C1/C2/C3, 2.0% on C4. All within the user's 1–3% range.
-#   sewer_outflow rim 0.0,   depth 0.5,   invert −0.5  (iter-7..11)
-#   J4            rim 1.0,   depth 1.1,   invert −0.1
-#   J3            rim 1.587, depth 1.087, invert  0.5
-#   J1, J2        rim 2.174, depth 1.074, invert  1.1
-#   dummy_outfall rim 2.370, depth 0.5,   invert  1.870 (disconnected)
-#
-# Iter-13 (2026-04-28): pipe diameter 0.2 → 1.0 m, inverts cascaded for 2.0 %
-# slopes throughout. (Pre-iter-15 cascade — replaced below.)
-#
-# Iter-17 (2026-04-29): dropoff zone lowered 1.0 → 0.5 m to match the minimum
-# upstream elevation (the buffer-lowered swale at the bottom corridor row).
-# Sewer_outflow now sits in a 0.5 m dropoff zone, so its depth re-cascades.
-# Other junctions' rims unchanged from iter-16; their depths preserved.
-#   J1, J2 rim 0.891, depth 0.500, invert  0.391
-#   J3     rim 0.696, depth 0.800, invert −0.104   C1, C2 (0.391 − −0.104)/30 = 1.65 %
-#   J4     rim 0.500, depth 1.100, invert −0.600   C3     (−0.104 − −0.600)/30 = 1.65 %
-#   sewer  rim 0.500, depth 1.400, invert −0.900   C4     (−0.600 − −0.900)/20 = 1.50 %
-#   dummy_outfall depth 0.500 (disconnected; rim auto-pins to DEM at its cell).
-# 2026-06-14: emptied to the uniform 0.5 m fallback (_JUNCTION_DEPTH_M) for the
-# n_rows-driven 8-node chain — the per-name depths above were tuned for the
-# retired 5-node 16x30 layout and no longer correspond to the new node names.
-# With a uniform depth, inverts follow the DEM corridor slope (rim==DEM,
-# invert = rim - 0.5). Tune per-node here if the review plots show conduit
-# slopes outside the 1-3% target (see the main-agent tuning guide).
+# Node depths. Every node takes the one fallback depth below (`_NODE_DEPTHS_M` is empty),
+# and its invert is placed at rim - depth, so rim = invert + MaxDepth lands on the DEM at the
+# node's cell. The fallback EQUALS the conduit crown: every link the generator writes is a
+# CIRCULAR conduit of Geom1 = `_CONDUIT_DIAMETER_M` at offset 0 under LINK_OFFSETS DEPTH, so
+# its crown is 1.0 m at both ends. SWMM raises a node's full depth to the crown of its highest
+# connecting link (link.c), so a depth below the crown would put SWMM's rim, and a solver that
+# reads SWMM's full depth, above the DEM. A uniform depth shifts every invert by the same
+# amount, so conduit slopes follow the DEM corridor and do not depend on the depth chosen.
+# A per-name depth here would also need `_build.py`'s outfall branch changed: it reads an
+# outfall's depth from `_JUNCTION_DEPTH_M`, not from `_node_depth`, because an outfall row has
+# no MaxDepth column.
 _NODE_DEPTHS_M: dict[str, float] = {}
-# Backwards-compat default for any code path that still imports
-# `_JUNCTION_DEPTH_M` (now a fallback for nodes not in `_NODE_DEPTHS_M`).
-_JUNCTION_DEPTH_M = 0.5
+# The fallback for nodes not in `_NODE_DEPTHS_M`, and the depth `_build.py` uses for outfalls.
+_JUNCTION_DEPTH_M = 1.0
 
 
 def _node_depth(name: str) -> float:
@@ -406,17 +400,28 @@ def _subcatchment_polygon_cell_bounds(params) -> dict[str, tuple[int, int, int, 
 # ---------------------------------------------------------------------------
 # DataFrame builders
 # ---------------------------------------------------------------------------
-def _options_df() -> pd.DataFrame:
+def _options_df(flow_routing: str = "DYNWAVE") -> pd.DataFrame:
     """OPTIONS DataFrame. Timing keys use ``${NAME}`` placeholders that the
     toolkit's ``swmm_utils.create_swmm_inp_from_template`` fills at scenario
     prep via ``string.Template.safe_substitute``. Non-timing keys are literal.
+
+    ``flow_routing`` is variant-scoped. The conduit-free hydrology variant uses
+    KINWAVE, not DYNWAVE: with zero links every runoff node has ``degree == 0``,
+    and SWMM's ``node_getSystemOutflow`` (node.c) passes a terminal node's inflow
+    out as tracked External Outflow ONLY under ``RouteModel != DW``. Under DYNWAVE
+    that branch is skipped and 100% of wet-weather inflow strands on the routing
+    ledger (Flow Routing Continuity Error = 100.000%). KINWAVE closes it to 0.000%
+    with per-node TOTAL_INFLOW byte-identical to DYNWAVE (measured: max per-step
+    diff 0.0, mass ratio 1.000000000), so the coupling handoff is unchanged and
+    External Outflow then equals exactly the mass delivered to TRITON. The
+    hydraulics/full variants keep DYNWAVE — they have conduits and need backwater.
     """
     return pd.DataFrame(
         {
             "Value": [
                 "CMS",
                 "HORTON",
-                "DYNWAVE",
+                flow_routing,
                 "DEPTH",
                 "0",
                 "NO",
@@ -521,6 +526,53 @@ def _outfalls_df(params) -> pd.DataFrame:
             "StageOrTimeseries": ["NO" for _ in rows],
         },
         index=pd.Index([n for n, _, _ in rows], name="Name"),
+    )
+
+
+def _pollutants_df(params) -> pd.DataFrame | None:
+    """POLLUTANTS frame for the regression-instrument knob, or ``None`` when it is off.
+
+    Returning ``None`` is what keeps the default-parameter ``.inp`` byte-identical:
+    `_write_variant` sets `m.inp.pollutants` only on a non-``None`` return, and
+    swmmio appends a `[POLLUTANTS]` section only for a section it was given a frame
+    for. The starter carries no `[POLLUTANTS]` header, so nothing is emitted at the
+    default and the knob's off-state leaves no trace in the output.
+
+    Every concentration is 0.0 deliberately. The coupled solver's snapshot-write
+    guard keys on `Nobjects[POLLUT] > 0` — the pollutant COUNT — and the refusal it
+    guards keys on an outfall's `routeTo < 0`, so neither depends on any pollutant
+    carrying mass. Zero concentrations therefore complete the defect's structural
+    trigger while routing no mass, which leaves every flow and coupling result the
+    model already produces numerically untouched. A non-zero concentration would
+    perturb the comparand this instrument exists to preserve and buy nothing.
+
+    `CoPollutName` is ``*``, SWMM's "no co-pollutant" sentinel; a real name here
+    would declare a co-dependency on a pollutant the model does not define.
+
+    This is a one-row frame on purpose: the guard is a `> 0` test, so a second
+    pollutant adds no reachable state and doubles the snapshot's pollutant arrays.
+
+    Not established: whether SWMM's own engine reports `Nobjects[POLLUT] == 1` for
+    this frame is not re-measured here — that needs a solver run, which is an
+    HPC-venue act. What is measured is that a real SWMM `.inp` reader parses the
+    emitted section back to exactly one pollutant row (see this package's tests).
+    """
+    if not params.pollutant_name:
+        return None
+    return pd.DataFrame(
+        {
+            "MassUnits": ["MG/L"],
+            "RainConcen": [0.0],
+            "GWConcen": [0.0],
+            "I&IConcen": [0.0],
+            "DecayCoeff": [0.0],
+            "SnowOnly": ["NO"],
+            "CoPollutName": ["*"],
+            "CoPollutFraction": [0.0],
+            "DWFConcen": [0.0],
+            "InitConcen": [0.0],
+        },
+        index=pd.Index([params.pollutant_name], name="Name"),
     )
 
 
@@ -717,6 +769,15 @@ _SECTIONS_NEEDING_DASHES = {
     "TIMESERIES",
     "CURVES",
     "POLYGONS",
+    # POLLUTANTS is emitted only when the regression-instrument knob is set, so this
+    # member changes no default-parameter output. It is here for the same reason as
+    # every other member: swmmio writes one `;;column-names` line where SWMM's own
+    # writer writes two, and this module's job is to restore SWMM's native format.
+    # Not established: whether the coupled C++ parser scans POLLUTANTS at all was
+    # not re-measured for this change, so the membership rests on format fidelity to
+    # SWMM's writer rather than on a measured parser requirement. It is inert if the
+    # parser does not scan the section and required if it does.
+    "POLLUTANTS",
 }
 
 
@@ -779,12 +840,47 @@ def _write_variant(
     dest.write_text(_STARTER_INP, encoding="utf-8")
     m = swmmio.Model(str(dest))
     # OPTIONS / REPORT — always written so synthesised run params take effect.
-    m.inp.options = _options_df()
-    # JUNCTIONS / OUTFALLS / COORDINATES — always present. Even hydrology-only
-    # .inp needs junctions so SUBCATCHMENTS can reference outlet nodes.
+    # Hydrology-only (conduit-free) variant routes with KINWAVE so its terminal
+    # nodes book External Outflow instead of stranding 100% on the routing
+    # ledger; see _options_df. Coupling output (TOTAL_INFLOW) is unaffected.
+    m.inp.options = _options_df(flow_routing="KINWAVE" if (include_hydrology and not include_hydraulics) else "DYNWAVE")
+    # JUNCTIONS / OUTFALLS / COORDINATES — always present.
+    #
+    # The runoff nodes MUST stay JUNCTIONS and MUST NOT be promoted to
+    # [OUTFALLS]. This is a COUPLING constraint, not a SWMM one: a
+    # [SUBCATCHMENTS] Outlet may legally reference an outfall and SWMM runs
+    # fine. The binding reason is downstream —
+    # scenario.py::return_df_of_nodes_grouped_by_DEM_gridcell derives
+    # lst_outfalls as EVERY node in [OUTFALLS], and
+    # swmm_runoff_modeling.py::write_hydrograph_files skips exactly those
+    # (`if key not in lst_outfalls`). Promoting the runoff nodes to outfalls
+    # therefore yields ZERO TRITON inflow hydrographs (measured 2026-07-15:
+    # 0/11, for both a JB-only and an all-nodes promotion).
+    #
+    # The conduit-free topology is load-bearing for the same reason: it is what
+    # makes each node's TOTAL_INFLOW equal its OWN subcatchment's local runoff,
+    # which write_hydrograph_files injects at that node's own DEM cell. Adding
+    # conduits folds upstream runoff into downstream nodes and double-counts
+    # (measured 2026-07-15: 8.85x total mass inflation, 1.00x-10.73x per-node).
+    #
+    # Do NOT "fix" the hydrology variant's Flow Routing Continuity Error by
+    # changing node types or adding conduits — both are refuted above. It is a
+    # DYNWAVE artifact on a link-free network and is addressed via FLOW_ROUTING
+    # in _options_df. See the stipulation:
+    # `library/docs/stipulations/hhemt/synthetic hydrology variant is conduit-free
+    # with junction runoff nodes and kinwave routing.md`
     m.inp.junctions = _junctions_df(params)
     m.inp.outfalls = _outfalls_df(params)
     m.inp.coordinates = _coordinates_df(params)
+    # POLLUTANTS — emitted in every variant, but only when the regression-instrument
+    # knob is set. The guard is `is not None` rather than a truthiness test on the
+    # frame: a DataFrame has no boolean value and `if frame:` raises ValueError.
+    # `_pollutants_df` owns the on/off decision, which is also what makes the knob's
+    # off-state monkeypatchable as one named seam for the byte-identity gate's own
+    # discrimination check.
+    pollutants = _pollutants_df(params)
+    if pollutants is not None:
+        m.inp.pollutants = pollutants
     if include_hydraulics:
         m.inp.conduits = _conduits_df(params)
         m.inp.xsections = _xsections_df(params)

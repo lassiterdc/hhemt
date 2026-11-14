@@ -20,8 +20,10 @@ guard is an INERT backstop in production today — its set/clear wiring is defer
 (see the plan follow-up) — so these tests drive the field directly rather than
 through a real two-allocation ``batch_job`` run (unrunnable in this worktree).
 """
+
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,7 +31,6 @@ import pytest
 
 from hhemt.process_simulation import (
     TRITONSWMM_sim_post_processing,
-    _CLEAR_RAW_DELETE_SUBDIRS,
 )
 
 
@@ -85,6 +86,7 @@ def _make_proc(
         out_tritonswmm=None,
         out_triton=None,
         swmm_full_out_file=swmm_out_file,
+        sim_folder=out_dir_path.parent,
     )
     setattr(scen_paths, out_dir_attr, out_dir_path)
 
@@ -98,31 +100,43 @@ def _make_proc(
     log = SimpleNamespace(
         raw_TRITON_outputs_cleared=_LogStub(),
         raw_SWMM_outputs_cleared=_LogStub(),
+        # R13 (2026-09-18): `_clear_raw_outputs` is wrapped by the module-level
+        # `_deferred_log_writes` decorator (process_simulation.py), whose wrapper enters
+        # `self.log.deferred_writes()` BEFORE the body runs -- one more attribute the
+        # receiver must carry. A no-op context manager satisfies that protocol and
+        # asserts NOTHING about write batching (that is pinned by
+        # tests/test_log_write_hardening.py); it stays an explicit attribute rather than
+        # a MagicMock so the NEXT contract widening reds loudly here, as this one did.
+        deferred_writes=nullcontext,
     )
 
     proc = TRITONSWMM_sim_post_processing.__new__(TRITONSWMM_sim_post_processing)
     proc.scen_paths = scen_paths
     proc.log = log
-    # The PATTERN-A/B restamp edits in process_simulation.py read
-    # self._analysis.analysis_paths.analysis_dir; point it at the parent of the
-    # seeded out_dir so restamp_parent_sentinels no-ops (no _status/ tree there).
+    # The deletion-tool call sites in process_simulation.py read
+    # self.scen_paths.sim_folder (the owning scenario); the stub's sim_folder is the
+    # parent of the seeded out_dir, which carries no _status/_du.json, so the tool
+    # deletes and skips the sentinel adjustment.
     # The analysis-level log carries multi_allocation_in_progress, which the P3
     # _clear_raw_outputs guard reads via self._analysis.log.
     proc._analysis = SimpleNamespace(
         analysis_paths=SimpleNamespace(analysis_dir=out_dir_path.parent),
-        log=SimpleNamespace(
-            multi_allocation_in_progress=_GetLogField(multi_allocation_in_progress)
-        ),
+        log=SimpleNamespace(multi_allocation_in_progress=_GetLogField(multi_allocation_in_progress)),
     )
     return proc
 
 
-@pytest.mark.parametrize("out_attr,model_type", [
-    ("out_tritonswmm", "tritonswmm"),
-    ("out_triton", "triton"),
-])
+@pytest.mark.parametrize(
+    "out_attr,model_type",
+    [
+        ("out_tritonswmm", "tritonswmm"),
+        ("out_triton", "triton"),
+    ],
+)
 def test_clear_raw_outputs_deletes_subdirs_preserves_files_and_swmm(
-    tmp_path: Path, out_attr: str, model_type: str,
+    tmp_path: Path,
+    out_attr: str,
+    model_type: str,
 ):
     """For TRITON/TRITON-SWMM: deletes H/QX/QY/MH/bin/cfg/performance/ but
     preserves top-level files and the ``swmm/`` subdir (per user-corrected
@@ -189,9 +203,7 @@ def test_clear_raw_outputs_preserves_unknown_subdirs(tmp_path: Path):
     for sub in ("H", "QX", "QY", "MH", "bin", "cfg", "performance"):
         assert not (out_dir / sub).exists(), f"{sub}/ should be deleted"
     # Unknown subdir survives.
-    assert (out_dir / "diagnostics_future").exists(), (
-        "unknown subdirs must be preserved (allowlist semantics)"
-    )
+    assert (out_dir / "diagnostics_future").exists(), "unknown subdirs must be preserved (allowlist semantics)"
     assert (out_dir / "diagnostics_future" / "marker.bin").exists()
 
 
@@ -208,24 +220,24 @@ def test_clear_raw_outputs_rejects_unknown_model_type(tmp_path: Path):
         TRITONSWMM_sim_post_processing._clear_raw_outputs(proc, "bogus")  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("resolved,model_type,expected", [
-    ("none", "tritonswmm", False),
-    ("none", "triton", False),
-    ("none", "swmm", False),
-    ("all", "tritonswmm", True),
-    ("all", "triton", True),
-    ("all", "swmm", True),
-    (["tritonswmm"], "tritonswmm", True),
-    (["tritonswmm"], "triton", False),
-    (["tritonswmm", "swmm"], "swmm", True),
-    (["tritonswmm", "swmm"], "triton", False),
-])
+@pytest.mark.parametrize(
+    "resolved,model_type,expected",
+    [
+        ("none", "tritonswmm", False),
+        ("none", "triton", False),
+        ("none", "swmm", False),
+        ("all", "tritonswmm", True),
+        ("all", "triton", True),
+        ("all", "swmm", True),
+        (["tritonswmm"], "tritonswmm", True),
+        (["tritonswmm"], "triton", False),
+        (["tritonswmm", "swmm"], "swmm", True),
+        (["tritonswmm", "swmm"], "triton", False),
+    ],
+)
 def test_should_clear_raw_for_model(resolved, model_type, expected):
     """``_should_clear_raw_for_model`` honors the three ``clear_raw`` shapes."""
-    assert (
-        TRITONSWMM_sim_post_processing._should_clear_raw_for_model(resolved, model_type)
-        is expected
-    )
+    assert TRITONSWMM_sim_post_processing._should_clear_raw_for_model(resolved, model_type) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +253,9 @@ def test_clear_raw_guard_raises_when_mid_multi_allocation(tmp_path: Path):
     _seed_tritonswmm_out_dir(out_dir)
 
     proc = _make_proc("out_tritonswmm", out_dir, multi_allocation_in_progress=True)
-    with pytest.raises(RuntimeError, match="clear raw triton outputs deferred"):
+    with pytest.raises(
+        RuntimeError, match=r"mid-multi-allocation \(multi_allocation_in_progress=True\)\. This is forbidden"
+    ):
         TRITONSWMM_sim_post_processing._clear_raw_outputs(proc, "tritonswmm")  # type: ignore[arg-type]
 
     # Guard fired before the _CLEAR_RAW_DELETE_SUBDIRS walk — nothing deleted.

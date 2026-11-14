@@ -1,0 +1,70 @@
+source: src/hhemt/report_renderers/_tabulator_defaults.py
+entries:
+- rule: capitals
+  string: // iter 8 — per-group Show all / Hide all buttons. Placed // BETWEEN the group header (<h4>) and the optional footnote // (<div clas
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: capitals
+  string: 'ex: 0 0 220px; max-height: 75vh; overflow-y: auto; border: 1px solid #DADADA; padding: 8px; font-size: 12px; background: #FAFAFA; } #{} h3 { margi'
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: capitals
+  string: feedback. Each button iterates only the columns declared // for THIS group (group.columns) and calls show()/hide() on // each, then
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: capitals
+  string: 'order: 1px solid #DADADA; padding: 8px; font-size: 12px; background: #FAFAFA; } #{} h3 { margin: 0 0 6px 0; font-size: 13px; color: #232D4B; } #{}'
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: capitals
+  string: 'x 0 4px 0; font-size: 12px; color: #232D4B; border-bottom: 1px solid #DADADA; padding-bottom: 2px; } #{} label { display: block; padding: 2px 0; c'
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: em_dash
+  string: '"Copy failed: " + (e.message || e); } }); } // iter 9.2 — Reset all button handler. Clears every // localStorage key matching'
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: em_dash
+  string: // iter 5b — Copy-table button. Builds TSV manually from the // table's active (
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: em_dash
+  string: <!-- Tabulator {} (https://tabulator.info) — bundled inline. {} --> <style>{}</style> <script>{}</script>
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: em_dash
+  string: e all"; // Closure-capture group.columns into the click handler — the // forEach var rebinds across iterations so we must capture
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: em_dash
+  string: le = new Tabulator("#{}", tableOptions); // Column-visibility sidebar — populated after tableBuilt so // column instances are addressable. Ea
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: em_dash
+  string: rfTable.setClipboardCopyConfig (does NOT exist in // Tabulator v6.4 — the option is construction-time only; calling // the non-existent s
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: em_dash
+  string: t = group.label; list.appendChild(groupHeader); // iter 8 — per-group Show all / Hide all buttons. Placed // BETWEEN the gr
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: which
+  string: istinct from the sidebar-header Show all / // Hide all buttons (which toggle ALL columns globally) by // CSS class .trf-group-toggle
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: capitals
+  string: or.clipboard API. // Avoids __trfTable.setClipboardCopyConfig (does NOT exist in // Tabulator v6.4 — the option is construction-time only;
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: capitals
+  string: error the user surfaced in screenshot at scratch L4255). // Headers ARE included in the whole-table copy per user spec at // scratch L4260;
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: capitals
+  string: 'ding: 1px 4px; margin-right: 3px; cursor: pointer; border: 1px solid #BBB; background: #fff; color: #232D4B; } #{} .trf-group-toggle:hover { ba'
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: capitals
+  string: the sidebar-header Show all / // Hide all buttons (which toggle ALL columns globally) by // CSS class .trf-group-toggle vs .trf-tog
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.

@@ -1,0 +1,7 @@
+source: src/hhemt/eda/compute_sensitivity.py
+entries:
+- rule: retired_word
+  string: sa_id
+  status: permitted
+  reason: 'dictionary key and coordinate name of the stored verdict and datatree layout (renaming it is a layout migration); not printed: the page prints the key''s value under its own column header'
+  count: 6

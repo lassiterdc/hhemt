@@ -1,8 +1,10 @@
-Peak flood depth raster for scenario **{{ snakemake.wildcards.event_id }}**.
+Peak flood depth, water surface elevation and event hydrology for member **{{ snakemake.wildcards.member_id }}**, event **{{ snakemake.wildcards.event_id }}**.
 
-The raster is computed by the TRITON solver as the per-cell maximum H value across all simulation timesteps. Color scale and extent are configured in ``report_config.yaml`` under ``per_sim.peak_flood_depth``.
+**Peak flood depth** is TRITON's per-cell running maximum of depth (the solver's MH), updated at every solver step, so the value can sit above the largest depth printed at any output timestep (a peak between prints) and, in coupled runs at solver commits before b3820a44, below the printed depth at a manhole cell. **Water surface elevation** is that depth added to the underlying DEM, on a colorbar whose range is computed once across every event so the scale is comparable between events; cells the DEM marks as building or wall are left out of that range. Colormaps, the depth colorbar floor and the quantile clips are configured in ``cfg_analysis.yaml`` under ``report.per_sim.map``; a ``depth_clip_quantile_lower`` there raises the depth colorbar floor to that quantile of the wetted depths across every event, and a quantile at or above the colorbar maximum leaves the floor unchanged. The floor never drops below the configured floor.
 
-See the **System Information** sidebar section for the underlying DEM and boundary geometry.
+Both map panels are clipped to the watershed polygon supplied as ``system_config.watershed_gis_polygon``, so every cell shown lies inside the polygon and cells outside the polygon are excluded from both the display and the colorbar range. The polygon boundary is drawn on each map and labeled **watershed polygon** in the legend.
+
+**Flood Drivers** carries the event hydrology: the rainfall time series in the upper sub-panel and the boundary-condition water level in the lower one.
 
 **Sources:**
 

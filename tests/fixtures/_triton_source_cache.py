@@ -1,0 +1,823 @@
+"""Shared TRITON object store for the synthetic-test fixture.
+
+WHY A CANONICAL STORE, AND WHY THIS SHAPE (every element is load-bearing):
+  * The canonical MUST be a NON-BARE full clone with submodules initialized.
+    `submodule.alternateLocation=superproject` derives each submodule's
+    alternate as `{canonical}/.git/modules/{name}/objects`, a path a BARE
+    repo does not have. Measured: a bare canonical makes the borrow exit 1
+    (`cannot add alternate: path '.../modules/external/kokkos/' does not
+    exist`), and the `--reference-if-able` "fix" exits 0 while silently
+    leaving submodules undeduped — 112 MB/worktree instead of 61 MB, with no
+    error and no log line.
+  * NEVER pass `--reference-if-able` and NEVER set
+    `submodule.alternateErrorStrategy=info`. The default `die` is what turns
+    a canonical-shape defect into a loud failure instead of a silent 51
+    MB/worktree regression. (Measured: the `-c ...=info` flag is INERT on the
+    clone command line anyway; `--reference-if-able` is what takes effect.)
+  * `gc.auto=0` on the canonical AND on every borrower. Git gives a borrower
+    ZERO protection from the canonical's gc (measured: a canonical
+    `gc --prune=now` leaves the borrower's `git status` at rc 128 while the
+    alternates target directory still exists). And a BORROWER-side
+    `repack -a -d` silently re-absorbs the alternate's objects, restoring
+    ~322 MB with the alternates file still in place.
+  * `refs/pins/{sha}` anchors every borrowed pin, and the canonical is
+    refreshed with a NARROWED refspec whose destination is
+    `refs/remotes/origin/*`. `+refs/*:refs/*` (a --mirror clone's default) has
+    `refs/*` as its destination namespace, so `fetch --prune` prunes
+    `refs/pins/*` and the next gc destroys the anchored object; a
+    `refs/heads/*` destination is rejected outright by git on this non-bare
+    store. The shipped destination can reach neither failure.
+  * The canonical lives OUTSIDE `synthetic_test_runs/` so the run-dir reaper
+    (`tests/fixtures/_run_dir_reaper.py`) can never target it.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import warnings
+from pathlib import Path
+
+import hhemt.utils as ut
+from hhemt._filelock_compat import resolve_filelock
+from hhemt.cache import paths as cache_paths
+
+#: THE TRITON SOURCE IDENTITY FOR THE SYNTHETIC-TEST TIER, AND IT IS A PAIR.
+#: A COMMIT ALONE IS NOT AN IDENTITY, measured rather than cautionary: 3a832f7d
+#: resolves on BOTH the ORNL upstream and the maintainer fork and names a DIFFERENT codebase on
+#: each, so a pin-only record is self-consistent while describing the wrong repository.
+#: `system.py::_download_tritonswmm_source` records the same trap on the production clone: both remotes are
+#: named `triton.git`, and `_verify_tritonswmm_pin` compares the COMMIT and never the
+#: REMOTE, so a clone from the wrong remote whose HEAD matches the pin verifies clean.
+#: Never record one without the other — record TRITON_SOURCE_DESCRIPTOR.
+TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
+
+#: The fork's `main` (github.com/lassiterdc/triton.git), at "fix(swmm): refuse SWMM file paths
+#: longer than MAXFNAME before swmm_open" (`bb13ea28`; `git merge-base --is-ancestor bd18215
+#: bb13ea28` -> rc 0, a plain FORWARD move of two commits on one lineage). `git diff --stat
+#: bd18215 bb13ea28` -> 2 files: `external/swmm/src/solver/massbal.c` (7a59d18, the flooding-debug
+#: path buffer bounded at MAXFNAME) and `src/swmm_triton.h` (bb13ea28, the coupled startup refuses
+#: an input, report or binary-output path over 259 characters before swmm_open). The snapshot is
+#: unchanged (`git diff bd18215 bb13ea28 -- external/swmm/src/solver/snapshot.c` -> empty;
+#: SNAPSHOT_VERSION 7 at both), so a resume across the two pins is not refused, and
+#: `scenario.SWMM_QUALITY_SNAPSHOT_SHAS` lists this pin beside bd18215. The vendored SWMM is still
+#: `VERSION 5.2.3`. THE PREVIOUS PIN, bd18215 ("carry water-quality state across a snapshot
+#: resume"), remains registered and remains a member of that set.
+#: THE PRECEDING MOVE'S RECORD, RETAINED AND NO LONGER LIVE (320b3313 -> a146fb6, the pin
+#: `SHA_CURATED_MAIN_PIN` still names for the estate's family C). It was a CROSS-BRANCH MOVE from
+#: the previous pin `320b3313` (wp1/snapshot-guard): `is-ancestor 320b3313 a146fb6` -> rc 1,
+#: because the curated commits are NEW trees; each names its wp1 source in a `Curated-from:`
+#: trailer. What decided that move was not ancestry but the solver landing's re-measurement: every
+#: curated tree built and green on Rivanna, and 28/28 legacy models byte-identical to wp1
+#: `58dad318`, which is `320b3313` plus one commit whose cfg key defaults off
+#: (`git log 320b3313..58dad318` -> 1 commit).
+#: AN EARLIER MOVE'S RECORD, RETAINED AND NO LONGER LIVE (e53c2fa -> 031ea42b). It was a
+#: CROSS-BRANCH move whose `is-ancestor` answered rc 1 in BOTH directions, with 46 commits on the
+#: branch not on `main`; the two commands that decided it were not the counts but
+#: `git diff --name-status`, which returned ZERO D statuses, and a removed-non-comment-line census
+#: returning nine lines, every one a signature replaced by its wider form in the same hunk. The 46 are
+#: the AUTHORING HISTORY (wip commits, reviewer characterization tests, inventory triage passes)
+#: of work `main` re-landed as 10 squashed commits on top of a38338b0. Nothing in that paragraph
+#: constrains the present pin; it is kept because the next cross-branch move will want the method.
+#: THE SUBMODULE GITLINKS ARE UNCHANGED ACROSS THIS MOVE, so the borrow's
+#: `submodule.alternateLocation=superproject` path needs no submodule-side network work:
+#: `git ls-tree {pin} external/kokkos external/yaml-cpp` returns dc1bf738 and a83cd315 at BOTH
+#: bd18215 and bb13ea28 (measured 2026-10-26, byte-equal). `external/swmm` is a TREE (mode
+#: 040000) rather than a gitlink and it DOES move (71accf8c -> 6c5a47f9) -- expected, because the
+#: move's SWMM changes live inside it -- so a reader comparing the entries must not read that one
+#: as a submodule bump.
+#: NO MANUAL CACHE WORK IS OWED. The fetch that reaches this pin only ADDED objects, and
+#: `ensure_canonical` fetches on pin-absent and self-heals. `provision_borrower`'s reuse gate is
+#: checkout-identity-keyed, so the old tier fails it and is `fast_rmtree`'d WITH its nested build
+#: dirs and their `compilation.log` -- which is why the log-marker compile gate cannot adopt a
+#: stale build across a pin move. What IS owed is a WARM from a non-chunk session (the role gate
+#: refuses to provision from a suite chunk and names `pytest tests/test_synth_00_compile_models.py`).
+#: THE RULE, carried forward unchanged because it holds at every move: MOVING THIS PIN OWES
+#: model_defects A REGISTERED CONSTANT FOR THE NEW SHA, every time. `model_defects` is per-sha by
+#: construction and the read path has no clone, so an unregistered pin falls through to
+#: `indeterminate`/`ancestry_unresolvable` on every defect. The lapse is non-failing at the exit
+#: code -- `check_known_resume_defects` selects on `status == "present"`, so `indeterminate`
+#: collapses into the passing arm -- but it is not INDISTINGUISHABLE in the artifact: that
+#: function's summary names its examined and indeterminate counts. The enforcing mechanism is the
+#: GUARD `scripts/check_live_pin_registered.py`, which reads this declaration by AST and refuses
+#: unless the registry resolves it ABSENT via the explicit `known_absent_in` set for EVERY defect.
+#: `model_defects.SHA_MAIN_SWMM_PATH_REFUSAL_PIN` is this pin's entry.
+#: THE GUARD IS WIRED: `.pre-commit-config.yaml` runs `scripts/check_live_pin_registered.py`
+#: as a hook, and `tests/test_check_live_pin_registered.py` exercises the script's own logic.
+#: WHY A REGISTRATION AND A PIN MOVE ARE ONE CHANGE AND CANNOT BE SPLIT: the guard resolves the
+#: LIVE pin against every entry, so a commit that moves this constant without adding the sha to
+#: every `REGISTRY` entry's `known_absent_in` set reds with `pin-indeterminate`, and a commit
+#: that adds the sha without moving this constant leaves the guard asserting the OLD pin.
+#: Neither half is independently green.
+#: Measured 2026-10-26 against this pin, not inherited:
+#:   * `git merge-base --is-ancestor a38338b0 bb13ea28` -> rc 0
+#:   * `git merge-base --is-ancestor 3a832f7d bb13ea28` -> rc 0
+#:   * `git merge-base --is-ancestor 9db367dd bb13ea28` -> rc 0
+#:   * `git merge-base --is-ancestor 5fadf167 bb13ea28` -> rc 0 (it carries the snapshot payload)
+#:   * `git merge-base --is-ancestor 681d809 bb13ea28` -> rc 0 (the curated snapshot traversal fix)
+#:   * `git merge-base --is-ancestor d456518 bb13ea28` -> rc 0 (the curated clean-start disposal)
+#:   * `git merge-base --is-ancestor 852f10c bb13ea28` and `2ecb1cf bb13ea28` -> rc 0 each (the
+#:     curated coupled-list/rim and US-unit fixes); `a146fb6 bb13ea28` and `bd18215 bb13ea28` -> rc 0
+#:   * the wp1 commits are NOT ancestors (c7b2fd1d, 23b75781, cf357e4b, 320b3313 -> rc 1 each);
+#:     their behaviour is carried by the curated commits named in model_defects.
+#: The ghost-ring caveat still applies and is RE-MEASURED here rather than carried: two natural
+#: probes classify the ghost-ring row WRONG -- `is-ancestor 5d2ad1e8 bb13ea28` -> rc 1, and
+#: `ls-tree bb13ea28 -- src/ghost_ring.h` -> 0 entries -- because both ask the FORK's question of an
+#: ORNL-descended tree. The deciding basis is a38338b0 -> rc 0. See the comment on
+#: `model_defects.SHA_ORNL_GHOST_RING_AND_GPU`, the constant that holds a38338b0.
+#: THIS CONSTANT AND `test_case_builder.py`'s config write MUST MOVE TOGETHER: a
+#: provisioner pin that differs from the config pin raises ConfigurationError on every
+#: synth construction (`system.py::_verify_tritonswmm_pin`). `tests/fixtures/test_case_builder.py`
+#: IMPORTS both constants rather than restating them, so that coupling is satisfied by
+#: construction and this is ONE edit in THIS file -- but it is NOT one edit in the tree. The
+#: deciding command is a tracked literal census over the FULL 40-character sha,
+#: `grep -rlF {sha} tests src`. At this pin it puts the live sha in six files; the five
+#: besides this one are:
+#:   * `src/hhemt/model_defects.py` (ADD beside, do not move);
+#:   * `src/hhemt/scenario.py::SWMM_QUALITY_SNAPSHOT_SHAS`, the set A3 and A2 key on, which is
+#:     NOT covered by the live-pin guard, so a later pin that carries the fix is added there by hand;
+#:     it now lists both bd18215 and this pin;
+#:   * `tests/test_check_known_resume_defects.py::_SHA_REGISTERED`, asserted equal to the live
+#:     pin, so a miss is a LOUD red;
+#:   * `tests/test_wp2b_resume_mechanism_review.py::_SHA_CURRENT_PIN`, asserted
+#:     `== TRITON_PIN`, so a miss is also a LOUD red;
+#:   * `tests/test_known_solver_defects.py::_PIN`.
+#: A short-prefix search also matches docstrings that merely mention the pin, which are not
+#: coupled literals a move must update.
+TRITON_PIN = "bb13ea28603d50879f8d85cd041c17f440fbdb2b"
+
+#: The ONE form every version RECORD prints, so a URL cannot be omitted beside a pin.
+#: Consumed by `model_version_lines()` and by the estate's per-chunk provenance stamp.
+TRITON_SOURCE_DESCRIPTOR = f"{TRITON_GIT_URL}@{TRITON_PIN}"
+
+_PROVISION_LOCK_TIMEOUT_SECONDS = 1800
+
+#: Opt-out for the canonical store. Set to "1" to skip provisioning entirely and
+#: fall back to `system.py`'s own not-exists() clone gate.
+_DISABLE_ENV = "HHEMT_DISABLE_TRITON_CANONICAL"
+
+#: The PROCESS ROLE, set to "chunk" by `hhemt.suite._runner.run_chunk` and by nothing
+#: else. Declared here as a literal rather than imported because `src/hhemt/**` may not
+#: import `tests/**`, so the string is necessarily stated in two files; the other
+#: statement is `src/hhemt/suite/_runner.py`'s env assignment.
+_SUITE_ROLE_ENV = "HHEMT_SUITE_ROLE"
+
+
+def synthetic_runs_root() -> Path:
+    """The un-slugged synthetic-test cache root. SINGLE SOURCE.
+
+    `test_case_builder.py`, both `test_case_catalog.py` sites (those three through
+    `slug_runs_root`), and the run-dir reaper (`tests/fixtures/_run_dir_reaper.py`)
+    MUST consume this rather than re-deriving it. A second copy is not a
+    style problem: if a producer's root moves and the reaper's copy does not, the
+    reaper either sweeps a path nothing uses or deletes a tree a live consumer is
+    still writing to.
+    """
+    return cache_paths.synthetic_runs_root()
+
+
+def slug_runs_root(slug: str) -> Path:
+    return cache_paths.slug_runs_root(slug)
+
+
+def checkout_slug(cwd: Path) -> str:
+    """The cache-tier address of the checkout at `cwd`. SINGLE SOURCE.
+
+    `tests/fixtures/__init__.py::worktree_slug` derives the address a builder writes
+    to, and the run-dir reaper's path arm (`tests/fixtures/_run_dir_reaper.py`)
+    re-derives it to decide whether a tier is still the one its checkout uses. Both
+    call this function, so the two cannot drift apart.
+
+    `cwd` must already be canonical: `Path.cwd().resolve()`, which is also what the
+    `.origin` breadcrumb records. It is then resolved to the CHECKOUT ROOT it belongs to
+    before the address is minted, because `pytest tests/` does not change directory: a
+    working-directory derivation gives one checkout two addresses, each cold for the other,
+    and the status verb then reports a machine that looks cold while its trees sit on disk.
+
+    TWO ARMS.
+      * Under `.claude/worktrees/{name}/` the address is `{name}` when the name is no
+        longer than a digest address (21 characters). Such a name stays readable and the
+        reaper's worktree arm, which matches a tier name against a git worktree
+        basename, protects its tier. A longer name takes the digest arm below, and the
+        reaper's path arm protects that tier through its `.origin` breadcrumb, exactly as
+        it protects a non-worktree checkout's.
+      * Anywhere else, and for a worktree name over that threshold, the address is
+        `path-` followed by the first 16 hex digits of the SHA-256 of `str(cwd)`: 21
+        characters for every checkout.
+
+    WHY A FIXED-LENGTH DIGEST. The address is one segment of every synthetic
+    simulation's run path, and SWMM keeps a file name only up to MAXFNAME (259)
+    characters. The previous address escaped the whole checkout path into this
+    segment, so it grew with the checkout's own path. Measured on Rivanna: a
+    77-character address under a 78-character cache root made a sensitivity member's
+    `swmm_flooding_debug.txt` path 272 characters long. This address is 21 characters
+    wherever the checkout lives.
+
+    WHAT THE DIGEST GIVES UP, stated rather than hidden. The escaped form was
+    injective; a 64-bit digest is only collision-resistant, so two checkouts would
+    share a tier if their paths collided in 64 bits. The address is also not
+    decodable: read a tier's checkout from its `.origin` breadcrumb.
+
+    The `path` prefix is kept on purpose: the reaper's fail-safe for an unreadable
+    `.origin` keys on it. The hyphen keeps every digest address distinct from the
+    previous escaped form, which always continued `path_s`.
+    """
+    return cache_paths.tier_address_for(cwd)
+
+
+def canonical_root() -> Path:
+    """The shared object store. Deliberately a SIBLING of synthetic_test_runs/,
+    never nested inside it, so the run-dir reaper cannot target it."""
+    return cache_paths.canonical_root()
+
+
+def _rev_parse(tree: Path, ref: str) -> str | None:
+    """Resolve `ref` to a full commit sha in `tree`, or None when it does not
+    resolve. Module-private; the sole primitive behind every pin-resolution
+    check in this module."""
+    r = subprocess.run(
+        ["git", "-C", str(tree), "rev-parse", "--verify", f"{ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip()
+
+
+def _normalize_remote(url: str) -> str:
+    """Compare-form for a git remote URL: trailing slash and `.git` suffix stripped,
+    case-folded.
+
+    LOAD-BEARING, NOT COSMETIC. A bare `!=` on the raw strings reports a mismatch for
+    `https://github.com/lassiterdc/triton/` against `https://github.com/lassiterdc/triton.git`
+    — the SAME repository — so a repair keyed on the naive comparison rewrites a correct
+    remote on every call. Measured on two scratch repos: the naive form returns True
+    (repair) on that pair; this form returns False.
+    """
+    u = (url or "").strip().rstrip("/")
+    if u.endswith(".git"):
+        u = u[: -len(".git")]
+    return u.lower()
+
+
+def _canonical_origin(canonical: Path) -> str | None:
+    """`origin`'s URL in `canonical`, or None when it has no origin / is not a repo."""
+    r = subprocess.run(
+        ["git", "-C", str(canonical), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+    )
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def borrower_is_healthy(tree: Path, pin: str) -> bool:
+    """True iff `tree` is a git checkout that resolves BOTH HEAD and `pin` to
+    commits AND is CHECKED OUT AT `pin` (resolved HEAD sha == resolved pin sha).
+
+    Checkout identity is the third condition and it is load-bearing, not belt-and-
+    braces. For a standalone clone, resolvability and checkout-identity coincide
+    because the clone gate clones AT the pin. For a `--reference` borrower they come
+    apart: `git rev-parse --verify {sha}^{commit}` succeeds for ANY object present in
+    the alternate, and the canonical carries every branch — so a borrower resolves a
+    pin it is not checked out at, and a resolvability-only gate returns True for a
+    tree whose HEAD is a DIFFERENT commit. The sole consumer of a healthy verdict is
+    a path whose next production step is `system.py::_verify_tritonswmm_pin`, which
+    tests `head != pinned` and raises ConfigurationError. Without this condition a
+    pin move is invisible to the gate for every existing borrower, and two
+    simultaneously-live pins sharing one per-slug `_software/triton` (this module's
+    `TRITON_PIN` and `scripts/experiments/container_validation.py`'s `15eb18a5`) make
+    whichever case runs second fail.
+
+    This is the predicate a `--reference` borrower needs and `.git`-existence
+    does not give. Measured: when the canonical is deleted OR pruned, the
+    borrower keeps its own `.git` and its full working tree including
+    CMakeLists.txt, so `system.py`'s clone gate skips re-cloning and
+    `_verify_tritonswmm_pin`'s `(d / ".git").exists()` guard does not fire — the
+    run then dies inside the pin verify with "does not resolve to a commit", a
+    message that lists a wrong pin, a predating clone, a pruned store and a gone
+    borrowed store as possible causes and cannot say which one this is. Both
+    failure modes return rc 128 and are indistinguishable by exit code, so one reachability probe is the whole test.
+    An alternates-target-exists check is ALSO insufficient: the directory
+    survives a prune.
+    """
+    if not (tree / ".git").exists():
+        return False
+    resolved: dict[str, str] = {}
+    for ref in ("HEAD", pin):
+        sha = _rev_parse(tree, ref)
+        if sha is None:
+            return False
+        resolved[ref] = sha
+    # Checkout identity, not just reachability. Both sides are resolved to full
+    # shas first so a short pin compares correctly against the 40-char HEAD —
+    # the same normalization `system.py::_verify_tritonswmm_pin` performs.
+    return resolved["HEAD"] == resolved[pin]
+
+
+def borrower_remote_matches(tree: Path, expected_remote: str = TRITON_GIT_URL) -> bool:
+    """True iff `tree`'s `origin` is `expected_remote`, compared in normalized form.
+
+    THE THIRD SINGLE-AXIS PREDICATE, and it is deliberately NOT folded into either
+    sibling. `borrower_is_healthy` is a PIN gate and three tests define it that way;
+    `is_borrowing` is a SHARE gate and two tests define it that way. Repository
+    IDENTITY is a third question: ORNL upstream and the maintainer fork are BOTH named
+    `triton.git` and 3a832f7d resolves on both, so a commit-only gate adopts the wrong
+    codebase and verifies clean -- measured once on the maintainer's machine, a
+    `_ctl_develop` tier was checked out at 3a832f7d from code.ornl.gov/hydro/triton.git
+    while every other tier was at 21e666d6 from the fork.
+    `system.py::_download_tritonswmm_source` records the same trap on the production
+    clone. Comparison goes through `_normalize_remote` because a raw `!=`
+    reports a mismatch for `.../triton/` against `.../triton.git`.
+    """
+    return _normalize_remote(_canonical_origin(tree)) == _normalize_remote(expected_remote)
+
+
+def is_borrowing(tree: Path) -> bool:
+    """True iff `tree`'s superproject object store borrows from a directory that
+    still exists.
+
+    DELIBERATELY SEPARATE FROM `borrower_is_healthy`, and the separation is
+    load-bearing in BOTH directions.
+      * `borrower_is_healthy` is a PIN gate: it answers "is this tree checked out
+        at `pin`, with `pin` resolvable." A plain standalone clone at the pin
+        satisfies every one of its conditions — measured True on a 217 MB
+        standalone clone with no alternates file at all. So it cannot be the
+        predicate that decides whether the SHARE is intact.
+      * This predicate is NOT sufficient for health and must never be substituted
+        for one: an alternates file survives a canonical `gc --prune`, so a
+        borrowing-only gate is false-clean exactly when the borrowed objects are
+        gone. That is the finding `borrower_is_healthy`'s docstring records.
+    The two are conjoined at the reuse gate, never merged.
+    """
+    target = _alternates_target(Path(tree) / ".git")
+    return target is not None and target.is_dir()
+
+
+def _alternates_target(git_dir: Path) -> Path | None:
+    """The first alternate `git_dir` borrows from, or None when it borrows none."""
+    f = git_dir / "objects" / "info" / "alternates"
+    if not f.exists():
+        return None
+    lines = [ln.strip() for ln in f.read_text().splitlines() if ln.strip()]
+    return Path(lines[0]) if lines else None
+
+
+def _reborrow_in_place(tree: Path, canonical: Path, pin: str) -> bool:
+    """Convert a standalone clone into a `--reference` borrower WITHOUT deleting it.
+
+    WHY IN PLACE, AND NOT VIA THE DESTRUCTIVE BRANCH. Re-provisioning through
+    `fast_rmtree` + re-clone would also restore the borrow, and it is wrong: every
+    TRITON build dir is nested inside `dest`, so that path destroys
+    `build_tritonswmm_cpu/triton.exe`. `tests/test_synth_00_compile_models.py`
+    constructs the builder again on the line after the one that breaks the borrow,
+    and the binary was built by the SESSION-scoped `tritonswmm_cpu_compiled`
+    fixture, which will not run again — so a destructive self-heal there fails
+    every downstream coupled test's `compilation_cpu_successful` gate. This
+    conversion never touches the working tree. Measured on the real 217 MB tree:
+    .git 217 MB -> 840 KB in 0.78 s, `git fsck --connectivity-only` rc 0, a
+    subsequent `submodule update --init --recursive` idempotent, and
+    `build_tritonswmm_cpu/triton.exe` byte-preserved.
+
+    `-l` (`--local`) IS LOAD-BEARING. `git repack -a -d` WITHOUT it packs the
+    alternate's objects into the local store — the ~322 MB re-absorption this
+    module's docstring warns about. `--local` excludes alternate-resident objects,
+    which is what produces the 840 KB result. These are the only `repack`
+    invocations in the whole toolkit; do not drop the flag, and do not "simplify"
+    them away.
+
+    Returns True only when the tree ends up BOTH borrowing and healthy. Every
+    failure is non-destructive: a half-applied conversion leaves an alternates file
+    whose objects are still resident locally, which is merely un-deduped, never
+    broken.
+    """
+    tree = Path(tree)
+    canonical_objects = Path(canonical) / ".git" / "objects"
+    if not canonical_objects.is_dir():
+        return False
+    # $displaypath maps 1:1 onto {canonical}/.git/modules/{displaypath}/objects for
+    # TRITON's FLAT submodule set (external/kokkos, external/yaml-cpp — verified
+    # non-nested). The `[ -d ]` guard makes a future NESTED submodule, whose
+    # canonical modules path is deeper, a silent skip rather than a dangling
+    # alternate.
+    submodule_script = (
+        f'CANON="{Path(canonical)}/.git/modules/$displaypath/objects"; '
+        'if [ -d "$CANON" ]; then '
+        'echo "$CANON" > "$(git rev-parse --absolute-git-dir)/objects/info/alternates" '
+        "&& git repack -a -d -l -q; fi"
+    )
+    try:
+        info = tree / ".git" / "objects" / "info"
+        info.mkdir(parents=True, exist_ok=True)
+        (info / "alternates").write_text(f"{canonical_objects}\n")
+        subprocess.run(["git", "-C", str(tree), "repack", "-a", "-d", "-l", "-q"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tree),
+                "submodule",
+                "foreach",
+                "--recursive",
+                submodule_script,
+            ],
+            check=True,
+        )
+        # Config parity with a fresh `--reference` clone, so the two provisioning
+        # paths converge on ONE state rather than on a lookalike.
+        for key, value in (
+            ("gc.auto", "0"),
+            ("submodule.alternateLocation", "superproject"),
+            ("submodule.alternateErrorStrategy", "die"),
+        ):
+            subprocess.run(["git", "-C", str(tree), "config", key, value], check=True)
+    except (subprocess.CalledProcessError, OSError):
+        return False
+    return is_borrowing(tree) and borrower_is_healthy(tree, pin)
+
+
+def _canonical_lock():
+    """Lock guarding canonical create/fetch/anchor. Routed through
+    `resolve_filelock` (never raw `filelock.FileLock`) so a flock-less
+    filesystem degrades to SoftFileLock rather than failing.
+
+    Constructed with `timeout=_PROVISION_LOCK_TIMEOUT_SECONDS` — a finite cap, not
+    `-1`. A first-provisioning clone of the 322 MB canonical is the long pole, so
+    the cap is generous; but an indefinite wait would convert a stale lock (which
+    `SoftFileLock` leaves behind on a killed holder) into a hung test session with
+    no diagnostic."""
+    # Sited in the canonical's PARENT so it is never inside a tree this module
+    # creates or removes.
+    return resolve_filelock(
+        str(canonical_root().parent / ".triton.canonical.lock"),
+        timeout=_PROVISION_LOCK_TIMEOUT_SECONDS,
+    )
+
+
+def ensure_canonical(*, pin: str = TRITON_PIN) -> Path:
+    """Create-or-adopt the canonical and guarantee it resolves `pin`.
+
+    Held under one lock for the WHOLE sequence, not just the fetch: two
+    worktrees that both observe "pin absent" and both fetch will both succeed,
+    but the second's --prune can run between the first's fetch and its
+    update-ref. Re-check the predicate INSIDE the lock, never only before
+    acquiring it.
+
+    Steps: (1) if absent, `git clone --recurse-submodules {TRITON_GIT_URL}` into
+    canonical_root(), then `git config gc.auto 0` on it and, via
+    `submodule foreach --recursive`, on each submodule. (2) cheap no-network
+    check `git rev-parse --verify {pin}^{commit}`; return early if present.
+    (2b) ADOPT-TIME REMOTE IDENTITY: if the store's `origin` does not denote
+    TRITON_GIT_URL (compared normalized), `git remote set-url` it and FORCE the
+    fetch below — an existing store is adopted unconditionally, so a canonical
+    created against a previous URL is otherwise reused forever against the new
+    one. (3) otherwise `git fetch --prune origin
+    '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'` — the
+    destination is refs/remotes/*, NEVER refs/heads/* (git refuses to fetch into
+    the checked-out branch of a non-bare repo, and this canonical MUST be
+    non-bare) and NEVER '+refs/*:refs/*'. (4) re-check; raise
+    if still absent (a pin unreachable from any ref or tag). (5)
+    `git update-ref refs/pins/{pin} {pin}`, and the same for each submodule's
+    HEAD via `submodule foreach --recursive`, so a submodule-side gc cannot
+    strand a borrower's checkout (a submodule commit is referenced only by the
+    superproject's gitlink, which is not a ref in the submodule's own repo).
+    """
+    canonical = canonical_root()
+    with _canonical_lock():
+        if not (canonical / ".git").exists():
+            canonical.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", "--recurse-submodules", TRITON_GIT_URL, str(canonical)],
+                check=True,
+            )
+            subprocess.run(["git", "-C", str(canonical), "config", "gc.auto", "0"], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(canonical),
+                    "submodule",
+                    "foreach",
+                    "--recursive",
+                    "git config gc.auto 0",
+                ],
+                check=True,
+            )
+
+        # Cheap no-network check FIRST — the common case is an already-current
+        # canonical, and a fetch per construction would be a network round-trip
+        # inside a constructor.
+        # ADOPT-TIME REMOTE IDENTITY, checked BEFORE the pin. The create branch above
+        # fires only when a canonical is ABSENT; an existing store is adopted
+        # unconditionally, so one created against a PREVIOUS TRITON_GIT_URL is reused
+        # forever against the new one. A pin check cannot detect that — ORNL upstream and
+        # the fork are both named `triton.git` and one sha can resolve on both while
+        # naming a different codebase. REPAIR rather than refuse: this store is a
+        # toolkit-owned cache, and the re-point is a fast-forward superset, so the fetch
+        # only ADDS objects and no borrower can lose one. The previous pin stays reachable
+        # twice over — as an ancestor of the new pin, and via its own refs/pins anchor,
+        # which the narrowed refspec below cannot prune.
+        origin = _canonical_origin(canonical)
+        force_fetch = origin is not None and _normalize_remote(origin) != _normalize_remote(TRITON_GIT_URL)
+        if force_fetch:
+            subprocess.run(
+                ["git", "-C", str(canonical), "remote", "set-url", "origin", TRITON_GIT_URL],
+                check=True,
+            )
+
+        if force_fetch or _rev_parse(canonical, pin) is None:
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(canonical),
+                    "fetch",
+                    "--prune",
+                    "origin",
+                    # DESTINATION IS refs/remotes/origin/*, NOT refs/heads/*. Git REFUSES
+                    # to fetch into the checked-out branch of a non-bare repo — measured
+                    # `fatal: refusing to fetch into branch 'refs/heads/main' checked out
+                    # at ...`, rc 128, UNCONDITIONALLY under a forced (+) refspec, even
+                    # when that branch is already up to date. The canonical MUST be
+                    # non-bare (see this module's docstring) and its HEAD is on a branch,
+                    # so the previous destination could never succeed here; it went
+                    # unnoticed only because the cheap check above always short-circuited
+                    # past it. The narrowing rationale is unchanged and strengthened: this
+                    # destination namespace cannot touch refs/pins/* either.
+                    "+refs/heads/*:refs/remotes/origin/*",
+                    "+refs/tags/*:refs/tags/*",
+                ],
+                check=True,
+            )
+            if _rev_parse(canonical, pin) is None:
+                raise RuntimeError(
+                    f"TRITON pin {pin} is unreachable from any branch or tag on "
+                    f"{TRITON_GIT_URL} after a narrowed fetch of the canonical at "
+                    f"{canonical} (its origin now reads "
+                    f"{_canonical_origin(canonical)}). The pin is wrong, the commit was "
+                    f"removed upstream, or the pin belongs to a DIFFERENT remote than "
+                    f"TRITON_GIT_URL names — both TRITON remotes are called `triton.git`, "
+                    f"so check the remote before assuming the pin."
+                )
+
+        # Anchor the pin so a later `fetch --prune` + gc cannot destroy it. The
+        # narrowed refspec above cannot prune refs/pins/* because its destination
+        # namespaces are refs/remotes/origin/* and refs/tags/* only.
+        subprocess.run(
+            ["git", "-C", str(canonical), "update-ref", f"refs/pins/{pin}", pin],
+            check=True,
+        )
+        # Same for each submodule's HEAD: a submodule commit is referenced only by
+        # the superproject's gitlink, which is not a ref in the submodule's own repo,
+        # so nothing otherwise protects it from a submodule-side gc.
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(canonical),
+                "submodule",
+                "foreach",
+                "--recursive",
+                'git update-ref "refs/pins/$(git rev-parse HEAD)" "$(git rev-parse HEAD)"',
+            ],
+            check=True,
+        )
+    return canonical
+
+
+def provision_borrower(dest: Path, *, pin: str = TRITON_PIN) -> Path:
+    """Provision `dest` as a `--reference` borrower of the canonical.
+
+    Runs BEFORE `system.py`'s not-exists() clone gate, which then finds the tree
+    present and carrying CMakeLists.txt and skips its own full clone — which is
+    why provisioning a borrower needs no production-code change.
+
+    TWO FAILURE CLASSES, TWO BEHAVIORS — do not collapse them.
+      * A canonical SHAPE defect (bare canonical, missing `.git/modules/{name}`,
+        undeduped submodules) FAILS LOUD, non-zero. Silently degrading is
+        the 51 MB/worktree regression the `die` strategy exists to prevent.
+      * A canonical that cannot be CREATED — no network, unreachable remote,
+        `CI` set, or `HHEMT_DISABLE_TRITON_CANONICAL=1` — WARNS and returns without
+        provisioning, leaving `dest` exactly
+        as it found it so `system.py`'s existing not-exists clone gate remains the
+        fallback. This keeps the constructor's contract byte-identical to today's
+        on any machine without the canonical. It is load-bearing for CI: this
+        constructor is exercised by tests OUTSIDE the compile-gated tier
+        (`tests/test_sensitivity_hpc_alias.py`, `tests/test_from_scratch_honesty.py`,
+        `tests/conftest.py`, every `tests/test_synth_*.py`), and
+        `.github/workflows/test.yml` runs bare `pytest` on a runner with no
+        persistent cache (its `ubuntu-latest` / Python 3.12 matrix job).
+        An unconditional 322 MB clone from TRITON_GIT_URL's host there is a new network
+        dependency for the fast tier, and the same regression hits any offline
+        developer run.
+
+    FIRST STEP, before the reuse gate: call `ensure_canonical(pin=pin)`. The
+    canonical must resolve the pin before a borrower is created OR REUSED, so this
+    cannot sit inside the not-healthy branch — a healthy borrower's early return
+    would skip it and leave the canonical un-refreshed for the next caller.
+    `ensure_canonical` is idempotent and its own lock makes the repeat call cheap.
+    FIRST-RUN COST, stated because it is a real behavior change and the fallback
+    above does not cover it: on an online, non-CI machine with a cold cache the
+    call is NOT cheap — it performs the 322 MB `git clone --recurse-submodules`,
+    inside a constructor that is network-free today. The availability fallback
+    fires only when the canonical cannot be created, so it does not fire here.
+    Every test that constructs this builder therefore pays the canonical clone
+    once per machine, including the fast non-compile tests
+    (`tests/test_sensitivity_hpc_alias.py`, `tests/test_from_scratch_honesty.py`).
+    `HHEMT_DISABLE_TRITON_CANONICAL=1` is the opt-out.
+
+    Reuse gate: if `dest` exists AND `borrower_is_healthy(dest, pin)`, return it
+    untouched. If it exists and is NOT healthy, `fast_rmtree` it and re-provision
+    (this is the self-heal for a deleted/pruned canonical, and it is also what
+    makes a pin move land cleanly on an existing cache).
+
+    THE DESTRUCTIVE BRANCH RUNS UNDER ITS OWN LOCK, SITED OUTSIDE THE TREE IT
+    DELETES. `dest` is `TRITONSWMM_software_directory`, and EVERY TRITON build dir
+    is nested inside it (system.py places each build dir under
+    `TRITONSWMM_software_directory`), so this `fast_rmtree` destroys
+    `build_tritonswmm_cpu/` — its `triton.exe` AND its `compilation.log` — not just
+    the source checkout. Two consequences follow, and both are why the lock is
+    required rather than tidy. (1) COST: a re-provision is ~61 MB of source PLUS a
+    full recompile, never 61 MB alone; after a pin move every existing slug
+    pays this once, and any slug that alternates between the
+    fixture pin and `container_validation.py`'s pin pays it on every alternation.
+    (2) CONCURRENCY: the per-build-dir compile lock
+    (`triton/.build_tritonswmm_cpu.compile.lock`) cannot protect this — it lives
+    inside the directory being removed, and `system.py::_download_tritonswmm_source`
+    is uncovered for the same reason. Hold
+    `resolve_filelock(str(dest.parent / ".triton.provision.lock"),
+    timeout=_PROVISION_LOCK_TIMEOUT_SECONDS)` across the health check, the
+    `fast_rmtree`, the clone, and the submodule update, so two pytest sessions on
+    one slug cannot delete each other's tree mid-provision. `dest.parent` is
+    `_software/`, which this branch never removes.
+
+    Provision: `git clone --reference {canonical}/.git {TRITON_GIT_URL} {dest}`,
+    then `git config gc.auto 0`, `git config submodule.alternateLocation
+    superproject`, `git config submodule.alternateErrorStrategy die` (the
+    default, set explicitly so the intent is legible), then
+    `git checkout {pin}`, then `git submodule update --init --recursive`.
+
+    NOTE on durability: the alternates files are a CONSEQUENCE; the persisted
+    `submodule.alternateLocation` config is the CAUSE. Re-running
+    `git submodule update --init --recursive` preserves both (measured), and any
+    future path that deletes and re-creates a submodule gitdir re-derives the
+    alternate correctly BECAUSE the config persists. So there is no
+    "re-assert alternates after every submodule update" obligation — only an
+    obligation to write the config once, into the borrower's repo config.
+    """
+    dest = Path(dest)
+
+    # AVAILABILITY fallback (NOT the shape-defect path): leave `dest` exactly as
+    # found so system.py's not-exists clone gate stays the fallback.
+    if os.environ.get(_DISABLE_ENV) == "1" or os.environ.get("CI"):
+        return dest
+
+    try:
+        canonical = ensure_canonical(pin=pin)
+    except (subprocess.CalledProcessError, RuntimeError, OSError) as exc:
+        warnings.warn(
+            f"TRITON canonical object store unavailable ({exc}); leaving {dest} "
+            "untouched so system.py's clone gate remains the fallback. Set "
+            f"{_DISABLE_ENV}=1 to skip this attempt entirely.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return dest
+
+    lock = resolve_filelock(
+        str(dest.parent / ".triton.provision.lock"),
+        timeout=_PROVISION_LOCK_TIMEOUT_SECONDS,
+    )
+    with lock:
+        # Re-check INSIDE the lock: a sibling session may have provisioned while
+        # we waited.
+        if dest.exists() and borrower_is_healthy(dest, pin) and borrower_remote_matches(dest):
+            # HEALTHY BUT NOT BORROWING. `borrower_is_healthy` is a PIN gate, so a
+            # plain standalone clone checked out at `pin` passes it and would be
+            # adopted untouched FOREVER — the saving is lost for the life of the
+            # cache dir, not for one run. At least two paths produce such a tree:
+            # `system.py::_download_tritonswmm_source` (the
+            # `redownload_triton_swmm_if_exists=True` branch, `fast_rmtree` + a
+            # plain clone with no `--reference`), and the availability fallback
+            # above, which leaves `dest` for system.py's own clone gate to fill.
+            # Restore the borrow IN PLACE — never via the destructive branch below,
+            # which would delete the nested build dirs and their compiled binaries.
+            if not is_borrowing(dest) and not _reborrow_in_place(dest, canonical, pin):
+                warnings.warn(
+                    f"{dest} is a standalone clone at {pin} and could not be "
+                    f"converted to a borrower of {canonical}; it will be reused "
+                    "un-deduped. The tree is usable — only the object-store "
+                    "saving is forfeited.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            return dest
+        # ROLE GATE. Reaching here means the tier cannot be adopted as it stands, and that
+        # covers TWO states: it is ABSENT, or it exists and fails one of the reuse gate's
+        # later conjuncts. The predicate refuses in BOTH, deliberately -- a chunk is one of
+        # N array elements dispatched together, and provisioning from one is unsafe either
+        # way: for an existing tier because the next statement DELETES it and every TRITON
+        # build dir is nested inside `dest`; for an absent one because N chunks would clone
+        # into ONE path serialized only by a lock measured not to exclude across nodes on a
+        # parallel filesystem. What differs is the OPERATOR'S REMEDY, so the message names
+        # WHICH conjunct failed and WHAT to run. Naming the wrong conjunct is the same
+        # defect as naming the wrong hazard: the reuse gate has THREE, and blaming the pin
+        # for a remote mismatch sends the reader to look at the wrong thing.
+        if os.environ.get(_SUITE_ROLE_ENV) == "chunk":
+            if not dest.exists():
+                _state = "the tier is ABSENT -- nothing has provisioned it yet"
+            elif not borrower_is_healthy(dest, pin):
+                _state = f"the tier exists but its checkout is not at pin {pin[:12]}"
+            elif not borrower_remote_matches(dest):
+                _state = "the tier exists and is at the pin, but its `origin` is not the expected TRITON remote"
+            else:
+                _state = (
+                    "the tier now satisfies every reuse conjunct -- it changed under "
+                    "this process between the reuse check and this message"
+                )
+            raise RuntimeError(
+                f"refusing to provision {dest} from a suite chunk: {_state}. A chunk "
+                "never provisions a shared tier, because N array elements would act on "
+                "one path at once. REMEDY: from the toolkit checkout, in a session that "
+                "is NOT a suite chunk, run `python -m pytest "
+                "tests/test_synth_00_compile_models.py` -- that is the warm, and it "
+                "materializes or repairs the tier. A harness that dispatches chunks "
+                "should run that warm itself before submitting; if yours did and you are "
+                "still reading this, the tier changed between the warm and this chunk, "
+                "and that is the thing to investigate."
+            )
+        if dest.exists():
+            ut.fast_rmtree(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # A canonical SHAPE defect fails LOUD here (check=True) — never degrade to
+        # an undeduped clone via --reference-if-able.
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "--reference",
+                str(canonical / ".git"),
+                TRITON_GIT_URL,
+                str(dest),
+            ],
+            check=True,
+        )
+        subprocess.run(["git", "-C", str(dest), "config", "gc.auto", "0"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(dest),
+                "config",
+                "submodule.alternateLocation",
+                "superproject",
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(dest),
+                "config",
+                "submodule.alternateErrorStrategy",
+                "die",
+            ],
+            check=True,
+        )
+        subprocess.run(["git", "-C", str(dest), "checkout", pin], check=True)
+        subprocess.run(
+            ["git", "-C", str(dest), "submodule", "update", "--init", "--recursive"],
+            check=True,
+        )
+    return dest
+
+
+def model_version_lines() -> list[str]:
+    """The MODEL versions this suite exercises, as printable lines.
+
+    DERIVED, never restated: every value is read from its single declaration site, so
+    these lines cannot drift from the thing they report. That property is the whole
+    point — this file already carried three separate comment blocks describing a state
+    the code had moved past.
+
+    The TRITON identity is a (remote, commit) PAIR. See TRITON_GIT_URL.
+
+    SWMM appears TWICE in a coupled analysis and the two are different versions:
+      * STANDALONE (`toggle_swmm_model`) is cloned by `system.py` at
+        `system_config.SWMM_tag_key`, read here from the model default.
+      * COUPLED (`toggle_tritonswmm_model`) is VENDORED inside TRITON at
+        `external/swmm` and compiled into triton.exe. Its version travels with the
+        TRITON pin and cannot be read without a clone, so this line names the deciding
+        command instead of asserting a number. Measured at the pin above: 5.2.3.
+    """
+    from hhemt.config.system import system_config
+
+    swmm_tag = system_config.model_fields["SWMM_tag_key"].default
+    return [
+        f"TRITON-SWMM source: {TRITON_SOURCE_DESCRIPTOR}",
+        f"SWMM (standalone build): {swmm_tag} (system_config.SWMM_tag_key default)",
+        "SWMM (coupled): vendored in TRITON at external/swmm; its version travels with "
+        "the TRITON pin above. Read it with: git -C {TRITONSWMM_software_directory} show "
+        "{pin}:external/swmm/CMakeLists.txt",
+    ]

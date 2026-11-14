@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pytest
 
+from hhemt._compile_venue import compile_tier_required
 from hhemt.analysis import TRITONSWMM_analysis
 
 if TYPE_CHECKING:
@@ -17,8 +18,18 @@ def uses_slurm() -> bool:
     return "SLURM_JOB_ID" in os.environ
 
 
-def is_scheduler_context() -> bool:
-    """Return True when any known HPC scheduler env var is present."""
+def on_scheduler_node() -> bool:
+    """Return True when any known HPC scheduler env var is present.
+
+    SAFETY GUARD, not tier routing. Its 17 tier-routing callers -- the
+    `skipif(..., reason="Only runs on non-HPC systems.")` marks inherited from the
+    deleted `test_PC_*` / `test_UVA_*` / `test_frontier_*` / `test_PILOT_*` scheme --
+    were removed, because they routed traffic away from a tier that no longer
+    exists. What survives is a different population: the two run-proof modules whose
+    marks already read "do not launch on an HPC scheduler node", where the guard is
+    a deliberate choice about a live-deposit test and a local coupled run-proof.
+    The name now says which of the two it is.
+    """
     scheduler_vars = (
         "SLURM_JOB_ID",  # SLURM
         "PBS_JOBID",  # PBS
@@ -55,8 +66,15 @@ def require_compile_tier() -> bool:
     (the conda recipe and the future toolchain-bearing CI job) sets the var, so
     in that one environment a skip of the coupled-compile tier becomes a loud
     failure instead of a silently-passing ``N skipped``.
+
+    A DELEGATION, not a reader. ``hhemt._compile_venue.compile_tier_required`` owns
+    the read, so this helper and the suite runner that refuses a compile-bearing
+    plan resolve the same value from the same place. Two readers would be free to
+    drift on the spelling of the arming value, and a runner that accepted a
+    compile-bearing plan while this helper skipped the tier would produce a green
+    run whose output never says it could not compile.
     """
-    return os.environ.get("HHEMT_REQUIRE_COMPILE_TIER") == "1"
+    return compile_tier_required()
 
 
 def provenance_audit_enabled() -> bool:
@@ -189,6 +207,21 @@ def assert_system_setup(analysis: TRITONSWMM_analysis):
     from hhemt.analysis_validation import check_system_setup
 
     result = check_system_setup(analysis)
+    if not result.passed:
+        msg = result.summary
+        if result.details:
+            msg += "\n  " + "\n  ".join(f"- {d.get('detail', '')}" for d in result.details)
+        pytest.fail(msg)
+
+
+def assert_consolidated_metadata_current(analysis: TRITONSWMM_analysis):
+    """Pytest wrapper around analysis_validation.check_consolidated_metadata.
+
+    Fails with the first stale or missing index, naming the store, node and field.
+    """
+    from hhemt.analysis_validation import check_consolidated_metadata
+
+    result = check_consolidated_metadata(analysis)
     if not result.passed:
         msg = result.summary
         if result.details:
@@ -393,6 +426,7 @@ def assert_model_simulation_run(
 def assert_model_outputs_processed(
     analysis: TRITONSWMM_analysis,
     model_type: str,
+    check_timeseries: bool = True,
 ):
     """
     Assert that outputs were processed for a specific model type by checking actual output files.
@@ -471,6 +505,17 @@ def assert_model_outputs_processed(
                 ("SWMM-only node summary", paths.output_swmm_only_node_summary),
                 ("SWMM-only link summary", paths.output_swmm_only_link_summary),
             ]
+
+        # Post-processing reclaim (analysis_config.remove_after_processing) removes the
+        # per-scenario *_tseries artifacts after the summaries are proven intact, so "what
+        # a processed scenario looks like" is config-dependent from that feature forward.
+        # Callers that enabled the reclaim pass check_timeseries=False. The default True
+        # reproduces the pre-feature assertion byte-for-byte, so every existing call site
+        # (test_synth_01/02/04) is unchanged. This EXTENDS the switch the sibling
+        # assert_model_outputs_exist already carries rather than introducing a second,
+        # parallel one on the same axis.
+        if not check_timeseries:
+            required_paths = [(desc, path) for (desc, path) in required_paths if "timeseries" not in desc.lower()]
 
         # Check each required path exists
         for desc, path in required_paths:
@@ -556,6 +601,135 @@ def normalize_swmm_link_vars(link_vars: set[str]) -> set[str]:
     if "capacity" in link_vars:
         return (link_vars - {"capacity"}) | {"capacity_setting"}
     return link_vars
+
+
+def coupled_only_node_vars(*, exchange_flow_on: bool) -> set[str]:
+    """Node variables the coupled (TRITON-SWMM) node store carries and the SWMM-only store never does.
+
+    ``is_coupling_node`` is written for every coupled run. With ``toggle_coupling_exchange_flow`` on the coupled
+    store also carries ``coupling_exchange_flow`` and the eight ``STATISTIC_NAMES`` per-node statistics.
+    """
+    from hhemt.coupling_exchange import STATISTIC_NAMES
+
+    names = {"is_coupling_node"}
+    if exchange_flow_on:
+        names |= {"coupling_exchange_flow", *STATISTIC_NAMES}
+    return names
+
+
+def swmm_only_node_vars() -> set[str]:
+    """Node variables the SWMM-only node store carries and the coupled one never does.
+
+    The five Runoff Quantity Continuity rows (``runoff_continuity_{stem}``): only the standalone SWMM model routes
+    its own runoff, so only its report prints them, and the coupled hydraulics model routes none (D19, shape row 36).
+    Read from ``hhemt.constants.LST_RUNOFF_CONTINUITY_VARIABLES`` so the set follows the source. Not in this set: the
+    six system series live in the separate ``swmm_only/system`` store, and their twelve ``_max`` / ``_last``
+    reductions ride in the node SUMMARY store, which this comparison is never given (its callers pass the two node
+    time-series stores).
+    """
+    from hhemt.constants import LST_RUNOFF_CONTINUITY_VARIABLES
+
+    return set(LST_RUNOFF_CONTINUITY_VARIABLES)
+
+
+def node_var_mismatch(swmm_vars: set[str], coupled_vars: set[str], *, exchange_flow_on: bool) -> str | None:
+    """Describe how the SWMM-only and coupled node variable sets violate the cross-model design, or return None.
+
+    The design is: every coupled-only variable is present in the coupled store and absent from the SWMM-only
+    store; the SWMM-only-only variables (``swmm_only_node_vars``) may appear in the SWMM-only store and never in the
+    coupled one; and everything else is equal. Five ways to violate it are reported separately, each naming the
+    variables: a coupled-only name leaked into the SWMM-only store, a coupled-only name missing from the coupled
+    store (the always-on ``is_coupling_node`` flag included), a SWMM-only-only name present in the coupled store,
+    and any remaining difference.
+    """
+    coupled_only = coupled_only_node_vars(exchange_flow_on=exchange_flow_on)
+    swmm_only = swmm_only_node_vars()
+    problems = []
+    leaked = sorted(set(swmm_vars) & coupled_only)
+    if leaked:
+        problems.append(f"coupled-only variables present in the SWMM-only store: {leaked}")
+    absent = sorted(coupled_only - set(coupled_vars))
+    if absent:
+        problems.append(f"coupled-only variables absent from the coupled store: {absent}")
+    inverse_leak = sorted(set(coupled_vars) & swmm_only)
+    if inverse_leak:
+        problems.append(f"SWMM-only-only variables present in the coupled store: {inverse_leak}")
+    shared_coupled = set(coupled_vars) - coupled_only - swmm_only
+    shared_swmm = set(swmm_vars) - coupled_only - swmm_only
+    if shared_swmm != shared_coupled:
+        problems.append(
+            f"remaining variables differ: only in SWMM-only {sorted(shared_swmm - shared_coupled)}, "
+            f"only in coupled {sorted(shared_coupled - shared_swmm)}"
+        )
+    return "; ".join(problems) or None
+
+
+def assert_node_vars_consistent(ds_swmm_nodes, ds_coupled_nodes, analysis) -> None:
+    """Fail, naming the variables, unless the two node stores satisfy ``node_var_mismatch``'s design."""
+    flux = bool(getattr(analysis.cfg_analysis, "toggle_coupling_exchange_flow", False))
+    mismatch = node_var_mismatch(
+        {str(v) for v in ds_swmm_nodes.data_vars}, {str(v) for v in ds_coupled_nodes.data_vars}, exchange_flow_on=flux
+    )
+    if mismatch:
+        pytest.fail(f"Node time series data variables do not match: {mismatch}")
+
+
+def inp_section_first_tokens(inp: Path, section: str) -> set[str]:
+    """The first token of every data line of one `[SECTION]` of an input file."""
+    names: set[str] = set()
+    active = False
+    for raw in inp.read_text(errors="replace").splitlines():
+        line = raw.split(";")[0].strip()
+        if line.startswith("["):
+            active = line.upper() == f"[{section}]"
+            continue
+        if active and line:
+            names.add(line.split()[0])
+    return names
+
+
+def nodes_with_a_nonzero_flow_inflow(inp: Path) -> set[str]:
+    """Nodes whose `[INFLOWS]` carry a FLOW entry that can be non-zero: a time series, or a non-zero baseline.
+
+    The synthetic model writes a FLOW entry at EVERY junction with an empty time series (`""`) and a zero baseline,
+    so the coupling layer can read its node list from `[INFLOWS]`; such an entry adds no inflow, so listing a node
+    there does not make it loaded. A line is loaded when its constituent is FLOW and its time series is named or
+    its baseline (the 7th field, default 0) is not zero. Not established: that a non-FLOW constituent line adds no
+    flow, which SWMM guarantees only for pollutant loads; those lines are not counted here.
+    """
+    loaded: set[str] = set()
+    active = False
+    for raw in inp.read_text(errors="replace").splitlines():
+        line = raw.split(";")[0].strip()
+        if line.startswith("["):
+            active = line.upper() == "[INFLOWS]"
+            continue
+        tokens = line.split()
+        if not (active and len(tokens) >= 2 and tokens[1].upper() == "FLOW"):
+            continue
+        series = tokens[2] if len(tokens) > 2 else '""'
+        baseline = float(tokens[6]) if len(tokens) > 6 else 0.0
+        if series not in ('""', "''") or baseline != 0.0:
+            loaded.add(tokens[0])
+    return loaded
+
+
+def quiet_coupled_nodes(inp: Path, coupled: list[str]) -> list[str]:
+    """Coupled nodes with no non-zero FLOW inflow, no DWF or RDII, and no subcatchment draining to them."""
+    loaded = nodes_with_a_nonzero_flow_inflow(inp) | inp_section_first_tokens(inp, "DWF")
+    loaded |= inp_section_first_tokens(inp, "RDII")
+    outlets: set[str] = set()
+    active = False
+    for raw in inp.read_text(errors="replace").splitlines():
+        line = raw.split(";")[0].strip()
+        if line.startswith("["):
+            active = line.upper() == "[SUBCATCHMENTS]"
+            continue
+        if active and line:
+            tokens = line.split()
+            if len(tokens) > 2:
+                outlets.add(tokens[2])
+    return [n for n in coupled if n not in loaded and n not in outlets]
 
 
 # ========== Phase 6d.2: New Assertion Helpers (2026-02-09) ==========
@@ -677,82 +851,6 @@ def assert_file_exists(path: Path, description: str | None = None) -> None:
     if not path.exists():
         desc = f" ({description})" if description else ""
         pytest.fail(f"Expected file{desc} not found: {path}")
-
-
-def assert_phases_complete(
-    analysis: TRITONSWMM_analysis,
-    phases: list[str] | None = None,
-    verbose: bool = False,
-) -> None:
-    """Assert specified workflow phases completed for all scenarios.
-
-    Uses WorkflowStatus to check completion state of workflow phases.
-    Useful for verifying prerequisites before testing later phases.
-
-    Parameters
-    ----------
-    analysis : TRITONSWMM_analysis
-        The analysis to check
-    phases : list[str], optional
-        Phases to check. Valid values: ["setup", "preparation", "simulation",
-        "processing", "consolidation"]. If None, checks all phases.
-    verbose : bool, default False
-        Print detailed status for each phase (use pytest -v to enable)
-
-    Raises
-    ------
-    AssertionError
-        If any specified phase is incomplete, with details of which phases failed
-
-    Examples
-    --------
-    Check setup and preparation before testing execution:
-        >>> assert_phases_complete(analysis, phases=["setup", "preparation"])
-
-    Check all phases:
-        >>> assert_phases_complete(analysis)
-
-    With verbose output:
-        >>> assert_phases_complete(analysis, phases=["simulation"], verbose=True)
-
-    Notes
-    -----
-    Leverages the WorkflowStatus infrastructure added in Tier 3 Phase 2.
-    Phase names match those returned by analysis.get_workflow_status().
-    """
-    if phases is None:
-        phases = ["setup", "preparation", "simulation", "processing", "consolidation"]
-
-    status = analysis.get_workflow_status()
-
-    incomplete = []
-    phase_status_map = {
-        "setup": status.setup,
-        "preparation": status.preparation,
-        "simulation": status.simulation,
-        "processing": status.processing,
-        "consolidation": status.consolidation,
-    }
-
-    for phase_name in phases:
-        if phase_name not in phase_status_map:
-            pytest.fail(f"Invalid phase name: '{phase_name}'. Valid phases: {list(phase_status_map.keys())}")
-
-        phase_obj = phase_status_map[phase_name]
-        if not phase_obj.complete:
-            if verbose:
-                print(f"\n  {phase_name.capitalize()}: {phase_obj.progress:.0%} complete")
-                if phase_obj.failed_items:
-                    print(f"    Failed items: {phase_obj.failed_items}")
-            incomplete.append(f"{phase_name} ({phase_obj.progress:.0%})")
-
-    if incomplete:
-        error_msg = f"Phase completion check failed for {len(incomplete)} phase(s):\n"
-        error_msg += "\n".join(f"  - {phase}" for phase in incomplete)
-        error_msg += f"\n\nTotal progress: {status.simulations_completed}/{status.total_simulations} simulations"
-        if not verbose:
-            error_msg += "\nRun with pytest -v for phase details."
-        pytest.fail(error_msg)
 
 
 def assert_model_simulations_complete(
@@ -943,12 +1041,12 @@ def _time_dim(da) -> str | None:
 
     Zarrs emitted by different toolkit code paths use different time-dim
     names: SWMM per-node/link timeseries use ``date_time``; TRITON 2D
-    timeseries use ``timestep_min``; some legacy code paths use ``time``.
+    timeseries use ``timestep``; some code paths use ``time``.
     Per-link or per-node summary variables with no time dim at all return
     None — callers should skip them rather than reduce.
     """
     for d in da.dims:
-        if d in ("date_time", "timestep_min", "time"):
+        if d in ("date_time", "timestep", "time"):
             return d
     return None
 
@@ -1050,8 +1148,8 @@ def assert_hydraulic_components_exercised(analysis) -> None:
 def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[str]) -> None:
     """Verify that TRITON emitted a time-varying 2D water field.
 
-    The toolkit's TRITON-output zarr uses ``wlevel_m`` (water level at cell
-    center) with dims ``(timestep_min, y, x)``; ``depth`` is an older naming
+    The toolkit's TRITON-output zarr uses ``flood_depth`` (flood depth at cell
+    center) with dims ``(timestep, y, x)``; ``depth`` is an older naming
     that no longer appears. Accept either as the depth proxy.
     """
     import xarray as xr
@@ -1061,11 +1159,11 @@ def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[
         return
     ds = xr.open_zarr(triton_ts)
     depth_var = next(
-        (v for v in ("wlevel_m", "depth") if v in ds.data_vars),
+        (v for v in ("flood_depth", "depth") if v in ds.data_vars),
         None,
     )
     if depth_var is None:
-        failures.append(f"event {event_iloc} {model_type}: no water-level var (wlevel_m / depth) in {triton_ts}")
+        failures.append(f"event {event_iloc} {model_type}: no flood-depth var (flood_depth / depth) in {triton_ts}")
         return
     # Reduce over every dim except the time dim so we get one value per
     # timestep, then count timesteps where the field is positive somewhere.
@@ -1085,7 +1183,7 @@ def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[
 
 
 def snapshot_scenario_output_mtimes(analysis, *, kind: str) -> dict[tuple[str | None, str], dict[Path, float]]:
-    """Return {(sa_id, event_id): {output_file: mtime_float}} for every per-scenario output.
+    """Return {(member_id, event_id): {output_file: mtime_float}} for every per-scenario output.
 
     Scenario id is the stable event-slug computed by scenario.compute_event_id_slug
     (e.g., "year.9_event_type.compound_event_id.1") — NOT the row label of df_sims.
@@ -1108,11 +1206,11 @@ def snapshot_scenario_output_mtimes(analysis, *, kind: str) -> dict[tuple[str | 
     only change when Snakemake's simulation/process/consolidate rules actually run.
 
     Keys are typed tuples to avoid substring-collision pitfalls with string-concat
-    namespacing (e.g., sa_id="sa_1" vs sa_id="extra_sa_1" both endswith "::sa_1"):
+    namespacing (e.g., member_id="member_1" vs member_id="extra_member_1" both endswith "::member_1"):
 
       - kind='multi_sim': key is (None, event_id).
-      - kind='sensitivity': key is (str(sa_id), event_id), disambiguating identical
-        event_ids across sub-analyses.
+      - kind='sensitivity': key is (str(member_id), event_id), disambiguating identical
+        event_ids across members.
     """
     from hhemt.scenario import compute_event_id_slug
 
@@ -1133,11 +1231,11 @@ def snapshot_scenario_output_mtimes(analysis, *, kind: str) -> dict[tuple[str | 
             slug, sim_folder = _slug_and_sim_folder(analysis, iloc)
             snapshot[(None, slug)] = _walk(sim_folder)
     elif kind == "sensitivity":
-        for sa_id, sub in analysis.sensitivity.sub_analyses.items():
-            sa_id_str = str(sa_id)
+        for member_id, sub in analysis.sensitivity.members.items():
+            member_id_str = str(member_id)
             for iloc in sub.df_sims.index:
                 slug, sim_folder = _slug_and_sim_folder(sub, iloc)
-                snapshot[(sa_id_str, slug)] = _walk(sim_folder)
+                snapshot[(member_id_str, slug)] = _walk(sim_folder)
     else:
         raise ValueError(f"unknown kind: {kind!r}")
 
@@ -1154,8 +1252,8 @@ def mutate_scenario_csv(
     """Copy the source scenario CSV to a tmp path, drop the row whose scenario
     identifier == remove_key, append a fresh row cloned from donor_key with a
     synthetic identifier guaranteed not to collide. Return (tmp_csv_path, new_key).
-    Keys are typed (sa_id, event_id) tuples matching snapshot_scenario_output_mtimes;
-    sa_id=None for multi_sim, sa_id=str for sensitivity.
+    Keys are typed (member_id, event_id) tuples matching snapshot_scenario_output_mtimes;
+    member_id=None for multi_sim, member_id=str for sensitivity.
 
     multi_sim:
       - Source CSV: analysis.cfg_analysis.weather_events_to_simulate (analysis.py:164-166).
@@ -1170,15 +1268,15 @@ def mutate_scenario_csv(
 
     sensitivity:
       - Source CSV (or XLSX): analysis.cfg_analysis.sensitivity_analysis.
-      - The `sa_id` column is required by stipulation
-        `library/docs/stipulations/hhemt/sensitivity csvs require sa_id column.md`.
-      - Mutation: drop the row whose sa_id == remove_id; clone donor row with a
-        new synthetic sa_id matching `^[A-Za-z0-9_.]+$`.
+      - The `member_id` column is required by stipulation
+        `library/docs/stipulations/hhemt/sensitivity csvs require member_id column.md`.
+      - Mutation: drop the row whose member_id == remove_id; clone donor row with a
+        new synthetic member_id matching `^[A-Za-z0-9_.]+$`.
     """
     if kind == "multi_sim":
         from hhemt.scenario import compute_event_id_slug
 
-        donor_event_id = donor_key[1]  # sa_id is None for multi_sim
+        donor_event_id = donor_key[1]  # member_id is None for multi_sim
         remove_event_id = remove_key[1]
         src = Path(analysis.cfg_analysis.weather_events_to_simulate)
         df = pd.read_csv(src)
@@ -1189,12 +1287,15 @@ def mutate_scenario_csv(
 
         slugs = df.apply(_row_slug, axis=1)
         donor_row = df[slugs == donor_event_id].iloc[0].copy()
-        # Capture victim's iloc positions BEFORE removal so we can delete stale model logs.
-        # The toolkit's completion check uses iloc-indexed log names (model_triton_evt{N}.log),
-        # NOT slug-based names. After removing the victim and appending a new scenario, the new
-        # scenario inherits the victim's iloc, causing the completion check to read the victim's
-        # log and declare the new scenario "already done" before running.
-        victim_ilocs = df.index[slugs == remove_event_id].tolist()
+        # No stale-log deletion is performed here, and the omission is deliberate. The
+        # toolkit's completion gate now adjudicates the triton arm on a per-scenario
+        # artifact (`out_triton/performance.txt`) in ADDITION to the ordinal-keyed run-log
+        # marker, so a newly added event that inherits a previous occupant's row position
+        # is no longer certified complete by that occupant's log. The workaround that stood
+        # here deleted `model_*_evt{victim_iloc}.log` on the belief that "the new scenario
+        # inherits the victim's iloc". It does not: `pd.concat(..., ignore_index=True)`
+        # appends the new row at the LAST ordinal, so the workaround targeted the one slot
+        # the stable-slug JSON already covered and left the colliding one untouched.
         df = df[slugs != remove_event_id].copy()
         bumped_col = indexer_cols[-1]
         donor_orig_bumped_val = donor_row[bumped_col]  # save before overwrite in loop below
@@ -1224,33 +1325,25 @@ def mutate_scenario_csv(
         new_weather_nc = analysis.analysis_paths.analysis_dir / f"_rerun_test_input_{kind}_weather.nc"
         ds_expanded.to_netcdf(new_weather_nc)
 
-        # Delete stale iloc-indexed model logs for the victim's row positions. Without this,
-        # the new scenario at victim_iloc passes the log-based completion check (reading the
-        # victim's old log) and the model run is skipped, leaving outputs missing.
-        simlog_dir = analysis.analysis_paths.simlog_directory
-        for model_type in ("triton", "tritonswmm", "swmm"):
-            for vic_iloc in victim_ilocs:
-                stale_log = simlog_dir / f"model_{model_type}_evt{vic_iloc}.log"
-                stale_log.unlink(missing_ok=True)
     elif kind == "sensitivity":
-        donor_sa_id = donor_key[0]
-        remove_sa_id = remove_key[0]
+        donor_member_id = donor_key[0]
+        remove_member_id = remove_key[0]
         src = Path(analysis.cfg_analysis.sensitivity_analysis)
         if src.suffix.lower() in (".xlsx", ".xls"):
             df = pd.read_excel(src)
         else:
             df = pd.read_csv(src)
-        donor_row = df[df["sa_id"].astype(str) == str(donor_sa_id)].iloc[0].copy()
-        used_sa_ids = set(df["sa_id"].astype(str).tolist())
+        donor_row = df[df["member_id"].astype(str) == str(donor_member_id)].iloc[0].copy()
+        used_member_ids = set(df["member_id"].astype(str).tolist())
         n = 9000
-        while f"rerun_test_{n}" in used_sa_ids:
+        while f"rerun_test_{n}" in used_member_ids:
             n += 1
-        new_sa_id = f"rerun_test_{n}"
-        donor_row["sa_id"] = new_sa_id
-        df = df[df["sa_id"].astype(str) != str(remove_sa_id)].copy()
+        new_member_id = f"rerun_test_{n}"
+        donor_row["member_id"] = new_member_id
+        df = df[df["member_id"].astype(str) != str(remove_member_id)].copy()
         df = pd.concat([df, donor_row.to_frame().T], ignore_index=True)
-        # Cloned-row event_id slug is identical to the donor row's event_id (only sa_id changed).
-        new_key = (new_sa_id, donor_key[1])
+        # Cloned-row event_id slug is identical to the donor row's event_id (only member_id changed).
+        new_key = (new_member_id, donor_key[1])
     else:
         raise ValueError(f"unknown kind: {kind!r}")
 
@@ -1320,8 +1413,8 @@ def assert_rerun_trigger_correctness(
 ) -> None:
     """Validate the four-part rerun-trigger contract.
 
-    Keys are typed (sa_id, event_id) tuples matching snapshot_scenario_output_mtimes;
-    sa_id=None for multi_sim, sa_id=str for sensitivity. Tuple-equality eliminates
+    Keys are typed (member_id, event_id) tuples matching snapshot_scenario_output_mtimes;
+    member_id=None for multi_sim, member_id=str for sensitivity. Tuple-equality eliminates
     the substring-suffix collision class that string-concat namespacing would carry.
     """
     # (a) added scenario has outputs in 'after' with at least one file

@@ -6,15 +6,15 @@ authors:
   - family-names: "Lassiter"
     given-names: "Daniel"
     email: "daniel.lassiter@outlook.com"
-version: "0.1.0"
-license: PolyForm-Noncommercial-1.0.0
+version: "0.2.0"
+date-released: "2026-11-14"
+license: AGPL-3.0-or-later
 repository-code: "https://github.com/lassiterdc/hhemt"
 url: "https://hhemt.readthedocs.io"
+# The CONCEPT DOI, deliberately, and not the version DOI for this release. A
+# version DOI does not exist when this file is written: Zenodo mints it in
+# response to the published release, so at tag time there is no value to put
+# here. docs/index.md carries the same concept DOI at the tag, and the version
+# DOI of the release is added to the latest build of that page after the tag.
+# Reasoning: "DOI kind convention" in architecture.md.
 doi: "10.5281/zenodo.21359151"
-identifiers:
-  - type: doi
-    value: "10.5281/zenodo.21359151"
-    description: "The concept DOI — always resolves to the latest version."
-  - type: doi
-    value: "10.5281/zenodo.21359152"
-    description: "The version DOI for v0.1.0."

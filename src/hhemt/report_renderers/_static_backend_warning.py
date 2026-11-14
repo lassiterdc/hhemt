@@ -7,6 +7,7 @@ to matplotlib regardless of the flag. This module's
 warn_no_plotly_branch() emits a logging.warning at the first call per
 renderer per process so the user learns about the fallback.
 """
+
 from __future__ import annotations
 
 import logging

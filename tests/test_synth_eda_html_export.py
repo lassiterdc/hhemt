@@ -11,6 +11,7 @@ def test_export_eda_html_degrades_to_none_on_bad_kernel(tmp_path, recwarn):
     assert out is None
     assert any("EDA HTML export skipped" in str(w.message) for w in recwarn.list)
 
+
 def test_export_eda_html_unknown_kernel_degrades(tmp_path, recwarn):
     import nbformat
     from nbformat.v4 import new_code_cell, new_notebook

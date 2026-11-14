@@ -1,15 +1,38 @@
-from hhemt.utils import write_json
-from hhemt.exceptions import ProcessingError
-from hhemt._filelock_compat import resolve_filelock
-from filelock import Timeout
-from pathlib import Path
-from pydantic import BaseModel, Field, field_serializer, PrivateAttr, field_validator
+import datetime
 import json
-from typing import Type, Optional, Generic, TypeVar, Any, Dict
 import logging
+import os
+import socket
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Generic, TypeVar
 
+from filelock import Timeout
+from pydantic import BaseModel, Field, PrivateAttr, field_serializer, field_validator
+
+from hhemt._filelock_compat import resolve_filelock
+from hhemt.exceptions import ProcessingError
+from hhemt.utils import write_json
 
 T = TypeVar("T")  # Generic type variable
+
+
+def _writer_stamp() -> dict:
+    """The writer stamp: WHO is writing this log document right now.
+
+    Compared by write() on (hostname, restart_count) -- NOT on slurm_jobid, because a
+    SLURM-requeued job (JobRequeue=1) keeps its job id, so the zombie instance and the
+    legitimate requeued instance share it; they differ in hostname and in
+    SLURM_RESTART_COUNT, which SLURM exports only to a requeued instance. slurm_jobid,
+    pid and written_at are carried for the reader, never for the comparison.
+    """
+    return {
+        "slurm_jobid": os.environ.get("SLURM_JOB_ID"),
+        "hostname": socket.gethostname(),
+        "restart_count": int(os.environ.get("SLURM_RESTART_COUNT", "0") or 0),
+        "pid": os.getpid(),
+        "written_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+    }
 
 
 # ----------------------------
@@ -22,43 +45,81 @@ class LogField(Generic[T]):
     Usage:
         my_field: LogField[bool] = LogField()
 
-    The type annotation is used for auto-registration of validators and serializers.
-    No manual registration needed in most cases.
+    The type annotation registers nothing by itself. Each LogField on a log class must be
+    named in that class's hand-maintained ``field_validator(...)`` list, which wraps and
+    coerces a loaded value, AND in its ``field_serializer(...)`` list, which writes it as
+    its value. A field missing from the serializer list makes every write of that log
+    raise ``Unable to serialize unknown type: LogField`` (see the note in
+    ``TRITONSWMM_system_log``'s string-field validator list).
     """
 
     _log: "TRITONSWMM_log" = PrivateAttr()
 
     def __init__(
         self,
-        value: Optional[T] = None,
-        expected_type: Optional[Type[T]] = None,
+        value: T | None = None,
+        expected_type: type[T] | None = None,
     ):
-        self.value: Optional[T] = value
+        self.value: T | None = value
         self._expected_type = expected_type
 
     def set_log(self, log: "TRITONSWMM_log"):
         self._log = log
 
-    def set_type(self, expected_type: Type[T]):
+    def set_type(self, expected_type: type[T]):
         self._expected_type = expected_type
 
     def set(self, new_value: T):
         if self._expected_type:
-            new_value = self._expected_type(new_value)  # type: ignore
+            new_value = self._expected_type(new_value)
 
         self.value = new_value
         self._log.write()
 
-    def get(self) -> Optional[T]:
+    def clear(self):
+        """Set this field to None (NOT MEASURED) and persist.
+
+        `set(None)` CANNOT express this. On any log loaded via `from_json` ->
+        `model_validate`, the pydantic before-validator constructs
+        `LogField(v, expected_type=bool)`, so `set(None)` coerces to
+        `bool(None)` == False and rewrites the very value it was asked to clear.
+        A log built fresh (default_factory, no expected_type) does NOT coerce —
+        which is why the failure is invisible in any test that constructs a bare
+        LogField and only appears on a hydrated one. MEASURED 2026-08-10.
+
+        `write()` persists None correctly: its delta keys on
+        `mine[k] != baseline[k]`, and None != False, so the field lands in
+        changed_keys and the lost-update overlay does not restore the old value.
+
+        Deliberately a separate verb rather than widening `set()`: `set()` is
+        called throughout the codebase and its coercion contract is relied upon.
+        Making `set(None)` mean "clear" is the more general fix, but it changes the
+        coercion every existing caller relies on, so it needs its own review of them.
+        """
+        self.value = None
+        self._log.write()
+
+    def get(self) -> T | None:
         if self.value is None or self._expected_type is None:
             return self.value
 
         try:
-            return self._expected_type(self.value)  # type: ignore
-        except Exception:
-            raise TypeError(
-                f"Cannot coerce {self.value!r} " f"to {self._expected_type.__name__}"
-            )
+            return self._expected_type(self.value)
+        except Exception as err:
+            # `from err`, NOT `from None`, and the choice is deliberate. The message names
+            # WHAT was attempted (value -> type); the inner exception is the only thing that
+            # says WHY. `int("12.5")` and `int(None)` produce the SAME message here and
+            # different causes (ValueError: invalid literal / TypeError: int() argument
+            # must be...). The `except Exception` is deliberately broad — it also catches
+            # whatever a tuple/dict coercion or a custom expected_type raises — so the cause
+            # is the only description of the actual failure.
+            #
+            # This is a LOG-READ path: it fires on a HYDRATED log, i.e. on bytes some earlier
+            # run (possibly a different toolkit version) persisted. That is exactly when the
+            # underlying error matters and cannot be reconstructed from the repr — which for
+            # a nested tuple or dict field is opaque or truncated. `from None` is right when
+            # the inner error is noise; here it IS the diagnosis.
+            raise TypeError(f"Cannot coerce {self.value!r} to {self._expected_type.__name__}") from err
 
     def as_dict(self):
         return {"value": self.value}
@@ -77,25 +138,23 @@ class LogFieldDict(Generic[T]):
 
     _log: "TRITONSWMM_log" = PrivateAttr()
 
-    def __init__(
-        self, d: Optional[Dict[Any, T]] = None, expected_type: Optional[Type[T]] = None
-    ):
-        self.value: Dict[Any, T] = d or {}
+    def __init__(self, d: dict[Any, T] | None = None, expected_type: type[T] | None = None):
+        self.value: dict[Any, T] = d or {}
         self._expected_type = expected_type
 
     def set_log(self, log: "TRITONSWMM_log"):
         self._log = log
 
-    def set(self, new_dict: Dict[Any, Any]):
+    def set(self, new_dict: dict[Any, Any]):
         for k, v in new_dict.items():
             if self._expected_type:
-                v = self._expected_type(v)  # type: ignore
+                v = self._expected_type(v)
             self.value[k] = v
         self._log.write()
 
-    def get(self) -> Dict[Any, T]:
+    def get(self) -> dict[Any, T]:
         if self._expected_type:
-            return {k: self._expected_type(v) for k, v in self.value.items()}  # type: ignore
+            return {k: self._expected_type(v) for k, v in self.value.items()}
         return self.value
 
     def as_dict(self):
@@ -119,7 +178,7 @@ class ProcessingEntry(BaseModel):
 
 class Processing(BaseModel):
     _log: "TRITONSWMM_log" = PrivateAttr()
-    outputs: Dict[str, ProcessingEntry] = Field(default_factory=dict)
+    outputs: dict[str, ProcessingEntry] = Field(default_factory=dict)
 
     def set_log(self, log: "TRITONSWMM_log"):
         self._log = log
@@ -132,7 +191,7 @@ class Processing(BaseModel):
 # ----------------------------
 # Helper function to create validators and serializers
 # ----------------------------
-def _create_logfield_validator(expected_type: Optional[Type] = None):
+def _create_logfield_validator(expected_type: type | None = None):
     """Creates a validator function for LogField with optional type coercion."""
 
     def validator(cls, v: Any):
@@ -143,7 +202,7 @@ def _create_logfield_validator(expected_type: Optional[Type] = None):
     return validator
 
 
-def _create_logfielddict_validator(expected_type: Optional[Type] = None):
+def _create_logfielddict_validator(expected_type: type | None = None):
     """Creates a validator function for LogFieldDict with optional type coercion."""
 
     def validator(cls, v: Any):
@@ -158,7 +217,7 @@ def _create_logfielddict_validator(expected_type: Optional[Type] = None):
 
 def _logfield_serializer(v):
     """Serializer for LogField and LogFieldDict."""
-    if isinstance(v, (LogField, LogFieldDict)):
+    if isinstance(v, LogField | LogFieldDict):
         return v.get()
     if isinstance(v, Path):
         return str(v)
@@ -179,13 +238,25 @@ class TRITONSWMM_log(BaseModel):
     # baseline onto the latest disk state, so a concurrent writer's updates to
     # OTHER fields are never clobbered (lost-update prevention).
     _baseline: dict = PrivateAttr(default_factory=dict)
+    # Depth of nested deferred_writes() contexts and whether a write is owed at exit.
+    _defer_depth: int = PrivateAttr(default=0)
+    _write_pending: bool = PrivateAttr(default=False)
+    # The stamp of the process that last wrote this document. ADDITIVE and
+    # None-defaulted so every pre-existing log deserialises unchanged (allowlist class,
+    # not a LAYOUT_VERSION bump). Assigned by write() on every write; ALWAYS-MINE --
+    # write() excludes it from the lost-update overlay, so it names the process that
+    # actually wrote last rather than whichever stamp was on disk.
+    last_writer: dict | None = None
+    # One record per quarantine-and-reconstruct write() performed on this document,
+    # appended in order. None until the first recovery. Same additive class as above.
+    recovered_from_unparseable: list[dict] | None = None
 
     # ----------------------------
     # Parent injection
     # ----------------------------
     def model_post_init(self, __context):
         """
-        Bind this TRITONSWMM_scenario_log instance to all child log-aware objects.
+        Bind this log instance (any subclass) to all child log-aware objects.
         """
         for value in self.__dict__.values():
             if hasattr(value, "set_log"):
@@ -200,6 +271,28 @@ class TRITONSWMM_log(BaseModel):
     def as_dict(self):
         return self.model_dump(mode="json")
 
+    @contextmanager
+    def deferred_writes(self):
+        """Collapse every LogField.set()/clear(), LogFieldDict.set() and
+        Processing.update() inside the block into ONE read-modify-write at exit.
+
+        Exposure to the measured lookup-vs-rename mechanism is linear in the number
+        of renames of a log name; every write() is one rename. Nesting is supported
+        (depth-counted); the single write lands when the OUTERMOST context exits,
+        and only if something was set. The flush runs in `finally`, so state set
+        before an exception inside the block is persisted exactly as it would have
+        been under immediate writes; a ProcessingError raised BY that flush
+        propagates with the original exception as its __context__.
+        """
+        self._defer_depth += 1
+        try:
+            yield self
+        finally:
+            self._defer_depth -= 1
+            if self._defer_depth == 0 and self._write_pending:
+                self._write_pending = False
+                self.write()
+
     def write(self):
         """Persist this log with concurrency-safe, lost-update-free semantics.
 
@@ -211,38 +304,202 @@ class TRITONSWMM_log(BaseModel):
         to OTHER fields survive. write_json itself is atomic
         (temp + fsync + os.replace).
         """
+        if self._defer_depth > 0:
+            # Inside deferred_writes(); the outermost context exit performs one write.
+            self._write_pending = True
+            return
         lock_path = self.logfile.with_suffix(f"{self.logfile.suffix}.lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         # Bounded timeout: the merge is sub-second; a stale/dead lock holder must
-        # not deadlock every writer (SE-F-I-2). A filelock timeout is translated
+        # not deadlock every writer. A filelock timeout is translated
         # to a ProcessingError naming this log file.
         try:
             with resolve_filelock(str(lock_path), timeout=30):
+                # ONE name resolution. O_RDWR|O_CREAT asks the filesystem for the
+                # name's inode and creates it if -- and only if -- it is genuinely absent.
+                # It can still fail: this open is the only site that raises "log write
+                # (open failed)", and that handler has been observed to fire under
+                # concurrent writers on WekaFS, so a stale NEGATIVE lookup for a name
+                # inside another node's rename window is reachable here. The raise below
+                # is a live path, not a defensive leftover; an earlier version of this
+                # block asserted it could not happen, and that does not hold on this
+                # deployment. The remedy on record is to gate the write at the callers
+                # rather than retry the open (OBSERVER MODE in system.py). The former
+                # read_bytes()-then-O_EXCL pair disagreed about one name from two syscalls
+                # and refused at the second; both refusal sites are deleted by this shape,
+                # not hardened. The lock (measured to EXCLUDE across nodes on WekaFS
+                # /scratch) brackets open, read, merge and the replace below in one
+                # critical section, so the inode read here is the inode the replace
+                # supersedes.
+                try:
+                    _fd = os.open(self.logfile, os.O_RDWR | os.O_CREAT, 0o644)
+                except OSError as exc:
+                    raise ProcessingError(
+                        "log write (open failed)",
+                        filepath=self.logfile,
+                        reason=(
+                            f"could not open {self.logfile} for read-modify-write "
+                            f"({type(exc).__name__}: {exc}); refusing to write, because this "
+                            "instance's unchanged fields would be persisted over on-disk "
+                            "state it never read. The document on disk is untouched. A retry "
+                            "is a NEW process that rebuilds every field from disk -- nothing "
+                            "in this process's memory reaches it, and under SLURM "
+                            "JobRequeue=1 the workflow engine's retries are not even the "
+                            "mechanism that re-runs a node-failed job."
+                        ),
+                    ) from exc
+                try:
+                    with os.fdopen(_fd, "rb") as _fh:
+                        _raw: bytes = _fh.read()
+                except OSError as exc:
+                    raise ProcessingError(
+                        "log write (read failed)",
+                        filepath=self.logfile,
+                        reason=(
+                            f"opened but could not read {self.logfile} "
+                            f"({type(exc).__name__}: {exc}); refusing to write, because this "
+                            "instance's unchanged fields would be persisted over on-disk "
+                            "state it never read. The document on disk is untouched; a retry "
+                            "rebuilds from disk in a new process."
+                        ),
+                    ) from exc
                 disk: dict = {}
-                if self.logfile.exists():
+                _disk_established = False
+                if len(_raw) == 0:
+                    # ABSENT, MINE ALONE. Either this open created the name, or a peer
+                    # died between its own create and its first write. Never routed to
+                    # the quarantine below: an empty document is not a corrupt one.
+                    pass
+                else:
+                    _parsed: object = None
+                    _parse_error: str | None = None
                     try:
-                        with self.logfile.open() as f:
-                            disk = json.load(f)
-                    except (json.JSONDecodeError, OSError):
-                        disk = {}
+                        _parsed = json.loads(_raw)
+                    except json.JSONDecodeError as exc:
+                        _parse_error = str(exc)
+                    if _parse_error is None and not isinstance(_parsed, dict):
+                        _parse_error = f"top-level JSON value is {type(_parsed).__name__}, not an object"
+                    if _parse_error is None:
+                        disk = _parsed  # type: ignore[assignment]
+                        _disk_established = True
+                    else:
+                        # QUARANTINE BY MOVE, then RECONSTRUCT in this same pass.
+                        # The bytes that ACTUALLY failed are the inode we just read, and
+                        # os.replace moves that inode -- no second read, no copy that could
+                        # differ from what failed. The name is then recreated below from
+                        # this instance's state, and the recovery is recorded on the
+                        # document itself so validate_analysis surfaces it.
+                        _quarantine = self.logfile.with_suffix(f"{self.logfile.suffix}.unreadable")
+                        _n = 1
+                        while _quarantine.exists():
+                            _quarantine = self.logfile.with_suffix(f"{self.logfile.suffix}.unreadable.{_n}")
+                            _n += 1
+                        try:
+                            os.replace(self.logfile, _quarantine)
+                        except OSError as qexc:
+                            raise ProcessingError(
+                                "log write (quarantine failed)",
+                                filepath=self.logfile,
+                                reason=(
+                                    f"{self.logfile} exists but does not parse ({_parse_error}) "
+                                    f"and could not be moved to {_quarantine} "
+                                    f"({type(qexc).__name__}: {qexc}); refusing to write over "
+                                    "a document that has not been preserved."
+                                ),
+                            ) from qexc
+                        _record = {
+                            "quarantine": str(_quarantine),
+                            "bytes": len(_raw),
+                            "error": _parse_error,
+                            "at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+                            "writer": _writer_stamp(),
+                        }
+                        self.recovered_from_unparseable = [*(self.recovered_from_unparseable or []), _record]
+                        logging.getLogger(__name__).warning(
+                            "Log %s did not parse (%s); moved to %s and reconstructed from this "
+                            "process's state. Fields this process did not set are now defaults. "
+                            "Recorded on the document as recovered_from_unparseable.",
+                            self.logfile,
+                            _parse_error,
+                            _quarantine,
+                        )
+                # The second-writer detector, evaluated BEFORE the overlay is built and
+                # BEFORE the baseline is reassigned below. self._baseline is what THIS
+                # process last synced with (loaded state at from_json/refresh, or its own
+                # last write), so a stamp on disk that differs from it means another
+                # process wrote this document in between. Compared on (hostname,
+                # restart_count): a SLURM-requeued instance keeps its job id. A baseline
+                # with NO stamp (a fresh-default object, or a legacy stampless document)
+                # is NOT exempt: a stamp on disk at write time can then only be a peer's.
+                _disk_stamp = disk.get("last_writer") if _disk_established else None
+                _base_stamp = self._baseline.get("last_writer")
+                if isinstance(_disk_stamp, dict):
+                    _disk_key = (_disk_stamp.get("hostname"), _disk_stamp.get("restart_count"))
+                    _base_key = (
+                        (_base_stamp.get("hostname"), _base_stamp.get("restart_count"))
+                        if isinstance(_base_stamp, dict)
+                        else None
+                    )
+                    if _base_key is None or _disk_key != _base_key:
+                        logging.getLogger(__name__).warning(
+                            "Log %s was written by ANOTHER process since this one last synced: "
+                            "on disk last_writer=%s; this process's baseline last_writer=%s. "
+                            "Two writers on one log within one rule execution is the "
+                            "signature of a second instance of this job (a SLURM requeue "
+                            "after NODE_FAIL keeps the job id; compare hostname and "
+                            "restart_count).",
+                            self.logfile,
+                            _disk_stamp,
+                            _base_stamp,
+                        )
+                self.last_writer = _writer_stamp()
                 mine = self.as_dict()
-                changed_keys = {
-                    k for k, v in mine.items() if v != self._baseline.get(k)
-                }
+                changed_keys = {k for k, v in mine.items() if v != self._baseline.get(k)}
                 # Overlay disk's value for every field I did NOT change, so a
                 # concurrent writer's updates win on those fields; my changed
                 # fields and required fields (e.g. logfile) come from mine.
-                # `k in mine` (SE-F-I-1 Spec 2) drops undeclared keys so removed
+                # `k in mine` drops undeclared keys so removed
                 # all_* fields are NOT resurrected on write — closes the
                 # resurrection vector for any future field removal.
-                overlay = {
-                    k: v
-                    for k, v in disk.items()
-                    if k not in changed_keys and k in mine
-                }
+                # `last_writer` is ALWAYS-MINE: two writes by one process inside one
+                # second carry an identical stamp, which the changed-keys test reads as
+                # unchanged, and the overlay would then persist a foreign stamp as ours.
+                overlay = {k: v for k, v in disk.items() if k not in changed_keys and k in mine and k != "last_writer"}
                 merged = {**mine, **overlay}
+                # A write must never turn a NON-NULL on-disk value into null/absent
+                # for a field this instance did not deliberately change. The overlay
+                # above restores every unchanged declared field, so the only way that
+                # happens is the `k in mine` filter: THIS process's model does not
+                # DECLARE a field the on-disk log carries — a version-skewed writer.
+                # Warn loudly and name the fields; the write still proceeds, because
+                # refusing it would strand a run over a diagnostic. A deliberate
+                # field REMOVAL shipped with a migration also lands here; that is
+                # why this is a warning and never a raise.
+                _dropped = sorted(
+                    k for k, v in disk.items() if v is not None and k not in changed_keys and merged.get(k) is None
+                )
+                if _dropped:
+                    logging.getLogger(__name__).warning(
+                        "Log write to %s DROPS %d non-null on-disk field(s) this "
+                        "model does not declare: %s. The writing process is running "
+                        "an hhemt version older than the one that wrote the log; the "
+                        "dropped values are NOT recoverable from the rewritten file.",
+                        self.logfile,
+                        len(_dropped),
+                        ", ".join(_dropped),
+                    )
+                # One publish path for all three states (established / absent-mine-alone /
+                # reconstructed): write_json's temp + fsync + os.replace onto the name. The
+                # exclusive-create branch is gone with the read that fed it -- the name's
+                # existence was settled by the single open above, under the lock.
                 write_json(merged, self.logfile)
-                self._baseline = merged
+                # Take the peers' values this write just published into THIS instance, so
+                # its memory is what it published, and re-baseline on its own memory.
+                # Re-baselining on `merged` while memory kept its pre-write values made a
+                # field this instance never touched read as "changed by me" at the NEXT
+                # write, which then published the stale value over the peer's.
+                self._absorb(merged, set(overlay))
+                self._baseline = self.as_dict()
         except Timeout as exc:
             raise ProcessingError(
                 "log write (file lock acquisition)",
@@ -255,7 +512,7 @@ class TRITONSWMM_log(BaseModel):
             return {k: self._dict_for_json(v) for k, v in obj.items()}
         elif isinstance(obj, list):
             return [self._dict_for_json(x) for x in obj]
-        elif isinstance(obj, (LogField, LogFieldDict)):
+        elif isinstance(obj, LogField | LogFieldDict):
             return self._dict_for_json(obj.get())
         elif isinstance(obj, Path):
             return str(obj)
@@ -268,13 +525,50 @@ class TRITONSWMM_log(BaseModel):
     def print(self, indent: int = 4):
         print(self._as_json(indent))
 
+    def _absorb(self, document: dict, keys: set[str]) -> None:
+        """Copy the values `document` holds for `keys` into THIS instance's own fields.
+
+        Values go INTO the existing LogField / LogFieldDict / Processing objects, which
+        stay bound to this instance, so a reference a caller holds keeps writing through
+        this instance. `logfile` is never taken from a document (it names where THIS
+        instance writes); write() passes only its overlay keys, which already exclude
+        `last_writer`, while refresh() takes the disk stamp as its new sync point. If the
+        document does not validate, nothing is taken: memory keeps its values, and the
+        caller's re-baseline on memory still keeps those fields out of the next write's
+        changed set, so the failure costs freshness, never a peer's value.
+        """
+        try:
+            published = type(self).model_validate(document)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Log %s: could not load the published document back into this instance "
+                "(%s: %s); fields this instance did not change keep their loaded values.",
+                self.logfile,
+                type(exc).__name__,
+                exc,
+            )
+            return
+        for k in keys:
+            if k == "logfile" or k not in type(self).model_fields:
+                continue
+            src = published.__dict__.get(k)
+            dst = self.__dict__.get(k)
+            if isinstance(dst, LogField | LogFieldDict) and type(src) is type(dst):
+                dst.value = src.value
+                if dst._expected_type is None:
+                    dst._expected_type = src._expected_type
+            elif isinstance(dst, Processing) and isinstance(src, Processing):
+                dst.outputs = src.outputs
+            else:
+                setattr(self, k, src)
+                if hasattr(src, "set_log"):
+                    src.set_log(self)
+
     def refresh(self):
-        """Reload the log from disk, updating all instance attributes."""
+        """Reload the log from disk into THIS instance's own field objects."""
         if self.logfile.exists():
             reloaded = self.from_json(self.logfile)
-            # Copy all attributes from reloaded instance to self
-            for key, value in reloaded.__dict__.items():
-                setattr(self, key, value)
+            self._absorb(reloaded.model_dump(mode="json"), set(type(self).model_fields))
             # Re-sync the merge baseline to the freshly reloaded disk state.
             self._baseline = self.as_dict()
         else:
@@ -282,21 +576,49 @@ class TRITONSWMM_log(BaseModel):
 
     @classmethod
     def from_json(cls, path: Path | str):
+        """Load a log document. FileNotFoundError PROPAGATES -- the callers that own the
+        "absent -> defaults" decision (scenario.get_log, TRITONSWMM_system.__init__) catch
+        it, which is what lets them open without an .exists() probe that can disagree with
+        the open that follows it. A document that does not parse is rebuilt from defaults
+        here, as before, and the rebuilt instance carries the same recovery record the
+        write path emits -- but the MOVE to a quarantine name happens ONLY in
+        write(), which holds the lock; a reader never moves what it cannot lock.
+        """
         path = Path(path)
-        try:
-            with path.open() as f:
-                data = json.load(f)
-        except json.JSONDecodeError:
-            logging.getLogger(__name__).warning(
-                "Log file %s was empty or corrupted; rebuilding log from defaults.",
-                path,
-            )
+        _read_error: str | None = None
+        _raw = path.read_bytes()  # FileNotFoundError propagates (see docstring)
+        if len(_raw.strip()) == 0:
+            # EMPTY (0 bytes or whitespace only) is ABSENT, not corrupt -- the state write()'s
+            # O_CREAT open leaves on every first open and a peer leaves between its create and
+            # its first write. Defaults, and NO recovery record: the write side records
+            # nothing for this state either (its quarantine branch is scoped to a non-empty
+            # document that does not parse).
             data = None
+        else:
+            try:
+                data = json.loads(_raw)
+            except json.JSONDecodeError as exc:
+                logging.getLogger(__name__).warning(
+                    "Log file %s does not parse; rebuilding log from defaults.",
+                    path,
+                )
+                data = None
+                _read_error = str(exc)
 
         if data:
             log = cls.model_validate(data)
         else:
             log = cls(logfile=path)
+            if _read_error is not None:
+                log.recovered_from_unparseable = [
+                    {
+                        "quarantine": None,
+                        "bytes": None,
+                        "error": _read_error,
+                        "at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+                        "writer": _writer_stamp(),
+                    }
+                ]
 
         # Ensure future writes go back to the same file
         log.logfile = path
@@ -309,7 +631,7 @@ class TRITONSWMM_log(BaseModel):
 
 class TRITONSWMM_scenario_log(TRITONSWMM_log):
     event_iloc: int = 0
-    event_idx: Dict = Field(default_factory=dict)
+    event_idx: dict = Field(default_factory=dict)
     simulation_folder: Path = Path(".")
     logfile: Path
 
@@ -321,32 +643,30 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     storm_tide_for_swmm: LogField[Path] = Field(default_factory=LogField)
     # scenario creation
     scenario_creation_complete: LogField[bool] = Field(default_factory=LogField)
-    inp_hydraulics_model_created_successfully: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    inp_full_model_created_successfully: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    inp_hydro_model_created_successfully: LogField[bool] = Field(
-        default_factory=LogField
-    )
+    inp_hydraulics_model_created_successfully: LogField[bool] = Field(default_factory=LogField)
+    inp_full_model_created_successfully: LogField[bool] = Field(default_factory=LogField)
+    inp_hydro_model_created_successfully: LogField[bool] = Field(default_factory=LogField)
     hydro_swmm_sim_completed: LogField[bool] = Field(default_factory=LogField)
     extbc_tseries_created: LogField[bool] = Field(default_factory=LogField)
     extbc_loc_created: LogField[bool] = Field(default_factory=LogField)
     hyg_timeseries_created: LogField[bool] = Field(default_factory=LogField)
     hyg_locs_created: LogField[bool] = Field(default_factory=LogField)
-    inflow_nodes_in_hydraulic_inp_assigned: LogField[bool] = Field(
-        default_factory=LogField
-    )
+    inflow_nodes_in_hydraulic_inp_assigned: LogField[bool] = Field(default_factory=LogField)
     triton_swmm_cfg_created: LogField[bool] = Field(default_factory=LogField)
-    triton_cfg_created: LogField[bool] = Field(
-        default_factory=LogField
-    )  # TRITON-only CFG
+    triton_cfg_created: LogField[bool] = Field(default_factory=LogField)  # TRITON-only CFG
     sim_tritonswmm_executable_copied: LogField[bool] = Field(default_factory=LogField)
     # Track which backend was used for this scenario
-    triton_backend_used: LogField[str] = Field(
-        default_factory=LogField
-    )  # "cpu" or "gpu"
+    triton_backend_used: LogField[str] = Field(default_factory=LogField)  # "cpu" or "gpu"
+    # The scenario's SWMM hydrology stores (`processed/hydrology_inflow_summary.zarr`, the per-node inflow capture,
+    # and `processed/hydrology_rpt_summary.zarr`, the Subcatchment Runoff Summary capture) were deleted after
+    # every slice of them was read back from the `swmm_node_hydro` and `swmm_subcatchment_hydro` groups of
+    # analysis_datatree.zarr (toggle_clear_scenario_timeseries_after_consolidation). Recorded HERE and not in a
+    # model log because the hydrology model is family-independent: neither store is a model output. The value is
+    # {"state": "pending" | "done", "stems": {stem: {group: [variable names]}}}, the same shape the model logs'
+    # `consolidated_summaries_cleared` record has: `pending` is written BEFORE the stores are deleted and `done`
+    # after, so either state means the data is in the tree and the stores are never a read-back source again.
+    # Additive and defaulted None, so every pre-existing scenario log deserialises unchanged.
+    consolidated_hydrology_cleared: LogField[dict] | None = None
     # This log tracks scenario preparation state only.
 
     # ----------------------------
@@ -388,6 +708,12 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         mode="before",
     )(_create_logfielddict_validator(Path))
 
+    # Plain dict LogField (the hydrology clearing record)
+    _validate_record_field = field_validator(
+        "consolidated_hydrology_cleared",
+        mode="before",
+    )(_create_logfield_validator(dict))
+
     # ----------------------------
     # Consolidated serializer (scenario preparation only, no model-specific fields)
     # ----------------------------
@@ -410,23 +736,52 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "triton_backend_used",
     )(_logfield_serializer)
 
+    # The hydrology clearing record is Optional (None until a clearing starts), so it serialises through the same
+    # None-tolerant lambda the model log's Optional records use rather than `_logfield_serializer`.
+    _serialize_record_field = field_serializer(
+        "consolidated_hydrology_cleared",
+        when_used="json",
+    )(lambda self, v: v.get() if v is not None else None)
+
 
 class TRITONSWMM_model_log(TRITONSWMM_log):
     """
     Processing log for a single model type (triton, tritonswmm, or swmm).
 
-    Fields are Optional and only populated for relevant model types.
-    This eliminates race conditions by giving each model its own log file.
+    Each model type has its own log file, which eliminates race conditions between
+    concurrently processed models. The class declares 26 log fields, in four groups:
 
-    Field population by model type:
-    - Common fields (all): simulation_completed, sim_run_time_minutes, processing_log
-    - Performance fields (triton, tritonswmm): performance_timeseries_written, performance_summary_written
-    - TRITON fields (triton, tritonswmm): TRITON_timeseries_written, TRITON_summary_written, raw_TRITON_outputs_cleared, full_TRITON_timeseries_cleared
-    - SWMM fields (swmm, tritonswmm): SWMM_node/link_timeseries_written, SWMM_node/link_summary_written, raw_SWMM_outputs_cleared, full_SWMM_timeseries_cleared
+    - Declared on every model type's log (not Optional): simulation_completed,
+      sim_run_time_minutes, n_resumes, force_rerun_pending, consecutive_terminal_failures,
+      resume_reporting_tsteps, processing_log. n_resumes and resume_reporting_tsteps are
+      written only on the hotstart-resume branch, which a swmm launch never takes
+      (run_simulation.TRITONSWMM_run.prepare_simulation_command), so on a swmm log they
+      stay unset.
+    - Optional, initialised for triton and tritonswmm by scenario.get_log:
+      performance_timeseries_written, performance_summary_written,
+      TRITON_timeseries_written, TRITON_summary_written, raw_TRITON_outputs_cleared,
+      full_TRITON_timeseries_cleared.
+    - Optional, initialised for swmm and tritonswmm by scenario.get_log:
+      SWMM_node_timeseries_written, SWMM_link_timeseries_written,
+      SWMM_node_summary_written, SWMM_link_summary_written, raw_SWMM_outputs_cleared,
+      full_SWMM_timeseries_cleared, raw_SWMM_binaries_reclaimed, coupled_rpt_truncated,
+      hydro_out_reclaimed.
+    - Optional, created by the analysis-level time-series consolidation and not by scenario.get_log:
+      consolidated_node_timeseries_cleared, consolidated_link_timeseries_cleared,
+      consolidated_triton_timeseries_cleared, consolidated_system_timeseries_cleared,
+      consolidated_performance_timeseries_cleared, the five matching ``*_clearing_pending`` lists and the
+      ``consolidated_summaries_cleared`` record. Each series field lands in the log of the model whose series store
+      was consolidated: tritonswmm (node, link, triton, performance), swmm (node, link, system) and triton (triton,
+      performance). The summary record lands in the log of the model that wrote the summary stores.
+    - Optional, with NO model applicability assigned: prep_inputs_reclaimed,
+      hydrographs_reclaimed, standalone_rpt_reclaimed. Nothing in src/ writes them and
+      scenario.get_log does not initialise them; the one reader,
+      analysis_validation.check_data_availability, reads each from every enabled model's
+      log and treats an absent value as "not reclaimed".
     """
 
     event_iloc: int = 0
-    event_idx: Dict = Field(default_factory=dict)
+    event_idx: dict = Field(default_factory=dict)
     simulation_folder: Path = Path(".")
     logfile: Path
 
@@ -434,29 +789,145 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     # Simulation execution
     simulation_completed: LogField[bool] = Field(default_factory=LogField)
     sim_run_time_minutes: LogField[float] = Field(default_factory=LogField)
-    # n_resumes counts hotstart resumes for this (model_type, event). Incremented
-    # at the resume-decision site in run_simulation.py. Unset on legacy logs;
-    # consumers MUST coalesce None -> 0 (LogField.get() returns None when unset).
+    # n_resumes counts hotstart resume ATTEMPTS for this (model_type, event), not
+    # completed resumes. It is incremented at the resume-decision site in
+    # run_simulation.py when the solver is handed a config_NNNN.cfg, BEFORE the solver
+    # is launched, so an attempt the solver then aborts is still counted. A launch that
+    # steps back to an earlier checkpoint is ONE attempt like any other. It is
+    # cumulative and never reset (only deleting this log file restarts it).
+    # Deliberately NOT a completion count: the `>= 1` reads in analysis_validation.py use
+    # it as a necessary pre-filter for "this sim was resumed", and a completion count
+    # would read 0 for a sim whose every resume aborted, so those checks would stop
+    # examining exactly the sims a failed resume produced. Completed resumes are what
+    # the durable resume-event ledger's rows count (resume_events.read_resume_events).
+    # Unset on legacy logs; consumers MUST coalesce None -> 0 (LogField.get() returns
+    # None when unset).
     n_resumes: LogField[int] = Field(default_factory=LogField)
+    # force_rerun_pending is the POSITIVE force-rerun marker. SET True by
+    # analysis._invalidate_processing_log_for_force_rerun for every (scenario, model) a
+    # stage="simulate" force names; CONSULTED by run_simulation.prepare_simulation_command
+    # AHEAD of the completion short-circuit (which otherwise returns None for a completed
+    # scenario and runs no solver); CONSUMED (set False) by run_simulation_runner
+    # immediately after subprocess.Popen returns. DECLARED here, never attached lazily: a
+    # lazily-assigned LogField has no parent bound by model_post_init and its set() raises.
+    # Legacy logs omit the key; consumers MUST coalesce None -> False.
+    force_rerun_pending: LogField[bool] = Field(default_factory=LogField)
+    # consecutive_terminal_failures counts CONSECUTIVE TERMINAL failures for this
+    # (member, event, model_type) -- attempts in which the RUNNER ITSELF concluded the
+    # attempt failed and wrote `_status/_failed/{rule_token}.json`. It is the durable
+    # operand of the consecutive-failure budget gate in run_simulation_runner, which is
+    # what converts Snakemake's MULTIPLICATIVE `retries:` ceiling (a declared 3 produced
+    # TEN solver launches across four SLURM jobs on member 39, every one re-attempting
+    # the same deterministic refusal) into an additive one.
+    #
+    # THREE PROPERTIES, each load-bearing, and the first two are the ones an implementer
+    # gets wrong:
+    #   TERMINAL, not merely incomplete. A walltime-killed attempt is SIGKILLed and never
+    #   reaches a Python-side failure return, so it does NOT increment this counter. That
+    #   is deliberate: `hpc_restart_times_simulate` is armed precisely so a
+    #   walltime-killed sim re-dispatches and hotstarts, so a counter that
+    #   grew on a walltime kill would refuse exactly the healthy long-running sims the
+    #   retries exist to serve.
+    #   CONSECUTIVE, not cumulative. Reset to 0 by a COMPLETING attempt.
+    #   ERA-RELATIVE. Reset to 0 when the gate observes `force_rerun_pending`, so a forced
+    #   re-run starts a fresh era rather than inheriting the budget it was forced to escape.
+    # It is NOT `n_resumes`, which counts resume ATTEMPTS and is cumulative across
+    # force-rerun eras; a healthy long-running sim accumulates many, so gating on that
+    # counter would invert this fix.
+    # Legacy logs omit the key; consumers MUST coalesce None -> 0.
+    consecutive_terminal_failures: LogField[int] = Field(default_factory=LogField)
+    # resume_reporting_tsteps records the REALIZED resume reporting-step (config_NNNN.cfg
+    # NNNN = the reporting step, return_the_reporting_step_from_a_cfg) per resume attempt,
+    # appended in run_simulation.py's hotstart branch. First-class durable record of WHERE
+    # each config actually resumed, so the b4b same-timestep-interruption experiment is
+    # answerable from the data forever. Legacy logs omit it; consumers coalesce None -> [].
+    resume_reporting_tsteps: LogField[list[int]] = Field(default_factory=LogField)
     processing_log: Processing = Field(default_factory=Processing)
 
     # Performance timeseries (triton and tritonswmm only)
-    performance_timeseries_written: Optional[LogField[bool]] = None
-    performance_summary_written: Optional[LogField[bool]] = None
+    performance_timeseries_written: LogField[bool] | None = None
+    performance_summary_written: LogField[bool] | None = None
 
     # TRITON outputs (triton and tritonswmm only)
-    TRITON_timeseries_written: Optional[LogField[bool]] = None
-    TRITON_summary_written: Optional[LogField[bool]] = None
-    raw_TRITON_outputs_cleared: Optional[LogField[bool]] = None
-    full_TRITON_timeseries_cleared: Optional[LogField[bool]] = None
+    TRITON_timeseries_written: LogField[bool] | None = None
+    TRITON_summary_written: LogField[bool] | None = None
+    raw_TRITON_outputs_cleared: LogField[bool] | None = None
+    full_TRITON_timeseries_cleared: LogField[bool] | None = None
 
     # SWMM outputs (swmm and tritonswmm only)
-    SWMM_node_timeseries_written: Optional[LogField[bool]] = None
-    SWMM_link_timeseries_written: Optional[LogField[bool]] = None
-    SWMM_node_summary_written: Optional[LogField[bool]] = None
-    SWMM_link_summary_written: Optional[LogField[bool]] = None
-    raw_SWMM_outputs_cleared: Optional[LogField[bool]] = None
-    full_SWMM_timeseries_cleared: Optional[LogField[bool]] = None
+    SWMM_node_timeseries_written: LogField[bool] | None = None
+    SWMM_link_timeseries_written: LogField[bool] | None = None
+    SWMM_node_summary_written: LogField[bool] | None = None
+    SWMM_link_summary_written: LogField[bool] | None = None
+    raw_SWMM_outputs_cleared: LogField[bool] | None = None
+    full_SWMM_timeseries_cleared: LogField[bool] | None = None
+    # The scenario's node / link time-series store was deleted after its slice was read back from
+    # the `timeseries` branch of analysis_datatree.zarr (toggle_clear_scenario_timeseries_after_consolidation).
+    # Each model records its own clearing in its own log. The coupled model's log covers the
+    # `tritonswmm/swmm_node/timeseries` and `tritonswmm/swmm_link/timeseries` groups, and the standalone SWMM
+    # model's log covers the `swmm_only/swmm_node/timeseries` and `swmm_only/swmm_link/timeseries` groups
+    # . Additive and defaulted None, so
+    # every pre-existing log_{model}.json deserialises unchanged. Distinct from full_SWMM_timeseries_cleared, which the
+    # remove_after_processing reclaim writes: that one does not imply a consolidated copy exists, this one does.
+    consolidated_node_timeseries_cleared: LogField[bool] | None = None
+    consolidated_link_timeseries_cleared: LogField[bool] | None = None
+    # The same record for the gridded TRITON store (`TRITONSWMM_TRITON_tseries`), whose slice is read back from the
+    # `tritonswmm/triton/timeseries` branch before the store is deleted. The TRITON-only model
+    # keeps it in its own log and reads its slice back from `triton_only/triton/timeseries`.
+    consolidated_triton_timeseries_cleared: LogField[bool] | None = None
+    # The same record for the standalone SWMM model's system series store (`SWMM_only_system_tseries`), whose slice is
+    # read back from `swmm_only/system/timeseries` before the store is deleted. It lands in the
+    # standalone SWMM model's log only: the coupled model writes no system store.
+    consolidated_system_timeseries_cleared: LogField[bool] | None = None
+    # The same record for the per-rank performance series store (`TRITONSWMM_perf_tseries` or
+    # `TRITON_only_perf_tseries`), whose slice is read back from `tritonswmm/performance/timeseries` or
+    # `triton_only/performance/timeseries` before the store is deleted. Each of the two TRITON models records it in
+    # its own log.
+    consolidated_performance_timeseries_cleared: LogField[bool] | None = None
+    # The `pending` state of each clearing above: the data-variable names the scenario's slice was verified
+    # against, written BEFORE the store is deleted and cleared (set to None) once the `*_cleared` bool above is True.
+    # A bool cannot carry the names, and the resume needs them because it can no longer read them from the source:
+    # a kill during the delete leaves a partly deleted store whose variable set is unknowable, and a missing variable
+    # in the `timeseries` group would otherwise pass for a complete slice. None = no clearing in flight; an existing
+    # `*_cleared` True with no pending record reads as `done`, so no log written before this field changes meaning.
+    consolidated_node_timeseries_clearing_pending: LogField[list] | None = None
+    consolidated_link_timeseries_clearing_pending: LogField[list] | None = None
+    consolidated_triton_timeseries_clearing_pending: LogField[list] | None = None
+    consolidated_system_timeseries_clearing_pending: LogField[list] | None = None
+    consolidated_performance_timeseries_clearing_pending: LogField[list] | None = None
+    # The model's per-scenario summary stores were deleted after every `summary` slice of the scenario was read back
+    # from analysis_datatree.zarr (toggle_clear_scenario_timeseries_after_consolidation). One record per model log,
+    # because the model owns the stems: {"state": "pending" | "done", "stems": {stem: {group: [variable names]}}}.
+    # `pending` is written BEFORE the stores are deleted and `done` after, so either state means the data is in the
+    # branch and the stores are never a read-back source again; the variable names are what a resume checks the
+    # branch against, because a half-deleted store can no longer say what it held. Absent (None) means the stores
+    # were never cleared, and a rebuilt per-scenario summary resets it to None. Additive and defaulted None, so every
+    # pre-existing log_{model}.json deserialises unchanged.
+    consolidated_summaries_cleared: LogField[dict] | None = None
+    # Post-processing reclaim (analysis_config.remove_after_processing) of
+    # out_tritonswmm/swmm/*.out -- the coupled-SWMM binary outputs, NEVER the .rpt, which
+    # is a live completion predicate. Distinct from raw_SWMM_outputs_cleared, which records
+    # the clear_raw pass over the RAW SIM tree; these are two axes and two records.
+    # Additive + defaulted None, so every pre-existing log_{model}.json deserialises
+    # unchanged and consumers coalesce None -> not reclaimed.
+    raw_SWMM_binaries_reclaimed: LogField[bool] | None = None
+    # Post-processing TRUNCATION of out_tritonswmm/swmm/hydraulics.rpt to its header,
+    # continuity/summary tables and trailer. TRUNCATION, never deletion -- the file remains
+    # the coupled-run completion signal.
+    coupled_rpt_truncated: LogField[bool] | None = None
+    # Post-processing reclaim of swmm/hydro.out, the SWMM hydrology output that
+    # write_hydrograph_files reads. Distinct from raw_SWMM_outputs_cleared (the clear_raw
+    # pass over the RAW SIM tree) and from raw_SWMM_binaries_reclaimed (out_tritonswmm/swmm
+    # binaries): three axes, three records.
+    hydro_out_reclaimed: LogField[bool] | None = None
+    # Three ADDITIVE records for the regeneration-cost classes. Same change class as the
+    # allowlisted additive fields above: Optional and defaulted None, so every
+    # pre-existing log_{model}.json deserialises unchanged and consumers coalesce
+    # None -> not reclaimed. These are NEW keys, never renames of existing ones --
+    # renaming an on-disk log key is the break that WOULD owe a LAYOUT_VERSION bump.
+    prep_inputs_reclaimed: LogField[bool] | None = None
+    hydrographs_reclaimed: LogField[bool] | None = None
+    standalone_rpt_reclaimed: LogField[bool] | None = None
 
     # Validators for LogField types
     _validate_bool_fields = field_validator(
@@ -473,6 +944,18 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "SWMM_link_summary_written",
         "raw_SWMM_outputs_cleared",
         "full_SWMM_timeseries_cleared",
+        "consolidated_node_timeseries_cleared",
+        "consolidated_link_timeseries_cleared",
+        "consolidated_triton_timeseries_cleared",
+        "consolidated_system_timeseries_cleared",
+        "consolidated_performance_timeseries_cleared",
+        "raw_SWMM_binaries_reclaimed",
+        "coupled_rpt_truncated",
+        "hydro_out_reclaimed",
+        "prep_inputs_reclaimed",
+        "hydrographs_reclaimed",
+        "standalone_rpt_reclaimed",
+        "force_rerun_pending",
         mode="before",
     )(_create_logfield_validator(bool))
 
@@ -483,8 +966,26 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
 
     _validate_int_fields = field_validator(
         "n_resumes",
+        "consecutive_terminal_failures",
         mode="before",
     )(_create_logfield_validator(int))
+
+    # resume_reporting_tsteps is LogField[list[int]] — a list-typed LogField, so it
+    # gets its own validator group rather than the scalar-int coercion above.
+    _validate_dict_fields = field_validator(
+        "consolidated_summaries_cleared",
+        mode="before",
+    )(_create_logfield_validator(dict))
+
+    _validate_list_fields = field_validator(
+        "resume_reporting_tsteps",
+        "consolidated_node_timeseries_clearing_pending",
+        "consolidated_link_timeseries_clearing_pending",
+        "consolidated_triton_timeseries_clearing_pending",
+        "consolidated_system_timeseries_clearing_pending",
+        "consolidated_performance_timeseries_clearing_pending",
+        mode="before",
+    )(_create_logfield_validator(list))
 
     # Serializers
     _serialize_bool_fields = field_serializer(
@@ -501,6 +1002,18 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "SWMM_link_summary_written",
         "raw_SWMM_outputs_cleared",
         "full_SWMM_timeseries_cleared",
+        "consolidated_node_timeseries_cleared",
+        "consolidated_link_timeseries_cleared",
+        "consolidated_triton_timeseries_cleared",
+        "consolidated_system_timeseries_cleared",
+        "consolidated_performance_timeseries_cleared",
+        "raw_SWMM_binaries_reclaimed",
+        "coupled_rpt_truncated",
+        "hydro_out_reclaimed",
+        "prep_inputs_reclaimed",
+        "hydrographs_reclaimed",
+        "standalone_rpt_reclaimed",
+        "force_rerun_pending",
         when_used="json",
     )(lambda self, v: v.get() if v is not None else None)
 
@@ -511,6 +1024,22 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
 
     _serialize_int_fields = field_serializer(
         "n_resumes",
+        "consecutive_terminal_failures",
+        when_used="json",
+    )(lambda self, v: v.get() if v is not None else None)
+
+    _serialize_dict_fields = field_serializer(
+        "consolidated_summaries_cleared",
+        when_used="json",
+    )(lambda self, v: v.get() if v is not None else None)
+
+    _serialize_list_fields = field_serializer(
+        "resume_reporting_tsteps",
+        "consolidated_node_timeseries_clearing_pending",
+        "consolidated_link_timeseries_clearing_pending",
+        "consolidated_triton_timeseries_clearing_pending",
+        "consolidated_system_timeseries_clearing_pending",
+        "consolidated_performance_timeseries_clearing_pending",
         when_used="json",
     )(lambda self, v: v.get() if v is not None else None)
 
@@ -549,12 +1078,8 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     mannings_shape: LogField[tuple] = Field(default_factory=LogField)
 
     # TRITON-SWMM compilation
-    compilation_tritonswmm_cpu_successful: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    compilation_tritonswmm_gpu_successful: LogField[bool] = Field(
-        default_factory=LogField
-    )
+    compilation_tritonswmm_cpu_successful: LogField[bool] = Field(default_factory=LogField)
+    compilation_tritonswmm_gpu_successful: LogField[bool] = Field(default_factory=LogField)
 
     # TRITON-only compilation
     compilation_triton_cpu_successful: LogField[bool] = Field(default_factory=LogField)
@@ -563,10 +1088,97 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     # SWMM compilation
     compilation_swmm_successful: LogField[bool] = Field(default_factory=LogField)
 
+    # TRITON provenance capture. Captured at compile time in system.py against the
+    # ACTUAL cloned TRITON tree, immediately after _verify_tritonswmm_pin. This is the named
+    # persistence carrier between the compile process (setup_workflow) and the consolidation
+    # process (consolidate_workflow) — different SLURM jobs on HPC — read by the two
+    # consolidation stamp sites via analysis._system.log.triton_head_sha.get() and stamped
+    # onto the consolidated tree root as `triton_producing_sha` (the rename is deliberate;
+    # grepping either name alone finds only half the chain).
+    #
+    # ONE FIELD, NOT THREE. The two sibling booleans that lived here
+    # (triton_has_coupled_resume_fix, triton_has_swmm_depth_scatter_fix) are RETIRED: they were
+    # per-defect verdicts DERIVED from a toolkit constant and frozen into durable state at run
+    # time, so a later toolkit change could not correct them. Dated instance: the scatter
+    # constant was introduced as None in 463ab9e (2026-08-02) beside an `is None -> set(False)`
+    # branch, the synth_cc campaign ran 2026-08-04 inside that window and was stamped False on
+    # every arm, and the constant received its real value at 7b7b573 (2026-08-05) — after the
+    # sims were on disk. The stamp is refuted by direct measurement (the producing sha IS the
+    # fix commit) and no re-consolidation can correct it, because the flag is re-derived only on
+    # the compile path. Defect applicability is now DERIVED at read time from this sha by
+    # `model_defects.resolve_for_tree_attrs`, so nothing durable is written that a later registry
+    # edit can contradict. Retiring the two keys is safe on legacy logs: TRITONSWMM_log sets no
+    # `extra` policy, so pydantic's default `ignore` absorbs them on from_json.
+    triton_head_sha: LogField[str] = Field(default_factory=LogField)
+
+    # The committer date (`YYYYMMDD`, 8 digits) of the solver clone's HEAD, captured by the same
+    # compile-time call and onto the same carrier as `triton_head_sha` above, and stamped on the
+    # consolidated-tree root as `triton_producing_commit_date`. ADDITIVE and graceful-absent: a
+    # legacy log, a container run (no clone to read) and a capture that failed all leave it
+    # unset, and every consumer treats absence as "date not captured". The date is NOT tied to
+    # the sha: it is absent whenever the capture did not run on a clone, including a container
+    # run, where `setup_workflow` sets `triton_head_sha` from the SIF label and nothing sets this
+    # field, so the sha is present while the date is absent.
+    triton_head_commit_date: LogField[str] = Field(default_factory=LogField)
+
+    # The sha256 of the SIF this analysis RAN, captured at SETUP against
+    # the image resolved under `container.sif_root` and carried to consolidation on this same log —
+    # the identical cross-job carrier `triton_head_sha` above uses, and for the identical
+    # reason (setup and consolidation are different SLURM jobs on HPC).
+    #
+    # WHY SETUP AND NOT CONSOLIDATION. `emit_provenance` fires once per sub-analysis AND
+    # once for the master, so capturing there would pay O(sub-analyses) multi-GB reads
+    # across as many SLURM jobs to produce that many copies of one constant — 29 reads on
+    # a 28-row matrix. Setup opens the file once, already.
+    #
+    # WHAT IT MEANS: the image AS INSPECTED AT SETUP. That is the correct referent rather
+    # than a defect — setup is where binary identity is fixed for the run.
+    #
+    # ADDITIVE + graceful-absent: a native run never sets
+    # it, a legacy log deserialises unchanged, and every consumer treats absence as
+    # "no digest recorded" rather than as a native run.
+    sif_sha256: LogField[str] = Field(default_factory=LogField)
+
+    # PER-BUILD-TARGET TRITON provenance. `triton_head_sha` above is
+    # RETAINED with its exact meaning and every one of its consumers is untouched --
+    # including model_defects.resolve_for_tree_attrs, which keys every registered defect
+    # verdict on it. The two below are ADDITIVE and answer a different question: not "what
+    # source did this analysis come from" but "were the two TRITON binaries built from the
+    # SAME source state". They are written ONLY by a compile invocation that actually built
+    # that target (the *_locked helpers now return a build-executed bool), so a target
+    # cached from an older clone state legitimately retains an OLDER sha than the clone --
+    # that divergence is the point, not a defect. Under the ordinary case of one clone and
+    # one run they are equal, and their equality is then a MEASUREMENT over two independent
+    # stamps rather than one value written twice under two names.
+    tritonswmm_producing_sha: LogField[str] = Field(default_factory=LogField)
+    triton_only_producing_sha: LogField[str] = Field(default_factory=LogField)
+
+    # Standalone-SWMM provenance capture: the one build-provenance axis on this log that
+    # had no carrier at all: `swmm_version` appeared in exactly two files, both
+    # container-preflight, and in no writer. Captured in system.py at the tail of
+    # `_compile_SWMM_locked`'s SUCCESS branch -- deliberately NOT at compile entry the way
+    # `triton_head_sha` is, per `provenance.producing_stamp`'s corollary that a stage which
+    # did not execute must not stamp. The already-compiled gate returns early above the
+    # capture and the persisted log retains the earlier run's value, so a cached build
+    # keeps a true stamp rather than acquiring a false one.
+    #
+    # The `standalone_` prefix is load-bearing TWICE. It names the thing (the COUPLED
+    # model's SWMM is vendored inside TRITON and travels with the TRITON pin, so it is NOT
+    # this field), and it keeps the identifier from being a SUFFIX of the coupled sha
+    # declared above -- a bare `swmm_producing_sha` is a substring of it, so every future
+    # grep for one would silently match the other.
+    #
+    # TWO FIELDS, ONE KIND EACH. The version field is tag-shaped and available in BOTH
+    # modes (native: the built clone's CMakeLists `VERSION`; container: the
+    # org.hhemt.swmm_version label), normalized by stripping a leading "v" so the two modes
+    # cannot disagree on shape alone. The sha field is native-only and is left ABSENT in
+    # container mode -- a SIF label carries no sha, and inferring one from the tag would
+    # launder an assumption into an apparent measurement.
+    standalone_swmm_producing_version: LogField[str] = Field(default_factory=LogField)
+    standalone_swmm_producing_sha: LogField[str] = Field(default_factory=LogField)
+
     # System-level DataTree consolidation
-    system_datatree_consolidation_complete: LogField[bool] = Field(
-        default_factory=LogField
-    )
+    system_datatree_consolidation_complete: LogField[bool] = Field(default_factory=LogField)
     dem_crs_epsg: LogField[int] = Field(default_factory=LogField)
     vertical_crs_epsg: LogField[int] = Field(default_factory=LogField)
 
@@ -591,6 +1203,23 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         mode="before",
     )(_create_logfield_validator(tuple))
 
+    _validate_string_fields = field_validator(
+        "triton_head_sha",
+        "triton_head_commit_date",
+        # A NEW LogField ON THIS MODEL MUST BE LISTED IN BOTH HAND-MAINTAINED NAME
+        # LISTS ON THIS CLASS — this validator AND the serializer below. Omitting it
+        # from the serializer raises `Unable to serialize unknown type: LogField` and
+        # fails EVERY write of the whole log; the message names the TYPE, not the
+        # missing name, so it points away from the omission. Measured while adding
+        # `sif_sha256`: caught by tests/test_bundle.py, 3 errors, on the first run.
+        "sif_sha256",
+        "tritonswmm_producing_sha",
+        "triton_only_producing_sha",
+        "standalone_swmm_producing_version",
+        "standalone_swmm_producing_sha",
+        mode="before",
+    )(_create_logfield_validator(str))
+
     _validate_int_fields = field_validator(
         "dem_crs_epsg",
         "vertical_crs_epsg",
@@ -611,21 +1240,48 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_triton_gpu_successful",
         "compilation_swmm_successful",
         "system_datatree_consolidation_complete",
+        "triton_head_sha",
+        "triton_head_commit_date",
+        "sif_sha256",
+        "tritonswmm_producing_sha",
+        "triton_only_producing_sha",
+        "standalone_swmm_producing_version",
+        "standalone_swmm_producing_sha",
         "dem_crs_epsg",
         "vertical_crs_epsg",
     )(_logfield_serializer)
 
 
 class TRITONSWMM_analysis_log(TRITONSWMM_log):
-    # Hierarchical DataTree consolidation (Phase 2)
-    datatree_consolidation_complete: LogField[bool] = Field(
-        default_factory=LogField
-    )
+    # Hierarchical DataTree consolidation (analysis level)
+    datatree_consolidation_complete: LogField[bool] = Field(default_factory=LogField)
     consolidation_version: LogField[int] = Field(default_factory=LogField)
-    # Sensitivity-level DataTree consolidation (Phase 3)
-    sensitivity_datatree_consolidation_complete: LogField[bool] = Field(
-        default_factory=LogField
-    )
+    # Fingerprint of the inputs that determine the SHAPE of the consolidated tree
+    # (see processing_analysis.py::_consolidation_inputs_fingerprint). The
+    # consolidate guard treats a mismatch OR an absent stamp as stale and rebuilds,
+    # so a consolidation-affecting config change (e.g. toggle_consolidate_timeseries)
+    # invalidates an otherwise-complete tree without any operator action.
+    consolidation_inputs_fingerprint: LogField[str] = Field(default_factory=LogField)
+    # The git sha of the build that WROTE the consolidated store, minted inline from
+    # provenance.producing_stamp() at the write site immediately below the fingerprint
+    # set. Deliberately NOT the tree-root hhemt_producing_sha, which apply_producing_stamp
+    # derives from the per-event coordinates frozen at PROCESSING time -- comparing that
+    # against the running consolidation build can never converge, because a rebuild
+    # re-derives the same processing-stage value. Same absent-is-stale semantics as the
+    # fingerprint above: a tree consolidated before this stamp existed rebuilds once.
+    consolidation_build_stamp: LogField[str] = Field(default_factory=LogField)
+    # Sensitivity-level DataTree consolidation (the master tree over all members)
+    sensitivity_datatree_consolidation_complete: LogField[bool] = Field(default_factory=LogField)
+    # A sensitivity MEMBER's own analysis_datatree.zarr is removed by the master once the master holds a
+    # read-back-equal copy of every group (clearing switch on). The removal is recorded BEFORE it happens:
+    # `pending` is written after the copy passed its read-back and before the delete, `done` after the delete.
+    # A resume finding `pending` never reads the (possibly half-deleted) member tree as a verification source;
+    # it checks the master's groups and finishes the delete. Absent means no move was ever recorded, so an
+    # absent member tree is damage, not a move.
+    member_tree_moved_to_master: LogField[str] = Field(default_factory=LogField)
+    # The member-tree-relative group paths the master copied (a JSON list), written together with `pending`, so a
+    # resume that no longer has the member tree can check the master for exactly those groups.
+    member_tree_moved_groups: LogField[str] = Field(default_factory=LogField)
     # Track which backends are available at analysis creation time
     cpu_backend_available: LogField[bool] = Field(default_factory=LogField)
     gpu_backend_available: LogField[bool] = Field(default_factory=LogField)
@@ -637,11 +1293,11 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     workflow_submission_time: LogField[str] = Field(default_factory=LogField)
     workflow_submission_mode: LogField[str] = Field(default_factory=LogField)  # "tmux", "batch_job", etc.
     workflow_submission_node: LogField[str] = Field(default_factory=LogField)  # login node hostname at submission time
-    orchestrator_slurm_jobid: LogField[str] = Field(default_factory=LogField)  # E2: single-job orchestrator jobid
+    orchestrator_slurm_jobid: LogField[str] = Field(default_factory=LogField)  # single-job orchestrator jobid
     workflow_canceled: LogField[bool] = Field(default_factory=LogField)
     workflow_cancellation_time: LogField[str] = Field(default_factory=LogField)
-    # multi_allocation_in_progress is an INERT defense-in-depth backstop
-    # (resume-retry-resilience P3): the _clear_raw_outputs guard raises if this field
+    # multi_allocation_in_progress is an INERT defense-in-depth backstop:
+    # the _clear_raw_outputs guard raises if this field
     # is ever True, refusing a raw-output delete that would strip pre-resume
     # performance{N}.txt checkpoints the V0008 aggregator depends on. Production
     # auto-wiring (when to set True/False) is DEFERRED: by DAG construction the per-sim
@@ -649,7 +1305,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     # post-final-allocation), so an analysis-level set-True would over-block finished
     # sims while siblings resume AND poison the detached-batch_job processing path
     # (which reloads a fresh disk log). Correct per-sim enforcement needs a real
-    # two-allocation batch_job run to validate (see the deferred follow-up). Unset by
+    # two-allocation batch_job run to validate. Unset by
     # default -> the guard never fires in production today; consumers coalesce
     # None -> not-in-progress.
     multi_allocation_in_progress: LogField[bool] = Field(default_factory=LogField)
@@ -674,6 +1330,10 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "workflow_cancellation_time",
         "workflow_submission_node",
         "orchestrator_slurm_jobid",
+        "consolidation_inputs_fingerprint",
+        "consolidation_build_stamp",
+        "member_tree_moved_to_master",
+        "member_tree_moved_groups",
         mode="before",
     )(_create_logfield_validator(str))
 
@@ -689,6 +1349,10 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     _serialize_logfields = field_serializer(
         "datatree_consolidation_complete",
         "consolidation_version",
+        "consolidation_inputs_fingerprint",
+        "consolidation_build_stamp",
+        "member_tree_moved_to_master",
+        "member_tree_moved_groups",
         "sensitivity_datatree_consolidation_complete",
         "cpu_backend_available",
         "gpu_backend_available",
@@ -731,17 +1395,17 @@ def log_function_to_file(logfile_path: Path):
 
     def decorator(func):
         def wrapper(*args, **kwargs):
-            # ---------- Change 1: Create a unique logger for this function call ----------
+            # ---------- Create a unique logger for this function call ----------
             logger = logging.getLogger(f"{func.__name__}_{id(func)}")
             logger.setLevel(logging.INFO)
             logger.propagate = False
             logger.handlers.clear()  # Remove any existing handlers
 
-            # ---------- Change 2: Ensure logfile directory exists and file exists ----------
+            # ---------- Ensure logfile directory exists and file exists ----------
             logfile_path.parent.mkdir(parents=True, exist_ok=True)
             logfile_path.touch(exist_ok=True)  # Make sure file exists immediately
 
-            # ---------- Change 3: FileHandler with explicit flush ----------
+            # ---------- FileHandler with explicit flush ----------
             fh = logging.FileHandler(logfile_path, mode="a", encoding="utf-8")
             formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
             fh.setFormatter(formatter)
@@ -754,7 +1418,7 @@ def log_function_to_file(logfile_path: Path):
                 logger.exception("Exception occurred during function execution")
                 raise
             finally:
-                # ---------- Change 4: Explicit flush before closing ----------
+                # ---------- Explicit flush before closing ----------
                 fh.flush()  # Ensures all logs are written to disk before checking exists()
                 logger.removeHandler(fh)
                 fh.close()

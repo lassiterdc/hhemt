@@ -1,8 +1,7 @@
 # Anonymized OLCF Frontier HPC system profile (example).
 # Authored from OLCF's PUBLIC cluster documentation; substitute {your-allocation} with your account.
-system_name: olcf_frontier
+hpc_name: olcf_frontier
 default_account: "{your-allocation}"          # NATIVE -> slurm_account (Frontier: your OLCF project)
-default_execution_mode: 1_job_many_srun_tasks # EXTENSION (Frontier default: one allocation, srun pool)
 gpu_allocation_flavor: gpus                   # EXTENSION (Frontier uses --gpus-per-node)
 max_concurrent_jobs: 1000                     # EXTENSION (D-D: cluster-throughput cap; new home for the retired analysis_config.hpc_max_simultaneous_sims)
 additional_modules:                           # EXTENSION (public module names)
@@ -19,7 +18,8 @@ partitions:
     supports_mpi: true                        # NATIVE
     gpu_compilation_backend: HIP              # EXTENSION (D1: per-partition backend)
 container:                                    # ADR-1/2/3: per-cluster Apptainer exec params; consumed only when analysis_config.execution_environment == "container" (native default ignores it)
-  sif_path: "${MEMBERWORK}/{your-allocation}/hhemt_frontier_rocm.sif"   # transferred, signed SIF (see containers/README.md)
+  sif_root: "${MEMBERWORK}/{your-allocation}/sifs"   # every identity resolves under it; images are PLACED here with their .manifest.json (see containers/README.md)
+  builds_containers: false                     # Frontier login nodes grant no fakeroot; build elsewhere and place
   gpu_flag: "--rocm"                          # Frontier MI250X GPU passthrough (binds driver-adjacent libs; container ROCm runtime executes)
   # === PRODUCTION MULTI-RANK (host Cray-MPICH-ABI / Slingshot) — VALIDATED (probe job 4898044: size=16 / 2 nodes / 8 GCDs per node) ===
   # Mechanism (container-specialist 2026-06-29): the OLCF helper modules bind the OPEN-ENDED host MPI+ROCm+compiler-runtime
@@ -50,5 +50,5 @@ container:                                    # ADR-1/2/3: per-cluster Apptainer
   #   apptainerenv_ld_library_path: "/opt/mpich/lib"   # MANDATORY (.def Change-B stripped /opt/mpich/lib; triton.exe empty RPATH)
   #   containlibs: []
   #   binds: []
-  exe_in_sif: {triton: "/opt/hhemt/bin/triton.exe", tritonswmm: "/opt/hhemt/bin/triton.exe", swmm: "/opt/hhemt/bin/runswmm"}   # in-SIF exe per model type
+  exe_in_sif: {triton: "/opt/hhemt/bin/triton_only.exe", tritonswmm: "/opt/hhemt/bin/triton.exe", swmm: "/opt/hhemt/bin/runswmm"}   # in-SIF exe per model type; `triton` MUST be the SWMM-DISABLED build (compile-time #ifdef TRITON_SWMM — not a runtime mode), else it dies on an empty inp_filename
 executor_profile_extras: {}                   # EXTENSION (advanced escape hatch; empty by default)

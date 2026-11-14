@@ -64,6 +64,7 @@ is acceptable for occasional v2 trees; path (a) is documented for operators
 maintaining v2-heavy deployments. The v2 → v3 promotion is intentionally not
 automated to avoid coupling V0006 to the system-config-resolution stack.
 """
+
 from __future__ import annotations
 
 import json
@@ -91,9 +92,7 @@ def _resolve_reference_mtime(ctx: MigrationContext, sa_id: str, fp: Path) -> flo
     """
     status_dir = ctx.target_dir / "_status"
     # Priority 1: corresponding b_prepare flag for this sa_id
-    prepare_flags = list(
-        status_dir.glob(f"b_prepare_sa-{sa_id}_*_complete.flag")
-    )
+    prepare_flags = list(status_dir.glob(f"b_prepare_sa-{sa_id}_*_complete.flag"))
     if prepare_flags:
         # Earliest mtime across any matching event_id; any one of them is ≥ the
         # original fingerprint mtime.
@@ -179,8 +178,7 @@ def _upgrade_payload(existing: dict) -> dict | None:
         return None  # idempotent
     if schema == 2:
         logger.warning(
-            "fingerprint at schema v2 (system_cfg_hash present); skipping — "
-            "manual review required. Path: %s",
+            "fingerprint at schema v2 (system_cfg_hash present); skipping — manual review required. Path: %s",
             existing,
         )
         return None

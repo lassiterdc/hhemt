@@ -23,9 +23,15 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from hhemt.bundle import Bundle
-from hhemt.bundle._emit import _rewrite_paths_to_relative
+from hhemt.bundle._emit import (
+    _EW_FIGURE_REL,
+    _VALIDATION_READ_MODEL_REL,
+    _assert_report_not_older_than_read_model,
+    _rewrite_paths_to_relative,
+)
 from hhemt.bundle._path_policy import (
     _PATH_FIELD_POLICY,
     PathPolicy,
@@ -33,7 +39,7 @@ from hhemt.bundle._path_policy import (
 )
 from hhemt.config.analysis import analysis_config
 from hhemt.config.system import system_config
-
+from hhemt.exceptions import StaleReadModelError
 
 FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "bundles"
 
@@ -50,9 +56,7 @@ def multi_sim_bundle(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def sensitivity_master_bundle(tmp_path: Path) -> Path:
-    return _copy_fixture(
-        FIXTURES_ROOT / "sensitivity_master", tmp_path / "sensitivity_master"
-    )
+    return _copy_fixture(FIXTURES_ROOT / "sensitivity_master", tmp_path / "sensitivity_master")
 
 
 def test_from_directory_round_trip(multi_sim_bundle: Path) -> None:
@@ -105,44 +109,31 @@ def _assert_field_conforms(
     is_optional = type(None) in typing.get_args(annotation)
 
     if policy is PathPolicy.FORCED_DOT:
-        assert value == ".", (
-            f"{field_name}: FORCED_DOT but value is {value!r}"
-        )
+        assert value == ".", f"{field_name}: FORCED_DOT but value is {value!r}"
         return
     if policy is PathPolicy.IS_NONE_ACCEPTABLE:
-        assert value is None, (
-            f"{field_name}: IS_NONE_ACCEPTABLE but value is {value!r}"
-        )
+        assert value is None, f"{field_name}: IS_NONE_ACCEPTABLE but value is {value!r}"
         return
     if policy is PathPolicy.BUNDLE_RELATIVE_LIST:
         # list[Path] field — value is a (possibly empty) list; every
         # element must be a non-absolute (bundle-relative) path string.
-        assert isinstance(value, list), (
-            f"{field_name}: BUNDLE_RELATIVE_LIST but value is {value!r}"
-        )
+        assert isinstance(value, list), f"{field_name}: BUNDLE_RELATIVE_LIST but value is {value!r}"
         for elem in value:
-            assert not Path(elem).is_absolute(), (
-                f"{field_name}: absolute path leaked into bundle list: {elem!r}"
-            )
+            assert not Path(elem).is_absolute(), f"{field_name}: absolute path leaked into bundle list: {elem!r}"
         return
     if value is None:
         # OR_NONE policy permits None; bare BUNDLE_RELATIVE on a None
         # value would be a misconfiguration on a required Path field.
         assert is_optional or policy is PathPolicy.BUNDLE_RELATIVE_OR_NONE, (
-            f"{field_name}: value is None but field is required "
-            f"(annotation={annotation}, policy={policy})"
+            f"{field_name}: value is None but field is required (annotation={annotation}, policy={policy})"
         )
         return
     # Remaining cases: BUNDLE_RELATIVE / BUNDLE_RELATIVE_OR_NONE with a
     # non-None value. Must not be absolute.
-    assert not Path(value).is_absolute(), (
-        f"{field_name}: absolute path leaked into bundle: {value!r}"
-    )
+    assert not Path(value).is_absolute(), f"{field_name}: absolute path leaked into bundle: {value!r}"
 
 
-def test_no_chdir_side_effect(
-    multi_sim_bundle: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_no_chdir_side_effect(multi_sim_bundle: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cwd_before = os.getcwd()
     Bundle.from_directory(multi_sim_bundle)
     assert os.getcwd() == cwd_before
@@ -159,6 +150,59 @@ def test_sensitivity_master_polymorphism(
     assert bundle.manifest["analysis_id"] == "synth_sensitivity"
 
 
+def test_sensitivity_master_delegates_bundleable_identity_attrs(
+    synth_sensitivity_analysis,
+) -> None:
+    """Regression: a sensitivity master (the real experiment topology emit_bundle(self)
+    receives via bundle_report_data) must expose the FULL BundleableAnalysis surface —
+    including cfg_hpc_system / case_manifest_yaml / _case_manifest. Pre-delegation these
+    three were absent on the sensitivity wrapper (only cfg_analysis/analysis_paths were
+    delegated), so emit_bundle's reads silently DROPPED the combine-identity files:
+    case.yaml (BLOCKING case_name) and hpc_system_config.identity.yaml (INFORMATIONAL
+    compute-config). This test failed before the delegation fix."""
+    from hhemt.bundle._protocol import BundleableAnalysis
+
+    sens = synth_sensitivity_analysis.sensitivity  # the TRITONSWMM_sensitivity_analysis wrapper
+    for attr in ("cfg_hpc_system", "case_manifest_yaml", "_case_manifest"):
+        assert hasattr(sens, attr), f"sensitivity wrapper missing BundleableAnalysis attr {attr!r}"
+        assert getattr(sens, attr) is getattr(sens.experiment, attr), (
+            f"{attr!r} must delegate to the wrapped master analysis"
+        )
+    assert isinstance(sens, BundleableAnalysis)  # runtime_checkable — full attribute surface
+
+
+def test_emit_hpc_identity_writes_scrubbed_surface(tmp_path: Path) -> None:
+    """_emit_hpc_identity emits ONLY the scrubbed partitions + gpu_allocation_flavor when
+    the bundle input exposes a cfg_hpc_system, and no-ops when it is None (local/native).
+    Guards the combine INFORMATIONAL surface a sensitivity master silently dropped; also
+    confirms the allow-list-by-construction scrub never leaks a USER-bucket scalar."""
+    from types import SimpleNamespace
+
+    from hhemt.bundle._emit import HPC_IDENTITY_FILENAME, _emit_hpc_identity
+
+    class _Cfg:
+        def model_dump(self, mode: str = "json") -> dict:
+            return {
+                "partitions": {"standard": {"gpus_per_node": 0}},
+                "gpu_allocation_flavor": "gres",
+                "default_account": "SHOULD-NOT-LEAK",  # USER bucket — must be scrubbed out
+            }
+
+    staging = tmp_path / "with_hpc"
+    staging.mkdir()
+    _emit_hpc_identity(SimpleNamespace(cfg_hpc_system=_Cfg()), staging)
+    out = staging / HPC_IDENTITY_FILENAME
+    assert out.exists()
+    dumped = yaml.safe_load(out.read_text())
+    assert set(dumped) == {"partitions", "gpu_allocation_flavor"}
+    assert "default_account" not in dumped
+
+    staging_none = tmp_path / "no_hpc"
+    staging_none.mkdir()
+    _emit_hpc_identity(SimpleNamespace(cfg_hpc_system=None), staging_none)
+    assert not (staging_none / HPC_IDENTITY_FILENAME).exists()
+
+
 def test_all_path_fields_have_policy() -> None:
     """Every Pydantic ``Path`` / ``Optional[Path]`` field on either cfg
     model must have an entry in ``_PATH_FIELD_POLICY``. This is the
@@ -169,18 +213,11 @@ def test_all_path_fields_have_policy() -> None:
         declared.update(enumerate_path_fields(cfg_model))
     missing = sorted(declared - set(_PATH_FIELD_POLICY))
     extra = sorted(set(_PATH_FIELD_POLICY) - declared)
-    assert not missing, (
-        f"Path fields without a _PATH_FIELD_POLICY entry: {missing}"
-    )
-    assert not extra, (
-        f"_PATH_FIELD_POLICY entries with no matching Pydantic Path "
-        f"field: {extra}"
-    )
+    assert not missing, f"Path fields without a _PATH_FIELD_POLICY entry: {missing}"
+    assert not extra, f"_PATH_FIELD_POLICY entries with no matching Pydantic Path field: {extra}"
 
 
-def test_null_software_dir_synthesized_config_loads(
-    synth_multi_sim_analysis, tmp_path: Path
-) -> None:
+def test_null_software_dir_synthesized_config_loads(synth_multi_sim_analysis, tmp_path: Path) -> None:
     """D4 relaxation: a synthesized system_config.yaml carrying
     ``TRITONSWMM_software_directory: null`` loads without raising.
 
@@ -209,35 +246,35 @@ def test_reprex_config_loads_minimal() -> None:
 
     cfg = reprex_config(
         default_account="acct123",
-        sif_path="/scratch/user/tritonswmm.sif",
+        sif_root="/scratch/user/sifs",
         target_ensemble_partition="gpu",
     )
     assert cfg.default_account == "acct123"
-    assert cfg.sif_path == Path("/scratch/user/tritonswmm.sif")
+    assert cfg.sif_root == Path("/scratch/user/sifs")
     assert cfg.login_node is None
     assert cfg.scratch_dir is None
     assert cfg.target_setup_and_analysis_processing_partition is None
 
-    with pytest.raises(Exception):  # extra=forbid rejects unknown keys
+    with pytest.raises(ValidationError):  # extra=forbid rejects unknown keys
         reprex_config(
             default_account="acct123",
-            sif_path="/x.sif",
+            sif_root="/x",
             target_ensemble_partition="gpu",
             unknown_field="nope",
         )
 
 
-def test_reprex_bundle_carries_runnable_set(
-    rendered_synth_multi_sim, tmp_path: Path
-) -> None:
+def test_reprex_bundle_carries_runnable_set(rendered_synth_multi_sim, tmp_path: Path) -> None:
     """R10/R11: an emitted reprex bundle carries the minimal runnable set at its root
     (reprex_config.yaml + a scrubbed hpc_system_config template + the Snakefile source
     + the Workflow-Run-Crate ro-crate-metadata.json), and the crate is typed as a WRC
     with the generated Snakefile as its mainEntity ComputationalWorkflow."""
     import json
+    import re
     import zipfile
 
     from hhemt.bundle._emit import HPC_TEMPLATE_FILENAME, REPREX_CONFIG_FILENAME
+    from hhemt.config.loaders import load_hpc_system_config
     from hhemt.metadata import _SNAKEMAKE_LANG_ID, _WFRUN_ROOT_PROFILES
 
     zip_out = tmp_path / "reprex_bundle.zip"
@@ -251,6 +288,51 @@ def test_reprex_bundle_carries_runnable_set(
     assert (bundle_dir / "Snakefile.source").exists()
     assert (bundle_dir / "ro-crate-metadata.json").exists()
 
+    # The carried HPC template must be LOADABLE as an hpc_system_config, not merely
+    # present. ADR-10 requires bundled HPC-specific info to be "bundled+flagged+revisable",
+    # and a file that cannot load is not revisable into a valid config. An existence-only
+    # assertion is exactly how the prior flat {default_account, login_node, sif_path} form
+    # survived: it raised a 3-error ValidationError (hpc_name missing, partitions
+    # missing, sif_path extra_forbidden at top level) and nothing ever loaded it.
+    cfg_hpc = load_hpc_system_config(bundle_dir / HPC_TEMPLATE_FILENAME)
+    assert cfg_hpc.hpc_name, "template must carry the REQUIRED hpc_name"
+    assert cfg_hpc.partitions, "template must carry the REQUIRED partitions map"
+    # sif_root nests under container: (ContainerSpec) — a top-level key is
+    # extra-forbidden and is what made the old template unloadable.
+    assert cfg_hpc.container is not None
+    assert cfg_hpc.container.sif_root
+    # Zero-user-info (ADR-13/14), asserted POSITIVELY against the placeholder grammar the
+    # scrub emits, rather than negatively against the producer's blocklist. Two reasons the
+    # positive form is stronger, not merely carrier-free. (1) The negative form could only
+    # catch the eight identifiers WE know about; this catches ANY real value landing in a
+    # user-bucket field, including a future producer's, whose identifiers are on nobody's
+    # list. (2) The negative form needed the real blocklist reachable at test time, which
+    # made this module hard-depend on a carrier that is being relocated out of this repo.
+    tpl_text = (bundle_dir / HPC_TEMPLATE_FILENAME).read_text()
+    _placeholder = re.compile(r"^\{your-[a-z0-9-]+\}$")
+    for _field, _value in (
+        ("hpc_name", cfg_hpc.hpc_name),
+        ("default_account", cfg_hpc.default_account),
+        ("login_node", cfg_hpc.login_node),
+    ):
+        assert _placeholder.match(str(_value or "")), (
+            f"{_field} carries {_value!r}, not a {{your-...}} placeholder -- a producer value survived the scrub"
+        )
+    for _partition_name in cfg_hpc.partitions:
+        assert _placeholder.match(_partition_name), (
+            f"partition key {_partition_name!r} is a real partition name, not a placeholder"
+        )
+    # sif_root EMBEDS a placeholder inside a path rather than being one outright.
+    assert "{your-allocation}" in str(cfg_hpc.container.sif_root), (
+        f"container.sif_root {cfg_hpc.container.sif_root!r} carries no placeholder"
+    )
+    # And no brace-token anywhere in the emitted template escapes the grammar, so a new
+    # scrubbed field cannot quietly adopt a different (or absent) placeholder convention.
+    for _brace_token in sorted(set(re.findall(r"\{[^{}\n]+\}", tpl_text))):
+        assert _brace_token.startswith("{your-"), (
+            f"template carries brace-token {_brace_token!r} outside the {{your-...}} grammar"
+        )
+
     doc = json.loads((bundle_dir / "ro-crate-metadata.json").read_text())
     root = next(e for e in doc["@graph"] if e.get("@id") == "./")
     assert root["mainEntity"] == {"@id": "Snakefile.source"}
@@ -261,7 +343,7 @@ def test_reprex_bundle_carries_runnable_set(
     assert set(_WFRUN_ROOT_PROFILES) <= profile_ids
 
 
-def test_zero_user_info_gate(tmp_path: Path) -> None:
+def test_zero_user_info_gate(tmp_path: Path, monkeypatch) -> None:
     """R12: the zero-user-info gate PASSES a clean tree (placeholders only) and FAILS a
     seeded-leak tree (a YAML value carrying a blocklist token) with ProcessingError.
 
@@ -273,18 +355,27 @@ def test_zero_user_info_gate(tmp_path: Path) -> None:
     from hhemt.bundle._reprex_gate import _load_blocklist, assert_bundle_zero_user_info
     from hhemt.exceptions import ProcessingError
 
+    # Carrier-independent by construction: this test exercises the gate MECHANISM, and a
+    # mechanism test needs A token, not THE producer's tokens. Pointing the resolver at a
+    # synthetic carrier means the real ground truth need not be reachable here -- which is
+    # what lets this module run in an environment that has no carrier at all. Contrast
+    # test_reprex_bundle_carries_runnable_set, which asserts real producer values are
+    # ABSENT from an emitted artifact and is therefore vacuous against synthetic tokens.
+    synthetic_carrier = tmp_path / "synthetic_blocklist.txt"
+    synthetic_carrier.write_text(
+        "# min-tokens: 4\nZZTESTTOKENALPHA\nZZTESTTOKENBETA\nZZTESTTOKENGAMMA\nZZTESTTOKENDELTA\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HHEMT_REPREX_BLOCKLIST", str(synthetic_carrier))
+
     clean_dir = tmp_path / "clean"
     clean_dir.mkdir()
-    (clean_dir / "cfg_system.yaml").write_text(
-        "system_directory: .\ndefault_account: '{your-allocation}'\n"
-    )
-    (clean_dir / "reprex_config.yaml").write_text(
-        "target_ensemble_partition: '{your-gpu-partition}'\n"
-    )
+    (clean_dir / "cfg_system.yaml").write_text("system_directory: .\ndefault_account: '{your-allocation}'\n")
+    (clean_dir / "reprex_config.yaml").write_text("target_ensemble_partition: '{your-gpu-partition}'\n")
     assert_bundle_zero_user_info(clean_dir)  # clean tree: no raise
 
-    # Seed a leak with an actual blocklist token, resolved at runtime so no literal
-    # private identifier appears in this test's source (else check_anonymization flags it).
+    # Seed a leak with a token from the synthetic carrier above, resolved at runtime so no
+    # literal identifier is hardcoded here.
     leak_token = _load_blocklist()[0]
     leak_dir = tmp_path / "leak"
     leak_dir.mkdir()
@@ -293,9 +384,7 @@ def test_zero_user_info_gate(tmp_path: Path) -> None:
         assert_bundle_zero_user_info(leak_dir)
 
 
-def test_reconstitute_runnable_config(
-    synth_multi_sim_analysis, tmp_path: Path
-) -> None:
+def test_reconstitute_runnable_config(synth_multi_sim_analysis, tmp_path: Path) -> None:
     """R5: reconstitute_runnable_config synthesizes a system_config.yaml that loads
     clean with the software-dir fields null and EXPERIMENT-bucket fields preserved.
 
@@ -369,9 +458,10 @@ def test_static_plot_configs_list_rewritten_to_relative(tmp_path: Path) -> None:
     )
 
     rewritten = result.cfg_dict["static_plot_configs"]
-    assert rewritten == ["static_plots/plot_a.yaml", "static_plots/plot_b.yaml"], (
-        f"list elements not rewritten to analysis-dir-relative form: {rewritten!r}"
-    )
+    assert rewritten == [
+        "static_plots/plot_a.yaml",
+        "static_plots/plot_b.yaml",
+    ], f"list elements not rewritten to analysis-dir-relative form: {rewritten!r}"
     for elem in rewritten:
         assert not Path(elem).is_absolute()
     # The policy was exercised — recorded in the per-policy invariants.
@@ -410,86 +500,96 @@ def test_from_directory_missing_manifest(tmp_path: Path) -> None:
 # static_backend cfg substrate (absorbed from Plan Phase 5 per Decision 3.3D).
 # ============================================================================
 
+
 def test_manifest_invariants_object(multi_sim_bundle):
     # bundle_manifest.json carries bundle_root_invariants with cfg_system
     # and cfg_analysis sub-dicts; each enumerates path-field policies.
     import json
-    manifest = json.loads(
-        (multi_sim_bundle / "bundle_manifest.json").read_text()
-    )
-    assert "bundle_root_invariants" in manifest, (
-        "Plan Phase 3 requires bundle_root_invariants in the manifest"
-    )
+
+    manifest = json.loads((multi_sim_bundle / "bundle_manifest.json").read_text())
+    assert "bundle_root_invariants" in manifest, "Plan Phase 3 requires bundle_root_invariants in the manifest"
     invariants = manifest["bundle_root_invariants"]
     assert "cfg_system" in invariants
     assert "cfg_analysis" in invariants
 
+
 def test_regenerate_report_no_chdir(multi_sim_bundle, monkeypatch):
     # Bundle.regenerate_report must not modify the parent-process cwd.
     import os
+
     from hhemt.bundle import Bundle
 
     class FakeProc:
         returncode = 0
+
     def fake_run(cmd, logfile, env=None, cwd=None, echo_to_stdout=True):
         return FakeProc()
+
     # Patch the binding site (bundle.__init__) rather than the
     # source module (subprocess_utils), so the patch intercepts the
     # local-import-inside-method that VMS-1 uses. If a future refactor
     # moves the import to module-level, this patch still works because
     # it targets the binding site, not the source.
     import hhemt.bundle as bundle_mod
-    monkeypatch.setattr(
-        bundle_mod, "run_subprocess_with_tee", fake_run, raising=False
-    )
+
+    monkeypatch.setattr(bundle_mod, "run_subprocess_with_tee", fake_run, raising=False)
 
     bundle = Bundle.from_directory(multi_sim_bundle)
     cwd_before = os.getcwd()
     try:
-        bundle.regenerate_report(format="html")
+        # declare_stale_plots: these fixtures' figure sidecars carry no build stamp
+        # (they predate the ADR-15 plot capture site), so the version guard correctly
+        # refuses them. These tests assert regeneration MECHANICS -- cwd handling,
+        # subprocess cwd, stale-lock behaviour -- not build matching, so declaring the
+        # known-stale fixture is the sanctioned operator escape rather than a weakening.
+        bundle.regenerate_report(format="html", declare_stale_plots=True)
     except (RuntimeError, FileNotFoundError):
         # Subprocess stubbed; downstream output-path assertions don't
         # matter — this test only asserts cwd invariance.
         pass
-    assert os.getcwd() == cwd_before, (
-        "Bundle.regenerate_report leaked an os.chdir to the parent process"
-    )
+    assert os.getcwd() == cwd_before, "Bundle.regenerate_report leaked an os.chdir to the parent process"
 
-def test_regenerate_report_subprocess_cwd_is_bundle_root(
-    multi_sim_bundle, monkeypatch
-):
+
+def test_regenerate_report_subprocess_cwd_is_bundle_root(multi_sim_bundle, monkeypatch):
     # The snakemake subprocess receives cwd=bundle.root via Popen kwarg.
     from hhemt.bundle import Bundle
 
     captured = {}
+
     class FakeProc:
         returncode = 0
+
     def fake_run(cmd, logfile, env=None, cwd=None, echo_to_stdout=True):
         captured["cwd"] = cwd
         return FakeProc()
+
     # Patch the binding site (bundle.__init__) rather than the
     # source module (subprocess_utils), so the patch intercepts the
     # local-import-inside-method that VMS-1 uses. If a future refactor
     # moves the import to module-level, this patch still works because
     # it targets the binding site, not the source.
     import hhemt.bundle as bundle_mod
-    monkeypatch.setattr(
-        bundle_mod, "run_subprocess_with_tee", fake_run, raising=False
-    )
+
+    monkeypatch.setattr(bundle_mod, "run_subprocess_with_tee", fake_run, raising=False)
 
     bundle = Bundle.from_directory(multi_sim_bundle)
     try:
-        bundle.regenerate_report(format="html")
+        # declare_stale_plots: these fixtures' figure sidecars carry no build stamp
+        # (they predate the ADR-15 plot capture site), so the version guard correctly
+        # refuses them. These tests assert regeneration MECHANICS -- cwd handling,
+        # subprocess cwd, stale-lock behaviour -- not build matching, so declaring the
+        # known-stale fixture is the sanctioned operator escape rather than a weakening.
+        bundle.regenerate_report(format="html", declare_stale_plots=True)
     except (RuntimeError, FileNotFoundError):
         pass
-    assert captured["cwd"] == bundle.root, (
-        f"Expected subprocess cwd={bundle.root}, got {captured['cwd']}"
-    )
+    assert captured["cwd"] == bundle.root, f"Expected subprocess cwd={bundle.root}, got {captured['cwd']}"
+
 
 def test_regenerate_report_raises_on_stale_lock(multi_sim_bundle):
     # Bundle.regenerate_report fails loud when stale locks exist
     # (Decision 3.1A defense-in-depth check).
     import pytest
+
     from hhemt.bundle import Bundle
 
     locks_dir = multi_sim_bundle / ".snakemake" / "locks"
@@ -498,7 +598,13 @@ def test_regenerate_report_raises_on_stale_lock(multi_sim_bundle):
 
     bundle = Bundle.from_directory(multi_sim_bundle)
     with pytest.raises(RuntimeError, match="--unlock"):
-        bundle.regenerate_report(format="html")
+        # declare_stale_plots: these fixtures' figure sidecars carry no build stamp
+        # (they predate the ADR-15 plot capture site), so the version guard correctly
+        # refuses them. These tests assert regeneration MECHANICS -- cwd handling,
+        # subprocess cwd, stale-lock behaviour -- not build matching, so declaring the
+        # known-stale fixture is the sanctioned operator escape rather than a weakening.
+        bundle.regenerate_report(format="html", declare_stale_plots=True)
+
 
 def test_legacy_manifest_no_invariants_key(tmp_path):
     # Bundle.from_directory loads bundles that lack the
@@ -508,6 +614,7 @@ def test_legacy_manifest_no_invariants_key(tmp_path):
     # Pydantic-valid cfg_analysis.yaml; the legacy-bundle compat axis
     # under test is solely the optional invariants key.
     import json
+
     from hhemt.bundle import Bundle
     from hhemt.version_migration.constants import (
         BUNDLE_SCHEMA_VERSION,
@@ -524,34 +631,36 @@ def test_legacy_manifest_no_invariants_key(tmp_path):
         "source_paths_by_renderer": {},
         # NOTE: no bundle_root_invariants key — backward-compat axis under test.
     }
-    (bundle_dir / "bundle_manifest.json").write_text(
-        json.dumps(legacy_manifest)
-    )
+    (bundle_dir / "bundle_manifest.json").write_text(json.dumps(legacy_manifest))
     _write_minimal_cfg_analysis(bundle_dir / "cfg_analysis.yaml")
     bundle = Bundle.from_directory(bundle_dir)
-    assert (
-        bundle.manifest.get("bundle_root_invariants", "MISSING")
-        == "MISSING"
-    ), "Legacy bundle should load without the key"
+    assert bundle.manifest.get("bundle_root_invariants", "MISSING") == "MISSING", (
+        "Legacy bundle should load without the key"
+    )
+
 
 def test_static_backend_field_default_is_plotly():
     # cfg_report's InteractiveBackendConfig.static_backend defaults to
     # 'plotly' per Plan Phase 2 D3 + Decision 4.
     from hhemt.config.report import InteractiveBackendConfig
+
     cfg = InteractiveBackendConfig()
     assert cfg.static_backend == "plotly"
+
 
 def test_preflight_raises_without_kaleido(monkeypatch):
     # preflight_validate with static_backend='plotly' adds an ERROR
     # issue when kaleido is not importable.
     import sys
+
     from hhemt.validation import (
-        _check_static_backend_kaleido_available,
         ValidationResult,
+        _check_static_backend_kaleido_available,
     )
 
     class FakeInteractive:
         static_backend = "plotly"
+
     class FakeReport:
         interactive = FakeInteractive()
 
@@ -560,20 +669,22 @@ def test_preflight_raises_without_kaleido(monkeypatch):
     result = ValidationResult(context="test")
     _check_static_backend_kaleido_available(FakeReport(), result)
     assert any(
-        "reinstall" in (issue.fix_hint or "").lower()
-        or "pip install -e ." in (issue.fix_hint or "")
+        "reinstall" in (issue.fix_hint or "").lower() or "pip install -e ." in (issue.fix_hint or "")
         for issue in result.errors
     ), "Expected preflight error guiding a reinstall now that kaleido is core"
+
 
 # ============================================================================
 # Plan Phase 4 tests — zip emit determinism.
 # ============================================================================
+
 
 def test_zip_determinism(tmp_path):
     # _emit_bundle_zip produces byte-identical archives on repeat
     # invocations against the same staging tree (fixed mtime + sorted
     # order).
     import hashlib
+
     from hhemt.bundle._emit import _emit_bundle_zip
 
     # Construct a synthetic staging tree with a few files at varying
@@ -595,21 +706,19 @@ def test_zip_determinism(tmp_path):
 
     sha_a = hashlib.sha256(zip_a.read_bytes()).hexdigest()
     sha_b = hashlib.sha256(zip_b.read_bytes()).hexdigest()
-    assert sha_a == sha_b, (
-        f"Emit not deterministic: bundle_a SHA={sha_a}, bundle_b SHA={sha_b}"
-    )
+    assert sha_a == sha_b, f"Emit not deterministic: bundle_a SHA={sha_a}, bundle_b SHA={sha_b}"
+
 
 def test_zip_emit_no_tar_artifact(tmp_path):
     # After Plan Phase 4, the emit-side produces .zip, not .tar.
     # The default output_path in emit_bundle uses the .zip suffix.
     import inspect
+
     from hhemt.bundle._emit import emit_bundle
 
     src = inspect.getsource(emit_bundle)
     assert ".zip" in src, "emit_bundle default output path must use .zip suffix"
-    assert ".tar" not in src, (
-        "Plan Phase 4 removes the .tar suffix from emit_bundle default path"
-    )
+    assert ".tar" not in src, "Plan Phase 4 removes the .tar suffix from emit_bundle default path"
 
 
 # ============================================================================
@@ -628,8 +737,10 @@ def _write_minimal_cfg_analysis(path, *, static_backend="plotly", with_report=Tr
     sync with the current analysis_config schema by Phase 1), then strips
     or pins the `report:` block per the with_report toggle.
     """
-    import yaml
     from pathlib import Path
+
+    import yaml
+
     fixture_path = Path(__file__).parent / "fixtures" / "bundles" / "multi_sim" / "cfg_analysis.yaml"
     cfg = yaml.safe_load(fixture_path.read_text())
     if with_report:
@@ -643,12 +754,9 @@ def test_read_static_backend_one_step(tmp_path):
     """R8 v2 (case 1): cfg_analysis.yaml carries `report.interactive.static_backend`;
     `_read_static_backend` returns that value as the sole resolution path."""
     from hhemt.bundle import Bundle
-
     from hhemt.version_migration.constants import BUNDLE_SCHEMA_VERSION
 
-    _write_minimal_cfg_analysis(
-        tmp_path / "cfg_analysis.yaml", static_backend="matplotlib"
-    )
+    _write_minimal_cfg_analysis(tmp_path / "cfg_analysis.yaml", static_backend="matplotlib")
     (tmp_path / "bundle_manifest.json").write_text(
         json.dumps({"bundle_schema_version": BUNDLE_SCHEMA_VERSION, "bundle_root_invariants": {}})
     )
@@ -661,34 +769,42 @@ def test_read_static_backend_raises_when_report_absent_via_from_directory(tmp_pa
     Pydantic validation at `Bundle.from_directory(...)` — `_read_static_backend`
     is never reached. Pins the R1 load-time-required contract."""
     import pytest
+
     from hhemt.bundle import Bundle
     from hhemt.version_migration.constants import BUNDLE_SCHEMA_VERSION
 
-    _write_minimal_cfg_analysis(
-        tmp_path / "cfg_analysis.yaml", with_report=False
-    )
+    _write_minimal_cfg_analysis(tmp_path / "cfg_analysis.yaml", with_report=False)
     (tmp_path / "bundle_manifest.json").write_text(
         json.dumps({"bundle_schema_version": BUNDLE_SCHEMA_VERSION, "bundle_root_invariants": {}})
     )
-    with pytest.raises(Exception):  # pydantic.ValidationError via from_directory
+    from hhemt.exceptions import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="report"):  # the loader wraps pydantic's error
         Bundle.from_directory(tmp_path)
 
 
 def test_bundle_v1_rejected_by_post_f2_toolkit(tmp_path):
     """R15: a bundle stamped `bundle_schema_version=1` (pre-F2) fails the
-    schema-version gate in `Bundle.from_directory` under post-F2 toolkit
-    (`BUNDLE_SCHEMA_VERSION=2`). The error message names the version mismatch."""
+    schema-version gate in `Bundle.from_directory` under any later toolkit.
+    The error message names both versions and the remedy."""
     import pytest
-    from hhemt.bundle import Bundle, BundleSchemaError
+
+    from hhemt.bundle import BUNDLE_SCHEMA_VERSION, Bundle, BundleSchemaError
 
     _write_minimal_cfg_analysis(tmp_path / "cfg_analysis.yaml")
-    (tmp_path / "bundle_manifest.json").write_text(
-        '{"bundle_schema_version": 1, "bundle_root_invariants": {}}'
-    )
+    (tmp_path / "bundle_manifest.json").write_text('{"bundle_schema_version": 1, "bundle_root_invariants": {}}')
     with pytest.raises(BundleSchemaError) as excinfo:
         Bundle.from_directory(tmp_path)
-    assert "Pre-F2" in str(excinfo.value)
-    assert "Re-emit" in str(excinfo.value)
+    # Pin the INVARIANT, not a generation. The retired assertion looked for
+    # "Pre-F2" -- a phrase naming ONE transition -- so it broke the moment the
+    # message stopped being about v1->v2, which is the same re-staling shape
+    # test_bundle_schema_version_matches_the_fixtures was renamed to escape.
+    # What must always hold: the error names BOTH versions so a reader can see
+    # the mismatch, and states the remedy that applies to every bump.
+    msg = str(excinfo.value)
+    assert "bundle_schema_version=1" in msg
+    assert f"BUNDLE_SCHEMA_VERSION={BUNDLE_SCHEMA_VERSION}" in msg
+    assert "Re-emit" in msg
 
 
 def test_copy_supporting_files_carries_rocrate_sidecar(tmp_path: Path) -> None:
@@ -706,9 +822,11 @@ def test_copy_supporting_files_carries_rocrate_sidecar(tmp_path: Path) -> None:
     analysis = types.SimpleNamespace(
         analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
         cfg_analysis=types.SimpleNamespace(weather_events_to_simulate=None),
+        case_manifest_yaml=None,  # BundleableAnalysis contract attr (emit reads it directly now)
     )
     _copy_supporting_files(analysis, staging)
     assert (staging / "ro-crate-metadata.json").exists()
+
 
 def test_copy_supporting_files_no_rocrate_sidecar_is_noop(tmp_path: Path) -> None:
     """R5: emission is a no-op (no error) when the sidecar is absent."""
@@ -723,6 +841,103 @@ def test_copy_supporting_files_no_rocrate_sidecar_is_noop(tmp_path: Path) -> Non
     analysis = types.SimpleNamespace(
         analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
         cfg_analysis=types.SimpleNamespace(weather_events_to_simulate=None),
+        case_manifest_yaml=None,  # BundleableAnalysis contract attr (emit reads it directly now)
     )
     _copy_supporting_files(analysis, staging)  # must not raise
     assert not (staging / "ro-crate-metadata.json").exists()
+
+
+def test_copy_reference_outputs_carries_test_summaries(tmp_path: Path) -> None:
+    """[Q8] REQ-1 (R9b): _copy_reference_outputs carries the producer's test()-shaped
+    per-scenario physics summaries into reference_outputs/, group-indexed, physics
+    *_summary.* only (never *_tseries.*)."""
+    import types
+
+    from hhemt.bundle._emit import _copy_reference_outputs
+
+    analysis_dir = tmp_path / "analysis"
+    processed = analysis_dir / "_test" / "group_0" / "sims" / "evt1" / "processed"
+    processed.mkdir(parents=True)
+    (processed / "TRITONSWMM_TRITON_summary.nc").write_text("ref")
+    (processed / "TRITONSWMM_SWMM_link_summary.nc").write_text("ref")
+    (processed / "TRITONSWMM_TRITON_tseries.nc").write_text("ts")  # NOT *_summary -> excluded
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    analysis = types.SimpleNamespace(
+        analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
+        cfg_analysis=types.SimpleNamespace(target_processed_output_type="nc"),
+    )
+    _copy_reference_outputs(analysis, staging)
+    ref = staging / "reference_outputs" / "group_0" / "sims" / "evt1" / "processed"
+    assert (ref / "TRITONSWMM_TRITON_summary.nc").exists()
+    assert (ref / "TRITONSWMM_SWMM_link_summary.nc").exists()
+    assert not (ref / "TRITONSWMM_TRITON_tseries.nc").exists()  # timeseries not carried
+
+
+def test_copy_reference_outputs_no_test_dir_is_noop(tmp_path: Path) -> None:
+    """[Q8] REQ-1 / ADR-19 (R9b): with no {analysis_dir}/_test/, _copy_reference_outputs is
+    a no-op and no reference_outputs/ is created (non-[Q8] bundles stay byte-identical)."""
+    import types
+
+    from hhemt.bundle._emit import _copy_reference_outputs
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    analysis = types.SimpleNamespace(
+        analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
+        cfg_analysis=types.SimpleNamespace(target_processed_output_type="nc"),
+    )
+    _copy_reference_outputs(analysis, staging)  # must not raise
+    assert not (staging / "reference_outputs").exists()
+
+
+# --- VMS-11T: shipping-time read-model staleness guard -------------------------------
+# `import os` / `import pytest` are NOT re-imported here: this module already carries both.
+
+_STALE_T = 1_700_000_000
+
+
+def _stale_tree(tmp_path, figure_t=None, read_model_t=None):
+    if figure_t is not None:
+        p = tmp_path / _EW_FIGURE_REL
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x")
+        os.utime(p, (figure_t, figure_t))
+    if read_model_t is not None:
+        p = tmp_path / _VALIDATION_READ_MODEL_REL
+        p.write_text("{}")
+        os.utime(p, (read_model_t, read_model_t))
+    return tmp_path
+
+
+def test_refuses_a_figure_older_than_its_read_model(tmp_path):
+    """CATCHES arm: the measured defect -- figure written before the read-model it
+    transcribes (e389264af7b9: 19:30 figure, 19:40 read-model)."""
+    d = _stale_tree(tmp_path, figure_t=_STALE_T, read_model_t=_STALE_T + 600)
+    with pytest.raises(StaleReadModelError) as exc:
+        _assert_report_not_older_than_read_model(d)
+    assert "OLDER than" in str(exc.value)
+    assert "render_report" in str(exc.value), "the refusal must name its remedy"
+
+
+@pytest.mark.parametrize(
+    "figure_t,read_model_t,case",
+    [
+        (_STALE_T + 600, _STALE_T, "figure newer -- correctly ordered"),
+        (_STALE_T, _STALE_T, "equal mtimes -- same filesystem tick is NOT stale"),
+        (_STALE_T + 5, _STALE_T, "eda() never ran; read-model written inside the DAG"),
+        (_STALE_T, None, "no read-model -- nothing to be stale against"),
+        (None, _STALE_T, "no figure -- not in the bundle"),
+        (None, None, "neither present"),
+    ],
+)
+def test_stays_quiet_on_a_legitimately_ordered_tree(tmp_path, figure_t, read_model_t, case):
+    """OVER-FIRE arm: the guard must not fire on any correct tree.
+
+    Asserted as the INVARIANT (non-staleness), not as the satisfying position
+    (strictly-later): the equal-mtimes row is the one a strict `>` would wrongly refuse.
+    """
+    d = _stale_tree(tmp_path, figure_t=figure_t, read_model_t=read_model_t)
+    _assert_report_not_older_than_read_model(d)  # must not raise

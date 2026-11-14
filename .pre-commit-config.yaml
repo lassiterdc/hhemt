@@ -2,14 +2,73 @@
 # Install: pip install pre-commit && pre-commit install
 # Run manually: pre-commit run --all-files
 
+# `pre-commit install` installs ONLY `.git/hooks/pre-commit` unless this key is present
+# (`default_install_hook_types` defaults to `['pre-commit']`; see pre_commit/clientlib.py
+# and commands/install_uninstall.py::_hook_types). Every `stages:` key below therefore
+# named a venue that a correctly-onboarded clone never ran -- docs/contributing.md
+# prescribes bare `pre-commit install`. That silently disabled the pre-push half of
+# `anonymization-guard` and ALL of `anonymization-guard-commit-msg`, both of which carry
+# comments citing real leaks as the reason those venues exist, and it would have shipped
+# the layout-version pre-push hooks below inert on arrival.
+default_install_hook_types: [pre-commit, pre-push, commit-msg]
+
 repos:
   # Ruff linting and formatting
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.0
+    rev: v0.15.17
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  # ---------------------------------------------------------------------------
+  # INTERPRETER CONTRACT for every `local` hook in this file.
+  #
+  # A git hook inherits no shell state, and Debian/Ubuntu ship no unversioned
+  # `python`, so `entry: python ...` aborts with `Executable python not found`
+  # on a stock machine. Every local hook therefore runs through
+  # `scripts/hook_env.sh`, which:
+  #   - runs the hook in a SHARED environment keyed by `uv.lock`, the Python
+  #     version and the extras, held under ~/.cache/hhemt/hook_envs and OUTSIDE
+  #     every tree, so no commit creates a `.venv/` in a tree (the old
+  #     `uv run --locked` built about 1.6 GiB per tree and never removed it);
+  #   - IGNORES any active conda/venv, so the sanctioned `conda run -n agentic
+  #     ... git_stage` actuator reaches a working interpreter;
+  #   - binds to the tree BEING COMMITTED by putting that tree's `src` first on
+  #     `PYTHONPATH`, per process. A conda-env pin does not bind: the hhemt
+  #     env's `__editable__.hhemt-0.1.0.pth` names the MAIN clone, so from a
+  #     worktree it grades that worktree's files against main's code. The shared
+  #     environment installs dependencies only, never hhemt itself, so no tree
+  #     can re-point it at another;
+  #   - keeps `--locked` on its sync, so a stale `uv.lock` is refused legibly
+  #     (what `--locked` buys over `--frozen`, which runs the guards against an
+  #     environment that does not match the declared dependencies and reports a
+  #     bare ModuleNotFoundError);
+  #   - syncs the extras `test docs` by default, which covers the `ty` hooks (`ty`
+  #     is declared only in `[project.optional-dependencies].test`) and removes
+  #     the failure that differed by missing extra. No entry passes `--python` or
+  #     `--extra`;
+  #   - removes key directories unused for 14 days on every run.
+  #
+  # `uv` is a hard prerequisite for committing; see docs/contributing.md.
+  #
+  # DEPENDENCY UNION of the `python scripts/` hooks below: hhemt (reached through
+  # `PYTHONPATH`, not installed), openpyxl, packaging and pyyaml, the last three supplied by
+  # the wrapper's default `test docs` sync. `openpyxl` is a core dependency; `packaging`
+  # arrives TRANSITIVELY via core `snakemake`. check_env_lock_consistency.py raises
+  # SystemExit without `packaging`, so dropping snakemake from core deps would break that
+  # guard.
+  # Two of those needs are DEFERRED imports and are invisible to a module-level
+  # import grep: `yaml` inside check_caption_vocabulary.load_retired(), and
+  # `openpyxl` inside check_retired_field_overlay_columns._overlay_columns().
+  #
+  # `default_language_version` is deliberately ABSENT: it governs managed-language
+  # environments only and is inert for `language: system` (measured -- a system
+  # hook ran on ambient 3.12.3 under `default_language_version: python:
+  # python3.11`, while a managed hook in the same run honoured it). The
+  # interpreter is the wrapper's default 3.12, inside `requires-python =
+  # ">= 3.11, < 3.13"` in pyproject.toml, which `--locked` enforces at every sync.
+  # ---------------------------------------------------------------------------
 
   # Version-migration discipline (scripts/check_layout_version.py)
   # Check A: LAYOUT_VERSION bump => migration module + fixtures
@@ -18,39 +77,217 @@ repos:
     hooks:
       - id: check-layout-version-a
         name: check LAYOUT_VERSION bump implies migration + fixtures
-        entry: python scripts/check_layout_version.py check-a HEAD~1
+        entry: scripts/hook_env.sh python scripts/check_layout_version.py check-a HEAD
         language: system
         pass_filenames: false
         always_run: true
+        stages: [pre-commit]
+      - id: check-layout-version-a-range
+        name: check pushed LAYOUT_VERSION bump implies migration + fixtures
+        entry: scripts/hook_env.sh python scripts/check_layout_version.py check-a --range HEAD~1
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
       - id: check-layout-version-b
-        name: check layout-relevant files trigger LAYOUT_VERSION bump
-        entry: python scripts/check_layout_version.py check-b HEAD~1
+        name: check pushed layout-relevant files trigger LAYOUT_VERSION bump
+        entry: scripts/hook_env.sh python scripts/check_layout_version.py check-b --range
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      # CHECK B RUNS AT PRE-PUSH ONLY, and the venue is the whole of this block's subject.
+      #
+      # WHAT WAS WRONG WITH PRE-COMMIT. A pre-commit obligation is graded at the moment a
+      # commit is CREATED. A commit later replayed by rebase, cherry-pick, or a plain merge
+      # is never created again on this machine, so its content is never graded -- measured
+      # on 2026-10-28, an instance landed ungated by exactly that route. Pre-push is the last
+      # venue on the machine that sees a branch LEAVING, so it is the only one that can grade
+      # the commits actually being pushed. That is the move; the predicate is unchanged.
+      #
+      # THE POPULATION. `PRE_COMMIT_FROM_REF`/`PRE_COMMIT_TO_REF` are exported by pre-commit
+      # to pre-push hooks and name the pushed range. The ENTRY DELIBERATELY CARRIES NO REF:
+      # the checker reads both from the environment itself and defaults them to the safe
+      # one-commit population (`HEAD~1`..`HEAD`) when they are unset, so a manual
+      # `pre-commit run --hook-stage pre-push` outside a push still grades one commit rather
+      # than crashing or grading a wider range. Reading the environment in the CHILD is what
+      # makes this correct without depending on whether pre-commit shell-expands `entry`:
+      # environment inheritance holds under either exec model, and a literal `$PRE_COMMIT_FROM_REF`
+      # in `entry` would be correct under only one of them.
+      #
+      # THE REMOTE EXCLUSION. When `PRE_COMMIT_REMOTE_NAME` is set and non-empty (pre-commit
+      # exports it on every real pre-push run), the walk grades only the commits in that range
+      # that are NOT reachable from `refs/remotes/{name}/*` (`git rev-list {from}..{to} --not
+      # --remotes={name}`) and prints how many it skipped. Without it, a correct merge of
+      # `develop` fails: each commit imported from `develop` is re-graded against the allowlist
+      # loaded at the tip, and its blob was signed by a row a later row has replaced under the
+      # loader's last-wins rule. When the variable is UNSET or EMPTY nothing is excluded and the
+      # whole range is graded, so a manual `pre-commit run --hook-stage pre-push` keeps the
+      # one-commit population described above. Two operating conditions follow, and both are
+      # accepted: (1) a commit that reached the remote WITHOUT this gate (`SKIP=`, `--no-verify`,
+      # a web merge) is never graded again, which is already true of every commit on the remote;
+      # (2) a `git fetch` that brings a colleague's unsigned layout commit into the tracking refs
+      # also makes that commit exempt when it is merged, because the exclusion keys on tracking
+      # refs and not on who ran the gate.
+      #
+      # WHY NOT A WIDER BASE. Grading `merge-base(main, HEAD)..HEAD` is W-B2 and is REFUTED:
+      # measured at this repository's state (`main` at LAYOUT_VERSION 16 against HEAD 26) it
+      # returns PASS before its scan, while `check-a --range main` blocks every push. A wider
+      # base is not the mechanism and must not be reintroduced as one.
+      #
+      # THE PREDICATE, which is why the move could not be landed alone. `check-b`'s range arm
+      # used to disarm the WHOLE graded range when `head_v != base_v`, so one bump anywhere
+      # in a wide range printed `bumped; check-a covers this` and returned 0 BEFORE the file
+      # scan -- a population half with no predicate. The checker now walks the range ONE
+      # COMMIT AT A TIME and grades each commit's own diff, so a bump in commit 2 cannot
+      # disarm the scan of commit 3.
+      #
+      # AND THE WORKTREE READ IS GATED, which is why the move and the gate had to ship
+      # together. The change-scoped exemption arm used to compare the allowlist signature
+      # against `_file_content_hash(REPO_ROOT / rel)`, an uncontrolled WORKTREE read. At
+      # pre-push the worktree is neither HEAD nor the developer's tree: `pre_commit/commands/run.py`
+      # computes `stash = not all_files and not files`, which is not keyed on stage, so a
+      # branch update reverts UNSTAGED edits for the hook's duration while STAGED-uncommitted
+      # ones survive, and a push whose first unpushed ancestor is a root commit stashes
+      # nothing. The range venue therefore reads `git show {commit}:{rel}` -- the blob AT THE
+      # GRADED COMMIT -- and never touches the worktree. Moving the venue without that gate
+      # would have converted a recorded latent defect (D151) into a live one.
+      #
+      # check-layout-version-a KEEPS its pre-commit registration. It is not the obligation
+      # this block moves, and `check-a`'s range arm already grades the pushed bump at pre-push.
+
+      # LIVE-PIN REGISTRATION GUARD (scripts/check_live_pin_registered.py)
+      # Refuses a commit whose TRITON_PIN is not recorded ABSENT -- via the EXPLICIT
+      # known_absent_in set -- in every src/hhemt/model_defects.py entry.
+      #
+      # WHAT THE OBSERVABLE IS, because an exit code alone does not say why this earns a
+      # venue. model_defects is per-sha by construction and its read path has no clone, so
+      # an unregistered pin resolves `indeterminate`/`ancestry_unresolvable` on every
+      # defect; check_known_resume_defects selects on `status == "present"`, so that
+      # verdict collapses into the PASSING arm. The failure is therefore a green report
+      # over a build nobody assessed, not a red. The campaign has already reached that
+      # state once (01e95a76) and already paid to repair it once.
+      #
+      # WHY pre-commit AND NOT ALL STAGES. Omitting `stages:` would run this at every
+      # installed venue, and the guard reads the WORKTREE (it resolves both tracked files
+      # from REPO_ROOT and read_text()s them). The venue-split comment above this block
+      # establishes that pre-push is not a clean-tree venue -- `stash = not all_files and
+      # not files` reverts unstaged edits while staged-uncommitted ones survive -- so a
+      # worktree read there is unsound in both directions. check-layout-version-b has since
+      # MOVED to pre-push, and it could only do so because its range venue reads the blob at
+      # the graded commit instead of the worktree -- this guard has no such read mode, so no
+      # sound pre-push arm exists for it and none is wired.
+      #
+      # Deliberately NOT a pytest target: a test can be deselected by a marker expression
+      # and a compile-tier test can be skipped by venue, and this invariant must be neither.
+      # tests/test_check_live_pin_registered.py exercises the script's own logic; this hook
+      # is what makes the invariant hold at the moment the pin moves.
+      - id: check-live-pin-registered
+        name: check the live TRITON_PIN is registered in every model-defect entry
+        entry: scripts/hook_env.sh python scripts/check_live_pin_registered.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: check-caption-pairing
+        name: check captioned renderer changes are paired with caption edits
+        entry: scripts/hook_env.sh python scripts/check_caption_pairing.py HEAD~1
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: check-caption-vocabulary
+        name: retired-vocabulary guard over the report template tree
+        entry: scripts/hook_env.sh python scripts/check_caption_vocabulary.py
         language: system
         pass_filenames: false
         always_run: true
 
   # DU-sentinel mutation-site restamp discipline (scripts/check_du_sentinel_sites.py)
-  # Flags fast_rmtree(...) missing analysis_dir= and .unlink() not adjacent-followed
-  # by restamp_parent_sentinels(...), unless the site carries # EXEMPT-DU: {category}.
+  # Flags any fast_rmtree(...) / .unlink() / shutil.rmtree(...) outside du_sentinels.py
+  # that is not routed through du_sentinels.delete_and_account, unless the site carries
+  # # EXEMPT-DU: {category}.
   - repo: local
     hooks:
       - id: check-du-sentinel-sites
         name: DU-sentinel mutation-site restamp check
-        entry: python scripts/check_du_sentinel_sites.py
+        entry: scripts/hook_env.sh python scripts/check_du_sentinel_sites.py
         language: system
         pass_filenames: false
         always_run: true
 
   # Anonymization guard (scripts/check_anonymization.py)
-  # Fails if any tracked file contains a genuinely-private identifier listed in
-  # scripts/anonymization_blocklist.txt (ADR-14). Dormant until the pre-commit
-  # framework is activated (`pre-commit install`) by the
-  # `install or remove pre-commit hooks` idea — no effect on commits until then.
+  # Fails if any tracked file carries a private identifier (ADR-14): the generic pattern
+  # classes (email address, per-user absolute path) held in the script, minus the closed
+  # table scripts/anonymization_exemptions.yaml, plus the producer-specific list reached
+  # through $HHEMT_ANONYMIZATION_BLOCKLIST or `git config --local hhemt.blocklistPath PATH`
+  # (kept in a private location outside this repository; this repository carries no copy). With neither configured
+  # the guard runs the pattern classes alone and prints one notice.
+  #
+  # The pre-commit FRAMEWORK ships with the conda environment. Hooks
+  # fire only in a clone where `pre-commit install` has been run (docs/contributing.md,
+  # step 5); worktrees of that clone share its hooks. Activation is a per-clone step.
+  #
+  # Registered at BOTH pre-commit and pre-push. Pre-push is the load-bearing venue: CI runs
+  # this guard on `push` to main/develop, i.e. AFTER the objects are already on GitHub, so
+  # CI can only detect a leak that is by then permanent. Pre-push is the last venue that can
+  # PREVENT one. The empirical record shows the leak-then-clean cycle running at least twice
+  # (2026-07-26 and 2026-08-27), each cycle leaving a leaked blob in history forever.
   - repo: local
     hooks:
       - id: anonymization-guard
         name: anonymization blocklist guard
-        entry: python scripts/check_anonymization.py
+        entry: scripts/hook_env.sh python scripts/check_anonymization.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit, pre-push]
+
+  # Commit-MESSAGE anonymization guard (scripts/check_commit_message_anonymization.py)
+  # check_anonymization.py scans tracked file CONTENTS and is blind to commit messages.
+  # Three messages in this history carry blocklisted tokens, one of them a remediation
+  # commit that re-leaked into its own subject line. A message is rewritable only before
+  # the commit object exists, so commit-msg is the only venue that can prevent this.
+  - repo: local
+    hooks:
+      - id: anonymization-guard-commit-msg
+        name: anonymization blocklist guard (commit message)
+        entry: scripts/hook_env.sh python scripts/check_commit_message_anonymization.py
+        language: system
+        stages: [commit-msg]
+
+  # D106 message-text guard (scripts/check_private_estate_in_messages.py)
+  # Complements, does not replace, the two anonymization guards above. Those key on
+  # genuinely-private IDENTIFIERS anywhere in a tracked file; the word this gate bans is
+  # an ordinary one, carried by 43 tracked lines inside this gate's own roots, of which
+  # only a handful are messages. This gate keys on emission POSITION instead: a string
+  # reachable from raise, an assert message, print, SystemExit, warn, sys.exit or another
+  # .exit(), click/typer echo, sys.std{out,err}.write, ArgumentParser or add_argument, or
+  # a logger method -- plus a module docstring that an emitting call renders via __doc__.
+  # It is a PROXY for D106, never a test of it: a message naming the private deployment
+  # without the token is invisible to it, as is a literal bound to a variable first.
+  - repo: local
+    hooks:
+      - id: check-private-estate-in-messages
+        name: D106 message-text guard (no private estate in user-facing messages)
+        entry: scripts/hook_env.sh python scripts/check_private_estate_in_messages.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit, pre-push]
+
+  # Vocabulary freeze (scripts/check_vocabulary_freeze.py)
+  # INVERTED assertion: requires the OLD vocabulary to still be PRESENT in the
+  # forward-only migration modules, their legacy fixtures, and their tests. A
+  # rename sweep that reaches the frozen set turns this red; nothing else does.
+  # Without it, a renamed literal makes a historical migration find nothing,
+  # take its early return, and report success.
+  - repo: local
+    hooks:
+      - id: vocabulary-freeze
+        name: migration vocabulary freeze
+        entry: scripts/hook_env.sh python scripts/check_vocabulary_freeze.py
         language: system
         pass_filenames: false
         always_run: true
@@ -62,7 +299,13 @@ repos:
     hooks:
       - id: check-retired-field-overlay-columns
         name: check retired-field overlay columns
-        entry: python scripts/check_retired_field_overlay_columns.py
+      # This is the ONLY hook here that imports `hhemt`, so the interpreter
+      # contract above is load-bearing rather than uniform-for-tidiness: it must
+      # grade THIS tree's fixtures against THIS tree's model_fields. Measured
+      # 2026-09-03 mid-merge, with src/hhemt/utils.py carrying conflict markers:
+      # `uv run --locked` surfaced the broken tree, while `conda run -n hhemt`
+      # imported main's hhemt and reported success on it.
+        entry: scripts/hook_env.sh python scripts/check_retired_field_overlay_columns.py
         language: system
         pass_filenames: false
         always_run: true
@@ -76,7 +319,63 @@ repos:
     hooks:
       - id: check-env-lock-consistency
         name: environment-lock.yaml swmm-provenance consistency
-        entry: python scripts/check_env_lock_consistency.py
+        entry: scripts/hook_env.sh python scripts/check_env_lock_consistency.py
         language: system
         pass_filenames: false
         files: ^environment(-lock)?\.yaml$
+
+  # ty type-checker gate (### D133 adoption; ### D143 environment pin).
+  # The predicate is the COMPLEMENT of what currently fires, scoped per path --
+  # see scripts/generate_ty_overrides.py for why per-path rather than corpus-wide.
+  # --error-on-warning is NOT optional: without it a rule renamed upstream makes the
+  # gate exit 0 while arming nothing (measured: an unknown rule name yields
+  # `warning[unknown-rule]` and exit 0).
+  - repo: local
+    hooks:
+      - id: ty-check
+        name: ty type check (narrow tier -- rules at zero under BOTH stacks)
+        # D144 clause 2: the pip stack may not fail a build, and a bare hook resolves
+        # the pip tier (pyproject's ${HHEMT_TY_ENV:-.venv}). A full-scope gate here is
+        # therefore red BY CONSTRUCTION: the overrides table is generated under conda,
+        # so it cannot carry an entry for a diagnostic that exists only under pip.
+        # Measured: exactly ONE such (file,rule) pair exists --
+        # swmm_runoff_modeling.py / unresolved-attribute, the np.trapz portability
+        # probe, which is CORRECT under both numpy majors. Do not "fix" that line.
+        #
+        # These 8 rules fire zero times under BOTH raw tiers, so this hook cannot
+        # produce a tier-specific finding. It reds only on a NEW violation, which is
+        # a genuine regression in either tier. The authoritative full-scope gate is
+        # type-gate.yml, which resolves the certified conda stack.
+        entry: >-
+          scripts/hook_env.sh ty check --ignore all
+          --error call-non-callable
+          --error invalid-raise
+          --error invalid-exception-caught
+          --error invalid-super-argument
+          --error subclass-of-final-class
+          --error instance-layout-conflict
+          --error invalid-await
+          --error invalid-type-form
+          --error-on-warning
+        language: system
+        pass_filenames: false
+        always_run: true
+      # Broad tier, mirroring `ruff check --exit-zero --statistics` in test.yml: the
+      # full population, reported and never blocking. This is where a developer sees
+      # the pip tier's findings without them failing the commit.
+      - id: ty-report
+        name: ty type check (broad, reporting only)
+        entry: scripts/hook_env.sh ty check --exit-zero --output-format concise
+        language: system
+        pass_filenames: false
+        always_run: true
+      # Asserts the overrides table is IN FORCE, not merely present. The gate above
+      # is green BECAUSE of that table, so a table that silently stops applying
+      # would leave the gate green while arming nothing -- a fail-open that no
+      # exit-code check can see.
+      - id: ty-overrides-in-force
+        name: ty overrides table is in force (two-arm canary)
+        entry: scripts/hook_env.sh python scripts/check_ty_overrides_in_force.py
+        language: system
+        pass_filenames: false
+        always_run: true

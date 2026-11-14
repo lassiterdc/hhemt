@@ -1,0 +1,7 @@
+# A sentence opener that labels a break in flow rather than linking to the previous sentence.
+extends: existence
+message: "Link the sentence to the previous one by its topic; do not open with '%s'."
+level: warning
+nonword: true
+raw:
+  - '(?m)(?:^|(?<=[.!?]\s))(?:However|Moreover|Furthermore|Additionally|In\s+addition|Therefore|Thus|Hence|Consequently|Indeed),'

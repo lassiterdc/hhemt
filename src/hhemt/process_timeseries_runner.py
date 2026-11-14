@@ -21,21 +21,22 @@ Exit codes:
     2: Invalid arguments
 """
 
-import sys
 import argparse
-import json
-from pathlib import Path
-import traceback
-import logging
-
-from hhemt.log_utils import log_workflow_context
-from hhemt.status_flags import emit_runner_flag as _emit_runner_flag
 import gc
+import json
+import logging
+import os
+import sys
+import traceback
 
 # Memory profiling imports (always-on, minimal overhead)
 import tracemalloc
+from pathlib import Path
+
 import psutil
-import os
+
+from hhemt.log_utils import log_workflow_context
+from hhemt.status_flags import emit_runner_flag as _emit_runner_flag
 
 # Configure logging to stderr
 logging.basicConfig(
@@ -44,6 +45,13 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 logger = logging.getLogger(__name__)
+
+# Severity of the container-toolkit-mismatch guard in main(). True -> the rung
+# refuses to process (fail closed); False -> it logs the error and continues.
+# Ruled FATAL by the user ([Q105]). Deliberately a module constant rather than a
+# config field: it encodes a settled ruling, not an operator-facing bypass, and
+# making it settable would re-create the force path that was recommended against.
+_FAIL_CLOSED_ON_TOOLKIT_MISMATCH = True
 
 
 def get_memory_mb():
@@ -60,9 +68,7 @@ def log_memory_profile(description: str):
 
 def main():
     """Main entry point for timeseries processing subprocess."""
-    parser = argparse.ArgumentParser(
-        description="Process TRITON-SWMM scenario timeseries outputs in a subprocess"
-    )
+    parser = argparse.ArgumentParser(description="Process TRITON-SWMM scenario timeseries outputs in a subprocess")
     parser.add_argument(
         "--event-iloc",
         type=int,
@@ -107,9 +113,9 @@ def main():
         type=str,
         default=None,
         help=(
-            'Runtime override for cfg_analysis.clear_raw. Accepts a JSON-encoded '
+            "Runtime override for cfg_analysis.clear_raw. Accepts a JSON-encoded "
             'value: \'"all"\', \'"none"\', or \'["tritonswmm","swmm"]\'. When '
-            'omitted, the runner reads cfg_analysis.clear_raw from the YAML.'
+            "omitted, the runner reads cfg_analysis.clear_raw from the YAML."
         ),
     )
     parser.add_argument(
@@ -118,12 +124,13 @@ def main():
         default=5,
         help="Compression level for output files (0-9)",
     )
-    parser.add_argument(
-        "--clear-full-timeseries",
-        action="store_true",
-        default=False,
-        help="Clear full timeseries files after creating summaries (to save disk space)",
-    )
+    # NOTE: the former `--clear-full-timeseries` boolean is RETIRED, not moved. Its
+    # consumption is superseded by `analysis_config.remove_after_processing`, which the
+    # reclaim call below reads from the PERSISTED config. Keeping a boolean CLI flag
+    # beside a config field would put two switches on one axis, which is the overlap the
+    # reclaim design deliberately avoids. No Snakefile emitter ever passed the flag
+    # (grep-verified across workflow.py, the reprocess/bundle/combined generators), so
+    # removing it breaks no caller.
     parser.add_argument(
         "--flag-output",
         type=Path,
@@ -143,10 +150,22 @@ def main():
         help="Event id slug for the flag sidecar payload",
     )
     parser.add_argument(
-        "--sa-id",
+        "--write-terminal-markers",
+        action="store_true",
+        default=False,
+        help=(
+            "Option A (in-rule processing): this runner owns the v2 terminal markers for the "
+            "combined rule -- on exit it writes _status/_completed/ (rc 0) or _status/_failed/ "
+            "(rc != 0) for the token {--rule-name}_evt-{--event-id} and unlinks "
+            "_status/_submitted/. Inert unless SLURM_JOB_ID is set. Handled by the "
+            "_main_with_terminal_markers wrapper, not by main()."
+        ),
+    )
+    parser.add_argument(
+        "--member-id",
         type=str,
         default=None,
-        help="Sub-analysis id for the flag sidecar payload (sensitivity)",
+        help="Member id for the flag sidecar payload (sensitivity)",
     )
     try:
         args = parser.parse_args()
@@ -177,18 +196,102 @@ def main():
 
     try:
         # Import here to avoid import errors if dependencies are missing
-        from hhemt.system import TRITONSWMM_system
         from hhemt.analysis import TRITONSWMM_analysis
-        from hhemt.scenario import TRITONSWMM_scenario
         from hhemt.process_simulation import (
             TRITONSWMM_sim_post_processing,
         )
+        from hhemt.scenario import TRITONSWMM_scenario
+        from hhemt.system import TRITONSWMM_system
 
         # Log workflow context for traceability
         log_workflow_context(logger)
 
+        # Prove the container ran the container's OWN toolkit.
+        #
+        # Measured on norfolk_observed_event (2026-08-27): an apptainer-wrapped
+        # process rung wrote 40/40 summaries stamped with the HOST toolkit sha
+        # while loading container dependencies. Seven import-path mechanisms were
+        # refuted; the route is still unidentified. This guard is deliberately
+        # ROUTE-AGNOSTIC — it asks only whether the module about to write the
+        # provenance stamp is the one this image ships.
+        #
+        # BOTH OPERANDS COME FROM THE FILESYSTEM, NEITHER FROM THE ENVIRONMENT.
+        # An earlier draft keyed the container signal on an env marker; measured,
+        # a host `HHEMT_IMAGE_TOOLKIT_ROOT=/spoof` reads as `/spoof` INSIDE the
+        # container, because apptainer runs without --cleanenv (prohibited by
+        # NQ-11) and inherits wholesale. That let one host variable both fake the
+        # container signal and supply the root the guard validates against — a
+        # guard checking an operand its adversary controls. Host env inheritance
+        # is the very property under investigation here; it cannot also be the
+        # thing we trust. `/.singularity.d/` is created by the runtime and is not
+        # forgeable from the host environment.
+        _sing_dir = Path("/.singularity.d")
+        if _sing_dir.is_dir():
+            import hhemt as _hhemt
+
+            _declared = None
+            try:
+                _labels = json.loads((_sing_dir / "labels.json").read_text()) or {}
+                _declared = _labels.get("org.hhemt.toolkit_root")
+            except Exception:
+                _declared = None
+            if not _declared:
+                # Containerized but UN-GOVERNED. Distinguishable from the native
+                # case only because the signal and the root are now separate
+                # operands; this is exactly the state an ungoverned image would
+                # otherwise sail through, so it warns rather than passing silently.
+                logger.warning(
+                    "Container toolkit unverifiable: running under Apptainer but the "
+                    "image declares no org.hhemt.toolkit_root label, so the imported "
+                    "`hhemt` cannot be checked against the image's own source tree. "
+                    "Provenance stamps from this rung are unverified."
+                )
+            else:
+                _imported = Path(_hhemt.__file__).resolve()
+                _root = Path(_declared).resolve()
+                # .resolve() on BOTH sides deliberately: __file__ does NOT follow
+                # symlinks, so an unresolved compare passes through a symlinked
+                # source tree that redirects outside the image.
+                if not _imported.is_relative_to(_root):
+                    logger.error(
+                        f"Container toolkit mismatch: this image declares its toolkit at {_root}, but\n"
+                        f"`hhemt` imported from {_imported}. This rung would run host code inside the\n"
+                        f"container and stamp provenance naming the wrong tree, so it is refusing to\n"
+                        f"process.\n"
+                        f"\n"
+                        f"Likely causes, most common first:\n"
+                        f"  1. The image's org.hhemt.toolkit_root label is wrong (a recipe/label\n"
+                        f"     mistake, NOT a real shadow). Fix the label and re-run.\n"
+                        f"  2. PYTHONPATH is set in the environment the driver inherited; apptainer\n"
+                        f"     runs without --cleanenv, so it reaches this interpreter.\n"
+                        f"  3. A bind mount shadows the image's own source tree.\n"
+                        f"\n"
+                        f"Nothing is lost: simulations and raw outputs are complete on disk. Correct\n"
+                        f"the cause and re-run processing (analysis.reprocess()); no simulation\n"
+                        f"re-runs.\n"
+                        f"\n"
+                        f"There is deliberately no override flag. If the toolkit that ran cannot be\n"
+                        f"identified, the provenance of the results cannot be reconstructed later,\n"
+                        f"and that is not recoverable after the fact the way a re-processed summary is.\n"
+                    )
+                    # SEVERITY: the single point of change. Ruled FATAL by the user
+                    # ([Q105], "I agree with fatal"); no force-through path exists by
+                    # design (specialist concurrence, rounds 12-14).
+                    # True  -> refuse to process (fail closed).
+                    # False -> log the error above and continue.
+                    if _FAIL_CLOSED_ON_TOOLKIT_MISMATCH:
+                        return 1
+
         logger.info(f"Loading system configuration from {args.system_config}")
-        system = TRITONSWMM_system(args.system_config)
+        system = TRITONSWMM_system(
+            args.system_config,
+            # OBSERVER: this rung only reads compile state, and its one log write is the
+            # PER-MODEL `model_log.write()` below. Writing the SHARED system_log.json at
+            # construction is the measured `log write (open failed)` failure under ~30
+            # concurrent runners on WekaFS (change 1028-1828); the analysis construction
+            # on the next lines passes the same flag for the same reason (1028-2152).
+            skip_log_update=True,
+        )
 
         logger.info(f"Loading analysis configuration from {args.analysis_config}")
         analysis = TRITONSWMM_analysis(
@@ -239,8 +342,8 @@ def main():
 
         # Call the write_timeseries_outputs method
         proc.write_timeseries_outputs(
-            which=args.which,  # type: ignore
-            model_type=args.model_type,  # type: ignore
+            which=args.which,
+            model_type=args.model_type,
             override_clear_raw=override_clear_raw,
             verbose=True,
             compression_level=args.compression_level,
@@ -259,41 +362,23 @@ def main():
         # Performance time series verification (TRITON models only)
         if args.which == "TRITON" or args.which == "both":
             if args.model_type in ("triton", "tritonswmm"):
-                if (
-                    not model_log.performance_timeseries_written
-                    or not model_log.performance_timeseries_written.get()
-                ):
-                    logger.error(
-                        f"Performance timeseries not created for scenario {args.event_iloc}"
-                    )
+                if not model_log.performance_timeseries_written or not model_log.performance_timeseries_written.get():
+                    logger.error(f"Performance timeseries not created for scenario {args.event_iloc}")
                     return 1
         # TRITON outputs verification (TRITON models only)
         if args.which == "TRITON" or args.which == "both":
             if args.model_type in ("triton", "tritonswmm"):
-                if (
-                    not model_log.TRITON_timeseries_written
-                    or not model_log.TRITON_timeseries_written.get()
-                ):
-                    logger.error(
-                        f"TRITON timeseries not created for scenario {args.event_iloc}"
-                    )
+                if not model_log.TRITON_timeseries_written or not model_log.TRITON_timeseries_written.get():
+                    logger.error(f"TRITON timeseries not created for scenario {args.event_iloc}")
                     return 1
 
         # SWMM outputs verification (SWMM models only)
         if args.which == "SWMM" or args.which == "both":
             if args.model_type in ("swmm", "tritonswmm"):
-                node_ok = (
-                    model_log.SWMM_node_timeseries_written
-                    and model_log.SWMM_node_timeseries_written.get()
-                )
-                link_ok = (
-                    model_log.SWMM_link_timeseries_written
-                    and model_log.SWMM_link_timeseries_written.get()
-                )
+                node_ok = model_log.SWMM_node_timeseries_written and model_log.SWMM_node_timeseries_written.get()
+                link_ok = model_log.SWMM_link_timeseries_written and model_log.SWMM_link_timeseries_written.get()
                 if not (node_ok and link_ok):
-                    logger.error(
-                        f"SWMM timeseries not created for scenario {args.event_iloc}"
-                    )
+                    logger.error(f"SWMM timeseries not created for scenario {args.event_iloc}")
                     return 1
 
         logger.info(f"Scenario {args.event_iloc} timeseries processed successfully")
@@ -304,8 +389,8 @@ def main():
         # create summaries from full timeseries
         logger.info(f"Creating summaries for scenario {args.event_iloc}")
         proc.write_summary_outputs(
-            which=args.which,  # type: ignore
-            model_type=args.model_type,  # type: ignore
+            which=args.which,
+            model_type=args.model_type,
             verbose=True,
             compression_level=args.compression_level,
         )
@@ -314,28 +399,15 @@ def main():
         # (Now safe because each model has its own log - no race conditions!)
         if args.which == "TRITON" or args.which == "both":
             if args.model_type in ("triton", "tritonswmm"):
-                if (
-                    not model_log.TRITON_summary_written
-                    or not model_log.TRITON_summary_written.get()
-                ):
-                    logger.error(
-                        f"TRITON summary not created for scenario {args.event_iloc}"
-                    )
+                if not model_log.TRITON_summary_written or not model_log.TRITON_summary_written.get():
+                    logger.error(f"TRITON summary not created for scenario {args.event_iloc}")
                     return 1
         if args.which == "SWMM" or args.which == "both":
             if args.model_type in ("swmm", "tritonswmm"):
-                node_ok = (
-                    model_log.SWMM_node_summary_written
-                    and model_log.SWMM_node_summary_written.get()
-                )
-                link_ok = (
-                    model_log.SWMM_link_summary_written
-                    and model_log.SWMM_link_summary_written.get()
-                )
+                node_ok = model_log.SWMM_node_summary_written and model_log.SWMM_node_summary_written.get()
+                link_ok = model_log.SWMM_link_summary_written and model_log.SWMM_link_summary_written.get()
                 if not (node_ok and link_ok):
-                    logger.error(
-                        f"SWMM summaries not created for scenario {args.event_iloc}"
-                    )
+                    logger.error(f"SWMM summaries not created for scenario {args.event_iloc}")
                     return 1
 
         # Memory checkpoint after summary generation
@@ -346,7 +418,7 @@ def main():
         # Final memory profiling summary
         gc.collect()
         snapshot_after = tracemalloc.take_snapshot()
-        top_stats = snapshot_after.compare_to(snapshot_before, 'lineno')
+        top_stats = snapshot_after.compare_to(snapshot_before, "lineno")
 
         logger.info("[MEMORY] Top 10 memory allocations:")
         for stat in top_stats[:10]:
@@ -356,45 +428,20 @@ def main():
         logger.info(f"[MEMORY] Peak: {peak_memory:.1f} MB (delta: +{peak_memory - initial_memory:.1f} MB)")
         logger.info("[MEMORY PROFILING] Complete - data available in logfile for analysis")
 
-        # Optionally clear full timeseries files to save disk space
-        if args.clear_full_timeseries:
-            logger.info(f"Clearing full timeseries for scenario {args.event_iloc}")
-            proc._clear_full_timeseries_outputs(
-                which=args.which,  # type: ignore
-                verbose=True,
-            )
-            scenario.log.refresh()
-            logger.info(f"Full timeseries cleared for scenario {args.event_iloc}")
-
         # (R6 positive completion marker) Gate the d_process flag write on THIS
         # model's summary files actually existing on disk. The d_process flag is
-        # per-(model_type, sa_id, event_id) — each runner processes one
+        # per-(model_type, member_id, event_id) — each runner processes one
         # args.model_type and writes one per-model flag — so gate on THIS model
         # only; gating on other models' summaries would fail spuriously because
         # each model's runner is an independent rule. This strengthens the flag's
         # meaning from "the process stage ran" (the existing log-field checks
         # above) to "the summaries are present on disk", making the flag/summary
         # divergence class structurally unrepresentable: the flag can never exist
-        # while a summary is absent. The map is duplicated from
-        # analysis.py::_reconcile_stale_process_flags_against_summaries; DRYing
-        # _SUMMARY_ATTRS_BY_MODEL across its production-adjacent copies is a
-        # recorded follow-up, deliberately not folded into this fix.
-        _SUMMARY_ATTRS_BY_MODEL = {
-            "tritonswmm": (
-                "output_tritonswmm_triton_summary",
-                "output_tritonswmm_node_summary",
-                "output_tritonswmm_link_summary",
-                "output_tritonswmm_performance_summary",
-            ),
-            "triton": (
-                "output_triton_only_summary",
-                "output_triton_only_performance_summary",
-            ),
-            "swmm": (
-                "output_swmm_only_node_summary",
-                "output_swmm_only_link_summary",
-            ),
-        }
+        # while a summary is absent. The map is the single canonical
+        # declaration in hhemt.summary_paths, imported here and at every other
+        # consumer (the former per-site copies were lifted into it).
+        from hhemt.summary_paths import _SUMMARY_ATTRS_BY_MODEL
+
         _missing_summaries = []
         for _attr in _SUMMARY_ATTRS_BY_MODEL.get(args.model_type, ()):
             _summary_path = getattr(scenario.scen_paths, _attr, None)
@@ -407,6 +454,43 @@ def main():
                 f"summary outputs are absent on disk: {_missing_summaries}"
             )
             return 1
+
+        # (reclaim gate, part 3 of 3) Existence is NOT sufficient for a zarr: a store is a
+        # DIRECTORY, so Path.exists() is True for an empty one and a mid-stream-crashed
+        # write .exists() as complete -- the same hazard
+        # processing_analysis.consolidate_to_datatree records at its D5 comment. A size
+        # check does not close it either (a directory has no meaningful size), so verify
+        # OPENABILITY. The summary tier is ~1.4 MB across all four artifacts, so this read
+        # is cheap. Only after all three gates pass -- log field True (above), path present
+        # (above), store openable (here) -- may anything be reclaimed.
+        _unopenable = []
+        for _attr in _SUMMARY_ATTRS_BY_MODEL.get(args.model_type, ()):
+            _summary_path = getattr(scenario.scen_paths, _attr, None)
+            if _summary_path is None:
+                continue
+            try:
+                proc._open(_summary_path).load()
+            except Exception as _exc:  # noqa: BLE001 -- any failure disqualifies
+                _unopenable.append(f"{_summary_path}: {type(_exc).__name__}: {_exc}")
+        if _unopenable:
+            logger.error(
+                f"Refusing to write the d_process completion flag for model "
+                f"'{args.model_type}' scenario {args.event_iloc}: summary outputs "
+                f"are present but not openable: {_unopenable}"
+            )
+            return 1
+
+        # Reclaim redundant per-scenario artifacts now that the summaries are PROVABLY
+        # intact. Deliberately placed BEFORE _emit_runner_flag: if the reclaim raises, this
+        # runner returns non-zero, no completion flag is written, and the scenario re-runs
+        # from raws that are still on disk. Placing it AFTER the flag would invert that --
+        # a half-reclaimed tree carrying a "done" flag and no record of what was removed.
+        proc.remove_after_processing(
+            model_type=args.model_type,
+            which=args.which,
+            verbose=True,
+        )
+        model_log.write()
 
         _emit_runner_flag(args)
         return 0
@@ -424,5 +508,49 @@ def main():
         tracemalloc.stop()
 
 
+def _main_with_terminal_markers() -> int:
+    """Run main() and, under --write-terminal-markers, own the v2 terminal markers.
+
+    Kept OUTSIDE main() deliberately: main() has nine early ``return 1`` sites and its own
+    ``finally`` (tracemalloc), so the return code is only observable here. Pre-scans argv
+    with parse_known_args so main()'s own parser stays the single owner of every other flag.
+    """
+    import argparse as _argparse
+
+    _pre = _argparse.ArgumentParser(add_help=False)
+    _pre.add_argument("--write-terminal-markers", action="store_true", default=False)
+    _pre.add_argument("--rule-name", type=str, default=None)
+    _pre.add_argument("--event-id", type=str, default=None)
+    _pre.add_argument("--flag-output", type=Path, default=None)
+    _known, _ = _pre.parse_known_args()
+    _jobid = os.environ.get("SLURM_JOB_ID")
+    _own = bool(_known.write_terminal_markers) and bool(_jobid) and _known.rule_name and _known.event_id
+    rc = 1
+    try:
+        rc = main()
+        return rc
+    finally:
+        if _own:
+            from hhemt.terminal_markers import rule_token_for, unlink_submitted_sentinel, write_terminal_marker
+
+            _status_dir = (
+                _known.flag_output.resolve().parent if _known.flag_output is not None else Path.cwd() / "_status"
+            )
+            _token = rule_token_for(_known.rule_name, _known.event_id)
+            write_terminal_marker(
+                _status_dir,
+                _token,
+                status="completed" if rc == 0 else "failed",
+                jobid=_jobid,
+                payload_base={
+                    "run_uuid": os.environ.get("SLURM_JOB_NAME"),
+                    "rule_name": _known.rule_name,
+                    "event_id": _known.event_id,
+                    "owner": "process_timeseries_runner",
+                },
+            )
+            unlink_submitted_sentinel(_status_dir, _token)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_main_with_terminal_markers())

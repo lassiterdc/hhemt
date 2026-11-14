@@ -3,23 +3,32 @@
 Free functions shared by `analysis.eda()` and `Bundle.eda()` (they take a `root`
 Path + the configs, NOT a TRITONSWMM_analysis, so the Bundle non-subclass boundary
 is honored). Each EDA plot emits via `emit_plot_with_sources` (HTML branch) under
-MASTER-ROOTED `{root}/plots/eda/<plot_id>.html` and declares its
+PRIMARY-ROOTED `{root}/plots/eda/<plot_id>.html` and declares its
 `{root}/eda/<plot_id>.zarr` data-prep artifact as a source - so the existing
 harvest chain carries the dataset into a render bundle (D1 Option A). EDA plots
-MUST NOT emit under plots/sensitivity/per_sim/sa-{N}/ (harvest re-roots that subtree
-against subanalyses/sa_{N}/, which has no eda/ dir; see the master-rooted-emission
+MUST NOT emit under plots/sensitivity/per_sim/member-{N}/ (harvest re-roots that subtree
+against members/member_{N}/, which has no eda/ dir; see the primary-rooted-emission
 stipulation).
 """
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import plotly.graph_objects as go
 
+from hhemt.eda._dem_resolution_plots import (
+    _render_dem_resolution_cost_error,
+    _render_dem_resolution_coupling_table,
+    _render_dem_resolution_diff_maps,
+    _render_dem_resolution_error_ecdf,
+)
+from hhemt.figure_caption import add_figure_caption, content_width_px
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
+from hhemt.utils import open_store
 
 if TYPE_CHECKING:
     from hhemt.config.analysis import analysis_config
@@ -31,19 +40,89 @@ def render_eda_plots(
     *,
     cfg_analysis: analysis_config,
     eda_cfg: eda_config,
+    only_kinds: set[str] | None = None,
+    must_emit: set[str] | None = None,
+    cfg_system=None,
 ) -> list[Path]:
-    """Render every plot in ``eda_cfg.enabled_plots`` to ``{root}/plots/eda/``.
+    """Render the plots in ``eda_cfg.enabled_plots`` to ``{root}/plots/eda/``.
 
-    Returns the list of emitted HTML paths. Unknown renderer-kind keys raise
-    ValueError (fail-fast at the facade boundary). ``root`` is the analysis_dir
-    on the Analysis side and bundle.root on the Bundle side.
+    ``only_kinds`` is an OPTIONAL narrowing filter that the ``eda()`` facade fills with the
+    produced-kinds set. Absence-safety MUST NOT rely on the filter, because
+    ``Bundle.eda(plots_only=True)`` passes ``only_kinds=None`` for render-all, so the
+    absence gate below is CALLEE-side and both callers inherit the gate. Returns the
+    list of emitted HTML paths. Every key of ``eda_cfg.enabled_plots`` is checked
+    against the renderer registry BEFORE the ``only_kinds`` filter and before any
+    figure renders, so a key that names no renderer, including a figure type the render refuses,
+    raises ValueError whichever types the caller narrowed to. The filter
+    MUST NOT run first, because a refused stem is never in the produced-kinds set, so a
+    filter-first order drops the stem with no error and no warning. ``root`` is the
+    analysis_dir on the Analysis side and bundle.root on the Bundle side.
+
+    ``cfg_system`` is the system configuration object, when the caller has the object. The
+    DEM-resolution figures take ``crs.horizontal_epsg`` from the object, and the report rule's
+    adapter is a caller whose analysis directory carries no system configuration file. A caller
+    that passes none relies on ``{root}/cfg_system.yaml``, as
+    ``_dem_resolution_plots._horizontal_epsg`` shows. Every renderer accepts the keyword so the
+    dispatch stays uniform, and the renderers that read no system configuration ignore the keyword.
     """
+    for kind in eda_cfg.enabled_plots:
+        if kind not in _EDA_RENDERERS:
+            raise ValueError(f"unknown EDA plot kind {kind!r}; known: {sorted(_EDA_RENDERERS)}")
     out: list[Path] = []
     for kind in eda_cfg.enabled_plots:
-        renderer = _EDA_RENDERERS.get(kind)
-        if renderer is None:
-            raise ValueError(f"unknown EDA plot kind {kind!r}; known: {sorted(_EDA_RENDERERS)}")
-        out.append(renderer(root, cfg_analysis=cfg_analysis, eda_cfg=eda_cfg))
+        if only_kinds is not None and kind not in only_kinds:
+            continue
+        renderer = _EDA_RENDERERS[kind]
+        # Absence gate (bundle-safe, CALLEE-side). A calc member that skipped wrote no
+        # backing zarr, so skip rather than open a non-existent store -- Bundle.eda(
+        # plots_only=True) passes only_kinds=None (render-all) and would otherwise crash
+        # on a grown enabled_plots default. Key on the kind's ACTUAL backing-artifact
+        # stem, which is the kind itself for the eda_-prefixed sensitivity plots but
+        # eda_cross_sim_identity for config_diff_maps (its calc member is
+        # check_cross_sim_identity). LOUD ON SURPRISE: warn before skipping so a future
+        # kind/stem drift surfaces instead of silently emptying the report (mirrors the
+        # _harvest_sources skip-with-warning precedent, Gotcha 50).
+        backing_stem = _RENDERER_BACKING_ARTIFACT.get(kind, kind)
+        artifact = root / "eda" / f"{backing_stem}.zarr"
+        # The compute_config_byte_identity kinds are ALWAYS enumerated by the compute_config_byte_identity ReportingSet
+        # (workflow.py / bundle snakefile_generator emit one report() target per template), and their
+        # renderer emits an honest-degradation panel on absent/degraded data, so they must
+        # NOT be absence-skipped here — a skip yields "marked for report but does not exist".
+        # Non-b4b conditional members keep the skip (a skipped calc member wrote no zarr).
+        # ENUMERATE-IMPLIES-EMIT (the general rule; _ALWAYS_EMIT_KINDS is the b4b-specific
+        # special case that predates it). `must_emit` carries the ENUMERATED report() targets
+        # for THIS invocation -- the adapter passes the single rule's own output stem, which is
+        # exactly what the ReportingSet enumerated. A kind the active set enumerated MUST be
+        # emitted even with its backing artifact absent, or Snakemake raises
+        # MissingOutputException ("marked for report but does not exist") and the whole workflow
+        # dies. The renderer is then contractually responsible for an honest-degradation panel.
+        # Render-all callers that carry no enumeration (Bundle.eda(plots_only=True),
+        # eda/_notebook.py) pass must_emit=None and KEEP the skip-with-warning, so the warning
+        # that surfaces genuine kind/stem drift is preserved exactly where it is still meaningful.
+        # A kind with no eda/ backing artifact at all (the DEM-resolution figures read the
+        # experiment datatree at the root and no calc member writes an eda/ store for them) has
+        # nothing for this gate to test: the absent store is the NORMAL state, not drift. Without
+        # this branch the gate warned a false "degradation panel is rendered" under must_emit and,
+        # on every render-all route (Bundle.eda, the notebook cell), skipped the figure outright.
+        if kind in _NO_EDA_BACKING_KINDS:
+            pass
+        elif not artifact.exists() and kind in (must_emit or ()) and kind not in _ALWAYS_EMIT_KINDS:
+            warnings.warn(
+                f"EDA plot kind {kind!r} is a report target but its backing "
+                f"artifact {artifact} is absent, so the degradation panel is rendered rather "
+                f"than skipping (a skip would fail the workflow). If the calc member did "
+                f"not legitimately skip, this is a kind/stem mismatch.",
+                stacklevel=2,
+            )
+        elif not artifact.exists() and kind not in _ALWAYS_EMIT_KINDS:
+            warnings.warn(
+                f"EDA plot kind {kind!r} is enabled but its backing artifact "
+                f"{artifact} is absent, so it is skipped. If the calc member did not "
+                f"legitimately skip, this is a kind/stem mismatch.",
+                stacklevel=2,
+            )
+            continue
+        out.append(renderer(root, cfg_analysis=cfg_analysis, eda_cfg=eda_cfg, cfg_system=cfg_system))
     return out
 
 
@@ -52,34 +131,554 @@ def _render_config_diff_maps(
     *,
     cfg_analysis: analysis_config,
     eda_cfg: eda_config,
+    cfg_system=None,
 ) -> Path:
     """Config-diff-maps EDA plot (redesign, /design-figure iteration 1).
 
     Reads the consolidated `{root}/sensitivity_datatree.zarr` directly (per-cell
-    max_wlevel_m + per-conduit max_flow_cms + per-sub compute-config attrs) plus one
+    max_flood_depth + per-conduit max_flow + per-sub compute-config attrs) plus one
     sub's hydraulics.inp for conduit geometry, and renders: a cross-config
     identity+absolute-diff table, and per byte-identical config group the SIGNED diff
     and percent-diff maps (DEM cells + SWMM conduits) vs the serial-CPU baseline with
     serial reference maps. Compute-config labels are derived from config attrs (never
-    the sa_id name). Emits under MASTER-ROOTED plots/eda/ as config_diff_maps.html.
+    the member_id name). Emits under PRIMARY-ROOTED plots/eda/ as config_diff_maps.html.
 
-    plot_id `config_diff_maps` (== on-disk stem, ADR-2). Existing bundles carrying the
-    legacy `eda_cross_sim_identity` enabled_plots key are normalized to this kind by
-    config/eda.py::_rewrite_legacy_eda_plot_kind (Bundle.eda() back-compat).
+    plot_id `config_diff_maps` (== on-disk stem). The `eda_cross_sim_identity`
+    key is a kind the render refuses, as it refuses any unknown kind; a cfg_analysis.yaml that lists it is
+    edited to list `config_diff_maps`.
     """
     from hhemt.eda._config_diff import build_config_diff_figure, config_diff_source_paths
 
     plot_id = canonical_plot_id("config_diff_maps")
-    fig = build_config_diff_figure(root)
+    fig = build_config_diff_figure(root, cfg_system=cfg_system)
 
     output_path = root / "plots" / "eda" / f"{plot_id}.html"
     html_text = _fig_to_html(fig, plotly_js_mode=eda_cfg.plotly_js_mode)
     return emit_plot_with_sources(
         html_text,
         output_path,
-        source_paths=config_diff_source_paths(root),  # consolidated tree + one hydraulics.inp
+        source_paths=config_diff_source_paths(root, cfg_system=cfg_system),  # consolidated tree + one hydraulics.inp
         analysis_dir=root,
         output_format="html",
+    )
+
+
+def _render_rank_sensitivity(
+    root: Path,
+    *,
+    cfg_analysis: analysis_config,
+    eda_cfg: eda_config,
+    cfg_system=None,
+) -> Path:
+    """Rank-sensitivity EDA plot (within-family rank-N vs rank-1). Figure body is a
+    /eda-spinup seam; emits primary-rooted plots/eda/eda_rank_sensitivity.html and declares
+    BOTH eda/eda_rank_sensitivity.zarr AND its .verdict.json as sources."""
+    from hhemt.eda._sensitivity_figures import (
+        build_rank_sensitivity_figure,
+        sensitivity_source_paths,
+    )
+
+    plot_id = canonical_plot_id("eda_rank_sensitivity")
+    fig = build_rank_sensitivity_figure(root)
+    output_path = root / "plots" / "eda" / f"{plot_id}.html"
+    html_text = _fig_to_html(fig, plotly_js_mode=eda_cfg.plotly_js_mode)
+    return emit_plot_with_sources(
+        html_text,
+        output_path,
+        source_paths=sensitivity_source_paths(root, plot_id),  # {plot_id}.zarr + .verdict.json
+        analysis_dir=root,
+        output_format="html",
+    )
+
+
+def _render_resume_sensitivity(
+    root: Path,
+    *,
+    cfg_analysis: analysis_config,
+    eda_cfg: eda_config,
+    cfg_system=None,
+) -> Path:
+    """Resume-sensitivity EDA plot (clean-vs-resume). Figure body is a /eda-spinup seam;
+    emits primary-rooted plots/eda/eda_resume_sensitivity.html and declares BOTH
+    eda/eda_resume_sensitivity.zarr AND its .verdict.json as sources."""
+    from hhemt.eda._sensitivity_figures import (
+        build_resume_sensitivity_figure,
+        sensitivity_source_paths,
+    )
+
+    plot_id = canonical_plot_id("eda_resume_sensitivity")
+    fig = build_resume_sensitivity_figure(root)
+    output_path = root / "plots" / "eda" / f"{plot_id}.html"
+    html_text = _fig_to_html(fig, plotly_js_mode=eda_cfg.plotly_js_mode)
+    return emit_plot_with_sources(
+        html_text,
+        output_path,
+        source_paths=sensitivity_source_paths(root, plot_id),
+        analysis_dir=root,
+        output_format="html",
+    )
+
+
+def _render_cross_hardware_magnitude(
+    root: Path,
+    *,
+    cfg_analysis: analysis_config,
+    eda_cfg: eda_config,
+    cfg_system=None,
+) -> Path:
+    """Cross-hardware-magnitude EDA plot (ADR-4 1-GPU vs 1-rank serial-CPU). Figure body
+    is a /eda-spinup seam; emits primary-rooted plots/eda/eda_cross_hardware_magnitude.html
+    and declares BOTH eda/eda_cross_hardware_magnitude.zarr AND its .verdict.json."""
+    from hhemt.eda._sensitivity_figures import (
+        build_cross_hardware_magnitude_figure,
+        sensitivity_source_paths,
+    )
+
+    plot_id = canonical_plot_id("eda_cross_hardware_magnitude")
+    fig = build_cross_hardware_magnitude_figure(root)
+    output_path = root / "plots" / "eda" / f"{plot_id}.html"
+    html_text = _fig_to_html(fig, plotly_js_mode=eda_cfg.plotly_js_mode)
+    return emit_plot_with_sources(
+        html_text,
+        output_path,
+        source_paths=sensitivity_source_paths(root, plot_id),
+        analysis_dir=root,
+        output_format="html",
+    )
+
+
+#: Disclosure-regime physical band for the b4b max-abs-difference colorbar (data-viz round-3).
+#: Ties to the disclosed dry-cell/nuisance floor τ (a-priori physical quantity, NEVER tuned to
+#: the result); keep equal to compute_sensitivity._TAU_M. |Δ| below this reads ~white (honest
+#: "no meaningful difference"); above it saturates honestly (proportional ink).
+_B4B_TAU_M = 0.03
+#: Okabe-Ito colorblind-safe pair (Moreland 2016): bluish-green = byte-identical (null state),
+#: vermillion = magnitude ramp for differing cells. Redundant text/legend accompanies color.
+_B4B_IDENTICAL_COLOR = "#009E73"
+_B4B_DIFF_RAMP = [[0.0, "#FFFFFF"], [1.0, "#D55E00"]]
+
+
+def _b4b_str_map(ds, name: str) -> dict:
+    """compute_config (str) -> str value from a (compute_config,) DataArray; {} if absent."""
+    if ds is None or name not in ds:
+        return {}
+    da = ds[name]
+    return {str(c): str(v) for c, v in zip(da["compute_config"].values, da.values, strict=False)}
+
+
+def _b4b_bool_map(ds, name: str) -> dict:
+    """compute_config (str) -> bool value from a (compute_config,) DataArray; {} if absent."""
+    if ds is None or name not in ds:
+        return {}
+    da = ds[name]
+    return {str(c): bool(v) for c, v in zip(da["compute_config"].values, da.values, strict=False)}
+
+
+def _b4b_category(fam: str) -> str:
+    """Q4a (iter-2): collapse the per-hardware family token to a display CATEGORY — 'cpu' stays
+    'cpu'; any GPU hardware token -> 'gpu'; the degraded single-panel sentinel 'all' -> 'all'.
+    Panels group by this (one CPU panel, one GPU panel); each row keeps its OWN family's
+    within-family reference math (max_abs_diff is precomputed per config in the zarr)."""
+    if fam in ("cpu", "all"):
+        return fam
+    return "gpu"
+
+
+def _b4b_category_title(cat: str) -> str:
+    """Human panel title for a display CATEGORY: 'cpu' -> 'CPU'; 'gpu' -> 'GPU'; 'all' -> 'All configs'."""
+    if cat == "cpu":
+        return "CPU"
+    if cat == "all":
+        return "All compute configurations"
+    return "GPU"
+
+
+def _b4b_family_title(fam: str) -> str:
+    """Human panel title from the settled `family` token: 'cpu' -> 'CPU'; 'gpu' -> 'GPU'
+    (N3: ONE GPU family); a legacy per-hardware token -> 'GPU {token}'; the degraded
+    single-panel sentinel -> 'All configs'. The per-hardware branch is retained so a
+    pre-N3 zarr still renders a sensible caption."""
+    if fam == "cpu":
+        return "CPU"
+    if fam == "all":
+        return "All compute configurations"
+    if fam == "gpu":
+        return "GPU"
+    return f"GPU {fam}"
+
+
+def _b4b_faceted_figure(ds, da, *, title: str, baseline_caption: str, show_boundaries: bool) -> go.Figure:
+    """Disclosure-regime b4b figure: ONE subplot per hardware family (CPU + one per GPU
+    hardware). Identical cells render solid Okabe-Ito bluish-green; differing cells are colored
+    by max |Δ| vs the per-family baseline on a white->vermillion colorbar anchored to [0, τ].
+    Reads the SETTLED per-compute_config DataArray contract directly: `config_label` (already
+    _derive_config_label'd) as the y-label, `family` for panel grouping, `is_reference` to mark
+    the baseline row, `max_abs_diff` (meters) for magnitude. Caption is built from the dataset
+    attr `reference_config_by_family`. Degrades to a binary identical/differs encoding + raw
+    labels + a single panel when max_abs_diff / config_label / family are absent. Positions and
+    margins are nominal — smoke-render and nudge if needed."""
+    import json
+
+    import numpy as np
+    from plotly.subplots import make_subplots
+
+    # Q4b (iter-2): compare FLOOD DEPTH (flood_depth = instantaneous H), NOT the AND of all four
+    # raw types (which includes max_flood_depth + velocities). Select the flood_depth raw type when
+    # present; fall back to the all-types AND only when flood_depth is absent (older/partial data).
+    _RAW_FLOOD_DEPTH = "flood_depth"
+    if "raw_output_type" in getattr(da, "dims", ()) and _RAW_FLOOD_DEPTH in [
+        str(v) for v in da["raw_output_type"].values
+    ]:
+        z_all = da.sel(raw_output_type=_RAW_FLOOD_DEPTH)
+    else:
+        z_all = da.min(dim="raw_output_type", skipna=True)  # fallback: 1 iff ALL raw types identical
+    x = [float(t) for t in z_all["timestep"].values]
+    configs = [str(c) for c in z_all["compute_config"].values]
+    identical = np.asarray(z_all.transpose("compute_config", "timestep").values, dtype=float)
+
+    mad = ds["max_abs_diff"] if (ds is not None and "max_abs_diff" in ds) else None
+    if mad is not None and "raw_output_type" in getattr(mad, "dims", ()):
+        # Q4b: magnitude for the SAME variable the identity uses (flood_depth), not the max over
+        # all raw types. Fall back to the all-types max only when flood_depth is absent.
+        if _RAW_FLOOD_DEPTH in [str(v) for v in mad["raw_output_type"].values]:
+            mad = mad.sel(raw_output_type=_RAW_FLOOD_DEPTH)
+        else:
+            mad = mad.max(dim="raw_output_type", skipna=True)
+    mad_vals = np.asarray(mad.transpose("compute_config", "timestep").values, dtype=float) if mad is not None else None
+
+    label_by_cfg = _b4b_str_map(ds, "config_label")  # already deterministic (F2)
+    family_by_cfg = _b4b_str_map(ds, "family")  # "cpu" / "gpu" (device class)
+    is_ref_by_cfg = _b4b_bool_map(ds, "is_reference")
+
+    def _label(cfg: str) -> str:
+        base = label_by_cfg.get(cfg, cfg)
+        return f"{base}  ★ ref" if is_ref_by_cfg.get(cfg) else base
+
+    def _family(cfg: str) -> str:
+        return family_by_cfg.get(cfg, "all")
+
+    fam_to_rows: dict[str, list[int]] = {}
+    for i, cfg in enumerate(configs):
+        fam_to_rows.setdefault(_b4b_category(_family(cfg)), []).append(i)  # Q4a: one CPU + one GPU panel
+    families = sorted(fam_to_rows, key=lambda f: (f != "cpu", f))  # CPU panel first
+    n_panels = len(families)
+    row_heights = [max(2, len(fam_to_rows[f])) for f in families]  # Q2: floor a 1-config panel
+
+    fig = make_subplots(
+        rows=n_panels,
+        cols=1,
+        shared_xaxes=True,
+        row_heights=row_heights,
+        subplot_titles=[_b4b_category_title(f) for f in families],
+        vertical_spacing=min(0.08, 0.3 / max(n_panels, 1)),
+    )
+    shown_colorbar = False
+    for r, fam in enumerate(families, start=1):
+        # Reference row at the BOTTOM of every family panel. Plotly draws a categorical
+        # y-axis with y[0] at the BOTTOM (verified: a 3-category heatmap computes
+        # yaxis.range=(-0.5, 2.5), low end at the bottom), and this figure sets no
+        # reversed axis -- so "ref first in the array" IS "ref at the bottom".
+        #
+        # Before this, row order was the dataset's compute_config order, which is
+        # alphabetical by label: `Serial 1r x 1t` sorted LAST among CPU labels (index 7 of
+        # 8 -> drawn at the TOP) while `GPU x1 (a100-80)` sorted FIRST among GPU labels
+        # (index 0 of 6 -> drawn at the BOTTOM). The two panels of one figure therefore
+        # placed their reference at opposite ends, by coincidence rather than by rule, and
+        # any relabelling would have moved them again.
+        #
+        # A stable sort on the is_reference key ONLY -- not a reversal, which would also
+        # invert the non-reference ordering. Reference SELECTION is untouched: which config
+        # is the reference is decided upstream by eda/raw_byte_identity.py's
+        # `min(members, key=_b4b_ref_key)` per family (the EW-4 work), and this reorders
+        # display only. `rows` is the single source for the y-labels, `ident` and `mrows`
+        # alike, so one reorder propagates consistently to all three heatmaps.
+        rows = sorted(
+            fam_to_rows[fam],
+            key=lambda i: (not is_ref_by_cfg.get(configs[i], False),),
+        )
+        y = [_label(configs[i]) for i in rows]
+        ident = identical[rows, :]  # (n_rows, n_t)
+        z_ident = [[1 if v == 1 else None for v in ident[a]] for a in range(len(rows))]
+        fig.add_trace(
+            go.Heatmap(
+                z=z_ident,
+                x=x,
+                y=y,
+                colorscale=[[0.0, _B4B_IDENTICAL_COLOR], [1.0, _B4B_IDENTICAL_COLOR]],
+                showscale=False,
+                xgap=1,
+                ygap=1,
+                hovertemplate="%{y}<br>t=%{x} min<br>byte-identical<extra></extra>",
+            ),
+            row=r,
+            col=1,
+        )
+        if mad_vals is not None:
+            mrows = mad_vals[rows, :]
+            z_diff = [
+                [
+                    None if (ident[a, b] == 1 or mrows[a, b] != mrows[a, b]) else float(mrows[a, b])
+                    for b in range(len(x))
+                ]
+                for a in range(len(rows))
+            ]
+            fig.add_trace(
+                go.Heatmap(
+                    z=z_diff,
+                    x=x,
+                    y=y,
+                    colorscale=_B4B_DIFF_RAMP,
+                    zmin=0.0,
+                    zmax=_B4B_TAU_M,
+                    showscale=not shown_colorbar,
+                    colorbar=dict(
+                        title=f"max |Δ| vs reference (m)<br>scale 0–τ ({_B4B_TAU_M} m)",
+                        len=0.5,
+                        thickness=14,
+                        x=1.02,
+                        xanchor="left",
+                        y=0.85,
+                        yanchor="top",
+                    ),
+                    xgap=1,
+                    ygap=1,
+                    hovertemplate="%{y}<br>t=%{x} min<br>max |Δ|=%{z:.3g} m<extra></extra>",
+                ),
+                row=r,
+                col=1,
+            )
+            shown_colorbar = True
+        else:
+            z_diff = [[1 if ident[a, b] == 0 else None for b in range(len(x))] for a in range(len(rows))]
+            fig.add_trace(
+                go.Heatmap(
+                    z=z_diff,
+                    x=x,
+                    y=y,
+                    colorscale=[[0.0, "#D55E00"], [1.0, "#D55E00"]],
+                    showscale=False,
+                    xgap=1,
+                    ygap=1,
+                    hovertemplate="%{y}<br>t=%{x} min<br>differs<extra></extra>",
+                ),
+                row=r,
+                col=1,
+            )
+        if show_boundaries and ds is not None:
+            for k, t in enumerate(ds.attrs.get("resume_boundaries", []) or [], start=1):
+                fig.add_vline(
+                    x=float(t),
+                    line_dash="dash",
+                    line_color="black",
+                    annotation_text=f"r{k}",
+                    annotation_position="top",
+                    row=r,
+                    col=1,
+                )
+
+    # Legend proxy for the identical color (Heatmap emits no legend entry) — redundant channel.
+    fig.add_trace(
+        go.Scatter(
+            x=[None],
+            y=[None],
+            mode="markers",
+            marker=dict(size=12, color=_B4B_IDENTICAL_COLOR, symbol="square"),
+            name="byte-identical (Δ = 0)",
+            showlegend=True,
+        ),
+        row=1,
+        col=1,
+    )
+
+    # Caption: generic prefix + the deterministic per-family reference list (Δ = 0 by definition).
+    ref_map = ds.attrs.get("reference_config_by_family", "{}") if ds is not None else "{}"
+    if isinstance(ref_map, str):
+        try:
+            ref_map = json.loads(ref_map)
+        except Exception:
+            ref_map = {}
+    ref_bits = "; ".join(f"{_b4b_family_title(k)} → {v}" for k, v in sorted((ref_map or {}).items()))
+    caption = baseline_caption
+    if ref_bits:
+        caption = f"{baseline_caption} Reference (Δ = 0 by definition) per family: {ref_bits}."
+
+    # N4 / Gate-0 count-don't-eyeball: the collapsed rows hide a denominator, so state it.
+    # Guarded on `in ds` because a legacy (pre-N4) zarr carries no n_replicates variable and
+    # must render its caption unchanged.
+    if ds is not None and "n_replicates" in ds:
+        _nr = sorted({int(v) for v in ds["n_replicates"].values})
+        if _nr and max(_nr) > 1:
+            _rng = str(_nr[0]) if len(_nr) == 1 else f"{min(_nr)}–{max(_nr)}"
+            caption += (
+                f" Each row aggregates {_rng} replicate runs of that compute configuration,"
+                " worst case: a cell is green only if every replicate was byte-identical,"
+                " and |Δ| is the maximum over replicates."
+            )
+
+    total_rows = sum(row_heights)
+    # Caption layout is owned by hhemt.figure_caption (ONE deterministic module for every
+    # figure). This call site predates the module and hand-tuned b=150 against a caption
+    # whose length is DATA-DEPENDENT: the per-family reference list and the replicate
+    # disclosure are appended above, so the text that must fit is not the text this
+    # constant was tuned against. add_figure_caption wraps the text itself and RETURNS the
+    # bottom margin the wrapped result needs, which is what replaces the constant.
+    # G3 fungibility: content_w_px derives from the two layout margins, which are shared by
+    # the pure-TRITON and coupled arms, so the same caption wraps identically on both.
+    _CAPTION_L_PX, _CAPTION_R_PX, _CAPTION_T_PX = 180, 140, 64
+    # The caption must wrap against the width the figure ACTUALLY renders at. This
+    # figure set no width=, so the previous `700 - l - r` wrapped 552 chars to 9 lines
+    # against a 380 px content box the browser never used. Declaring the width is what
+    # makes hhemt.figure_caption's "pure function of (text, content_w_px, font_px)"
+    # guarantee true here; it is not a cosmetic change. User-ruled 2026-08-12: 1000,
+    # matching _config_diff's fig_width so co-located figures wrap alike (P5).
+    _FIG_W_PX = 1000
+    # WIDTH FIRST, then read the content width back off the figure. Two changes, one
+    # reason. (1) `_FIG_W_PX - _CAPTION_L_PX - _CAPTION_R_PX` re-derives what
+    # `content_width_px` computes, so the wrap and the layout could drift apart silently --
+    # the same hand-subtraction D1.3 removed from the benchmarking figure. P4 does not
+    # catch this one because it subtracts NAMES rather than literals. (2) The caption was
+    # placed before `update_layout` declared the width, so the stamp recorded
+    # `fig_content_w_px=None` and the invariant read it as a post-caption resize.
+    fig.update_layout(width=_FIG_W_PX, margin=dict(l=_CAPTION_L_PX, r=_CAPTION_R_PX, t=_CAPTION_T_PX))
+    _caption_w_px = content_width_px(fig)
+    _plot_h_px = max(126, 26 * total_rows + 46 * n_panels + 26)
+    fig.update_xaxes(title_text="reporting timestep (min)", row=n_panels, col=1)
+    # axis_band_px reserves the tick-label + x-axis-title band below the plot area, so
+    # the caption clears the "reporting timestep (min)" title instead of landing beside
+    # it. 46 is this function's OWN per-panel axis allowance, reused from _plot_h_px
+    # above rather than introduced as a new constant.
+    _caption_b_px = add_figure_caption(
+        fig,
+        caption,
+        content_w_px=_caption_w_px,
+        plot_h_px=_plot_h_px,
+        axis_band_px=46,
+        wrap_reference="content",
+    )
+    fig.update_layout(
+        title=title,
+        width=_FIG_W_PX,
+        height=_plot_h_px + _CAPTION_T_PX + _caption_b_px,
+        margin=dict(l=_CAPTION_L_PX, r=_CAPTION_R_PX, t=_CAPTION_T_PX, b=_caption_b_px),
+        legend=dict(orientation="v", yanchor="top", y=1.0, x=1.02, xanchor="left"),
+    )
+    return fig
+
+
+def _render_b4b(
+    root: Path,
+    *,
+    stem: str,
+    title: str,
+    baseline_caption: str,
+    eda_cfg: eda_config,
+    show_boundaries: bool,
+) -> Path:
+    """Shared b4b render: reads eda/{stem}.zarr (written by
+    raw_byte_identity.check_raw_byte_identity) and emits a heatmap y=compute_config, x=timestep,
+    z=all-raw-types-identical (AND-reduced over raw_output_type), or an explicit R10
+    honest-degradation panel when the artifact's `degraded` attr is set. Declares its own
+    eda/{stem}.zarr as the source (raw dirs fail _validate_source_path; the producer owns
+    raw-presence detection via the `degraded` attr, so this render reads only its own zarr
+    and passes the Gotcha-53 renderer-IO audit)."""
+
+    plot_id = canonical_plot_id(stem)  # pass-through == stem
+    artifact = root / "eda" / f"{plot_id}.zarr"
+    output_path = root / "plots" / "eda" / f"{plot_id}.html"
+    # Absent-artifact guard (Gate-6 honest-degradation). check_raw_byte_identity writes this zarr on
+    # every analysis.eda() run, so an absent artifact means the b4b calc member did not run
+    # before this render (a bundle emitted before eda(), or a bundle-carriage gap where the
+    # figure was not harvested). Emit the honest-degradation placeholder rather than letting
+    # xr.open_zarr raise / render_eda_plots skip, so an ENUMERATED b4b report target is never
+    # "marked for report but does not exist".
+    if not artifact.exists():
+        ds = None
+        degraded = True
+        reason = (
+            "raw byte-for-byte backing artifact absent (the byte-identity calculation did not run before this render)"
+        )
+        # A bundle emitted before this figure's stem was renamed carries its backing artifact
+        # under the predecessor's name, which this renderer no longer reads. The reason above
+        # is false there, because the calc member did run, so name the real cause instead.
+        # Deliberately keyed on the rename map's predecessors of THIS stem and NOT on
+        # config.eda._RETIRED_EDA_FIGURE_STEMS: that set also holds eda_cross_sim_identity,
+        # whose zarr is the live backing artifact of config_diff_maps on every primary that
+        # ran eda(), so a whole-set test would blame the rename for an artifact merely absent.
+        from hhemt.config.eda import _EDA_RENAMES
+
+        predecessors = [
+            old for old, new in _EDA_RENAMES.items() if new == plot_id and (root / "eda" / f"{old}.zarr").exists()
+        ]
+        if predecessors:
+            reason = (
+                f"this bundle predates the renaming of {predecessors[0]} to {plot_id} and carries its "
+                "backing artifact under the old name; re-emit the bundle from its source analysis "
+                "with the current toolkit"
+            )
+        da = None
+    else:
+        ds = open_store(artifact, kind="zarr")
+        degraded = bool(int(ds.attrs.get("degraded", 0)))
+        reason = str(ds.attrs.get("degraded_reason", ""))
+        da = ds["identical"] if "identical" in ds else None
+    if degraded or da is None or "compute_config" not in getattr(da, "dims", ()):
+        import textwrap
+
+        fig = go.Figure()
+        fig.add_annotation(
+            text="Raw byte-for-byte comparison unavailable<br>"
+            + "<br>".join(textwrap.wrap(reason or "raw outputs were cleared", width=90)),
+            showarrow=False,
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            font=dict(size=14),
+        )
+        fig.update_layout(title=title, height=260, xaxis=dict(visible=False), yaxis=dict(visible=False))
+    else:
+        fig = _b4b_faceted_figure(
+            ds, da, title=title, baseline_caption=baseline_caption, show_boundaries=show_boundaries
+        )
+    html_text = _fig_to_html(fig, plotly_js_mode=eda_cfg.plotly_js_mode)
+    return emit_plot_with_sources(
+        html_text,
+        output_path,
+        source_paths=[artifact, artifact.with_suffix(".manifest.json")],
+        analysis_dir=root,
+        output_format="html",
+    )
+
+
+def _render_raw_byte_identity(
+    root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config, cfg_system=None
+) -> Path:
+    """Cross-hardware results comparison (b4b), reused per-family over each primary's
+    own subs (serves both the clean and resume primaries). Reads eda/raw_byte_identity.zarr;
+    R10 honest-degradation panel when raw outputs were cleared."""
+    return _render_b4b(
+        root,
+        stem="raw_byte_identity",
+        title=("Per-timestep flood-depth byte-for-byte comparison vs the hardware-category reference"),
+        baseline_caption=(
+            "Alternate configurations are compared against their hardware category's "
+            "minimum-device reference (CPU → serial-CPU, GPU → 1-GPU). "
+            "Identical cells (Δ = 0) are green; differing cells show max |Δ| vs the per-family "
+            "reference, colorbar band 0–τ (τ = 0.03 m). "
+            # P1 (state what cannot be seen) + P2 (no experiment-specific values): the
+            # mechanism is a property of the storage cast and transfers to any system,
+            # so no residual magnitude appears here. BOTH directions are stated -- a
+            # one-directional "values are quantized to float32" understates the second,
+            # which is the one that manufactures a false byte-identical control. The
+            # user has confirmed the second direction already truncated a real
+            # pure-TRITON resume sensitivity to apparent zero.
+            "Differences are read from the float32 <code>.zarr</code> summary tier: a "
+            "residual below a float32 ULP is reported at that ULP, and a residual far "
+            "below it is reported as zero. Both bounds are properties of the "
+            "storage cast, not of the model."
+        ),
+        eda_cfg=eda_cfg,
+        show_boundaries=False,
     )
 
 
@@ -101,7 +700,49 @@ def _fig_to_html(fig: go.Figure, *, plotly_js_mode: str) -> str:
     return pio.to_html(fig, include_plotlyjs=include_plotlyjs, full_html=True)
 
 
-#: renderer-kind -> renderer function. Extend here when EDA families are added.
+#: renderer-kind -> renderer function. Keys are the eda_-PREFIXED plot-IDs the calc
+#: members mint (compute_sensitivity.py:463,553,637); canonical_plot_id is a
+#: pass-through, so those keys ARE the on-disk eda/{key}.zarr stems. Do not unprefix.
+#: EDA kinds that are ALWAYS enumerated by their ReportingSet (the compute_config_byte_identity family) and whose
+#: renderer emits an honest-degradation panel on absent/degraded backing data. render_eda_plots
+#: MUST NOT absence-skip these, or an enumerated report() target goes unproduced (WorkflowError).
+_ALWAYS_EMIT_KINDS = frozenset({"raw_byte_identity"})
+
+#: EDA kinds whose renderer reads the experiment datatree at the root and has NO eda/{stem}.zarr
+#: backing artifact (the four DEM-resolution figures). render_eda_plots tests membership BEFORE
+#: the absence gate and skips the gate for these. Distinct from _ALWAYS_EMIT_KINDS, which also
+#: promises an honest-degradation panel on absent data: these renderers promise no such panel,
+#: they have no backing artifact whose absence could be tested.
+_NO_EDA_BACKING_KINDS = frozenset(
+    {
+        "dem_resolution_cost_error",
+        "dem_resolution_coupling_table",
+        "dem_resolution_diff_maps",
+        "dem_resolution_error_ecdf",
+    }
+)
+
 _EDA_RENDERERS = {
     "config_diff_maps": _render_config_diff_maps,
+    "eda_rank_sensitivity": _render_rank_sensitivity,
+    "eda_resume_sensitivity": _render_resume_sensitivity,
+    "eda_cross_hardware_magnitude": _render_cross_hardware_magnitude,
+    "dem_resolution_cost_error": _render_dem_resolution_cost_error,
+    "dem_resolution_diff_maps": _render_dem_resolution_diff_maps,
+    "dem_resolution_error_ecdf": _render_dem_resolution_error_ecdf,
+    "dem_resolution_coupling_table": _render_dem_resolution_coupling_table,
+    "raw_byte_identity": _render_raw_byte_identity,
+}
+
+#: renderer-kind -> the on-disk eda/{stem}.zarr the kind's CALC member actually writes.
+#: Absence-gate keys on THIS, not the kind, because the two diverge for config_diff_maps:
+#: its calc member is check_cross_sim_identity, which mints
+#: canonical_plot_id("eda_cross_sim_identity") -> eda/eda_cross_sim_identity.zarr (nothing
+#: writes eda/config_diff_maps.zarr). The three sensitivity kinds are 1:1 (kind == stem),
+#: so absent entries default to identity via .get(kind, kind); add an entry ONLY for a
+#: renderer whose kind != its calc member's plot_id. Consistency note: analysis.eda()'s
+#: _eda_results pairing (kind -> calc member, analysis.py) encodes the SAME config_diff_maps
+#: exception from the facade side; keep the two in sync.
+_RENDERER_BACKING_ARTIFACT = {
+    "config_diff_maps": "eda_cross_sim_identity",
 }

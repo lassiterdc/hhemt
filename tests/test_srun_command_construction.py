@@ -8,13 +8,24 @@ These tests verify:
 - GPU preflight raises RuntimeError on detectable under-allocation
 """
 
+import atexit
+import contextlib
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from hhemt.run_simulation import TRITONSWMM_run
+
+# Every _make_run() gets a REAL temp sim_folder (the GPU-binding guard writes
+# {sim_folder}/_status/_gpu_bind/ at emission on the batch_job form); a MagicMock sim_folder
+# would otherwise mkdir a relative `MagicMock/...` path in the CWD. Drained at process exit
+# (process-scoped: covers every importer of _make_run and every xdist worker).
+_TMP_SIM_FOLDERS: list[str] = []
+atexit.register(lambda: [shutil.rmtree(p, ignore_errors=True) for p in _TMP_SIM_FOLDERS])
 
 
 def _make_run(
@@ -76,6 +87,9 @@ def _make_run(
     scenario.model_run_completed.return_value = False
     scenario.scen_paths.sim_tritonswmm_executable = Path("/fake/TRITONSWMM")
     scenario.scen_paths.triton_swmm_cfg = Path("/fake/TRITONSWMM.cfg")
+    _tmp = tempfile.mkdtemp(prefix="hhemt-srun-test-")
+    _TMP_SIM_FOLDERS.append(_tmp)
+    scenario.scen_paths.sim_folder = Path(_tmp) / "sim"
 
     run = TRITONSWMM_run.__new__(TRITONSWMM_run)
     run._scenario = scenario
@@ -83,14 +97,16 @@ def _make_run(
     return run
 
 
-def _get_launch_cmd(run: TRITONSWMM_run) -> str:
+def _get_launch_cmd(run: TRITONSWMM_run, execution_locus: str | None = None) -> str:
     """Extract the launch command string from prepare_simulation_command."""
     # Patch out anything that touches the filesystem or logs
     with patch.object(run, "_analysis_level_model_logfile", return_value=Path("/fake/run.log")):
         with patch.object(
             run, "_retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation", return_value=None
         ):
-            result = run.prepare_simulation_command(pickup_where_leftoff=False, verbose=False)
+            result = run.prepare_simulation_command(
+                pickup_where_leftoff=False, verbose=False, execution_locus=execution_locus
+            )
     assert result is not None
     cmd, env, logfile, _ = result
     # The full command is passed to bash -lc; extract the srun portion
@@ -152,7 +168,7 @@ def test_gres_mode_gpu_srun_omits_explicit_ntasks():
     run = _make_run("gpu", n_gpus=2, n_omp_threads=1, in_slurm=True, gpu_alloc_mode="gres")
     full_cmd = _get_launch_cmd(run)
     assert "--ntasks-per-gpu=1" in full_cmd
-    assert "--ntasks=" not in full_cmd          # the regression guard (no explicit clamp)
+    assert "--ntasks=" not in full_cmd  # the regression guard (no explicit clamp)
     assert "--overlap" in full_cmd and "--kill-on-bad-exit=1" in full_cmd
 
 
@@ -316,3 +332,106 @@ def test_gpu_preflight_skips_when_no_gpu_vars(capsys):
                 result = run.prepare_simulation_command(pickup_where_leftoff=False, verbose=False)
     assert result is not None
     assert "[GPU-PREFLIGHT]" in capsys.readouterr().out
+
+
+def test_gres_mode_multi_gpu_local_uses_gpus_per_task(monkeypatch):
+    """[Q8] Mode A (g2): gres-mode single-node MULTI-GPU (n_gpus>=2) under the
+    per-rule Snakemake slurm executor (multi_sim_run_method='local' PLUS
+    execution_mode='slurm' -- the locus, not the dispatch label) must emit
+    --gpus-per-task=1 + explicit --ntasks=N, NOT --ntasks-per-gpu=1. The outer
+    per-rule sbatch is Gotcha-32-routed (mpi+tasks, tasks_per_gpu=0) -> SUPPRESSES
+    --ntasks-per-gpu; an inner --ntasks-per-gpu=1 then fails
+    _handle_ntasks_per_tres_step ('no GPU specification')."""
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)  # skip the GPU/CPU preflight
+    run = _make_run(
+        "gpu",
+        n_gpus=2,
+        n_omp_threads=1,
+        in_slurm=True,
+        multi_sim_run_method="local",
+        gpu_alloc_mode="gres",
+    )
+    full_cmd = _get_launch_cmd(run, execution_locus="slurm")
+    assert "--gpus-per-task=1" in full_cmd
+    assert "--ntasks=2" in full_cmd
+    assert "--ntasks-per-gpu" not in full_cmd
+
+
+def test_gres_mode_single_gpu_local_keeps_ntasks_per_gpu(monkeypatch):
+    """[Q8] Mode A regression guard (FQ4): the 1-GPU (g1) gres case -- which
+    SUCCEEDS on the live run -- must stay on --ntasks-per-gpu=1 with NO explicit
+    --ntasks (its outer sbatch is single-GPU, NOT gres_multi_gpu, and carries
+    --ntasks-per-gpu=1). n_gpus<2 keeps it in the else branch. The locus is
+    supplied explicitly: multi_sim_run_method='local' is the dispatch label, and
+    execution_mode='slurm' is what makes the sim allocation-resident."""
+    monkeypatch.delenv("SLURM_JOB_ID", raising=False)
+    run = _make_run(
+        "gpu",
+        n_gpus=1,
+        n_omp_threads=1,
+        in_slurm=True,
+        multi_sim_run_method="local",
+        gpu_alloc_mode="gres",
+    )
+    full_cmd = _get_launch_cmd(run, execution_locus="slurm")
+    assert "--ntasks-per-gpu=1" in full_cmd
+    assert "--gpus-per-task" not in full_cmd
+    assert "--ntasks=" not in full_cmd  # '--ntasks-per-gpu=1' is not a '--ntasks=' match
+
+
+# ---------------------------------------------------------------------------
+# local-locus MPI slot-pool declaration (PRRTE SLURM RAS)
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _slurm_env(**overrides):
+    """Install a SLURM environment, removing BOTH job-id spellings unless supplied.
+
+    `SLURM_JOBID` and `SLURM_JOB_ID` are NOT interchangeable for PRRTE: its SLURM
+    RAS activates on the former and not the latter (measured, OMPI 5.0.10). A test
+    that leaves the unwanted spelling in place from the ambient environment would
+    pass for the wrong reason, so both are cleared unless explicitly set.
+    """
+    with patch.dict(os.environ, overrides, clear=False):
+        for spelling in ("SLURM_JOBID", "SLURM_JOB_ID"):
+            if spelling not in overrides:
+                os.environ.pop(spelling, None)
+        yield
+
+
+@pytest.mark.parametrize("jobid_spelling", ["SLURM_JOBID", "SLURM_JOB_ID"])
+def test_local_mpi_declares_slot_pool_from_cpu_budget(jobid_spelling):
+    """local-locus MPI must declare SLURM_TASKS_PER_NODE from the real CPU budget.
+
+    PRRTE sizes its slot pool from SLURM_TASKS_PER_NODE, so under the harness's
+    `--ntasks=1 --cpus-per-task=8` a bare `mpirun -np 2` is refused. Both job-id
+    spellings are exercised because the guard must fire in either environment.
+    """
+    run = _make_run("mpi", n_mpi_procs=2, n_omp_threads=1, in_slurm=False)
+    env = {jobid_spelling: "12345", "SLURM_NTASKS": "1", "SLURM_CPUS_PER_TASK": "8"}
+    with _slurm_env(**env):
+        full_cmd = _get_launch_cmd(run)
+    assert 'export SLURM_TASKS_PER_NODE="8"' in full_cmd
+    assert "mpirun -np 2" in full_cmd
+
+
+def test_local_mpi_refuses_when_cpu_budget_below_need():
+    """local-locus MPI must refuse rather than oversubscribe an under-allocated step."""
+    run = _make_run("hybrid", n_mpi_procs=2, n_omp_threads=2, in_slurm=False)
+    with _slurm_env(SLURM_JOBID="12345", SLURM_NTASKS="1", SLURM_CPUS_PER_TASK="2"):
+        with pytest.raises(RuntimeError, match="MPI launch refused"):
+            _get_launch_cmd(run)
+
+
+def test_local_mpi_off_scheduler_emission_unchanged():
+    """REGRESSION PIN (passes pre-fix by construction; not a fix-verifier).
+
+    Off-scheduler there is no SLURM RAS to correct, so the emission must stay
+    byte-identical to the historical bare-mpirun form.
+    """
+    run = _make_run("mpi", n_mpi_procs=2, n_omp_threads=1, in_slurm=False)
+    with _slurm_env():
+        full_cmd = _get_launch_cmd(run)
+    assert "SLURM_TASKS_PER_NODE" not in full_cmd
+    assert "mpirun -np 2" in full_cmd

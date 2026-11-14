@@ -11,12 +11,11 @@ The ScenarioInputGenerator class coordinates:
 4. Full SWMM model creation (optional, via SWMMFullModelBuilder)
 """
 
-import pandas as pd
-import numpy as np
 from pathlib import Path
-import swmmio
-from scipy.stats import rankdata
 from typing import TYPE_CHECKING
+
+import pandas as pd
+import swmmio
 
 if TYPE_CHECKING:
     from .scenario import TRITONSWMM_scenario
@@ -56,9 +55,7 @@ class ScenarioInputGenerator:
         self.cfg_analysis = scenario._analysis.cfg_analysis
         self.system = scenario._system
 
-    def create_hydraulics_model_from_template(
-        self, swmm_model_template, destination: Path
-    ) -> None:
+    def create_hydraulics_model_from_template(self, swmm_model_template, destination: Path) -> None:
         """
         Create SWMM hydraulics model from template - direct input to TRITON-SWMM.
 
@@ -81,156 +78,83 @@ class ScenarioInputGenerator:
         create_swmm_inp_from_template(self.scenario, swmm_model_template, destination)
         return
 
-    def update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(
-        self, verbose: bool = False
-    ) -> None:
+    def update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(self, verbose: bool = False) -> None:
         """
-        Update SWMM hydraulics model structure to match DEM grid for TRITON-SWMM coupling.
+        Write the list of SWMM nodes this scenario's TRITON-SWMM run couples to the surface.
 
-        Ensures only one inflow node per DEM grid cell by identifying the most
-        downstream node in each cell and removing inflow assignments from other nodes.
-        This prevents duplicate inflow assignments in TRITON-SWMM coupling where
-        surface runoff from each DEM cell is routed to the drainage network.
+        TRITON-SWMM couples exactly the nodes named in the file its cfg's
+        ``swmm_coupling_nodes`` key names, so this step decides the coupled set by writing that
+        file, ``coupling_nodes.txt`` beside ``hydraulics.inp``, one name per line in SWMM node
+        order. ``hydraulics.inp`` itself is left as the template filled it: no ``[INFLOWS]`` line
+        is added, removed or rewritten, so every inflow the model declares reaches SWMM.
+
+        The candidates are the ones ``system_config.swmm_coupling_mode`` declares. Every DEM
+        cell holding a candidate is resolved by ``scenario.resolve_cell_inflow_nodes``:
+        junctions are written; outfalls, storage nodes and dividers are not, and are named
+        together in one warning; and a cell whose candidates are all of those types stops
+        preparation with a named error. With ``one_coupled_inflow_node_per_dem_cell`` set
+        (applied under ``legacy`` only), each cell keeps a single junction chosen by pipe size,
+        and every prepared scenario records each cell that had more than one candidate in
+        ``_status/inflow_node_selection.json``.
 
         Parameters
         ----------
         verbose : bool, optional
             If True, print detailed progress messages (default: False)
         """
-        from .scenario import return_df_of_nodes_grouped_by_DEM_gridcell, calc_area
+        import json
+        import warnings
 
-        dem_processed = self.system.sys_paths.dem_processed
+        from .scenario import coupling_nodes_file_for, inp_link_table, select_coupling_nodes
 
-        df_node_locs, lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
-            self.scenario.scen_paths.swmm_hydraulics_inp, dem_processed, verbose=verbose
+        f_inp = self.scenario.scen_paths.swmm_hydraulics_inp
+        one_per_cell = bool(self.cfg_analysis.one_coupled_inflow_node_per_dem_cell)
+        model = swmmio.Model(str(f_inp))
+        links = inp_link_table(model)
+        selection = select_coupling_nodes(
+            self.system.cfg_system,
+            f_inp,
+            self.system.sys_paths.dem_processed,
+            links,
+            one_per_cell=one_per_cell,
         )
-        lst_grps_more_than_1_node = []
-        count = -1
-        for coords, group in df_node_locs.groupby(["dem_x_coord", "dem_y_coord"]):
-            keys = list(group.node_key)
-            if len(group) > 1:
-                count += 1
-                group["grid_id"] = count
-                lst_grps_more_than_1_node.append(group)
-        if verbose:
-            print(
-                "There are {} gridcells with more than 1 node.".format(
-                    len(lst_grps_more_than_1_node)
+
+        ineligible_dropped: list[str] = []
+        selection_cells: list[dict] = []
+        for (dem_x, dem_y), resolution in selection.cells:
+            ineligible_dropped.extend(
+                f"{n} ({resolution.node_types[n].lower()})"
+                for n in resolution.dropped
+                if resolution.drop_reasons[n] == "eligibility"
+            )
+            if one_per_cell and len(resolution.node_types) > 1:
+                selection_cells.append(
+                    {
+                        "dem_x_coord": float(dem_x),
+                        "dem_y_coord": float(dem_y),
+                        "inflow_nodes": [{"node": n, "type": t} for n, t in resolution.node_types.items()],
+                        "kept": resolution.kept[0] if resolution.kept else None,
+                        "dropped": [{"node": n, "reason": resolution.drop_reasons[n]} for n in resolution.dropped],
+                    }
                 )
+        if ineligible_dropped:
+            warnings.warn(
+                f"{f_inp}: nodes TRITON-SWMM cannot couple were not written to the coupling-node list, "
+                f"each sharing a DEM cell with a junction that stays coupled: {ineligible_dropped}",
+                stacklevel=2,
             )
-        if not lst_grps_more_than_1_node:
-            # No DEM-cell overlap to resolve; nothing to update.
-            return
-        df_overlapping_nodes = pd.concat(lst_grps_more_than_1_node)
-        model = swmmio.Model(str(self.scenario.scen_paths.swmm_hydraulics_inp))
-        links = model.links.dataframe
-        nodes = model.nodes.dataframe
-        inflows = model.inp.inflows
-        all_upstream_nodes_to_drop = []
-        lst_ambiguous_nodes = []
-        for grid_id, group in df_overlapping_nodes.groupby(["grid_id"]):
-            keys = list(group.node_key)
-            downstream_links = links[links.InletNode.isin(keys)]
-            upstream_nodes_to_drop = []
-            if len(downstream_links) == 0:
-                # this means that these two nodes do not have downstream conduits
-                node_to_keep = inflows[inflows.index.isin(keys)].index.values
-                if len(node_to_keep) == 1:
-                    # unambiguous
-                    upstream_nodes_to_drop = upstream_nodes_to_drop + list(
-                        np.asarray(keys)[np.asarray(keys) != node_to_keep[0]]
-                    )
-                else:
-                    node_to_keep = find_lowest_inv(node_to_keep, nodes)
-                    if len(node_to_keep) > 1:
-                        if verbose:
-                            print("###########################################")
-                            print(
-                                "Warning: node selection ambiguous for nodes {} even after trying to select based on the lowest invert elevation. Choose the first node in the list...".format(
-                                    list(node_to_keep)
-                                )
-                            )
-                            print("###########################################")
-                        if node_to_keep not in lst_ambiguous_nodes:
-                            lst_ambiguous_nodes.append(node_to_keep)
-                    node_to_keep = node_to_keep[0]
-            else:
-                keys = list(downstream_links.InletNode)
-                # compute link area
-                lst_areas = []
-                for id, row in downstream_links.iterrows():
-                    lst_areas.append(calc_area(row))
-                # rank pipe area
-                ranks = rankdata(lst_areas, method="min")
-                # find unique ranks
-                df_rank_counts = pd.DataFrame(np.unique(ranks, return_counts=True)).T
-                df_rank_counts.columns = ["rank", "count"]
-                df_rank_counts = df_rank_counts.set_index("rank")
-                # add smaller nodes to the list of nodes to drop
-                upstream_nodes_to_drop += list(np.asarray(keys)[ranks != max(ranks)])
-                if df_rank_counts.loc[max(ranks), "count"] > 1:
-                    downstream_links_tied = downstream_links[ranks == max(ranks)]
-                    # if a node appears as an outlet node, drop it
-                    downstream_links_w_outlets = downstream_links_tied[
-                        downstream_links_tied.OutletNode.isin(keys)
-                    ]
-                    upstream_nodes_to_drop += list(
-                        downstream_links_w_outlets.InletNode.values
-                    )
-                    # remove nodes that don't have an outlet node
-                    remaining_dwnstrm_links = downstream_links_tied[
-                        ~downstream_links_tied.InletNode.isin(upstream_nodes_to_drop)
-                    ]
-                    node_to_keep = remaining_dwnstrm_links.InletNode.values
-                    if len(node_to_keep) > 1:
-                        node_to_keep = find_lowest_inv(node_to_keep, nodes)
-                        if len(node_to_keep) > 1:
-                            if verbose:
-                                print("###########################################")
-                                print(
-                                    "Warning: node selection ambiguous for nodes {} even after trying to select based on the lowest invert elevation. Choose the first node in the list...".format(
-                                        list(node_to_keep)
-                                    )
-                                )
-                                print("###########################################")
-                        node_to_keep = node_to_keep[0]
-                        upstream_nodes_to_drop = downstream_links[
-                            downstream_links.InletNode != node_to_keep
-                        ].InletNode.values
-                else:
-                    idx_largest_pipe = np.argmax(lst_areas)
-                    node_to_keep = keys[idx_largest_pipe]
-                    upstream_nodes_to_drop = downstream_links[
-                        downstream_links.InletNode != node_to_keep
-                    ].InletNode.values
-            all_upstream_nodes_to_drop = all_upstream_nodes_to_drop + list(
-                upstream_nodes_to_drop
-            )
+        nodes_file = coupling_nodes_file_for(f_inp)
+        nodes_file.parent.mkdir(parents=True, exist_ok=True)
+        nodes_file.write_text("".join(f"{name}\n" for name in selection.written))
         if verbose:
-            print("Removing {} inflow nodes.".format(len(all_upstream_nodes_to_drop)))
-        # write new swmm model, removing outflow that won't be used by TRITON-SWMM
-        with open(self.scenario.scen_paths.swmm_hydraulics_inp, "r") as fp:
-            lines = fp.readlines()
-        for idx_line, line in enumerate(lines):
-            if "[INFLOWS]" in line:
-                inflows_section_first_line_num = idx_line
-            if "[CURVES]" in line:
-                inflows_section_last_line_num = idx_line
-        line_nums_to_remove = []
-        lines_to_remove = []
-        for inflow_line in np.arange(
-            inflows_section_first_line_num, inflows_section_last_line_num + 1
-        ):
-            line = lines[inflow_line]
-            node_id = line.split("    ")[0]
-            if node_id in all_upstream_nodes_to_drop:
-                line_nums_to_remove.append(inflow_line)
-                lines_to_remove.append(line)
-        # overwrite hydaulics model
-        with open(self.scenario.scen_paths.swmm_hydraulics_inp, "w") as fp:
-            for number, line in enumerate(lines):
-                if number not in line_nums_to_remove:
-                    fp.write(line)
+            print(f"Wrote {len(selection.written)} coupling nodes to {nodes_file}.")
+        if one_per_cell:
+            # Written for EVERY scenario prepared with the option on, empty when no cell was
+            # reduced, so that an ABSENT file means "not prepared by this build" to the report's
+            # inflow-node reduction disclosure rather than reading as "nothing reduced".
+            record = self.scenario.scen_paths.sim_folder / "_status" / "inflow_node_selection.json"
+            record.parent.mkdir(parents=True, exist_ok=True)
+            record.write_text(json.dumps({"cells": selection_cells}, indent=2) + "\n")
         self.scenario.log.inflow_nodes_in_hydraulic_inp_assigned = True
         return
 
@@ -255,12 +179,11 @@ class ScenarioInputGenerator:
         """
         n_threads = self.cfg_analysis.n_omp_threads
 
-        with open(inp_file_path, "r") as fp:
+        with open(inp_file_path) as fp:
             lines = fp.readlines()
 
         # Find and replace THREADS line in [OPTIONS] section
         in_options_section = False
-        threads_found = False
 
         for idx, line in enumerate(lines):
             # Track when we enter/exit OPTIONS section
@@ -275,7 +198,6 @@ class ScenarioInputGenerator:
             if in_options_section and line.strip().startswith("THREADS"):
                 # Preserve spacing format: "THREADS              {value}"
                 lines[idx] = f"THREADS              {n_threads}\n"
-                threads_found = True
                 break
 
         # Write back modified file
@@ -295,33 +217,33 @@ class ScenarioInputGenerator:
 
         Updates the scenario log to indicate files were created successfully.
         """
-        import rioxarray as rxr
         import geopandas as gpd
+        import rioxarray as rxr
+
         from .scenario import (
             extract_vertex_coordinates,
-            infer_side,
             find_closest_dem_coord,
+            infer_side,
         )
 
-        weather_timeseries = self.cfg_analysis.weather_timeseries
-        weather_event_indexers = self.scenario.weather_event_indexers
-        weather_time_series_storm_tide_datavar = (
-            self.cfg_analysis.weather_time_series_storm_tide_datavar
-        )
-        simulation_folders = self.scenario._analysis.analysis_paths.simulation_directory
+        weather_time_series_storm_tide_datavar = self.cfg_analysis.weather_time_series_storm_tide_datavar
         storm_tide_units = self.cfg_analysis.storm_tide_units
 
         dem_processed = self.system.sys_paths.dem_processed
         storm_tide_boundary_line_gis = self.cfg_analysis.storm_tide_boundary_line_gis
         ds_event_ts = self.scenario.ds_event_ts
-        df_water_levels = (
-            ds_event_ts[weather_time_series_storm_tide_datavar]
-            .reset_coords(drop=True)
-            .to_dataframe()
-            .dropna()
-        )[weather_time_series_storm_tide_datavar].to_frame()
+        df_water_levels = (ds_event_ts[weather_time_series_storm_tide_datavar].reset_coords(drop=True).to_dataframe())[
+            weather_time_series_storm_tide_datavar
+        ].to_frame()
 
-        tseries_diff_hrs = pd.Series(df_water_levels.index).diff().dt.seconds / 60 / 60  # type: ignore
+        # .dt.seconds is the SECONDS COMPONENT (0-86399) and silently wraps on a
+        # gap of >= 24 h; .dt.total_seconds() is the non-wrapping form. Contiguous
+        # steps are unaffected. The .dropna() that USED to justify this was removed by
+        # the [Q85] scrub, but the choice stands on a second ground: a non-uniform
+        # weather axis can still open a >= 24 h gap here, and the uniformity assertion
+        # in _weather_step_seconds fires from the post-write window-agreement guard,
+        # AFTER this writer has already run. Do not narrow this back to .dt.seconds.
+        tseries_diff_hrs = pd.Series(df_water_levels.index).diff().dt.total_seconds() / 60 / 60
         tseries_diff_hrs.loc[0] = 0
 
         df_water_levels["time_hr"] = tseries_diff_hrs.cumsum().values
@@ -335,20 +257,18 @@ class ScenarioInputGenerator:
         with open(self.scenario.scen_paths.extbc_tseries, "w") as f:
             f.write(wlevel_first_line + wlevel_second_line)
 
-        df_water_levels.to_csv(
-            self.scenario.scen_paths.extbc_tseries, mode="a", header=False
-        )
+        df_water_levels.to_csv(self.scenario.scen_paths.extbc_tseries, mode="a", header=False)
 
         self.scenario.log.extbc_tseries_created.set(True)
         # write external boundary condition location file
         rds_dem = rxr.open_rasterio(dem_processed)
-        gdf_bc = gpd.read_file(storm_tide_boundary_line_gis)  # type: ignore
+        gdf_bc = gpd.read_file(storm_tide_boundary_line_gis)
         str_line1 = "% BC Type, X1, Y1, X2, Y2, BC"
         gdf_row = gdf_bc.loc[0, :]
         vertices = extract_vertex_coordinates(gdf_row.geometry)
         lst_x = []
         lst_y = []
-        for vertex in vertices:  # type: ignore
+        for vertex in vertices:
             lst_x.append(vertex[0])
             lst_y.append(vertex[1])
         # find x and ys at edge of DEM representing the boundary condition
@@ -369,27 +289,3 @@ class ScenarioInputGenerator:
             f.write(str_line2 + "\n")
         self.scenario.log.extbc_loc_created.set(True)
         return
-
-
-def find_lowest_inv(node_to_keep, nodes):
-    """
-    Find nodes with the lowest invert elevation.
-
-    Helper function for identifying the most downstream node when multiple nodes
-    fall within the same DEM grid cell.
-
-    Parameters
-    ----------
-    node_to_keep : array-like
-        Node IDs to evaluate
-    nodes : DataFrame
-        DataFrame containing node information including InvertElev
-
-    Returns
-    -------
-    list
-        Node IDs with the lowest invert elevation
-    """
-    from .scenario import find_lowest_inv as scenario_find_lowest_inv
-
-    return scenario_find_lowest_inv(node_to_keep, nodes)

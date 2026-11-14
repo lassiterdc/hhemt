@@ -39,9 +39,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Main entry point for scenario preparation subprocess."""
-    parser = argparse.ArgumentParser(
-        description="Prepare a TRITON-SWMM scenario in a subprocess"
-    )
+    parser = argparse.ArgumentParser(description="Prepare a TRITON-SWMM scenario in a subprocess")
     parser.add_argument(
         "--event-iloc",
         type=int,
@@ -98,10 +96,10 @@ def main():
         help="Event id slug for the flag sidecar payload",
     )
     parser.add_argument(
-        "--sa-id",
+        "--member-id",
         type=str,
         default=None,
-        help="Sub-analysis id for the flag sidecar payload (sensitivity)",
+        help="Member id for the flag sidecar payload (sensitivity)",
     )
     parser.add_argument(
         "--target-partition",
@@ -151,26 +149,24 @@ def main():
         # the GPU build dir from these fields, so they MUST be injected here or a GPU prepare
         # finds build_dir_gpu=None and raises CompilationError("Log: missing"). Unlike
         # setup/simulation (which read --target-partition from the Snakefile), prepare is
-        # always per-single-sub-analysis, so the ensemble partition is unambiguous and read
+        # always per-single-member, so the ensemble partition is unambiguous and read
         # directly from the loaded analysis config — no Snakefile thread needed. The helper
         # returns (None, None) for null selectors, so CPU/local prepares are byte-identical.
-        cfg_hpc = (
-            load_hpc_system_config(args.hpc_system_config) if args.hpc_system_config else None
-        )
+        cfg_hpc = load_hpc_system_config(args.hpc_system_config) if args.hpc_system_config else None
         # The Snakefile's prepare rule carries --target-partition (the shared
         # UniqueSystemTarget's canonical partition) just like setup/sim — prefer it; fall
-        # back to the per-sub analysis config's hpc_ensemble_partition for direct CLI use
+        # back to the per-member config's hpc_ensemble_partition for direct CLI use
         # or a target without an explicit partition. resolve_gpu_target returns (None, None)
         # for null selectors, so CPU/local prepares stay byte-identical.
-        _partition = (
-            args.target_partition
-            or load_analysis_config(args.analysis_config).hpc_ensemble_partition
-        )
+        _partition = args.target_partition or load_analysis_config(args.analysis_config).hpc_ensemble_partition
         gpu_hardware, gpu_compilation_backend = resolve_gpu_target(cfg_hpc, _partition)
         system = TRITONSWMM_system(
             args.system_config,
             gpu_hardware=gpu_hardware,
             gpu_compilation_backend=gpu_compilation_backend,
+            # OBSERVER: same shape as run_simulation_runner — prepare reads compile
+            # state and must not rewrite the shared system_log.json (change 1028-1828).
+            skip_log_update=True,
         )
 
         logger.info(f"Loading analysis configuration from {args.analysis_config}")
@@ -199,9 +195,7 @@ def main():
             _emit_runner_flag(args)
             return 0
         else:
-            logger.error(
-                f"Scenario {args.event_iloc} preparation failed (log indicates incomplete)"
-            )
+            logger.error(f"Scenario {args.event_iloc} preparation failed (log indicates incomplete)")
             return 1
 
     except Exception as e:

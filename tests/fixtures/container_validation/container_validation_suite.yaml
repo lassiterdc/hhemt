@@ -14,7 +14,7 @@
 # consolidation's `check_cross_sim_identity(within_family=True)` compares the
 # container row against the native reference at IDENTICAL compute — yielding a
 # clean native ≡ container verdict. (check_cross_sim_identity anchors on the
-# lexicographically-first sa_id; "container" < "native", so the native row is
+# lexicographically-first member_id; "container" < "native", so the native row is
 # compared against the container reference. Same physics either way.)
 #
 # Compute = GPU single-rank (run_mode=gpu, n_gpus=1, n_mpi_procs=1) on an a100 node.
@@ -44,7 +44,8 @@ suite:
 # The native row ignores the `container:` block; the container row consumes it.
 hpc_system_config_container_block:        # paste into your hpc_system_config.yaml
   container:
-    sif_path: "/scratch/{your-allocation}/hhemt_uva_cuda.sif"   # transferred, signed SIF
+    sif_root: "/scratch/{your-allocation}/sifs"   # `hhemt build-sifs` writes every identity under it
+    builds_containers: true
     gpu_flag: "--nv"                       # UVA NVIDIA passthrough
     srun_mpi: "pmix"                       # container-own OpenMPI (UVA-only)
     # exe_in_sif / binds: see the example UVA profile; analysis_dir bind is appended by the seam.

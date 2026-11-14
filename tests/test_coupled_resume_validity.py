@@ -1,0 +1,1477 @@
+"""Unit tests for the Phase-2 TRITON pin-enforcement + coupled-resume-validity surface.
+
+Covers (per the plan's Validation Plan):
+  (a) ``_verify_tritonswmm_pin`` raises ``ConfigurationError`` when HEAD != pin and is a
+      no-op when ``branch_key`` is None;
+  (b) ``check_coupled_resume_validity`` — all four arms: pre-fix WARN, unstamped INFO,
+      no-coupled-model / no-resume pass, and post-fix-but-replay-marker-absent WARN;
+  (c) the interim ``check_coupled_hotstart_resume`` is removed.
+
+Exercised with lightweight ``SimpleNamespace`` stubs + a monkeypatched
+``_read_triton_provenance`` (the zarr read), mirroring ``test_resume_status_reporting.py``.
+"""
+
+from __future__ import annotations
+
+import logging
+import subprocess
+from types import SimpleNamespace
+
+import pandas as pd
+import pytest
+
+import hhemt.analysis_validation as av
+from hhemt.analysis_validation import check_coupled_resume_validity
+from hhemt.exceptions import ConfigurationError
+from hhemt.model_defects import SHA_EXTBC_GHOST_RING_FIX
+from hhemt.system import TRITONSWMM_system
+
+
+# ---------------------------------------------------------------------------
+# (a) _verify_tritonswmm_pin
+# ---------------------------------------------------------------------------
+def _git(repo, *args):
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def _init_repo(tmp_path):
+    repo = tmp_path / "triton"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, capture_output=True)
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "c1")
+    return repo
+
+
+def _pin_stub(repo, branch_key, sys_yaml):
+    return SimpleNamespace(
+        cfg_system=SimpleNamespace(
+            TRITONSWMM_branch_key=branch_key,
+            TRITONSWMM_software_directory=repo,
+        ),
+        system_config_yaml=sys_yaml,
+    )
+
+
+def test_verify_pin_noop_when_branch_key_none(tmp_path):
+    repo = _init_repo(tmp_path)
+    stub = _pin_stub(repo, None, tmp_path / "sys.yaml")
+    # No exception, no requirement that the clone even exist.
+    TRITONSWMM_system._verify_tritonswmm_pin(stub, verbose=False)
+
+
+def test_verify_pin_passes_when_head_matches(tmp_path):
+    repo = _init_repo(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+    stub = _pin_stub(repo, head, tmp_path / "sys.yaml")
+    TRITONSWMM_system._verify_tritonswmm_pin(stub, verbose=False)  # no raise
+
+
+def test_verify_pin_raises_when_head_differs(tmp_path):
+    repo = _init_repo(tmp_path)
+    first = _git(repo, "rev-parse", "HEAD")
+    # Advance HEAD so the pin (first commit) no longer equals HEAD, but still resolves.
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "c2")
+    stub = _pin_stub(repo, first, tmp_path / "sys.yaml")
+    with pytest.raises(ConfigurationError):
+        TRITONSWMM_system._verify_tritonswmm_pin(stub, verbose=False)
+
+
+def test_verify_pin_raises_when_pin_unresolvable(tmp_path):
+    repo = _init_repo(tmp_path)
+    stub = _pin_stub(repo, "0" * 40, tmp_path / "sys.yaml")  # well-formed but absent
+    with pytest.raises(ConfigurationError):
+        TRITONSWMM_system._verify_tritonswmm_pin(stub, verbose=False)
+
+
+# ---------------------------------------------------------------------------
+# (b) check_coupled_resume_validity — four arms
+# ---------------------------------------------------------------------------
+#: --------------------------------------------------------------------------
+#: Arm-B fixtures. READ THIS BEFORE EDITING.
+#:
+#: These tests originally CREATED `{scenario_directory}/logs/run_tritonswmm.log` and then
+#: asserted on it — the exact path production never writes (the vestigial
+#: ScenarioPaths.log_run_* convention). They were green because the fixture manufactured
+#: the file the check looked for, so the suite structurally could not detect that the
+#: check read NOTHING in production and passed vacuously on all 28 rows of
+#: synth_cc_resume. Two properties fix that, and BOTH must be preserved:
+#:
+#:   1. PRODUCER-BOUND: the fixture places its log by calling the REAL
+#:      `run_simulation.model_logfile_for` — the same function the check resolves through
+#:      and the runner writes through. If the convention changes, fixture and check move
+#:      together; if anyone hand-builds a path again, these tests fail. Stubbing the
+#:      resolver instead would re-commit the original defect one level up.
+#:   2. DECOY: every Arm-B test also writes a file at the OLD dead path whose marker
+#:      content is the INVERSE of the real log's. A check that reads the decoy returns the
+#:      inverted verdict, so each test FAILS against pre-fix code. Do NOT delete the decoys
+#:      as "unused fixtures" — they are the anti-regression, and without them three of
+#:      these tests pass vacuously against a check that reads nothing.
+#: --------------------------------------------------------------------------
+#:
+#: THIRD PREDICATE (per-exec resume discriminator). Every "this exec resumed" log must
+#: carry _CKPT, because the check's SCOPE gate keys on it: n_resumes is cumulative and
+#: never reset, so only the in-log [OK] marker proves the LAST exec resumed. A fixture
+#: that omits _CKPT is asserting a FRESH exec — which is a real, tested case
+#: (test_postfix_fresh_last_exec_is_out_of_scope), not an oversight. Literal shapes are
+#: taken verbatim from live logs (synth_cc_resume at the pin, 2026-07-16):
+#:     [..] Reading checkpoint files
+#:     [OK] Checkpoint files read
+#:     [..] SWMM exchange history replayed to t=3000 s (11435 steps); resuming live segment
+
+_CKPT_ATTEMPT = "[..] Reading checkpoint files\n"
+_CKPT = _CKPT_ATTEMPT + "[OK] Checkpoint files read\n"
+_REPLAY = "[..] SWMM exchange history replayed to t=3600 s (12 steps); resuming live segment\n"
+_ENDS = "Simulation ends\n"
+
+# Producing shas that stand in for the retired per-defect booleans. Each is a REAL commit whose
+# ancestry the registry resolved at authoring time, so these exercise the production read path
+# (no clone, cached sets) rather than a path production never takes.
+_SHA_PRE_REPLAY = "15eb18a5d25afe5da295cb4b559a62669dbe5bc3"  # replay PRESENT  (Arm A)
+_SHA_PRE_SCATTER = "b3820a448f304b3f732f4b6fac5564adf86ac333"  # replay absent, scatter PRESENT (Arm C)
+_SHA_POST_ALL = "9db367ddc79f86c7f708686d1dd805dc992fb0a4"  # replay + scatter both absent (Arm B)
+
+
+def _weather_indexer(event_iloc):
+    """Stand-in for ``_retrieve_weather_indexer_using_integer_index`` on a duck-typed analysis.
+
+    The production method projects the row at ``event_iloc`` of ``df_sims`` onto
+    ``cfg_analysis.weather_event_indices``. A stub has neither an events CSV nor a ``df_sims``
+    frame, so this returns a one-column indexer whose slug is a pure function of the ordinal --
+    which is all the resolver needs to mint a name. The STUB supplies weather INDEXERS; the
+    filename grammar stays in ``run_simulation``, so a stub can never become a second
+    expression of it.
+
+    Every stub that reaches ``model_logfile_for`` -- directly, through ``_write_real_log`` or
+    through any check that resolves the model log -- must carry this projection, because the
+    name is derived from the event's identity rather than from its row position.
+    """
+    return {"event": int(event_iloc)}
+
+
+def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None):
+    return SimpleNamespace(
+        _system=SimpleNamespace(
+            cfg_system=SimpleNamespace(toggle_tritonswmm_model=coupled),
+        ),
+        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity, is_experiment_member=False),
+        analysis_paths=SimpleNamespace(
+            analysis_datatree_zarr=None,
+            experiment_datatree_zarr=None,
+            simlog_directory=simlog_dir,
+        ),
+        df_status=df,
+        _retrieve_weather_indexer_using_integer_index=_weather_indexer,
+    )
+
+
+def _resumed_df(scenario_directory="", event_iloc=0, member_id=None, model_type="tritonswmm", column="member_id"):
+    row = {
+        "model_type": model_type,
+        "n_resumes": 2,
+        "scenario_directory": scenario_directory,
+        "event_iloc": event_iloc,
+    }
+    if member_id is not None:
+        row[column] = member_id
+    return pd.DataFrame([row])
+
+
+def _write_real_log(analysis, event_iloc, text, model_type="tritonswmm"):
+    """Place the log at the path the PRODUCER writes — resolved by the real convention.
+
+    `model_type` mirrors `_resumed_df`'s parameter of the same name and exists so the two
+    fixtures cannot disagree: the row declares which model it is, and the log must be
+    written where THAT model's log lives. A mismatched pair produces a test that passes
+    for the wrong reason -- a pure-TRITON row whose fixture sits at the coupled path is
+    EXAMINED only because the check's log read was itself hardcoded (see VMS-9D), so the
+    test goes green while the defect it pins is still present. Default preserves all
+    existing callers, every one of which passes three positional arguments.
+    """
+    from hhemt.run_simulation import model_logfile_for
+
+    p = model_logfile_for(analysis, event_iloc, model_type)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    return p
+
+
+def _write_dead_path_decoy(scen_dir, text):
+    """Write the OLD hand-built path — the check MUST NOT read this.
+
+    `{scenario_directory}/logs/run_tritonswmm.log` IS `ScenarioPaths.log_run_tritonswmm`
+    (scenario_directory == sim_folder; logs_dir == sim_folder/"logs"), the field nothing
+    writes. Content here is always the INVERSE of the real log's, so a regression back to
+    the hand-built path flips the verdict and fails the test.
+    """
+    p = scen_dir / "logs" / "run_tritonswmm.log"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    return p
+
+
+def test_coupled_off_without_resumes_is_na(monkeypatch):
+    """Coupled-off is N/A for a POPULATION reason, not a toggle reason.
+
+    Retired property: `test_coupled_off_is_na` asserted "not enabled" in the summary,
+    pinning the old toggle gate that returned N/A for EVERY pure-TRITON analysis. The
+    widening deliberately falsifies that universal -- a coupled-off arm WITH resumes is
+    now evaluated (see the companion test below). What survives is the narrower true
+    property: with nothing resumed there is nothing to verify.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: SHA_EXTBC_GHOST_RING_FIX)
+    res = check_coupled_resume_validity(_analysis_stub(coupled=False))
+    assert res.passed is True
+    assert res.applicable is False
+
+
+def test_coupled_off_with_resumes_is_evaluated(monkeypatch, tmp_path):
+    """THE arm that pins the widening: a pure-TRITON arm that resumed is EVALUATED.
+
+    Red before VMS-9/9B/9D (the toggle gate returned N/A on `coupled=False` before any
+    registry read), and red after VMS-9B alone (the row is selected but its log read is
+    keyed on a hardcoded "tritonswmm", so it counts INDETERMINATE and examined stays 0).
+    Green only once the log path follows the row's model_type.
+
+    `model_type="triton"` is passed to BOTH fixtures, once each. That pairing is the
+    coherence property VMS-9F exists to buy: a row declaring one model with its log
+    written at another's path is EXAMINED only via the very hardcoding VMS-9D removes,
+    i.e. a test that passes for the wrong reason.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: SHA_EXTBC_GHOST_RING_FIX)
+    a = _analysis_stub(
+        coupled=False,
+        df=_resumed_df(str(tmp_path), model_type="triton"),
+        simlog_dir=tmp_path / "logs" / "sims",
+    )
+    _write_real_log(a, 0, "start\n" + _CKPT + _REPLAY + _ENDS, model_type="triton")
+    res = check_coupled_resume_validity(a)
+    assert res.applicable is True, (
+        "a pure-TRITON arm that resumed must be EVALUATED, not N/A; "
+        f"got applicable={res.applicable!r} summary={res.summary!r}"
+    )
+
+
+def test_unstamped_is_indeterminate(monkeypatch):
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: None)
+    res = check_coupled_resume_validity(_analysis_stub(df=_resumed_df()))
+    assert res.passed is True
+    assert "unknown" in res.summary
+    assert res.details == []
+
+
+def test_prefix_with_resume_warns(monkeypatch):
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_PRE_REPLAY)
+    res = check_coupled_resume_validity(_analysis_stub(df=_resumed_df()))
+    assert res.passed is False
+    assert len(res.details) == 1
+    assert "pre-fix" in res.details[0]["detail"]
+
+
+def test_prefix_without_resume_is_na(monkeypatch):
+    """Pre-fix TRITON but NOTHING resumed: examined == 0, so the cell is N/A, not a PASS.
+
+    Renamed from `test_prefix_without_resume_passes` under EW-2b. `passed is True` alone no
+    longer describes the outcome — it is true of the N/A return as well — so the applicable
+    assertion is what keeps this test discriminating.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_PRE_REPLAY)
+    empty = pd.DataFrame([{"model_type": "tritonswmm", "n_resumes": 0, "scenario_directory": ""}])
+    res = check_coupled_resume_validity(_analysis_stub(df=empty))
+    assert res.passed is True
+    assert res.applicable is False, res.summary
+
+
+def test_postfix_missing_replay_marker_warns(monkeypatch, tmp_path):
+    """Resumed + complete last exec, no replay marker -> WARN. The only WARN case.
+
+    FAILS PRE-FIX: today the check reads the decoy (marker PRESENT) -> 0 details ->
+    passed=True, so `assert res.passed is False` fails.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, _CKPT + _ENDS)
+    _write_dead_path_decoy(scen, _CKPT + _REPLAY + _ENDS)  # inverse verdict
+    res = check_coupled_resume_validity(a)
+    assert res.passed is False
+    assert len(res.details) == 1
+    # WORDING RE-POINT (WP-2B), behaviour unchanged: the arm now reports that NEITHER
+    # resume mechanism fired, because "no replay marker" stopped meaning "no restore" the
+    # moment the snapshot path landed. `passed is False` and the 1-detail count above are
+    # the both-states properties; this line tracks the message.
+    assert "neither resume marker is present" in res.details[0]["detail"]
+    assert "1 resumed coupled model run examined" in res.summary
+
+
+def test_postfix_with_replay_marker_passes(monkeypatch, tmp_path):
+    """Resumed + complete + replayed -> PASS, and the denominator proves the check actually
+    examined the sim rather than skipping it.
+
+    FAILS PRE-FIX: today the check reads the decoy (marker ABSENT) -> 1 detail ->
+    passed=False, so `assert res.passed is True` fails. The denominator assertion is the
+    second lock: a vacuous pass reports "0 ... examined".
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, "start\n" + _CKPT + _REPLAY + _ENDS)
+    _write_dead_path_decoy(scen, _CKPT + _ENDS)  # inverse verdict
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []
+    assert "1 resumed coupled model run examined" in res.summary
+
+
+def test_postfix_unreadable_log_is_indeterminate(monkeypatch, tmp_path):
+    """No log at the producer path -> INDETERMINATE, counted, never a warn.
+
+    FAILS PRE-FIX: today the check reads the decoy (marker ABSENT) -> 1 detail ->
+    passed=False, so `assert res.passed is True` fails.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    # No _write_real_log — the producer path is absent.
+    _write_dead_path_decoy(scen, _CKPT + _ENDS)  # inverse verdict
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []
+    assert "0 resumed coupled model runs examined" in res.summary
+    assert "1 indeterminate" in res.summary
+
+
+def test_postfix_incomplete_last_exec_is_indeterminate(monkeypatch, tmp_path):
+    """The COMPLETION GATE. A resumed last exec walltime-killed BEFORE its replay carries
+    the checkpoint marker but neither the replay nor the completion marker; warning on it
+    would conflate a benign kill with the rank-0 silent-skip.
+
+    FAILS PRE-FIX: today the check reads the decoy (complete, no replay marker) -> 1 detail
+    -> passed=False, so `assert res.passed is True` fails. Pre-fix there is no gate at all.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, _CKPT + "running\n")  # resumed, then killed: no replay, no ends
+    _write_dead_path_decoy(scen, _CKPT + _ENDS)  # inverse verdict: would warn
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []
+    assert "1 indeterminate" in res.summary
+
+
+def test_postfix_fresh_last_exec_is_out_of_scope(monkeypatch, tmp_path):
+    """The SCOPE GATE, and the reason it exists. n_resumes is CUMULATIVE and never reset,
+    so a sim that resumed, lost its checkpoints (clear_raw / delete / force-rerun), and then
+    ran FRESH to completion still has n_resumes>=1 and legitimately carries NO replay
+    marker. Its data is VALID. Warning on it would be a false positive on good data.
+
+    A fresh exec is OUT OF SCOPE — not indeterminate (the replay question never applied) and
+    not examined (we tested nothing). The denominator must say so in its own words.
+
+    FAILS PRE-FIX: today there is no scope gate at all, so this row is complete-with-no-
+    replay-marker -> 1 detail -> passed=False, and `assert res.passed is True` fails. It
+    fails against the PRE-ADDENDUM spec too, which had no scope gate either — this test is
+    what the live checkpoint-marker evidence bought.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, "start\n" + _ENDS)  # NO _CKPT: this exec ran fresh
+    _write_dead_path_decoy(scen, _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []
+    assert "0 resumed coupled model runs examined" in res.summary
+    assert "1 out of scope" in res.summary
+    assert "indeterminate" not in res.summary  # out-of-scope is NOT indeterminate
+
+
+def test_postfix_partial_checkpoint_read_is_indeterminate(monkeypatch, tmp_path):
+    """The ANCHOR CHOICE. A checkpoint read that STARTS and does not complete, after which
+    the run reaches t=end, must NOT warn: the replay reads the exchange history FROM the
+    checkpoint set, so "the replay should have engaged" is unwarranted when the read never
+    took. Anchoring scope on the [..] attempt form instead of the [OK] completion form would
+    make this a FALSE WARN on fresh-and-complete data.
+
+    It is INDETERMINATE rather than out-of-scope: a half-read checkpoint set is a real
+    anomaly, just not the rank-0 silent-skip this arm names.
+
+    FAILS PRE-FIX: no scope gate -> complete + no replay marker -> 1 detail -> passed=False.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, _CKPT_ATTEMPT + _ENDS)  # attempt WITHOUT the [OK] completion
+    _write_dead_path_decoy(scen, _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []
+    assert "1 indeterminate" in res.summary
+    assert "out of scope" not in res.summary
+
+
+def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
+    """The SENSITIVITY BRANCH. A master's df_status carries member_id and its members'
+    logs live under {master}/logs/sims via the is_experiment_member branch of the convention.
+
+    FAILS PRE-FIX: today the check reads the decoy (marker PRESENT) -> passed=True, so
+    `assert res.passed is False` fails.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    master_dir = tmp_path / "master"
+    sub = SimpleNamespace(
+        cfg_analysis=SimpleNamespace(
+            is_experiment_member=True,
+            analysis_id="member_0",
+            experiment_cfg_yaml=master_dir / "cfg_analysis.yaml",
+        ),
+        # model_logfile_for now derives the master log dir from the sub's OWN analysis_dir
+        # (`.parent.parent`), so the stub must carry the real two-level layout.
+        analysis_paths=SimpleNamespace(
+            simlog_directory=tmp_path / "unused",
+            analysis_dir=master_dir / "members" / "member_0",
+        ),
+        _retrieve_weather_indexer_using_integer_index=_weather_indexer,
+    )
+    master = _analysis_stub(
+        sensitivity=True,
+        df=_resumed_df(str(scen), member_id="member_0"),
+        simlog_dir=tmp_path / "unused",
+    )
+    master.sensitivity = SimpleNamespace(members={"member_0": sub})
+    master.cfg_analysis.toggle_sensitivity_analysis = True
+    _write_real_log(sub, 0, _CKPT + _ENDS)  # resumed, complete, no replay marker -> WARN
+    assert (master_dir / "logs" / "sims" / "model_tritonswmm_member_0_evt-event.0.log").exists()
+    _write_dead_path_decoy(scen, _CKPT + _REPLAY + _ENDS)  # inverse verdict
+    res = check_coupled_resume_validity(master)
+    assert res.passed is False
+    assert len(res.details) == 1
+
+
+def test_model_logfile_method_delegates_to_free_function():
+    """THE CONVENTION LOCK. The producer-side method and the detector must resolve ONE
+    function. Two independent expressions of this convention is exactly what made the
+    replay arm inert.
+
+    FAILS PRE-FIX: `model_logfile_for` does not exist -> ImportError.
+    """
+    from pathlib import Path as _P
+
+    from hhemt.run_simulation import TRITONSWMM_run, model_logfile_for
+
+    a = SimpleNamespace(
+        analysis_paths=SimpleNamespace(simlog_directory=_P("/x/logs/sims")),
+        cfg_analysis=SimpleNamespace(is_experiment_member=False),
+        _retrieve_weather_indexer_using_integer_index=_weather_indexer,
+    )
+    run = SimpleNamespace(_analysis=a, _scenario=SimpleNamespace(event_iloc=7))
+    assert TRITONSWMM_run._analysis_level_model_logfile(run, "tritonswmm") == model_logfile_for(a, 7, "tritonswmm")
+    # Still a NAME assertion, against the event-identity form: the pin discriminates on the
+    # convention, not on the wording around it.
+    assert model_logfile_for(a, 7, "tritonswmm").name == "model_tritonswmm_evt-event.7.log"
+
+
+def test_sub_model_log_lives_under_experiment_dir_not_config_dir(tmp_path):
+    """THE WIPE-COVERAGE INVARIANT. A member's model runtime log MUST land inside the
+    MASTER's analysis_dir, so `run(from_scratch=True)`'s fast_rmtree(analysis_dir) removes it
+    along with the outputs it describes.
+
+    FAILS PRE-FIX: the old form derived the dir from experiment_cfg_yaml.parent, so with
+    the config placed outside analysis_dir (the synth case-builder's platformdirs layout, and
+    the ordinary production layout where the user's config is not at the analysis root) the
+    log landed outside the wipe. Empirically, that stranded 28/28 week-stale "Simulation ends"
+    logs and made every sim of the pure-TRITON resume arm skip execution.
+    """
+    from hhemt.run_simulation import model_logfile_for
+
+    master_dir = tmp_path / "scratch" / "exp"
+    config_dir = tmp_path / "cache" / "exp"  # deliberately NOT under master_dir
+    sub = SimpleNamespace(
+        cfg_analysis=SimpleNamespace(
+            is_experiment_member=True,
+            analysis_id="member_gpu_2_r1",
+            experiment_cfg_yaml=config_dir / "analysis_config.yaml",
+        ),
+        analysis_paths=SimpleNamespace(
+            simlog_directory=master_dir / "members" / "member_gpu_2_r1" / "logs" / "sims",
+            analysis_dir=master_dir / "members" / "member_gpu_2_r1",
+        ),
+        _retrieve_weather_indexer_using_integer_index=_weather_indexer,
+    )
+    p = model_logfile_for(sub, 0, "triton")
+    assert p == master_dir / "logs" / "sims" / "model_triton_member_gpu_2_r1_evt-event.0.log"
+    assert config_dir not in p.parents, "model log must not be anchored to the config dir"
+
+
+# ---------------------------------------------------------------------------
+# (c) interim check removed
+# ---------------------------------------------------------------------------
+def test_interim_check_removed():
+    assert not hasattr(av, "check_coupled_hotstart_resume")
+
+
+# ---------------------------------------------------------------------------
+# Cross-process carriage seam (R5): system-log -> stamp -> zarr root -> reader.
+# ---------------------------------------------------------------------------
+def test_provenance_stamp_read_roundtrip(tmp_path):
+    import xarray as xr
+
+    from hhemt.log import TRITONSWMM_system_log
+    from hhemt.processing_analysis import _stamp_triton_provenance
+    from hhemt.utils import write_datatree_zarr
+
+    # A real system log carrying compile-time provenance (the cross-process carrier).
+    sys_log = TRITONSWMM_system_log(logfile=tmp_path / "system_log.json")
+    sys_log.triton_head_sha.set("cafebabecafebabecafebabecafebabecafebabe")
+    sys_log.write()
+
+    zarr_path = tmp_path / "analysis_datatree.zarr"
+    analysis = SimpleNamespace(
+        _system=SimpleNamespace(log=sys_log),
+        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zarr_path, experiment_datatree_zarr=None),
+    )
+
+    tree = xr.DataTree.from_dict({"/": xr.Dataset(attrs={"analysis_id": "demo"})})
+    _stamp_triton_provenance(tree, analysis)
+    assert tree.attrs["triton_producing_sha"].startswith("cafebabe")
+    # The two per-defect boolean attrs are RETIRED; the sha is the whole stamp now.
+    assert "triton_has_coupled_resume_fix" not in tree.attrs
+    assert "triton_has_swmm_depth_scatter_fix" not in tree.attrs
+
+    write_datatree_zarr(tree, zarr_path)
+
+    sha = av._read_triton_provenance(analysis)
+    assert sha == "cafebabecafebabecafebabecafebabecafebabe"
+
+
+def test_provenance_stamp_graceful_absent_when_unstamped(tmp_path):
+    import xarray as xr
+
+    from hhemt.log import TRITONSWMM_system_log
+    from hhemt.processing_analysis import _stamp_triton_provenance
+
+    sys_log = TRITONSWMM_system_log(logfile=tmp_path / "system_log.json")  # fields unset
+    analysis = SimpleNamespace(_system=SimpleNamespace(log=sys_log))
+    tree = xr.DataTree.from_dict({"/": xr.Dataset()})
+    _stamp_triton_provenance(tree, analysis)
+    # Unset provenance -> attrs omitted (graceful-absent -> INDETERMINATE downstream).
+    assert "triton_producing_sha" not in tree.attrs
+    assert "triton_has_coupled_resume_fix" not in tree.attrs
+
+
+# --- _read_triton_provenance: the reader must not be inert -----------------------
+#
+# REGRESSION (Rivanna synth_cc_resume, 2026-07-15): the reader opened the tree with
+# chunks="auto", which raises NotImplementedError ("Can not use auto rechunking with
+# object dtype") on any tree carrying an object-dtype variable. The bare
+# `except Exception: return None, None` turned that into a silent INDETERMINATE, so
+# check_coupled_resume_validity's pre-fix warning was PERMANENTLY DISABLED on every
+# experiment and passed vacuously. The stamped tree was correct on disk
+# (triton_producing_sha=3a832f7d..., triton_has_coupled_resume_fix=True).
+
+
+def _fake_analysis_with_zarr(zarr_path):
+    return SimpleNamespace(
+        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=True),
+        analysis_paths=SimpleNamespace(experiment_datatree_zarr=zarr_path),
+    )
+
+
+def test_provenance_reader_does_not_use_auto_rechunking(tmp_path, monkeypatch):
+    """The reader consumes ONLY root attrs, so it must open WITHOUT auto-rechunking.
+    Re-introducing chunks="auto" makes an object-dtype tree unreadable and silently
+    renders the whole coupled-resume check inert -> this test fails."""
+    import xarray as xr
+
+    zarr_path = tmp_path / "sensitivity_datatree.zarr"
+    zarr_path.mkdir()
+
+    class _FakeTree:
+        attrs = {
+            "triton_producing_sha": "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4",
+        }
+
+    def _fake_open_datatree(path, **kwargs):
+        if kwargs.get("chunks") == "auto":
+            raise NotImplementedError("Can not use auto rechunking with object dtype")
+        return _FakeTree()
+
+    monkeypatch.setattr(xr, "open_datatree", _fake_open_datatree)
+
+    sha = av._read_triton_provenance(_fake_analysis_with_zarr(zarr_path))
+    assert sha == "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
+
+
+def test_provenance_reader_warns_but_never_raises_on_unexpected_failure(tmp_path, monkeypatch, caplog):
+    """An UNEXPECTED reader exception must not abort validation (the never-raises
+    contract) but must NOT be swallowed silently either — a silently-inert check is
+    exactly how the chunks="auto" defect stayed hidden."""
+    import xarray as xr
+
+    zarr_path = tmp_path / "sensitivity_datatree.zarr"
+    zarr_path.mkdir()
+
+    def _boom(path, **kwargs):
+        raise RuntimeError("unexpected zarr failure")
+
+    monkeypatch.setattr(xr, "open_datatree", _boom)
+
+    with caplog.at_level(logging.WARNING, logger="hhemt.analysis_validation"):
+        sha = av._read_triton_provenance(_fake_analysis_with_zarr(zarr_path))
+
+    assert sha is None  # graceful-absent, never raises
+    assert "INDETERMINATE" in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+def test_provenance_reader_is_quiet_on_genuinely_absent_tree(tmp_path, monkeypatch, caplog):
+    """A genuinely absent/unreadable tree (pre-provenance or off-checkout) stays on
+    the documented quiet graceful-absent path — no warning noise."""
+    import xarray as xr
+
+    zarr_path = tmp_path / "sensitivity_datatree.zarr"
+    zarr_path.mkdir()
+
+    def _absent(path, **kwargs):
+        raise FileNotFoundError("no such tree")
+
+    monkeypatch.setattr(xr, "open_datatree", _absent)
+
+    with caplog.at_level(logging.WARNING, logger="hhemt.analysis_validation"):
+        sha = av._read_triton_provenance(_fake_analysis_with_zarr(zarr_path))
+
+    assert sha is None
+    assert caplog.text == ""
+
+
+# --- Q4: durable per-sub replay-evidence stamp fallback (Arm B, log purged) -------
+#
+# When the "w"-mode last-exec log is gone (R7 purge / cache clear), Arm B falls back to the
+# `coupled_resume_replay_evidence` root attr stamped at consolidation time
+# (_stamp_coupled_resume_evidence). A stamped resumed+completed sub is EXAMINED (positive if
+# replayed, a real WARN if not) instead of the vacuous INDETERMINATE the purged log would force.
+
+
+def test_postfix_unreadable_log_durable_stamp_replayed_passes(monkeypatch, tmp_path):
+    """Q4: log purged but the durable stamp shows resumed+completed+replayed -> EXAMINED + PASS
+    (not a vacuous INDETERMINATE). This is exactly the synth_cc_resume situation the R7 purge
+    created, made durable so a future run never depends on a cache-resident last-exec log."""
+    import json
+
+    import xarray as xr
+
+    from hhemt.utils import write_datatree_zarr
+
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    # No _write_real_log — the producer log path is ABSENT (purged).
+    zarr_path = tmp_path / "analysis_datatree.zarr"
+    a.analysis_paths.analysis_datatree_zarr = zarr_path
+    evidence = {str(scen): {"resumed": True, "completed": True, "replayed": True}}
+    tree = xr.DataTree.from_dict({"/": xr.Dataset(attrs={"coupled_resume_replay_evidence": json.dumps(evidence)})})
+    write_datatree_zarr(tree, zarr_path)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []
+    assert "1 resumed coupled model run examined" in res.summary
+
+
+def test_postfix_unreadable_log_durable_stamp_not_replayed_warns(monkeypatch, tmp_path):
+    """DELIBERATE CONTRACT CHANGE (WP-2B) -- this case USED TO WARN and now reports
+    INDETERMINATE. The assertion below is inverted in place, at the original test name, so
+    the reversal is visible in the diff rather than appearing as a deletion plus an
+    unrelated addition. IT NEEDS A REVIEWER'S CONCURRENCE; the coder does not accept it.
+
+    Why the old verdict became unsafe. A v1 stamp carries `replayed: False` and no
+    `resume_mechanism`, and it was written by a toolkit that looked for the replay marker
+    and NOTHING ELSE. Once TRITON gained a second, CORRECT restore mechanism, that record
+    can no longer distinguish "nothing restored the state" (the defect) from "the snapshot
+    restored it" (valid, and the fast path). Reading it as the defect is the identical
+    fails-open move this package closes at `if not _ev.get("replayed"):` -- applied to the
+    historical corpus instead of the live one.
+
+    What is NOT lost. This is the stamp FALLBACK, reached only when the "w"-mode log has
+    been purged; a tree with its logs intact is unaffected and still answers exactly. The
+    row lands in the INDETERMINATE denominator, which the summary discloses, so the
+    unanswered question is visible rather than swallowed. And re-consolidating re-stamps at
+    v2 with the full answer, so the signal is recoverable at zero compute.
+
+    The cheap reversal, if the reviewer prefers the old verdict: gate the v1 fallback on
+    the tree's `triton_producing_sha` predating the snapshot mechanism (a cached set in
+    `model_defects.py`, the pattern that module already uses for ancestry-without-a-clone),
+    and return "none" rather than "indeterminate" for a pre-snapshot producer. It was not
+    taken here because it adds a registry surface for a case one re-consolidation clears.
+    """
+    import json
+
+    import xarray as xr
+
+    from hhemt.utils import write_datatree_zarr
+
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    zarr_path = tmp_path / "analysis_datatree.zarr"
+    a.analysis_paths.analysis_datatree_zarr = zarr_path
+    evidence = {str(scen): {"resumed": True, "completed": True, "replayed": False}}
+    tree = xr.DataTree.from_dict({"/": xr.Dataset(attrs={"coupled_resume_replay_evidence": json.dumps(evidence)})})
+    write_datatree_zarr(tree, zarr_path)
+    res = check_coupled_resume_validity(a)
+    assert res.details == [], "a v1 stamp that never measured the snapshot must not assert the defect"
+    assert "0 resumed coupled model runs examined" in res.summary
+    assert "1 indeterminate" in res.summary
+
+
+def test_resume_schedule_honored_warns_on_short_coupled_replay(tmp_path):
+    """Arm A: a coupled resume whose replay_t landed BELOW schedule[-1]*interval
+    (replay_matches_schedule=False in the durable stamp) is a warn. Disjoint from
+    check_coupled_resume_validity (which fires on marker ABSENCE): here the marker is
+    present but mis-positioned.
+    """
+    import json
+
+    import xarray as xr
+
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    zpath = tmp_path / "analysis_datatree.zarr"
+    ev = {
+        "member_0": {
+            "resumed": True,
+            "completed": True,
+            "replayed": True,
+            "replay_t": 300.0,
+            "expected_replay_t": 600.0,
+            "replay_matches_schedule": False,
+        }
+    }
+    ds = xr.Dataset({"placeholder": (("a",), [1])})
+    ds.attrs["coupled_resume_replay_evidence"] = json.dumps(ev, sort_keys=True)
+    ds.to_zarr(zpath, mode="w")
+
+    analysis = SimpleNamespace(
+        _system=SimpleNamespace(cfg_system=SimpleNamespace(toggle_tritonswmm_model=True, toggle_triton_model=False)),
+        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zpath, experiment_datatree_zarr=None),
+    )
+    res = check_resume_schedule_honored(analysis)
+    assert res.passed is False
+    assert res.name == "Resume schedule honored"
+    assert any("did not reach the last scheduled interruption" in d["detail"] for d in res.details)
+    assert "1 resumed model run schedule-verified" in res.summary  # disclosed denominator
+
+
+def _triton_arm_b_stub(df):
+    """Pure-TRITON (Arm B) analysis stub: no sensitivity, so _iter_members_or_self
+    yields (None, analysis) and the schedule is read off analysis.cfg_analysis."""
+    return SimpleNamespace(
+        _system=SimpleNamespace(cfg_system=SimpleNamespace(toggle_tritonswmm_model=False, toggle_triton_model=True)),
+        cfg_analysis=SimpleNamespace(
+            toggle_sensitivity_analysis=False,
+            resume_interruption_schedule=(36, 72, 108),
+        ),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=None, experiment_datatree_zarr=None),
+        df_status=df,
+    )
+
+
+def test_resume_schedule_honored_surfaces_unverifiable_when_no_realized_boundaries():
+    """Arm B: a resumed pure-TRITON sim whose COUNT matches the schedule but which
+    recorded NO realized boundaries must be surfaced as UNVERIFIABLE, not passed.
+
+    This is the re-sim silent-invalidation shape: re-running the resume arm over an
+    existing analysis dir without start_from_scratch leaves the prior campaign's
+    n_resumes in place, so no interruption arms (the gate is _n_done < len(schedule)),
+    the count check passes, and a tree with no realized-boundary list has nothing to
+    compare — every detector green over data the deterministic prune never touched.
+    Absence of evidence must not read as evidence of correctness.
+    """
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    # n_resumes == len(schedule) (count check passes) and NO resume_reporting_tsteps.
+    df = pd.DataFrame([{"model_type": "triton", "n_resumes": 3, "scenario_directory": "sim_0"}])
+    res = check_resume_schedule_honored(_triton_arm_b_stub(df))
+
+    assert any("cannot be verified" in d["detail"] for d in res.details), (
+        "a resumed sim with no realized boundaries must be surfaced, not silently passed"
+    )
+    assert any("start_from_scratch" in d["detail"] for d in res.details), (
+        "the detail must name the operational cause a reader can act on"
+    )
+
+
+def test_resume_schedule_honored_is_quiet_when_realized_boundaries_match():
+    """Regression guard for the fix above: a sim that DID record realized boundaries
+    matching the configured schedule is the verified-good case and must emit no detail."""
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    df = pd.DataFrame(
+        [
+            {
+                "model_type": "triton",
+                "n_resumes": 3,
+                "scenario_directory": "sim_0",
+                "resume_reporting_tsteps": [36, 72, 108],
+            }
+        ]
+    )
+    res = check_resume_schedule_honored(_triton_arm_b_stub(df))
+    assert res.details == [], f"verified-good sim should emit no detail, got {res.details}"
+
+
+# --- Arm C (S8): replayed SWMM node depths are never scattered to the ranks. ----------
+# The three-way fixture below is the whole contract: Arm C must fire ONLY on the post-fix
+# branch, must be suppressed where Arm A already fires (so a doubly-affected sim receives
+# one remedy rather than two contradictory ones), and must go quiet once the upstream
+# scatter fix lands. All three share a replay-marker-PRESENT log, which is what isolates
+# Arm C from Arm B — the replay ran; its result was then discarded.
+
+
+def test_armc_suppressed_when_arm_a_fires(monkeypatch, tmp_path):
+    """has_fix=False -> Arm A fires and Arm C does NOT, so exactly one detail per scenario.
+
+    Anchored on the DETAIL COUNT rather than on message wording: a count of 1 is true in
+    both the pre-fix and post-fix worlds, whereas asserting on Arm A's wording alone would
+    pass even if Arm C also appended a second, contradictory row.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_PRE_REPLAY)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, "start\n" + _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is False
+    assert len(res.details) == 1, "Arm C must not append a second detail on the pre-fix branch"
+    assert "pre-fix" in res.details[0]["detail"]
+
+
+def test_armc_fires_on_postfix_replayed_without_scatter(monkeypatch, tmp_path):
+    """has_fix=True, replay marker PRESENT, scatter absent -> Arm C fires.
+
+    This is the case Arms A and B are both silent on by construction, which is why the
+    fixture writes a complete, replayed log: Arm B passes on it, so a detail here can only
+    have come from Arm C.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_PRE_SCATTER)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, "start\n" + _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is False
+    assert len(res.details) == 1
+    assert "lacks the SWMM node-depth scatter" in res.details[0]["detail"]
+    assert "max_flood_depth / H / MH from this model run are invalid" in res.details[0]["detail"]
+    assert "lacking the SWMM node-depth scatter" in res.summary
+
+
+def test_armc_quiet_when_scatter_fix_present(monkeypatch, tmp_path):
+    """has_fix=True, scatter=True -> the arm goes quiet with no other code change.
+
+    This is the forward-compatibility assertion: when the upstream fix lands and the pin
+    constant is set, the ancestry stamp starts reporting True and this arm stops firing.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, "start\n" + _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []
+
+
+# --- EW-2b: a check that EXAMINED NOTHING has not applied (P7 generalized). ------------
+# `passed = len(details) == 0` cannot distinguish "examined 28, found nothing" from
+# "examined 0", and the second is a green cell asserting a verification that never ran.
+# Measured on the Iteration-5 combined report, three cells across BOTH models:
+# clean_tritonswmm/Coupled resume validity, clean_tritonswmm/Resume schedule honored, and
+# clean_triton/Resume schedule honored all rendered PASS carrying "(0 ... examined)".
+# The disclosed denominator (Gotcha-71(d)) is NOT a substitute — it lives behind a hover
+# title while the grid shows green.
+#
+# The gate is `examined == 0 AND not details`, and the second conjunct is load-bearing
+# rather than defensive: see test_armc_zero_examined_finding_is_not_silenced below.
+
+
+def test_coupled_zero_examined_is_na_not_a_green_pass(monkeypatch):
+    """No resumed coupled sim -> N/A, not PASS.
+
+    FAILS PRE-FIX: today this returns applicable=True with
+    "No coupled-resume invalidity detected (0 resumed coupled model runs examined)", which the
+    roll-up renderer draws as a green PASS.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    df = pd.DataFrame([{"model_type": "tritonswmm", "n_resumes": 0, "scenario_directory": ""}])
+    res = check_coupled_resume_validity(_analysis_stub(df=df))
+    assert res.applicable is False, res.summary
+    assert res.passed is True
+    assert res.details == []
+    # The denominator survives into the N/A summary — the reason stays legible on hover.
+    assert "0 resumed coupled model runs examined" in res.summary
+
+
+def test_coupled_examined_population_stays_a_real_pass(monkeypatch, tmp_path):
+    """A resumed sim that WAS examined and was clean stays a genuine PASS (applicable=True).
+
+    Pairs with the N/A test above: without this, the same three cells would go grey under a
+    change that made the check unconditionally inapplicable, which would destroy the real
+    finding rather than fix the vacuous one.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.applicable is True, res.summary
+    assert res.passed is True
+    assert "1 resumed coupled model run examined" in res.summary
+
+
+def test_armc_zero_examined_finding_is_not_silenced(monkeypatch, tmp_path):
+    """THE SILENCING GUARD — why the gate is `examined == 0 AND not details`.
+
+    Arm C (the SWMM node-depth scatter arm) appends a detail row for every resume candidate
+    WITHOUT incrementing `examined`: the counter is touched only on the Arm A and Arm B
+    paths. So a scatter-pin analysis whose per-sim logs were purged produces
+    examined == 0 WITH findings, and a bare `examined == 0` gate would convert that real
+    FAIL into a grey N/A — silencing exactly the class of finding this campaign's
+    resume_tritonswmm cell carries.
+
+    Green both before and after: it is a preservation test against a WRONG fix, not a
+    discriminator between pre and post.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_PRE_SCATTER)
+    scen = tmp_path / "sim_0"
+    # No _write_real_log: the producer path is absent, so Arm B concedes INDETERMINATE and
+    # `examined` stays 0 while Arm C still fires on the pin.
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    res = check_coupled_resume_validity(a)
+    assert res.details, "Arm C must have fired on the scatter-less pin"
+    assert "0 resumed coupled model runs examined" in res.summary, "the zero-examined shape is the premise"
+    assert res.applicable is True, f"Arm-C finding was silenced into N/A: {res.summary}"
+    assert res.passed is False
+
+
+def test_schedule_zero_examined_is_na_not_a_green_pass():
+    """No resumed sim -> N/A, not PASS. Covers BOTH clean arms' schedule cell.
+
+    FAILS PRE-FIX: today this returns applicable=True with "All resumed sims honored their
+    configured resume schedule (0 resumed model runs schedule-verified)".
+    """
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    df = pd.DataFrame([{"model_type": "triton", "n_resumes": 0, "scenario_directory": "sim_0"}])
+    res = check_resume_schedule_honored(_triton_arm_b_stub(df))
+    assert res.applicable is False, res.summary
+    assert res.passed is True
+    assert res.details == []
+    assert "0 resumed model runs schedule-verified" in res.summary
+
+
+def test_schedule_examined_population_stays_a_real_pass():
+    """A schedule-verified population stays a genuine PASS — the resume arms' cells."""
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    df = pd.DataFrame(
+        [
+            {
+                "model_type": "triton",
+                "n_resumes": 3,
+                "scenario_directory": "sim_0",
+                "resume_reporting_tsteps": [36, 72, 108],
+            }
+        ]
+    )
+    res = check_resume_schedule_honored(_triton_arm_b_stub(df))
+    assert res.applicable is True, res.summary
+    assert res.passed is True
+    assert "1 resumed model run schedule-verified" in res.summary
+
+
+def test_schedule_examined_population_still_fails():
+    """A real schedule violation still FAILS with applicable=True."""
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    df = pd.DataFrame(
+        [
+            {
+                "model_type": "triton",
+                "n_resumes": 5,
+                "scenario_directory": "sim_0",
+                "resume_reporting_tsteps": [36, 72, 108],
+            }
+        ]
+    )
+    res = check_resume_schedule_honored(_triton_arm_b_stub(df))
+    assert res.applicable is True
+    assert res.passed is False
+    assert res.details
+
+
+def test_clean_pin_with_resumed_sims_passes_positively(monkeypatch):
+    """VMS-12 + VMS-13: at a pin where every registry defect resolves ABSENT, a resumed
+    arm must PASS with a real denominator -- not FAIL, and not N/A.
+
+    PRE-FIX (before VMS-12) this FAILS with passed=False: TRITON-RESUME-EXTBC-GHOST-RING
+    carries trigger="resumed_any" and status="absent" at 5d2ad1e8, and the old
+    `_applicable` filtered on TRIGGER only, so it admitted "triton" into
+    _candidate_models on an arm the registry had just cleared. The 28 admitted rows then
+    failed the coupling-only replay-marker test. This is the shipped defect in generation
+    e389264af7b9, where synth_cc_resume_triton reported
+    "28 resumed coupled sim(s) ... lack the exchange-replay marker".
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: SHA_EXTBC_GHOST_RING_FIX)
+    res = check_coupled_resume_validity(_analysis_stub(coupled=False, df=_resumed_df(model_type="triton")))
+    assert res.passed is True, f"got passed={res.passed!r} summary={res.summary!r}"
+    assert res.applicable is True, "a clean pin with resumed sims is a POSITIVE pass, not N/A"
+    assert "no known resume defect" in res.summary
+
+
+def test_affected_pin_with_resumed_sims_still_selects(monkeypatch):
+    """OVER-FIRE arm: VMS-12 must not clear an arm whose pin genuinely carries a defect.
+
+    At 9db367dd, TRITON-RESUME-EXTBC-GHOST-RING resolves PRESENT (also_present_set), so
+    _affected is non-empty and the positive-PASS branch must NOT fire. Pins that the
+    status filter narrows selection without disabling it.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    res = check_coupled_resume_validity(_analysis_stub(coupled=False, df=_resumed_df(model_type="triton")))
+    assert "no known resume defect" not in res.summary, (
+        "the positive-PASS branch fired on a pin carrying a PRESENT defect"
+    )
+
+
+# ===========================================================================
+# WP-2B — TWO resume mechanisms. TRITON can now restore the coupled SWMM state
+# from a full-precision SNAPSHOT (`swmm_triton.h:963` @ 658a7a37) instead of
+# REPLAYING the exchange history. Both are correct; only "neither" is the
+# truncation defect. Every test below is a pure unit test over log TEXT, stamp
+# RECORDS, and the defect registry -- no compile, no solver, no synth fixture --
+# because none of the three consumers this package changes reads anything else.
+# ===========================================================================
+
+_SNAPSHOT = "[..] SWMM state restored from snapshot to t=3600 s (12 steps skipped); resuming live segment\n"
+_SHA_CAMPAIGN_TIP = "658a7a37032a95842e1662fe330190da24ffd4e8"
+#: The SAME branch one commit later, after WP-1C. Spelled as a LITERAL rather than imported
+#: from `model_defects`, so the assertion below discriminates on the registry's BEHAVIOUR
+#: rather than on the presence of a constant: importing the name would turn a regression that
+#: DROPS the sha from the sets into an ImportError at collection, and a regression that drops
+#: it from ONE set into a silent pass.
+_SHA_WP1C_TIP = "01e95a76ba4b7015d13b20423eb0e72ec1fb495c"
+#: A sha the registry has never heard of. Its INDETERMINATE verdict is the control arm: it is
+#: what every unregistered tip resolves to, and it is what the two assertions below would
+#: return if the registry entry under test were widened instead of extended.
+_SHA_UNREGISTERED = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+
+def test_resume_mechanism_from_log_discriminates_both_markers():
+    """One matcher, three verdicts. The marker literals are deliberately the same
+    `...to t=` shape, so the discriminator must be the literal, not the shape."""
+    from hhemt.analysis_validation import resume_mechanism_from_log
+
+    assert resume_mechanism_from_log(_CKPT + _SNAPSHOT + _ENDS) == "snapshot"
+    assert resume_mechanism_from_log(_CKPT + _REPLAY + _ENDS) == "replay"
+    assert resume_mechanism_from_log(_CKPT + _ENDS) == "none"
+
+
+def test_resume_mechanism_from_stamp_never_returns_a_falsy_value():
+    """THE POINT OF THE ACCESSOR. Every return is a non-empty string, so there is no
+    falsy value for a caller to write `if not ...` against -- the shape that made
+    `if not _ev.get("replayed"):` convert "I do not know" into "this run is invalid".
+    A caller must state WHICH mechanism it means, by equality."""
+    from hhemt.analysis_validation import resume_mechanism_from_stamp
+
+    for rec in (
+        None,
+        {},
+        {"resume_mechanism": "snapshot"},
+        {"resume_mechanism": "replay"},
+        {"resume_mechanism": "none"},
+        {"replayed": True},
+        {"replayed": False},
+        {"resume_mechanism": "garbage"},
+        "not a mapping",
+    ):
+        out = resume_mechanism_from_stamp(rec)
+        assert isinstance(out, str) and out, f"falsy/non-str verdict {out!r} for {rec!r}"
+        assert out in ("snapshot", "replay", "none", "indeterminate")
+
+
+def test_resume_mechanism_from_stamp_v2_and_v1_shapes():
+    """v2 answers directly. v1 carries no `resume_mechanism`, and its `replayed: False`
+    is INDETERMINATE rather than "none": the toolkit that wrote it never looked for a
+    snapshot marker, so an absent replay marker cannot distinguish "nothing restored"
+    (the defect) from "the snapshot restored it" (correct)."""
+    from hhemt.analysis_validation import resume_mechanism_from_stamp
+
+    assert resume_mechanism_from_stamp({"stamp_schema": 2, "resume_mechanism": "snapshot"}) == "snapshot"
+    assert resume_mechanism_from_stamp({"stamp_schema": 2, "resume_mechanism": "none"}) == "none"
+    # v1 positive observation is still exact.
+    assert resume_mechanism_from_stamp({"resumed": True, "completed": True, "replayed": True}) == "replay"
+    # v1 negative observation is an ABSENCE the v1 stamp never measured against.
+    assert resume_mechanism_from_stamp({"resumed": True, "completed": True, "replayed": False}) == "indeterminate"
+    assert resume_mechanism_from_stamp(None) == "indeterminate"
+
+
+def test_postfix_snapshot_restore_passes(monkeypatch, tmp_path):
+    """THE HEADLINE REGRESSION. A resumed, completed sim that restored from the SNAPSHOT
+    is VALID and must not be reported as the truncation defect.
+
+    FAILS PRE-FIX, and on a property true in BOTH states rather than on wording: the
+    pre-fix arm tested `_TRITON_REPLAY_MARKER not in text`, which is True for this log,
+    so pre-fix yields 1 detail and `passed is False`. Asserting `passed is True` and
+    `details == []` discriminates on BEHAVIOUR; the denominator assertion is the second
+    lock, because a check that skipped the row entirely would also produce 0 details.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, _CKPT + _SNAPSHOT + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True, f"a snapshot-restored resume was reported defective: {res.details!r}"
+    assert res.details == []
+    assert "1 resumed coupled model run examined" in res.summary
+
+
+def test_postfix_neither_marker_still_warns(monkeypatch, tmp_path):
+    """THE VIOLATING ARM of the same differential. Widening the accepted mechanism set
+    must not disarm the check: a resumed, completed exec carrying NEITHER marker is the
+    defect and must still produce a finding."""
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, _CKPT + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is False
+    assert len(res.details) == 1
+    assert "neither resume marker is present" in res.details[0]["detail"]
+    assert "1 resumed coupled model run examined" in res.summary
+
+
+def test_durable_stamp_v2_snapshot_passes_and_v2_none_warns(monkeypatch, tmp_path):
+    """The stamp FALLBACK (log purged) keys on the mechanism too. A v2 `snapshot` record
+    is a PASS; a v2 `none` record is the defect and still warns."""
+    import json
+
+    import xarray as xr
+
+    from hhemt.utils import write_datatree_zarr
+
+    for mech, expect_pass in (("snapshot", True), ("none", False)):
+        monkeypatch.setattr(av, "_read_triton_provenance", lambda a: _SHA_POST_ALL)
+        scen = tmp_path / f"sim_{mech}"
+        a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / mech / "logs" / "sims")
+        zarr_path = tmp_path / f"{mech}.zarr"
+        a.analysis_paths.analysis_datatree_zarr = zarr_path
+        ev = {str(scen): {"stamp_schema": 2, "resumed": True, "completed": True, "resume_mechanism": mech}}
+        tree = xr.DataTree.from_dict({"/": xr.Dataset(attrs={"coupled_resume_replay_evidence": json.dumps(ev)})})
+        write_datatree_zarr(tree, zarr_path)
+        res = check_coupled_resume_validity(a)
+        assert res.passed is expect_pass, f"mechanism={mech!r} -> passed={res.passed!r}"
+        assert "1 resumed coupled model run examined" in res.summary
+
+
+def test_schedule_honored_verifies_a_snapshot_restore(tmp_path):
+    """The fourth stamp consumer. A v2 stamp positions the resume from WHICHEVER marker
+    fired, so a snapshot restore short of the last configured boundary is now caught.
+
+    FAILS PRE-FIX on behaviour, not wording: pre-fix this consumer read only
+    `replay_matches_schedule`, which a snapshot restore never populates, so the row hit
+    the `is None` arm -- 0 examined, 0 details, silently unverified.
+    """
+    import json
+
+    import xarray as xr
+
+    from hhemt.analysis_validation import check_resume_schedule_honored
+
+    zpath = tmp_path / "analysis_datatree.zarr"
+    ev = {
+        "member_0": {
+            "stamp_schema": 2,
+            "resumed": True,
+            "completed": True,
+            "resume_mechanism": "snapshot",
+            "resume_t": 300.0,
+            "expected_replay_t": 600.0,
+            "resume_matches_schedule": False,
+            "replay_t": None,
+            "replay_matches_schedule": None,
+        }
+    }
+    ds = xr.Dataset({"placeholder": (("a",), [1])})
+    ds.attrs["coupled_resume_replay_evidence"] = json.dumps(ev, sort_keys=True)
+    ds.to_zarr(zpath, mode="w")
+
+    analysis = SimpleNamespace(
+        _system=SimpleNamespace(cfg_system=SimpleNamespace(toggle_tritonswmm_model=True, toggle_triton_model=False)),
+        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zpath, experiment_datatree_zarr=None),
+    )
+    res = check_resume_schedule_honored(analysis)
+    assert res.passed is False
+    assert "1 resumed model run schedule-verified" in res.summary
+    assert any("(snapshot) restored the coupled state to t=300.0s" in d["detail"] for d in res.details)
+
+
+def test_stamp_producer_records_the_mechanism(tmp_path, monkeypatch):
+    """The LOAD-BEARING half: `_stamp_coupled_resume_evidence` must record WHICH mechanism.
+    It has no registry gate and always runs, so whatever it writes is the most any
+    consumer can know once the "w"-mode log is purged."""
+    import json
+
+    import xarray as xr
+
+    from hhemt.processing_analysis import _stamp_coupled_resume_evidence
+
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    a.cfg_analysis.resume_interruption_schedule = None
+    a.cfg_analysis.TRITON_reporting_timestep_s = None
+    _write_real_log(a, 0, _CKPT + _SNAPSHOT + _ENDS)
+    tree = xr.DataTree.from_dict({"/": xr.Dataset()})
+    _stamp_coupled_resume_evidence(tree, a, df_status=a.df_status)
+    rec = json.loads(tree.attrs["coupled_resume_replay_evidence"])[str(scen)]
+    assert rec["stamp_schema"] == 2
+    assert rec["resume_mechanism"] == "snapshot"
+    assert rec["restored_from_snapshot"] is True
+    assert rec["replayed"] is False  # truthful: the REPLAY marker specifically did not fire
+    assert rec["resume_t"] == 3600.0
+    assert rec["replay_t"] is None
+
+
+def test_parse_resume_timestep_reads_either_marker(tmp_path):
+    """Fifth consumer (EDA b4b vline). Keyed on the replay literal alone it returned None
+    on every snapshot-restored sim -- a silent loss of the figure's resume boundary."""
+    from hhemt.eda.raw_byte_identity import parse_resume_timestep
+
+    snap = tmp_path / "snap.log"
+    snap.write_text(_CKPT + _SNAPSHOT + _ENDS)
+    assert parse_resume_timestep(snap) == 3600.0
+
+    rep = tmp_path / "rep.log"
+    rep.write_text(_CKPT + _REPLAY + _ENDS)
+    assert parse_resume_timestep(rep) == 3600.0
+
+    none = tmp_path / "none.log"
+    none.write_text(_CKPT + _ENDS)
+    assert parse_resume_timestep(none) is None
+
+
+#: The explicit-set rule each decisive status must come from. A registered sha resolves through
+#: one of exactly these two rules, so a status and a rule are not independent facts here --
+#: pinning the pair is what keeps a per-defect table as discriminating as the uniform
+#: `== "known_absent_set"` assertion it replaces.
+_RULE_FOR_STATUS = {"absent": "known_absent_set", "present": "also_present_set"}
+
+
+def _assert_expected_is_registry_total(expected: dict[str, str], *, where: str) -> None:
+    """Bidirectional set-equality between an expected-verdict mapping and the live `REGISTRY`.
+
+    WHY A TABLE AND NOT A UNIVERSAL QUANTIFIER. The assertions below used to read
+    `for d in REGISTRY: assert v.status == "absent"`. That form is an enumeration wearing a
+    quantifier's clothes: it was true only while every registered defect happened to be fixed
+    before these tips, and the fourth registry entry -- the first with `introduced_in` set --
+    falsified it. A universal quantifier fails with no instruction about what to add, which is
+    how one registry addition produced four reds in two files and no guidance in any of them.
+
+    This helper makes GROWTH a named diagnostic instead. An unlisted member and a stale listed
+    one BOTH fail loudly and by name, which is the bidirectional property
+    `test_field_bucket_is_total` already relies on elsewhere in this suite.
+
+    Deliberately NOT a plain `len(expected) == len(REGISTRY)`: equal counts with one swapped
+    id pass that check and leave a defect unasserted under a name nobody notices.
+    """
+    # Imported INSIDE the helper, matching this module's own convention: every other reference
+    # to REGISTRY here is function-local, which is what keeps the module clone-free at import.
+    from hhemt.model_defects import REGISTRY
+
+    listed = set(expected)
+    live = {d.defect_id for d in REGISTRY}
+    unlisted = live - listed
+    stale = listed - live
+    assert not unlisted, (
+        f"{where}: registry gained {sorted(unlisted)} and this table does not expect them. "
+        "Add each one's verdict at this sha -- measure it, do not assume it mirrors a sibling."
+    )
+    assert not stale, (
+        f"{where}: this table expects {sorted(stale)}, which REGISTRY no longer carries. "
+        "Remove the stale row rather than leaving a verdict nothing evaluates."
+    )
+
+
+def test_campaign_branch_tip_resolves_absent_on_every_registered_defect():
+    """Sub-item (a): the registry pin gate sits UPSTREAM of every marker arm. An
+    unregistered producing sha makes `check_coupled_resume_validity` early-return
+    "resume validity NOT verified" AND makes `check_known_resume_defects` -- which selects
+    on `status == "present"` -- read INDETERMINATE as ABSENT and return a clean bill.
+
+    The ghost-ring row is the one worth pinning: 658a7a37 is NOT a descendant of the
+    FORK's fix sha 5d2ad1e8 and its tree carries no `src/ghost_ring.h`, so both natural
+    probes say PRESENT. It descends from ORNL's `a38338b0`, which implements the same
+    fix inline in `output.h`, and that sha was already in the set.
+    """
+    from hhemt.model_defects import REGISTRY, resolve
+
+    #: Measured at this sha, per defect. The snapshot-traversal entry is PRESENT here because
+    #: 658a7a37 carries the snapshot payload without the fix -- its tree has
+    #: external/swmm/src/solver/snapshot.c with the pre-fix predicate -- and it reaches that
+    #: payload on a lineage the main-side introducer is not an ancestor of, so the verdict rests
+    #: on the explicit set rather than on ancestry.
+    expected = {
+        "TRITON-COUPLED-RESUME-REPLAY": "absent",
+        "TRITON-RESUME-DEPTH-SCATTER": "absent",
+        "TRITON-RESUME-EXTBC-GHOST-RING": "absent",
+        "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "present",
+        # Measured: snapshot.c present, the clean-start disposal key absent, and cf357e4b not
+        # an ancestor (rc 1), so the stale-snapshot-at-clean-start defect is carried here.
+        "TRITON-SNAPSHOT-STALE-AT-CLEAN-START": "present",
+        # Measured: neither the node-list fix nor the US-unit fix (1b797e6d, 65e7f681) is an
+        # ancestor of 658a7a37 (rc 1 each),
+        # so the three every-coupled-run defects are carried here (each `also_present_in`).
+        "TRITON-COUPLED-RIM-BELOW-CROWN": "present",
+        "TRITON-COUPLED-US-UNIT-RIM": "present",
+        "TRITON-COUPLED-LIST-MISALIGNED": "present",
+    }
+    _assert_expected_is_registry_total(expected, where="campaign branch tip")
+
+    verdicts = {d.defect_id: resolve(d, _SHA_CAMPAIGN_TIP) for d in REGISTRY}
+    assert verdicts, "registry is empty"
+
+    # THE PROPERTY: a registered tip is DECISIVE on every registered defect. This is what the
+    # docstring above actually argues for -- an `indeterminate` verdict is what
+    # `check_known_resume_defects` reads as absent and reports as a clean bill.
+    for did, v in verdicts.items():
+        assert v.status != "indeterminate", (
+            f"{did} resolved indeterminate ({v.detail}) at the campaign branch tip -- this sha is "
+            "registered, so every defect must resolve from an explicit set"
+        )
+        # The rule is pinned 1:1 to the expected status rather than widened to a two-member
+        # set: a decisive `absent` at a registered sha can only come from the explicit
+        # known-absent set, and a decisive `present` only from the explicit present set. The
+        # earlier form asserted `== "known_absent_set"` for every defect, which was a 1:1
+        # assertion over a uniform table; keeping it 1:1 over a non-uniform table is what
+        # stops this repair from weakening the instrument it edits.
+        assert v.rule == _RULE_FOR_STATUS[expected[did]], (did, v)
+
+    # THE TABLE: per-defect discrimination, so a regression flipping one of the three original
+    # absence claims cannot hide behind the decisiveness property above.
+    for did, v in verdicts.items():
+        assert v.status == expected[did], (
+            f"{did} resolved {v.status} ({v.detail}) at the campaign branch tip; expected {expected[did]}"
+        )
+    assert "TRITON-RESUME-EXTBC-GHOST-RING" in verdicts
+
+
+def test_wp1c_branch_tip_resolves_absent_on_every_registered_defect():
+    """Sub-item (a) RE-APPLIED at the tip WP-1C advanced the branch to.
+
+    The remedy the design routed is PER-SHA by construction -- an explicit set entry -- so
+    it lapses the moment the branch tip moves, and `WP-1C` moved it. Measured against the
+    pre-fix registry, `01e95a76` resolved `indeterminate` / `ancestry_unresolvable` on all
+    three defects, which re-opened BOTH consequences the `658a7a37` entry was added to
+    close: `check_coupled_resume_validity` early-returns "resume validity NOT verified"
+    before any marker arm runs, and `check_known_resume_defects` -- selecting on
+    `status == "present"` -- reads INDETERMINATE as ABSENT and returns an affirmative
+    clean bill.
+
+    The ghost-ring row is again the one worth pinning, and for the identical reason: the
+    two natural probes (`merge-base --is-ancestor 5d2ad1e8 01e95a7` -> rc 1,
+    `ls-tree 01e95a7 -- src/ghost_ring.h` -> 0 entries) both say PRESENT. The verdict rests
+    on descent from ORNL's `a38338b0`, re-measured rc 0 rather than inherited from the
+    parent tip's row.
+    """
+    from hhemt.model_defects import REGISTRY, resolve
+
+    #: Measured at this sha, per defect. PRESENT on the snapshot-traversal entry for the same
+    #: reason as the campaign tip: 01e95a76 carries the snapshot payload and not the fix.
+    expected = {
+        "TRITON-COUPLED-RESUME-REPLAY": "absent",
+        "TRITON-RESUME-DEPTH-SCATTER": "absent",
+        "TRITON-RESUME-EXTBC-GHOST-RING": "absent",
+        "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "present",
+        # Measured: snapshot.c present, the clean-start disposal key absent, and cf357e4b not
+        # an ancestor (rc 1), so the stale-snapshot-at-clean-start defect is carried here.
+        "TRITON-SNAPSHOT-STALE-AT-CLEAN-START": "present",
+        # Measured: neither the node-list fix nor the US-unit fix (1b797e6d, 65e7f681) is an
+        # ancestor of 01e95a76 (rc 1 each),
+        # so the three every-coupled-run defects are carried here (each `also_present_in`).
+        "TRITON-COUPLED-RIM-BELOW-CROWN": "present",
+        "TRITON-COUPLED-US-UNIT-RIM": "present",
+        "TRITON-COUPLED-LIST-MISALIGNED": "present",
+    }
+    _assert_expected_is_registry_total(expected, where="WP-1C branch tip")
+
+    verdicts = {d.defect_id: resolve(d, _SHA_WP1C_TIP) for d in REGISTRY}
+    assert verdicts, "registry is empty"
+
+    # THE PROPERTY: decisiveness at a registered tip.
+    for did, v in verdicts.items():
+        assert v.status != "indeterminate", (
+            f"{did} resolved indeterminate ({v.detail}) at the WP-1C branch tip -- this sha is "
+            "registered, so every defect must resolve from an explicit set"
+        )
+        # The rule is pinned 1:1 to the expected status rather than widened to a two-member
+        # set: a decisive `absent` at a registered sha can only come from the explicit
+        # known-absent set, and a decisive `present` only from the explicit present set. The
+        # earlier form asserted `== "known_absent_set"` for every defect, which was a 1:1
+        # assertion over a uniform table; keeping it 1:1 over a non-uniform table is what
+        # stops this repair from weakening the instrument it edits.
+        assert v.rule == _RULE_FOR_STATUS[expected[did]], (did, v)
+
+    # THE TABLE: per-defect discrimination.
+    for did, v in verdicts.items():
+        assert v.status == expected[did], (
+            f"{did} resolved {v.status} ({v.detail}) at the WP-1C branch tip; expected {expected[did]}"
+        )
+    assert "TRITON-RESUME-EXTBC-GHOST-RING" in verdicts
+
+
+def test_registering_a_tip_extends_the_sets_rather_than_widening_the_predicate():
+    """The paired guard: the fix must ADD one sha, not soften the rule.
+
+    Two ways to make the assertion above green are indistinguishable from its own output --
+    listing `01e95a76` explicitly (correct), or relaxing `resolve` so an unresolvable
+    ancestry stops reporting INDETERMINATE (catastrophic: it would certify every future
+    unregistered build as clean). This arm separates them by asserting on an input the fix
+    must NOT have touched.
+
+    The pre-fix sha arm is the mirror: a registry edit that accidentally reached the
+    `also_present_in` sets would turn a build that genuinely carries all three defects into
+    a clean bill, which is the failure direction with real data behind it.
+    """
+    from hhemt.model_defects import REGISTRY, resolve
+
+    for d in REGISTRY:
+        v = resolve(d, _SHA_UNREGISTERED)
+        assert v.status == "indeterminate", (d.defect_id, v)
+        assert v.rule == "ancestry_unresolvable", (d.defect_id, v)
+
+    #: Loop 2, as a table. 15eb18a5 predates the snapshot payload entirely -- its tree carries
+    #: no external/swmm/src/solver/snapshot.c -- so the snapshot-traversal entry is ABSENT here,
+    #: and that is a property of the sha rather than a hole in the control. Registering it as
+    #: present to keep this table uniform would assert a defect in code that is not there.
+    expected_pre_replay = {
+        "TRITON-COUPLED-RESUME-REPLAY": "present",
+        "TRITON-RESUME-DEPTH-SCATTER": "present",
+        "TRITON-RESUME-EXTBC-GHOST-RING": "present",
+        "TRITON-SNAPSHOT-TRAVERSAL-GUARD": "absent",
+        # No snapshot payload at 15eb18a5 (snapshot.c -> 0 entries), so no snapshot to leave.
+        "TRITON-SNAPSHOT-STALE-AT-CLEAN-START": "absent",
+        # Measured: neither the node-list fix nor the US-unit fix (1b797e6d, 65e7f681) is an
+        # ancestor of 15eb18a5 (rc 1 each),
+        # so the three every-coupled-run defects are carried here (each `also_present_in`).
+        "TRITON-COUPLED-RIM-BELOW-CROWN": "present",
+        "TRITON-COUPLED-US-UNIT-RIM": "present",
+        "TRITON-COUPLED-LIST-MISALIGNED": "present",
+    }
+    _assert_expected_is_registry_total(expected_pre_replay, where="pre-replay sha")
+    for d in REGISTRY:
+        v = resolve(d, _SHA_PRE_REPLAY)
+        assert v.status == expected_pre_replay[d.defect_id], (d.defect_id, v)

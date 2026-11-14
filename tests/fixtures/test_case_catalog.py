@@ -6,7 +6,7 @@ Provides a collection of pre-configured test cases for different scenarios:
 - Platform-specific HPC tests (UVA, Frontier)
 - Sensitivity analysis tests with various configurations
 
-Each method returns a retrieve_TRITON_SWMM_test_case instance with:
+Each method returns a retrieve_synth_TRITON_SWMM_test_case instance with:
 - Synthetic weather data
 - Platform-appropriate HPC configurations
 - Short simulation durations for fast testing
@@ -15,21 +15,18 @@ Each method returns a retrieve_TRITON_SWMM_test_case instance with:
 
 import os
 import re
-from dataclasses import dataclass
+import uuid
 from pathlib import Path
 
 import pandas as pd
-import platformdirs
 import pytest
 
-import hhemt.constants as cnst
-from hhemt.examples import NorfolkIreneExample
 from tests.fixtures import worktree_slug
+from tests.fixtures._triton_source_cache import slug_runs_root
 
 # Import from test fixtures
 from tests.fixtures.test_case_builder import (
     retrieve_synth_TRITON_SWMM_test_case,
-    retrieve_TRITON_SWMM_test_case,
 )
 
 
@@ -46,40 +43,6 @@ def _require_cpu_cores_for_sensitivity(min_cores: int = 4) -> None:
         pytest.skip(f"synth sensitivity suite requires >={min_cores} CPU cores; found {n}")
 
 
-def _load_norfolk_example_or_skip(**kwargs) -> "NorfolkIreneExample":
-    """Acquire the Norfolk Irene example, or skip when the data is unavailable.
-
-    Every Norfolk-example consumer in the suite (the conftest ``norfolk_*``
-    fixtures, the ``retrieve_norfolk_*`` case methods, and the ``ex_Nrflk``
-    sensitivity path) funnels through this helper, so gating here converts an
-    absent-data ERROR into a SKIP for all of them at a single point.
-
-    Mirrors the canonical gate in ``tests/test_case_study_catalog.py`` (which
-    wraps the identical ``NorfolkIreneExample.load``): under
-    ``HHEMT_REQUIRE_EXAMPLE_DATA=1`` (CI runners that cache the example data) a
-    load failure is re-raised as a hard error instead of a silent skip, so a
-    data-required run cannot pass vacuously. Bare ``pytest`` (test.yml) does not
-    set the flag, so a runner without the Norfolk data SKIPs rather than ERRORs.
-    """
-    try:
-        return NorfolkIreneExample.load(**kwargs)
-    except Exception as exc:
-        if os.environ.get("HHEMT_REQUIRE_EXAMPLE_DATA") == "1":
-            raise AssertionError(
-                f"Norfolk Irene example data required (HHEMT_REQUIRE_EXAMPLE_DATA=1) but load failed: {exc!r}"
-            ) from exc
-        pytest.skip(f"Norfolk Irene example data not available locally: {exc!r}")
-
-
-@dataclass
-class all_examples:
-    from hhemt.examples import TRITON_SWMM_example
-
-    @staticmethod
-    def ex_Nrflk(download_if_exists: bool = False) -> TRITON_SWMM_example:
-        return _load_norfolk_example_or_skip(download_if_exists=download_if_exists)
-
-
 class GetTS_TestCases:
     """
     Test case catalog for TRITON-SWMM toolkit.
@@ -90,8 +53,9 @@ class GetTS_TestCases:
     - Platform-specific HPC configurations (via analysis/system overlay dicts)
     - Isolated test directories
 
-    Platform-specific methods apply centralized analysis/system overlay dicts
-    (defined in case_study_catalog.py) to eliminate configuration duplication.
+    Platform-specific methods apply analysis/system overlay dicts supplied by
+    the caller (``analysis_overlay`` / ``system_overlay``) to eliminate
+    configuration duplication.
 
     Caching Strategy:
         Use start_from_scratch=False to reuse processed inputs from previous runs,
@@ -103,285 +67,8 @@ class GetTS_TestCases:
     ) -> None:
         pass
 
-    @classmethod
-    def _retrieve_norfolk_case(
-        cls,
-        n_events: int,
-        analysis_name: str,
-        start_from_scratch: bool,
-        download_if_exists=False,
-        analysis_overlay: dict | None = None,
-        system_overlay: dict | None = None,
-        example_data_dir: Path | None = None,
-        analysis_overrides: dict | None = None,
-        system_overrides: dict | None = None,
-        n_reporting_tsteps_per_sim=cnst.TEST_N_REPORTING_TSTEPS_PER_SIM,
-        TRITON_reporting_timestep_s=cnst.TEST_TRITON_REPORTING_TIMESTEP_S,
-        test_system_dirname=cnst.TEST_SYSTEM_DIRNAME,
-        hpc_system_config_yaml: Path | None = None,
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """
-        Internal helper to create Norfolk test cases.
-
-        Applies a base analysis/system overlay (analysis_overlay / system_overlay),
-        then per-call overrides (analysis_overrides / system_overrides) take precedence.
-
-        Args:
-            analysis_name: Name for the test analysis
-            n_events: Number of weather events
-            n_reporting_tsteps_per_sim: Timesteps per simulation
-            TRITON_reporting_timestep_s: Reporting interval in seconds
-            start_from_scratch: Whether to reprocess inputs
-            download_if_exists: Whether to re-download HydroShare data
-            analysis_overlay: Base analysis-config overlay dict
-            system_overlay: Base system-config overlay dict
-            analysis_overrides: Per-call analysis-config overrides (win over the overlay)
-            system_overrides: Per-call system-config overrides (win over the overlay)
-            example_data_dir: Override for data directory location
-            hpc_system_config_yaml: Optional path to an hpc_system_config YAML
-
-        Returns:
-            retrieve_TRITON_SWMM_test_case instance with configured system
-        """
-
-        # Example-platform overlay is the base; per-call overrides win (same
-        # precedence as the retired PlatformConfig.to_*_dict() | overrides).
-        # example_data_dir is now an explicit param (was a UVA-preset field).
-        final_analysis_configs = (analysis_overlay or {}) | (analysis_overrides or {})
-        final_system_configs = (system_overlay or {}) | (system_overrides or {})
-
-        example = _load_norfolk_example_or_skip(
-            download_if_exists=download_if_exists, example_data_dir=example_data_dir
-        )
-
-        nrflk_test = retrieve_TRITON_SWMM_test_case(
-            example=example,
-            analysis_name=analysis_name,
-            n_events=n_events,
-            n_reporting_tsteps_per_sim=n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=TRITON_reporting_timestep_s,
-            test_system_dirname=test_system_dirname,
-            start_from_scratch=start_from_scratch,
-            additional_analysis_configs=final_analysis_configs,
-            additional_system_configs=final_system_configs,
-            hpc_system_config_yaml=hpc_system_config_yaml,
-        )
-        return nrflk_test
-
 
 class Local_TestCases:
-    cpu_sensitivity = "cpu_benchmarking_analysis.xlsx"
-    cpu_sensitivity_swmm = "cpu_benchmarking_analysis_swmm.xlsx"
-
-    @classmethod
-    def retrieve_norfolk_cpu_config_sensitivity_case(
-        cls,
-        start_from_scratch: bool = False,
-        download_if_exists: bool = False,
-        hpc_system_config_yaml: Path | None = None,
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local CPU configuration sensitivity analysis test."""
-        analysis_name = "cpu_config_sensitivity"
-        sensitivity = all_examples.ex_Nrflk().test_case_directory / cls.cpu_sensitivity
-        analysis_overrides = {
-            "toggle_sensitivity_analysis": True,
-            "sensitivity_analysis": sensitivity,
-            # Inject the benchmarking sensitivity report config (the same
-            # report.sensitivity shape the synth tier uses) so
-            # cfg_analysis.report.sensitivity is populated. Without it the
-            # report falls back to {} -> sensitivity None -> ConfigurationError
-            # when PC_05/PC_06 render the sensitivity benchmarking figure.
-            "report": cls._load_synth_sensitivity_report_dict(),
-        }
-
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            analysis_overrides=analysis_overrides,
-            hpc_system_config_yaml=hpc_system_config_yaml,
-        )
-
-    @classmethod
-    def retrieve_norfolk_cpu_config_sensitivity_case_triton_only(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local CPU configuration sensitivity analysis test."""
-        analysis_name = "cpu_config_sensitivity_triton_only"
-        sensitivity = all_examples.ex_Nrflk().test_case_directory / cls.cpu_sensitivity
-        analysis_overrides = {
-            "toggle_sensitivity_analysis": True,
-            "sensitivity_analysis": sensitivity,
-            # Inject the benchmarking sensitivity report config (the same
-            # report.sensitivity shape the synth tier uses) so
-            # cfg_analysis.report.sensitivity is populated. Without it the
-            # report falls back to {} -> sensitivity None -> ConfigurationError
-            # when PC_05/PC_06 render the sensitivity benchmarking figure.
-            "report": cls._load_synth_sensitivity_report_dict(),
-        }
-        system_overrides = {
-            "toggle_triton_model": True,
-            "toggle_tritonswmm_model": False,
-            "toggle_swmm_model": False,
-        }
-
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            analysis_overrides=analysis_overrides,
-            system_overrides=system_overrides,
-        )
-
-    @classmethod
-    def retrieve_norfolk_cpu_config_sensitivity_case_swmm_only(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local CPU configuration sensitivity analysis test."""
-        analysis_name = "cpu_config_sensitivity_swmm_only"
-        sensitivity = all_examples.ex_Nrflk().test_case_directory / cls.cpu_sensitivity_swmm
-        analysis_overrides = {
-            "toggle_sensitivity_analysis": True,
-            "sensitivity_analysis": sensitivity,
-            # Inject the benchmarking sensitivity report config (the same
-            # report.sensitivity shape the synth tier uses) so
-            # cfg_analysis.report.sensitivity is populated. Without it the
-            # report falls back to {} -> sensitivity None -> ConfigurationError
-            # when PC_05/PC_06 render the sensitivity benchmarking figure.
-            "report": cls._load_synth_sensitivity_report_dict(),
-        }
-        system_overrides = {
-            "toggle_triton_model": False,
-            "toggle_tritonswmm_model": False,
-            "toggle_swmm_model": True,
-        }
-
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            analysis_overrides=analysis_overrides,
-            system_overrides=system_overrides,
-        )
-
-    @classmethod
-    def retrieve_norfolk_single_sim_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local single simulation test - fastest test case."""
-        analysis_name = "single_sim"
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-        )
-
-    @classmethod
-    def retrieve_norfolk_multi_sim_test_case(
-        cls,
-        start_from_scratch: bool = False,
-        download_if_exists: bool = False,
-        hpc_system_config_yaml: Path | None = None,
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local multi-simulation test with 2 events."""
-        analysis_name = "multi_sim"
-        system_overrides = {
-            "toggle_triton_model": True,
-            "toggle_tritonswmm_model": True,
-            "toggle_swmm_model": True,
-        }
-
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=2,
-            system_overrides=system_overrides,
-            hpc_system_config_yaml=hpc_system_config_yaml,
-        )
-
-    # ========== Multi-Model Test Cases ==========
-
-    @classmethod
-    def retrieve_norfolk_triton_only_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local TRITON-only test (no SWMM coupling)."""
-        analysis_name = "triton_only"
-        system_overrides = {
-            "toggle_triton_model": True,
-            "toggle_tritonswmm_model": False,
-            "toggle_swmm_model": False,
-        }
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            system_overrides=system_overrides,
-        )
-
-    @classmethod
-    def retrieve_norfolk_swmm_only_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local SWMM-only test (EPA SWMM without TRITON coupling)."""
-        analysis_name = "swmm_only"
-        system_overrides = {
-            "toggle_triton_model": False,
-            "toggle_tritonswmm_model": False,
-            "toggle_swmm_model": True,
-        }
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            system_overrides=system_overrides,
-        )
-
-    @classmethod
-    def retrieve_norfolk_all_models_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local test with all models enabled (TRITON, TRITON-SWMM, SWMM)."""
-        analysis_name = "all_models"
-        system_overrides = {
-            "toggle_triton_model": True,
-            "toggle_tritonswmm_model": True,
-            "toggle_swmm_model": True,
-        }
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            system_overrides=system_overrides,
-        )
-
-    @classmethod
-    def retrieve_norfolk_triton_and_tritonswmm_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Local test with TRITON and TRITON-SWMM (no standalone SWMM)."""
-        analysis_name = "triton_and_tritonswmm"
-        system_overrides = {
-            "toggle_triton_model": True,
-            "toggle_tritonswmm_model": True,
-            "toggle_swmm_model": False,
-        }
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            system_overrides=system_overrides,
-        )
-
     # ========== Synthetic Test Cases ==========
 
     @staticmethod
@@ -399,9 +86,11 @@ class Local_TestCases:
     def retrieve_synth_multi_sim_test_case(
         start_from_scratch: bool = False,
         skip_run: bool = False,
+        hpc_system_config_yaml: Path | None = None,
     ):
         return retrieve_synth_TRITON_SWMM_test_case(
             analysis_name="synth_multi_sim",
+            hpc_system_config_yaml=hpc_system_config_yaml,
             # Iter-2 of `per_sim_peak_flood_depth` (2026-04-28): bumped from 2
             # to 3 so the per-event peak-flood-depth maps cover the three
             # forcing-mechanism scenarios encoded in weather.py
@@ -458,6 +147,7 @@ class Local_TestCases:
     def retrieve_synth_cpu_config_sensitivity_case(
         start_from_scratch: bool = False,
         skip_run: bool = False,
+        hpc_system_config_yaml: Path | None = None,
     ):
         _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
@@ -466,6 +156,7 @@ class Local_TestCases:
         )
         return retrieve_synth_TRITON_SWMM_test_case(
             analysis_name="synth_sensitivity",
+            hpc_system_config_yaml=hpc_system_config_yaml,
             toggle_tritonswmm_model=True,
             toggle_triton_model=False,
             toggle_swmm_model=False,
@@ -535,20 +226,15 @@ class Local_TestCases:
     ):
         """Phase 1 R3 — row with both system_config_yaml AND system.* → ConfigurationError."""
         _require_cpu_cores_for_sensitivity()
-        dest_dir = (
-            Path(platformdirs.user_cache_dir("hhemt"))
-            / "synthetic_test_runs"
-            / worktree_slug()
-            / "_sensitivity_configs"
-        )
+        dest_dir = slug_runs_root(worktree_slug()) / "_sensitivity_configs"
         dest_dir.mkdir(parents=True, exist_ok=True)
-        per_sa_yaml = dest_dir / "synth_mutex_violation_row0_system.yaml"
-        per_sa_yaml.write_text("# placeholder per-sa system YAML for mutex-violation test\n")
+        per_member_yaml = dest_dir / "synth_mutex_violation_row0_system.yaml"
+        per_member_yaml.write_text("# placeholder per-member system YAML for mutex-violation test\n")
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
             analysis_name="synth_sensitivity_mutex_violation",
             model_subset="all",
             extra_columns={
-                "system_config_yaml": [str(per_sa_yaml), "", "", ""],
+                "system_config_yaml": [str(per_member_yaml), "", "", ""],
                 "system.target_dem_resolution": [1.0, None, None, None],
             },
         )
@@ -778,22 +464,40 @@ class Local_TestCases:
         )
 
     @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_bare_name_column(
+        start_from_scratch: bool = False,
+    ):
+        """A sensitivity table that holds the bare analysis_config field name `mem_gb_per_cpu`.
+
+        The construction raises a ConfigurationError that names `analysis.mem_gb_per_cpu`."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_bare_name_column",
+            model_subset="all",
+            extra_columns={
+                "mem_gb_per_cpu": [2, 2, 2, 2],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_bare_name_column",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+        )
+
+    @staticmethod
     def retrieve_synth_cpu_config_sensitivity_case_all_analysis_prefixed(
         start_from_scratch: bool = False,
     ):
-        """Phase 2 R2 — all analysis-config columns use the canonical `analysis.` prefix."""
+        """Phase 2 R2 — all analysis-config columns use the canonical `analysis.` prefix.
+
+        The default sensitivity table is prefixed throughout, so this case adds no columns."""
         _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
             analysis_name="synth_sensitivity_all_analysis_prefixed",
             model_subset="all",
-            drop_columns=["run_mode", "n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"],
-            extra_columns={
-                "analysis.run_mode": ["mpi", "openmp", "hybrid", "serial"],
-                "analysis.n_mpi_procs": [2, 1, 2, 1],
-                "analysis.n_omp_threads": [1, 2, 2, 1],
-                "analysis.n_gpus": [0, 0, 0, 0],
-                "analysis.n_nodes": [1, 1, 1, 1],
-            },
         )
         return retrieve_synth_TRITON_SWMM_test_case(
             analysis_name="synth_sensitivity_all_analysis_prefixed",
@@ -808,16 +512,12 @@ class Local_TestCases:
     def retrieve_synth_cpu_config_sensitivity_case_mixed_prefixed_columns(
         start_from_scratch: bool = False,
     ):
-        """Phase 2 R10 — mixed bare + `analysis.` + `system.` columns."""
+        """Phase 2 R10 — `analysis.` and `system.` columns together."""
         _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
             analysis_name="synth_sensitivity_mixed_prefixed_columns",
             model_subset="all",
-            drop_columns=["n_mpi_procs"],
             extra_columns={
-                # `n_omp_threads` retained as bare (deprecated path); `analysis.n_mpi_procs`
-                # introduced as canonical prefixed replacement.
-                "analysis.n_mpi_procs": [2, 1, 2, 1],
                 "system.target_dem_resolution": [1.0, 1.0, 2.0, 2.0],
             },
         )
@@ -841,7 +541,7 @@ class Local_TestCases:
         # start_from_scratch wipe of the analysis dir does not delete the CSV.
         # Per-worktree rooting matches test_case_builder so concurrent runs in
         # sibling worktrees do not race on the sensitivity CSV.
-        runs_root = Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_runs" / worktree_slug()
+        runs_root = slug_runs_root(worktree_slug())
         dest_dir = runs_root / "_sensitivity_configs"
         dest_dir.mkdir(parents=True, exist_ok=True)
         csv_path = dest_dir / f"{analysis_name}.csv"
@@ -853,28 +553,28 @@ class Local_TestCases:
         if model_subset in ("all", "triton"):
             df = pd.DataFrame(
                 {
-                    "sa_id": [0, 1, 2, 3],
-                    "run_mode": ["mpi", "openmp", "hybrid", "serial"],
-                    "n_mpi_procs": [2, 1, 2, 1],
-                    "n_omp_threads": [1, 2, 2, 1],
-                    "n_gpus": [0, 0, 0, 0],
-                    "n_nodes": [1, 1, 1, 1],
+                    "member_id": [0, 1, 2, 3],
+                    "analysis.run_mode": ["mpi", "openmp", "hybrid", "serial"],
+                    "analysis.n_mpi_procs": [2, 1, 2, 1],
+                    "analysis.n_omp_threads": [1, 2, 2, 1],
+                    "analysis.n_gpus": [0, 0, 0, 0],
+                    "analysis.n_nodes": [1, 1, 1, 1],
                 }
             )
         elif model_subset == "swmm":
             df = pd.DataFrame(
                 {
-                    "sa_id": [0, 1, 2],
-                    "run_mode": ["openmp", "openmp", "serial"],
-                    "n_mpi_procs": [1, 1, 1],
+                    "member_id": [0, 1, 2],
+                    "analysis.run_mode": ["openmp", "openmp", "serial"],
+                    "analysis.n_mpi_procs": [1, 1, 1],
                     # SWMM 5.2 clamps NumThreads=1 when Nobjects[LINK] < 4*NumThreads
                     # (project.c:269). The synth full SWMM model has 12 conduits, so it
                     # honors at most 3 threads (12 >= 4*3); 4 would silently clamp to 1
-                    # and fail the resource-match check. sa_0=3 gives a genuinely
+                    # and fail the resource-match check. member_0=3 gives a genuinely
                     # multithreaded run whose actual matches expected.
-                    "n_omp_threads": [3, 2, 1],
-                    "n_gpus": [0, 0, 0],
-                    "n_nodes": [1, 1, 1],
+                    "analysis.n_omp_threads": [3, 2, 1],
+                    "analysis.n_gpus": [0, 0, 0],
+                    "analysis.n_nodes": [1, 1, 1],
                 }
             )
         else:
@@ -888,8 +588,36 @@ class Local_TestCases:
                 df[col_name] = col_values
         if drop_columns:
             df = df.drop(columns=[c for c in drop_columns if c in df.columns])
-        assert all(re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["sa_id"]), (
-            "sa_id values must match ^[A-Za-z0-9_.]+$"
+        assert all(re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["member_id"]), (
+            "member_id values must match ^[A-Za-z0-9_.]+$"
         )
-        df.to_csv(csv_path, index=False)
+        # ATOMIC: every array element on every node writes the SAME path (the slug root is shared), and `to_csv`
+        # truncates its target before it writes, so a reader (`sensitivity_analysis.py` reads this CSV with
+        # `pandas.read_csv`) that opens it between the truncation and the write sees an empty file and raises
+        # `EmptyDataError`. Write a complete temporary file in the same directory and `os.replace` it onto the target:
+        # the target is always a whole file, old or new. The temporary name starts with `.` (so the suite's
+        # write-surface classifier reads it as a coordination file, not a payload collision), does not end in `.csv`
+        # (nothing that lists `*.csv` sees it) and carries the process id and a random token, so two writers never
+        # share one. Not established: that this is the cause of the setup `EmptyDataError` seen in counted array 1;
+        # the trace could not reproduce it.
+        #
+        # WRITE ONLY WHEN THE BYTES DIFFER. Every caller of one `analysis_name` passes the same frame, so after the
+        # first writer the target already holds these bytes and a replace per call only churns a path others read.
+        # The bytes are built in memory with the same parameters the file is written with, so what is compared is what
+        # would be written. A target that cannot be read (absent, a directory, no permission, any `OSError`) counts as
+        # different and takes the write path below unchanged. The compare may meet a concurrent replace and then sees
+        # the old or the new whole file, never a partial one, because every writer replaces.
+        payload = df.to_csv(index=False, lineterminator="\n").encode("utf-8")
+        try:
+            if csv_path.is_file() and csv_path.read_bytes() == payload:
+                return csv_path
+        except OSError:
+            pass
+        tmp_path = dest_dir / f".{csv_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        try:
+            df.to_csv(tmp_path, index=False, lineterminator="\n", encoding="utf-8")
+            os.replace(tmp_path, csv_path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
         return csv_path

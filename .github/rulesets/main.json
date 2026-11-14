@@ -15,13 +15,14 @@
       "parameters": {
         "required_approving_review_count": 0,
         "dismiss_stale_reviews_on_push": false,
+        "required_reviewers": [],
         "require_code_owner_review": false,
         "require_last_push_approval": false,
         "required_review_thread_resolution": false,
-        "allowed_merge_methods": ["squash", "rebase"]
+        "require_extra_approval_for_unattributed_changes": true,
+        "allowed_merge_methods": ["merge"]
       }
     },
-    { "type": "required_linear_history" },
     { "type": "non_fast_forward" },
     { "type": "deletion" },
     {
@@ -33,7 +34,9 @@
           { "context": "build (ubuntu-latest, 3.12)" },
           { "context": "anonymization-guard" },
           { "context": "docs-build" },
-          { "context": "citation-validate" }
+          { "context": "citation-validate" },
+          { "context": "compile-synth-render-gate" },
+          { "context": "release-pr-tree-identity" }
         ]
       }
     }

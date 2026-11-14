@@ -7,15 +7,14 @@ to a single hierarchical ``analysis_datatree.zarr`` with /triton/, /tritonswmm/,
 (non-destructive default; a future ``--cleanup`` flag would remove them after
 verification).
 """
+
 from __future__ import annotations
 
 from hhemt.version_migration.context import MigrationContext
 
 version_from: int = 2
 version_to: int = 3
-description: str = (
-    "Consolidate flat per-mode zarrs into hierarchical analysis_datatree.zarr"
-)
+description: str = "Consolidate flat per-mode zarrs into hierarchical analysis_datatree.zarr"
 
 _FLAT_STORE_NAMES = {
     "triton_summary": "triton_summary.zarr",
@@ -32,9 +31,7 @@ _TREE_SPEC = {
 
 def upgrade(ctx: MigrationContext) -> None:
     input_stores = {
-        key: ctx.target_dir / fname
-        for key, fname in _FLAT_STORE_NAMES.items()
-        if (ctx.target_dir / fname).exists()
+        key: ctx.target_dir / fname for key, fname in _FLAT_STORE_NAMES.items() if (ctx.target_dir / fname).exists()
     }
     if not input_stores:
         return  # nothing to consolidate (e.g., system_directory pass)

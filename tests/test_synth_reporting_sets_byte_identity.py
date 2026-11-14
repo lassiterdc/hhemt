@@ -27,30 +27,61 @@ from __future__ import annotations
 import os
 import re
 import sys
-import tempfile
 from pathlib import Path
 
-import platformdirs
 import pytest
+
+from hhemt.cache import paths as cache_paths
+from tests.fixtures._triton_source_cache import synthetic_runs_root
 
 _GOLDEN_DIR = Path(__file__).parent / "fixtures" / "reporting_sets_byte_identity"
 _CAPTURE = os.environ.get("CAPTURE_REPORTING_SET_GOLDENS") == "1"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_SYNTH_RUNS_ROOT = Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_runs"
-_SYNTH_MODELS_ROOT = Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_models"
-# The synth fixtures' runs_root is nested under pytest's tmp base (Phase 1's
-# `runs_root_override` isolation), so the goldens bake `{tmpdir}/pytest-of-{user}/
-# pytest-{N}/{basetemp}/...`. Only the `{tmpdir}/pytest-of-{user}/pytest-{N}` prefix
-# is volatile (the per-invocation counter increments and the user/tmpdir are
-# machine-specific); the nodeid-derived `{basetemp}` is deterministic, so it is left
-# intact as real signal. Without this mask the goldens stay machine- and run-bound.
-_PYTEST_TMP_RE = re.compile(re.escape(tempfile.gettempdir()) + r"/pytest-of-[^/]+/pytest-\d+")
+_SYNTH_RUNS_ROOT = synthetic_runs_root()
+_SYNTH_MODELS_ROOT = cache_paths.synthetic_models_root()
+# The synth fixtures' runs_root is nested under pytest's tmp base (the fixtures set
+# `HHEMT_TEST_RUNS_ROOT_OVERRIDE` from `tmp_path` / `tmp_path_factory.mktemp`), so the
+# goldens bake `{basetemp}/{nodeid-slug}/...`. Only the basetemp PREFIX is volatile; the
+# nodeid-derived slug is deterministic and is left intact as real signal.
+#
+# ASK PYTEST FOR THE BASETEMP, NEVER MATCH ITS SHAPE. The basetemp is CHOSEN by the
+# invoker, not discoverable by pattern: the Rivanna suite harness passes an explicit
+# `--basetemp=$TMPDIR/hhemt-suite-{run_id}-{cid}`, which no `pytest-of-*/pytest-N`
+# pattern can ever match, so a shape-matching mask leaves the whole basetemp unmasked
+# off-laptop. A shape mask is stale-by-construction for a value another program picks:
+# the harness may rename that directory at any time. `getbasetemp()` is the authority
+# pytest itself uses to build every `tmp_path`, so masking its literal string tracks
+# whatever the invoker chose. It is also always RESOLVED, which a mask built from
+# `tempfile.gettempdir()` is not -- so this additionally covers a symlinked `$TMPDIR`,
+# where the two disagree and the shape mask silently matches nothing.
+_PYTEST_BASETEMP: str | None = None
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _capture_pytest_basetemp(tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Stash this invocation's effective pytest basetemp for `_normalize_volatile`."""
+    global _PYTEST_BASETEMP
+    _PYTEST_BASETEMP = str(tmp_path_factory.getbasetemp())
+
+
 # Model-cache source-path attributions appear as variable-depth ``../``-relative paths
 # (``os.path.relpath`` from the deep analysis dir climbs to ``/`` then descends through
 # the absolute home dir into the out-of-repo model cache). The ``../`` depth varies with
 # tree nesting and the descended segment bakes the machine home — mask both, mirroring
-# suite-1's ``{HOME_REL}`` pattern, while preserving the content-hash dir + filename.
-_SYNTH_MODELS_REL_RE = re.compile(r"(?:\.\./)+" + re.escape(str(_SYNTH_MODELS_ROOT).lstrip("/")))
+# suite-1's ``{HOME_REL}`` pattern, while preserving the FILENAME. The content-hash dir
+# is masked separately below (it is a fixture-generator content-address, not dispatch
+# signal — see the ``{HASH}`` mask in ``_normalize_volatile``).
+# ANCHOR ON THE SUBSTITUTED TOKEN, NOT ON THE ROOT TEXT. A ``../``-relative path
+# CONTAINS the absolute root as a substring — the root's leading ``/`` is supplied by
+# the final ``../`` of the climb — so the absolute replace in ``_normalize_volatile``
+# fires INSIDE the relative path, and by the time any root-anchored relative regex runs
+# its anchor text is already gone. Anchoring on ``{SYNTH_MODELS}`` and running AFTER the
+# absolute replace strips whatever ``../`` climb and resolved-home descent precedes the
+# token, which is the only part that differs between a symlinked-$HOME cluster
+# (``../../..{RESOLVED_HOME_SEGMENTS}{SYNTH_MODELS}``) and a non-symlinked laptop
+# (``../../..{SYNTH_MODELS}``). The FILENAME and the content-hash dir are preserved, and
+# a ``../`` path carrying no ``{SYNTH_MODELS}`` token is left untouched.
+_SYNTH_MODELS_PREFIX_RE = re.compile(r"(?:\.\./)+[^'\"\s]*?(?=\{SYNTH_MODELS\})")
 
 
 def _normalize_volatile(text: str) -> str:
@@ -60,15 +91,24 @@ def _normalize_volatile(text: str) -> str:
     were captured against. The synth caches live under ``platformdirs`` user-cache
     (outside ``_REPO_ROOT``), so each needs its own mask beyond suite-1's ``{REPO_ROOT}``.
     Genuine generation-logic tokens (rule names, resources, command shape, source-path
-    attributions) are left intact so real drift still fails the assertion.
+    FILE IDENTITY and path STRUCTURE) are left intact so real drift still fails the
+    assertion; only the environment-derived cache-key hash WITHIN a source path is masked.
     """
     text = text.replace(sys.executable, "{PYTHON}")
     text = text.replace(str(_REPO_ROOT), "{REPO_ROOT}")
-    text = _PYTEST_TMP_RE.sub("{PYTEST_TMP}", text)  # pytest tmp base (counter/user/tmpdir)
+    if _PYTEST_BASETEMP:  # this invocation's basetemp, whatever the invoker chose
+        text = text.replace(_PYTEST_BASETEMP, "{PYTEST_TMP}")
     text = text.replace(str(_SYNTH_RUNS_ROOT), "{SYNTH_RUNS}")
     text = re.sub(r"\{SYNTH_RUNS\}/[^/\"' ]+", "{SYNTH_RUNS}/{WT}", text)  # mask worktree slug
     text = text.replace(str(_SYNTH_MODELS_ROOT), "{SYNTH_MODELS}")  # absolute form (if any)
-    text = _SYNTH_MODELS_REL_RE.sub("{SYNTH_MODELS}", text)  # variable-depth ../-relative form
+    text = _SYNTH_MODELS_PREFIX_RE.sub("", text)  # ../-climb + resolved-home prefix left by the replace above
+    # The synth-model cache-dir NAME is a 16-hex `_cache_key` over
+    # SyntheticModelParams + toolkit version + SHA-1 of every
+    # src/hhemt/synthetic_model/*.py (cache.py). Any generator-source edit or
+    # version bump rotates it, so it is volatile w.r.t. this suite (which pins
+    # generation logic, not the synth-model identity). Mask it exactly like the
+    # {SYNTH_MODELS} root so a cache-key rotation cannot stale the goldens.
+    text = re.sub(r"(\{SYNTH_MODELS\})/[0-9a-f]{16}/", r"\1/{MODEL_KEY}/", text)
     return text
 
 
@@ -93,7 +133,7 @@ def test_multisim_default_byte_identical(synth_multi_sim_analysis):
     builder = synth_multi_sim_analysis._workflow_builder
     generated = builder.generate_snakefile_content(
         process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
     )
@@ -115,3 +155,248 @@ def test_reprocess_master_byte_identical(synth_sensitivity_analysis):
     builder = synth_sensitivity_analysis.sensitivity._workflow_builder
     generated = builder.generate_reprocess_master_snakefile_content(which="both", start_with="render")
     _check(generated, "benchmarking_reprocess_master.Snakefile")
+
+
+_RULE_RE = re.compile(r"(?m)^rule ([A-Za-z0-9_]+):")
+
+# predicate name -> the predicate_inputs KEY that predicate reads. NOT derivable from
+# the name: three of the five coincide and two do not, which is exactly enough
+# coincidence to survive a spot check. Verbatim from workflow.py's lambda bodies.
+_PREDICATE_INPUT_KEY = {
+    "has_independent_vars": "independent_vars",
+    "has_member_event_pairs": "member_event_pairs_member",
+    "has_eda_artifact": "has_eda_artifact",
+    "has_preserved_raw_outputs": "has_preserved_raw_outputs",
+    "has_swmm_link_outputs": "has_swmm_link_outputs",
+}
+
+
+def _emitted_rule_names(content: str) -> list[str]:
+    """Every rule name in generated Snakefile text.
+
+    The character class is established from the REGISTRY, not from the three names
+    an author happens to be looking at: `plot_raw_byte_identity` carries a digit,
+    so `[a-z_]+` drops it from BOTH sides of A1a's comparison and passes green on a
+    composition that dropped the b4b family entirely. Anchored at both ends so it
+    cannot match the word "rule" inside a docstring or a shell string.
+    """
+    return _RULE_RE.findall(content)
+
+
+def _renderer_vocabulary() -> set:
+    """Every rule_name any registered set declares -- the live read that separates
+    renderer rules from workflow rules. TEMPLATES, not selections."""
+    from hhemt.report_renderers._reporting_sets import REPORTING_SETS
+
+    return {
+        t.rule_name for s in REPORTING_SETS.values() for sel in s.renderer_selection for t in sel.rule_spec_template
+    }
+
+
+def _assert_predicate_inputs_complete(composed, predicate_inputs):
+    """PRECONDITION of A1a, not a separate test -- its whole value is running on the
+    same call. Every _RENDERER_PREDICATES entry is `bool(inp.get(...))`, so a MISSING
+    key is indistinguishable from False: the template silently drops out of `passing`
+    and A1a stops checking it.
+    """
+    from hhemt.workflow import _ReportingSetDispatchMixin
+
+    # Co-sourcing guard: a new predicate without a mapping entry fails HERE rather than
+    # silently widening the hole this precondition exists to close.
+    assert set(_PREDICATE_INPUT_KEY) == set(_ReportingSetDispatchMixin._RENDERER_PREDICATES), (
+        "_PREDICATE_INPUT_KEY has drifted from _RENDERER_PREDICATES: "
+        f"{set(_ReportingSetDispatchMixin._RENDERER_PREDICATES) ^ set(_PREDICATE_INPUT_KEY)}"
+    )
+    required = {
+        _PREDICATE_INPUT_KEY[k]
+        for sel in composed.renderer_selection
+        for k in (sel.predicate_key, *(t.predicate_key for t in sel.rule_spec_template))
+        if k is not None
+    }
+    missing = sorted(required - set(predicate_inputs))
+    assert not missing, (
+        f"predicate_inputs is missing {missing}; a missing key reads as False and would "
+        "silently remove those templates from A1a's expectation"
+    )
+
+
+def assert_a1a_no_duplication_or_omission(content: str, composed, passing_rule_names: set) -> None:
+    """A1a: exactly one emitted rule per predicate-PASSING composed template.
+
+    The predicate qualifier is load-bearing: has_eda_artifact depends on whether the
+    fixture carries an EDA artifact, so an unqualified A1a reddens on a property of
+    the fixture rather than of the code -- and the natural repair for that is to
+    change the fixture until it passes.
+    """
+    emitted = _emitted_rule_names(content)
+    for name in sorted(passing_rule_names):
+        assert emitted.count(name) == 1, f"A1a: rule {name!r} emitted {emitted.count(name)} times, expected exactly 1"
+
+
+def assert_a1b_no_over_emission(content: str, composed) -> None:
+    """A1b: no emitted rule from the renderer vocabulary that the composed set does
+    not carry. Catches a renderer emitted from a set the config never named -- the
+    mirror of the drop, which neither A1a nor A2 sees."""
+    composed_names = {t.rule_name for sel in composed.renderer_selection for t in sel.rule_spec_template}
+    strays = sorted((set(_emitted_rule_names(content)) & _renderer_vocabulary()) - composed_names)
+    assert not strays, f"A1b: renderer rules emitted from an unnamed set: {strays}"
+
+
+def assert_a2_no_silent_drop(composed, member_names) -> None:
+    """A2: the composed template MULTISET reduced to names with multiplicity one
+    equals the UNION of the members' name sets.
+
+    A1a cannot see a first-wins drop -- a composition missing four templates is
+    internally consistent and passes A1a green. Only A2 compares the composition
+    against its INPUTS. The length assertion below is a CONSTRUCTOR tripwire, not
+    merge coverage: compose_reporting_sets already enforces it by de-duplicating on
+    rule_name, so its value is catching a later edit to the constructor.
+    """
+    from hhemt.report_renderers._reporting_sets import REPORTING_SETS
+
+    templates = [t for sel in composed.renderer_selection for t in sel.rule_spec_template]
+    names = [t.rule_name for t in templates]
+    assert len(templates) == len(set(names)), (
+        f"A2 constructor tripwire: {len(templates)} templates carry {len(set(names))} "
+        "distinct rule_names -- the merge emitted a duplicate"
+    )
+    expected = set()
+    for m in member_names:
+        expected |= {t.rule_name for sel in REPORTING_SETS[m].renderer_selection for t in sel.rule_spec_template}
+    assert set(names) == expected, (
+        "A2: composition is not the union of its members.\n  dropped: "
+        f"{sorted(expected - set(names))}\n  added: {sorted(set(names) - expected)}"
+    )
+
+
+def test_composed_master_byte_identical(synth_sensitivity_analysis):
+    """ADDITIVE fourth golden: [dem-resolution, compute-sensitivity].
+
+    This pair and not another: it is the only admissible pair whose composed EDA
+    TEMPLATE count (5) differs from BOTH members' (4 and 1), so a first-wins drop
+    changes the emitted rule count. [benchmarking, sensitivity] is a pure-subset
+    pair whose composition is indistinguishable from benchmarking alone.
+
+    A golden captured in the session that authors the composition records whatever
+    the composition produced -- a photograph, not a pin. The three assertions above
+    are what make it a pin: they state what composition must produce independently
+    of what it did produce. Run them BEFORE _check, so a capture cannot record a
+    composition the assertions would have rejected.
+    """
+    from hhemt.report_renderers._reporting_sets import compose_reporting_sets
+
+    members = ("dem_resolution", "compute_sensitivity")
+    composed = compose_reporting_sets(members)
+    analysis = synth_sensitivity_analysis
+    analysis._active_reporting_set = composed
+    content = analysis.sensitivity._workflow_builder.generate_master_snakefile_content(
+        which="both", compression_level=5
+    )
+
+    passing = {
+        t.rule_name
+        for sel in composed.renderer_selection
+        for t in sel.rule_spec_template
+        if f"rule {t.rule_name}:" in content
+    }
+    predicate_inputs = {
+        "independent_vars": list(getattr(analysis.sensitivity, "analysis_independent_vars", []) or [])
+        + list(getattr(analysis.sensitivity, "system_independent_vars", []) or []),
+        "member_event_pairs_member": True,
+        "has_eda_artifact": bool(analysis.cfg_analysis.eda.enabled_plots),
+        "has_preserved_raw_outputs": False,
+        "has_swmm_link_outputs": True,
+    }
+    _assert_predicate_inputs_complete(composed, predicate_inputs)
+    assert_a1a_no_duplication_or_omission(content, composed, passing)
+    assert_a1b_no_over_emission(content, composed)
+    assert_a2_no_silent_drop(composed, members)
+    # Capture-time gate (obligation, not discretionary): before committing the golden
+    # fixture this _check writes, confirm the composed output's rule-name character
+    # class still holds — grep -oE '^rule [^:]+:' over `content` — because today's
+    # 22-name census establishes the class over the three EXISTING single-set goldens,
+    # not over composed text, which does not exist until this test runs.
+    _check(content, "composed_dem_resolution_compute_sensitivity_master.Snakefile")
+
+
+def test_synth_models_mask_converges_across_a_symlinked_home() -> None:
+    """``_normalize_volatile`` must converge across a symlinked and a non-symlinked ``$HOME``.
+
+    Asserted at the NORMALIZER, not at one mask: the defect this guards lives in the
+    ORDER of the masks, not in either mask. The absolute-root replace fires inside a
+    ``../``-relative path and consumes the anchor a root-anchored relative regex would
+    need, so asserting on that regex alone cannot observe the failure — it substitutes
+    correctly on a raw string and never reaches the ordering. Reverting the mask fix
+    makes this test red; the previous regex-level form stayed green.
+
+    Same defect class, and the same two arms, as suite-1's
+    ``test_home_data_dir_mask_survives_a_symlinked_home``: a symlinked home makes
+    ``os.path.relpath`` descend through the RESOLVED path, so the ``../`` run is followed
+    by the real home segments before this cache root rather than by the root directly.
+    """
+    root_rel = str(_SYNTH_MODELS_ROOT).lstrip("/")
+    key = "abc0123456789def"
+    laptop = f"watershed_rel_path='../../../../../../../{root_rel}/{key}/watershed.geojson',"
+    cluster = f"watershed_rel_path='../../../../../../../sfs/gpfs/tardis/{root_rel}/{key}/watershed.geojson',"
+
+    got_laptop = _normalize_volatile(laptop)
+    got_cluster = _normalize_volatile(cluster)
+    assert got_laptop == got_cluster, (
+        "the normalizer did not converge across homes, so the byte-identity comparison "
+        f"is machine-bound. laptop={got_laptop!r} cluster={got_cluster!r}"
+    )
+    assert "{SYNTH_MODELS}/{MODEL_KEY}/watershed.geojson" in got_laptop, (
+        f"the synth-models mask did not fire. got={got_laptop!r}"
+    )
+    assert "gpfs" not in got_cluster, f"a machine-specific segment leaked. got={got_cluster!r}"
+    assert "../" not in got_cluster, f"a relative-climb residual survived. got={got_cluster!r}"
+
+    # differently-positioned satisfying input: a ../-relative path carrying no
+    # model-cache token is real signal and must be returned byte-unchanged.
+    unrelated = "source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}]"
+    assert _normalize_volatile(unrelated) == unrelated, (
+        f"an unrelated ../-relative path was mangled. got={_normalize_volatile(unrelated)!r}"
+    )
+
+
+def test_pytest_tmp_mask_survives_an_explicitly_chosen_basetemp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_normalize_volatile`` must converge across every basetemp an invoker may choose.
+
+    Asserted at the NORMALIZER over three REAL basetemp shapes, all measured from
+    ``tmp_path_factory.getbasetemp()``: pytest's default, the Rivanna suite harness's
+    explicit ``--basetemp=$TMPDIR/hhemt-suite-{run_id}-{cid}``, and a default basetemp
+    under a symlinked ``$TMPDIR`` (where ``getbasetemp()`` is resolved and
+    ``tempfile.gettempdir()`` is not). A shape-matching mask converges on the first arm
+    only, so reverting this fix makes this test red ON CONVERGENCE -- a behavioural
+    failure rather than a missing-attribute error, because ``raising=False`` lets the
+    arms run against code that never reads the attribute.
+    """
+    arms = {
+        "default": "/tmp/pytest-of-someuser/pytest-177",
+        "harness-explicit": "/tmp/hhemt-suite-20260824T000000Z-00",
+        "symlinked-tmpdir": "/sfs/gpfs/tardis/scratch/u/pytest-of-someuser/pytest-0",
+    }
+    template = "analysis_dir = '{BT}/synth_multi_sim_builder0/synthetic_test_runs/multisim',"
+
+    got = {}
+    for arm, basetemp in arms.items():
+        monkeypatch.setattr(sys.modules[__name__], "_PYTEST_BASETEMP", basetemp, raising=False)
+        got[arm] = _normalize_volatile(template.replace("{BT}", basetemp))
+
+    assert len(set(got.values())) == 1, (
+        "the pytest-tmp mask did not converge across basetemp shapes, so the "
+        f"byte-identity comparison is invoker-bound. {got}"
+    )
+    masked = next(iter(got.values()))
+    assert "{PYTEST_TMP}/synth_multi_sim_builder0/" in masked, f"the basetemp mask did not fire. got={masked!r}"
+    for token in ("hhemt-suite", "pytest-of", "/sfs/"):
+        assert token not in masked, f"an invoker-specific segment {token!r} leaked. got={masked!r}"
+
+    # differently-positioned satisfying input: a line carrying no basetemp is real
+    # signal and must be returned byte-unchanged.
+    unrelated = "shell: 'python -m hhemt.setup_workflow --analysis-config cfg.yaml'"
+    assert _normalize_volatile(unrelated) == unrelated, (
+        f"an unrelated line was mangled. got={_normalize_volatile(unrelated)!r}"
+    )

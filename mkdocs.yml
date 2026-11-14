@@ -2,20 +2,75 @@ site_name: "H&H Ensemble Modeling Toolkit"
 site_description: "Orchestrates coupled TRITON (2D hydrodynamic) and SWMM (stormwater management) simulations across local machines and HPC clusters"
 site_author: "Daniel Lassiter"
 repo_url: "https://github.com/lassiterdc/hhemt"
-edit_uri: "edit/develop/docs/"
+# `stable` (the default published build) tracks the latest tag on `main`, so an
+# "edit this page" link must resolve against `main` rather than `develop`.
+# Pointing it at `develop` sent every released-docs reader to unreleased content.
+edit_uri: "edit/main/docs/"
 
 theme:
   name: material
   features:
-    - navigation.tabs
-    - navigation.sections
-    - toc.integrate
+    # NAVIGATION LIVES IN THE SIDEBAR AND NOWHERE ELSE. Three flags are absent
+    # deliberately and each absence answers a specific reader complaint; a
+    # future editor restoring any of them should read this block first.
+    #
+    # `navigation.tabs` — ABSENT. It renders the top-level sections as header
+    #   tabs, which made the home page a list of links that were already on
+    #   screen. With it gone the sections render in the sidebar, and the home
+    #   page is free to be a landing page rather than a second nav bar.
+    # `navigation.sections` — ABSENT. It renders top-level sections as flat
+    #   always-expanded groups. The API reference is long enough that a
+    #   non-collapsible sidebar stops working as navigation, so sections must
+    #   be expandable nodes instead.
+    # `toc.integrate` — ABSENT. It merges each page's own table of contents
+    #   into the LEFT sidebar, so on a long page the per-page headings and the
+    #   site nav compete in one column. The TOC belongs on the right.
+    #
+    # `navigation.indexes` is PRESENT and is the structural fix for two pages
+    # sharing one name: it attaches a section's `index.md` to the section NODE,
+    # so clicking a section in the sidebar opens its index page instead of
+    # expanding to reveal a first child carrying the same label as the section.
+    # It acts only where a section's first nav entry is a bare `index.md`. In
+    # this nav every top-level section node except `Contributing` has such a
+    # first child, which `navigation.indexes` attaches as the node's page;
+    # `Contributing`'s first child is the titled `contributing.md`, so it
+    # carries none.
+    - navigation.indexes
+    - navigation.top
   palette:
+    # Dark is the DEFAULT, deliberately, and the ordering is what makes it so:
+    # Material uses the first entry unless a `media` query redirects it, so no
+    # `media` key appears here — an OS-preference query would hand light-mode
+    # readers the light palette on first visit, which is not "default to dark".
+    # Both entries are required: a one-entry palette renders with no toggle at all.
+    - scheme: slate
+      primary: blue grey
+      accent: light blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
     - scheme: default
+      primary: blue grey
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+
+hooks:
+  - hooks/config_reference.py
+  - hooks/eda_kind_table.py
+  - hooks/marker_governance_table.py
 
 markdown_extensions:
+  - abbr
   - admonition
   - pymdownx.details
+  - pymdownx.snippets:
+      base_path:
+        - docs/_snippets
+      check_paths: true
+      auto_append:
+        - abbreviations.md
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -24,8 +79,22 @@ markdown_extensions:
 
 plugins:
   - search
+  # Renders the tutorial notebook as a page. `execute: false` keeps the strict build from running a cell: the
+  # notebook is executed once on a cluster, its outputs are saved in the file, and a build only converts them.
+  # The entry precedes `htmlproofer` on purpose. Measured with the entry after it, the strict build reported
+  # every link to and from the notebook as `Unable to locate source file`; with the entry before it, the build
+  # exits 0.
+  - mkdocs-jupyter:
+      execute: false
+      include_source: true
   - htmlproofer:
       validate_external_urls: false
+      # A link from one API page to a symbol on another is an autorefs link, and
+      # htmlproofer looks for its anchor among the target page's Markdown headings,
+      # where a symbol anchor never is. mkdocs-autorefs already fails the strict
+      # build on a cross-reference it cannot resolve, so these are not unchecked.
+      ignore_urls:
+        - "../api-*/#hhemt*"
   - mkdocstrings:
       handlers:
         python:
@@ -46,34 +115,61 @@ validation:
     anchors: warn
 
 exclude_docs: |
-  running a simulation.ipynb
-  processing_sim_outputs.ipynb
+  _snippets/
+
+# A notebook that the tutorial links as a download is built as a page that no navigation entry lists.
+not_in_nav: |
+  tutorials/assets/eda.ipynb
 
 nav:
-  - Home: index.md
+  - Home:
+      - index.md
+      - Capabilities: explanation/capabilities.md
+      - Limitations and constraints: explanation/limitations.md
+  - Quickstart: quickstart.md
+  - Installation: how-to/installation.md
   - Tutorials:
       - tutorials/index.md
-      - Quickstart: tutorials/quickstart.md
-      - Norfolk end-to-end: tutorials/norfolk-end-to-end.md
+      - Running a simulation interactively in Python: tutorials/interactive-python.ipynb
+      - Simulating an event ensemble: tutorials/norfolk-observed-events.md
+      - Running a benchmarking experiment: tutorials/norfolk-compute-config-sweep.md
+      - Exploratory analysis of an event ensemble: tutorials/exploratory-analysis.md
   - How-To Guides:
       - how-to/index.md
-      - Installation: how-to/installation.md
       - HPC-profile setup: how-to/hpc-profile-setup.md
       - Config filling: how-to/config-filling.md
+      - Compile the solver: how-to/compiling-the-solver.md
+      - Building container images: how-to/building-container-images.md
+      - Running an experiment definition: how-to/running-an-experiment-definition.md
       - In-flight operations: how-to/in-flight-operations.md
-      - Forcing re-runs: how-to/forcing-reruns.md
+      - Diagnosing a failed analysis: how-to/diagnosing-a-failed-run.md
+      - Forcing and suppressing reruns: how-to/forcing-reruns.md
       - Combining experiments: how-to/combining-experiments.md
-      - Synthetic compute-sensitivity experiment: how-to/synthetic-compute-sensitivity-experiment.md
+      - Running a synthetic compute-sensitivity experiment: how-to/synthetic-compute-sensitivity-experiment.md
+      - Run the exploratory analysis: how-to/running-eda.md
       - Publishing and fetching: how-to/publishing.md
       - Reprex round-trip: how-to/reprex-roundtrip.md
+      - DOI round-trip for operators: how-to/doi-roundtrip-e2e.md
   - Reference:
       - reference/index.md
-      - API Reference: reference/api.md
+      - API Reference:
+          - reference/api.md
+          - reference/api-toolkit.md
+          - reference/api-analysis.md
+          - reference/api-bundles.md
+          - reference/api-experiments.md
+          - reference/api-eda.md
+          - reference/api-version-migration.md
+      - Configuration schema: reference/config-schema.md
+      - CLI reference: reference/cli.md
+      - Output data model: reference/output-data-model.md
       - FAIR scope table: reference/fair-scope-table.md
-      - Example interactive report: reference/example-report.md
-  - Explanation:
-      - explanation/index.md
-      - Capabilities: explanation/capabilities.md
-      - Software availability: explanation/software-availability.md
-      - Rerun FAQ: explanation/rerun-faq.md
+      - Reporting sets: reference/reporting-sets.md
+      - Glossary: reference/glossary.md
+      - The interactive analysis report: reference/example-report.md
+      - Rerun triggers: reference/rerun-triggers.md
+      - Coupled inflow nodes: reference/coupled-inflow-nodes.md
+  - Contributing:
+      - Contributing guide: contributing.md
       - Branching and release model: explanation/branching-and-release-model.md
+      - Testing the toolkit: explanation/testing-the-toolkit.md

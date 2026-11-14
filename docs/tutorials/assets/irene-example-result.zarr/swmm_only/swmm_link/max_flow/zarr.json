@@ -1,0 +1,52 @@
+{
+  "shape": [
+    1,
+    1145
+  ],
+  "data_type": "float64",
+  "chunk_grid": {
+    "name": "regular",
+    "configuration": {
+      "chunk_shape": [
+        1,
+        1145
+      ]
+    }
+  },
+  "chunk_key_encoding": {
+    "name": "default",
+    "configuration": {
+      "separator": "/"
+    }
+  },
+  "fill_value": "NaN",
+  "codecs": [
+    {
+      "name": "bytes",
+      "configuration": {
+        "endian": "little"
+      }
+    },
+    {
+      "name": "zstd",
+      "configuration": {
+        "level": 0,
+        "checksum": false
+      }
+    }
+  ],
+  "attributes": {
+    "long_name": "Maximum flow rate",
+    "units": "m3 s-1",
+    "cell_methods": "time: maximum",
+    "coordinates": "event_id",
+    "_FillValue": "AAAAAAAA+H8="
+  },
+  "dimension_names": [
+    "event_iloc",
+    "link_id"
+  ],
+  "zarr_format": 3,
+  "node_type": "array",
+  "storage_transformers": []
+}

@@ -1,18 +1,19 @@
 """Unit tests for sensitivity DataTree assembly (Phase 3).
 
 Validates that ``build_sensitivity_datatree()`` produces an ``xr.DataTree`` with:
-- ``parameters`` Dataset at the root, indexed by ``sa_id``
-- Per-sub-analysis child nodes named ``sa_{sa_id}`` carrying sensitivity
+- ``parameters`` Dataset at the root, indexed by ``member_id``
+- Per-member child nodes named ``member_{member_id}`` carrying sensitivity
   parameters as ``.attrs``
-- Each sub-analysis subtree reproduces the per-analysis tree structure
+- Each member subtree reproduces the per-analysis tree structure
 """
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 import xarray as xr
+
+from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing
 
 
 class _FakeProcess:
@@ -22,10 +23,13 @@ class _FakeProcess:
     def open_datatree(self) -> xr.DataTree:
         return self._tree
 
+    # The member's real layout check, so the stand-in refuses a layout-30 tree exactly as a member does.
+    assert_summary_branch_layout = staticmethod(TRITONSWMM_analysis_post_processing.assert_summary_branch_layout)
+
 
 def _leaf_ds() -> xr.Dataset:
     return xr.Dataset(
-        data_vars={"max_wlevel_m": (("event_iloc", "y", "x"), np.zeros((1, 2, 2)))},
+        data_vars={"max_flood_depth": (("event_iloc", "y", "x"), np.zeros((1, 2, 2)))},
         coords={
             "event_iloc": [0],
             "y": [0.0, 1.0],
@@ -38,7 +42,7 @@ def _build_fake_sub_tree() -> xr.DataTree:
     return xr.DataTree.from_dict(
         {
             "/": xr.Dataset(attrs={"analysis_id": "sub"}),
-            "tritonswmm/triton": _leaf_ds(),
+            "tritonswmm/triton/summary": _leaf_ds(),
         }
     )
 
@@ -56,12 +60,16 @@ def test_build_sensitivity_datatree_structure(tmp_path):
     # `_refresh_log` is a read-only observer call the cross-analysis datatree read
     # site makes on each sub (added by the log-write-race-fix compute-on-read change);
     # the stub provides a no-op so the structural test does not depend on a real log.
-    sub_analyses = {
+    analyses = {
         "0": SimpleNamespace(
-            process=_FakeProcess(_build_fake_sub_tree()), _refresh_log=lambda: None
+            process=_FakeProcess(_build_fake_sub_tree()),
+            _refresh_log=lambda: None,
+            analysis_paths=SimpleNamespace(analysis_datatree_zarr=None),
         ),
         "1": SimpleNamespace(
-            process=_FakeProcess(_build_fake_sub_tree()), _refresh_log=lambda: None
+            process=_FakeProcess(_build_fake_sub_tree()),
+            _refresh_log=lambda: None,
+            analysis_paths=SimpleNamespace(analysis_datatree_zarr=None),
         ),
     }
 
@@ -70,19 +78,19 @@ def test_build_sensitivity_datatree_structure(tmp_path):
     )
 
     sens = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
-    sens.master_analysis = master
-    sens.sub_analyses = sub_analyses
+    sens.experiment = master
+    sens.members = analyses
     sens.df_setup = df_setup
-    sens.sub_analyses_prefix = "sa_"
+    sens.member_prefix = "member_"
 
     tree = sens.build_sensitivity_datatree()
 
     assert "parameters" in tree
-    assert "sa_0" in tree
-    assert "sa_1" in tree
-    assert tree["sa_0/tritonswmm/triton"].dataset["max_wlevel_m"].shape == (1, 2, 2)
-    assert tree["sa_0"].attrs["run_mode"] == "gpu"
-    assert tree["sa_1"].attrs["n_mpi_procs"] == 2
+    assert "member_0" in tree
+    assert "member_1" in tree
+    assert tree["member_0/tritonswmm/triton/summary"].dataset["max_flood_depth"].shape == (1, 2, 2)
+    assert tree["member_0"].attrs["run_mode"] == "gpu"
+    assert tree["member_1"].attrs["n_mpi_procs"] == 2
     df = tree["parameters"].dataset.to_dataframe()
     assert list(df.index) == ["0", "1"]
     assert df.loc["0", "run_mode"] == "gpu"

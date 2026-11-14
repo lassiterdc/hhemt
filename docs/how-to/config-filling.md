@@ -1,115 +1,79 @@
 # Fill in your configuration
 
-hhemt takes two user configs (system + analysis) plus an optional HPC-system profile. Start from the in-repo templates: `test_data/norfolk_coastal_flooding/template_system_config.yaml` and `template_analysis_config.yaml`. The `${DATA_DIR}` / `${PACKAGE_DIR}` placeholders are filled automatically when you load a case study via `TRITON_SWMM_example`; if you author a config by hand, replace them with real paths.
+## Goal
 
-## Annotated system config
+Produce a working system config and analysis config for your own study area, and confirm that both load before you spend any compute.
 
-```yaml
-# --- CRS ---
-crs:
-  horizontal_epsg: 32147   # projected CRS of your DEM/GIS inputs (meters or ftUS)
-  vertical_epsg: 5703      # vertical datum of DEM elevations
+## Prerequisites
 
-# --- Filepaths (inputs) ---
-watershed_gis_polygon: '/path/to/watershed.shp'   # analysis-extent polygon
-system_directory: '/path/to/system'               # where DEM/Manning's/compiled binaries land
-DEM_fullres: '/path/to/fullres_dem_m.tif'         # full-resolution DEM raster
-landuse_lookup_file: '/path/to/landuse_lookup.csv'   # required only if toggle_use_constant_mannings: false
-landuse_raster: '/path/to/landuse.tif'               # required only if toggle_use_constant_mannings: false
+- A working [installation](installation.md).
+- A DEM for your watershed, a SWMM `.inp` model, and a weather NetCDF.
 
-# --- Software sources (cloned + compiled by the toolkit) ---
-TRITONSWMM_software_directory: '/path/to/triton'
-SWMM_software_directory: '/path/to/swmm'
-TRITONSWMM_git_URL: 'https://code.ornl.gov/hydro/triton.git'
-TRITONSWMM_branch_key: '<commit-sha-or-branch>'
-SWMM_git_URL: 'https://github.com/USEPA/Stormwater-Management-Model.git'
-SWMM_tag_key: 'v5.2.4'
+## Key references
 
-# GPU backend: 'HIP' (AMD/ROCm) or 'CUDA' (NVIDIA); null for CPU-only.
-# On HPC, this DERIVES from the resolved partition's PartitionSpec — leave null here.
-gpu_compilation_backend: null
+- [Configuration schema](../reference/config-schema.md) gives the meaning of each field.
+- [HPC-profile setup](hpc-profile-setup.md) describes the HPC system config.
+- [Operating on an analysis while jobs are in flight](in-flight-operations.md) covers the commands for an analysis that is running.
 
-triton_swmm_configuration_template: '/path/to/TRITON_SWMM_definition_template.cfg'
-SWMM_hydraulics: '/path/to/hydraulics_model_template.inp'   # 2D-coupling hydraulics model
-SWMM_hydrology: '/path/to/hydrology_model_template.inp'     # required only if toggle_use_swmm_for_hydrology: true
-subcatchment_raingage_mapping: '/path/to/subcatchment_raingage_map.csv'   # with toggle_use_swmm_for_hydrology
-subcatchment_raingage_mapping_gage_id_colname: 'raingage_id'
+## 1. Start from the templates
 
-# --- Manning's lookup column names (with toggle_use_constant_mannings: false) ---
-landuse_description_colname: 'original_description'
-landuse_lookup_class_id_colname: 'CLASS_ID'
-landuse_lookup_mannings_colname: 'mannings'
-landuse_plot_color_colname: 'plot_color'
+Start from the [system config template](https://github.com/lassiterdc/hhemt/blob/main/test_data/norfolk_coastal_flooding/template_system_config.yaml) and the [analysis config template](https://github.com/lassiterdc/hhemt/blob/main/test_data/norfolk_coastal_flooding/template_analysis_config.yaml) on the repository. Save each template as a file of your own, such as `my_system.yaml` and `my_analysis.yaml`.
 
-# --- Toggles (see the dependency table below) ---
-toggle_use_swmm_for_hydrology: true
-toggle_use_constant_mannings: false
-toggle_triton_model: false
-toggle_tritonswmm_model: true
-toggle_swmm_model: false
+The templates define a serial, local configuration. The steps replace a placeholder path, set a value only you know for your study area, or opt into a feature that the default leaves off.
 
-# --- Constants / parameters ---
-dem_outside_watershed_height: 9999   # meters; sentinel elevation outside the watershed
-dem_building_height: 80              # meters; building-footprint burn height
-target_dem_resolution: 3.5           # meters; coarsen the full-res DEM to this cell size
-```
+## 2. Point the system config at your data
 
-## Annotated analysis config
+Replace every `/path/to/...` value in `my_system.yaml`. Set `crs.horizontal_epsg` to the projected CRS of your DEM. Authoring by hand without a case study also means replacing every `${DATA_DIR}` and `${PACKAGE_DIR}` placeholder.
+
+Set `target_dem_resolution` to the cell size to simulate at. The setting coarsens the full-resolution DEM and has the largest effect on runtime of any single field.
+
+A DEM with burned-in sentinel elevations for buildings or for the area outside the watershed needs `dem_building_height` and `dem_outside_watershed_height` set to the exact sentinel values. Report figures drop cells equal to the building value from the DEM colorbar range. They paint every cell at or above the lower of the values that are set, less `wall_threshold_buffer_m`, as a wall. A value that differs from your raster reports no error and shows as a colorbar stretched by rooftop cells or as real terrain painted as wall. Leave both fields unset when your raster carries no sentinels.
+
+## 3. Resolve the toggles
+
+Each toggle that you flip makes other fields required. Set the toggles first and then fill the fields that they demand. The [toggle-dependency table](../reference/config-schema.md#toggle-dependent-required-fields) lists each pairing. The common pairings follow.
+
+- A landuse raster for Manning's *n* in place of a constant requires the lookup file, the raster, and the column names that the schema lists.
+- SWMM for hydrology requires the hydrology `.inp` and a subcatchment-to-raingage mapping.
+
+## 4. Point the analysis config at your events
+
+Set `weather_timeseries`, `weather_events_to_simulate`, and the `weather_*` schema fields to the dimension and variable names as they appear in your NetCDF. The toolkit uses the names to find your data.
+
+The template carries the names of the Norfolk weather file. Replace the values with yours.
 
 ```yaml
-analysis_id: 'single_sim'   # analysis folder name; created under system_directory if absent
-
-# --- Weather-input schema (names of dims/vars in your weather NetCDF) ---
-weather_event_indices: ['year', 'event_type', 'event_id']
-weather_time_series_storm_tide_datavar: 'waterlevel_m'
-weather_time_series_timestep_dimension_name: 'timestep'
-weather_time_series_spatial_mean_rainfall_datavar: 'mm_per_hr'
-weather_timeseries: '/path/to/event_timeseries.nc'
-storm_tide_boundary_line_gis: '/path/to/variable_bc.shp'
-weather_events_to_simulate: '/path/to/events.csv'   # which events to run
-analysis_description:
-
-# --- Execution (add run_mode / multi_sim_run_method / n_* for non-serial) ---
-run_mode: "serial"              # serial | openmp | mpi | hybrid | gpu
-multi_sim_run_method: "local"   # local | batch_job | 1_job_many_srun_tasks
-local_cpu_cores_for_workflow: 4
-
-# --- Units ---
-rainfall_units: 'mm/hr'
-storm_tide_units: 'm'
-
-# --- Toggles ---
-toggle_sensitivity_analysis: false   # true requires the sensitivity_analysis XLSX path
-toggle_storm_tide_boundary: true
-
-# --- Parameters ---
-target_processed_output_type: 'zarr'   # zarr or nc (per-scenario tier)
-TRITON_raw_output_type: 'bin'          # bin or asc
-manhole_diameter: 1.2
-manhole_loss_coefficient: 0.1
-hydraulic_timestep_s: 0.01
-TRITON_reporting_timestep_s: 120
-open_boundaries: 1
-report: {}
-clear_raw: none       # none | all | [tritonswmm, triton, swmm]
-force_rerun: none      # none | all | [tritonswmm, triton, swmm]
+weather_timeseries: /path/to/events.nc
+weather_events_to_simulate: /path/to/events_to_simulate.csv
+weather_event_indices: [year, event_type, event_id]
+weather_time_series_storm_tide_datavar: waterlevel_m
+weather_time_series_timestep_dimension_name: timestep
+weather_time_series_spatial_mean_rainfall_datavar: mm_per_hr
 ```
 
-The template ships a serial/local config. For a non-serial run, ADD the execution fields the mode requires: `run_mode` plus the matching `n_mpi_procs` / `n_omp_threads` / `n_gpus` / `n_nodes` (cross-validated at config load), and set `multi_sim_run_method` for how simulations are dispatched.
+Set `hhemt_sha` to the full 40-hex commit of hhemt that you run. `git rev-parse HEAD` in your clone prints the hash. The template carries a placeholder. The field has no default, and every process that constructs the analysis refuses to start when the running toolkit is at a different commit.
 
-## Toggle-dependent required fields
+## 5. Choose the run mode
 
-| If you set… | you must also provide… |
-|---|---|
-| `toggle_use_constant_mannings: true` | `constant_mannings` |
-| `toggle_use_constant_mannings: false` | `landuse_lookup_file`, `landuse_raster`, + 3 colname fields |
-| `toggle_use_swmm_for_hydrology: true` | `SWMM_hydrology`, `subcatchment_raingage_mapping`, mapping colname |
-| `toggle_sensitivity_analysis: true` | `sensitivity_analysis` (XLSX path) |
-| any of `processed_xllcorner`/`yllcorner`/`ncols`/`nrows` | all four (all-or-nothing) |
+The default is `run_mode: serial` with `multi_sim_run_method: local`. A `run_mode` beyond the default needs the fields that the mode requires from `n_mpi_procs`, `n_omp_threads`, `n_gpus`, and `n_nodes`. Config load cross-validates the fields, so a mismatch fails at load and never at dispatch.
 
-!!! warning
-    Edit the sensitivity XLSX, never the derived `sensitivity_analysis_definition.csv` — the CSV is re-derived on every `analysis.run()` (see the [rerun FAQ](../explanation/rerun-faq.md)).
+The [glossary](../reference/glossary.md#multi_sim_run_method) defines the `multi_sim_run_method` values. A `batch_job` analysis config requires `hpc_total_job_duration_min`, `hpc_time_min_per_sim`, `hpc_ensemble_partition`, and `hpc_setup_and_analysis_processing_partition` to load. A `1_job_many_srun_tasks` config requires `hpc_ensemble_partition` and `hpc_setup_and_analysis_processing_partition` to load, and preflight also requires `hpc_total_nodes` and `hpc_total_job_duration_min`.
 
-## See also
-- [HPC-profile setup](hpc-profile-setup.md)
-- [Operating on an analysis while jobs are in flight](in-flight-operations.md)
+--8<-- "hpc-system-config-role.md"
+
+Author the HPC system config as [HPC-profile setup](hpc-profile-setup.md) describes.
+
+## 6. Verify before you commit compute
+
+A dry run checks every step in seconds and submits no job.
+
+```bash
+hhemt run --system-config my_system.yaml --analysis-config my_analysis.yaml --dry-run
+```
+
+The dry run exits 0 and prints the workflow that a real run executes. A non-zero exit names the offending field. Preflight validation accumulates every error and reports the errors together, so one round of fixes covers all of them.
+
+For a stronger check, `analysis.test()` runs a minimal subset of your own analysis end to end against a solver you compiled already. The [interactive Python tutorial](../tutorials/interactive-python.ipynb) shows the call. A real analysis also needs a compiled solver, so compile the solver once first, following [Compile the solver](compiling-the-solver.md).
+
+!!! warning "Edit the sensitivity XLSX and never the CSV"
+    With `toggle_sensitivity_analysis: true`, edit the sensitivity XLSX and leave the derived `sensitivity_analysis_definition.csv` alone, because the workflow overwrites a direct CSV edit. [Rerun triggers](../reference/rerun-triggers.md) gives the reason.

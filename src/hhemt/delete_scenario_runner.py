@@ -33,9 +33,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _write_submission_sentinel(
-    sentinel_path: Path, *, rule_token: str, slurm_job_id: str, event_id: str
-) -> None:
+def _write_submission_sentinel(sentinel_path: Path, *, rule_token: str, slurm_job_id: str, event_id: str) -> None:
     sentinel_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = sentinel_path.with_suffix(".json.tmp")
     tmp.write_text(
@@ -63,9 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     _slurm_jobid = os.environ.get("SLURM_JOB_ID")
     if _slurm_jobid:
         _rule_token = f"delete_scenario_{args.event_id}"
-        _sentinel = (
-            analysis_dir / "_status" / "_submitted" / f"{_rule_token}.json"
-        )
+        _sentinel = analysis_dir / "_status" / "_submitted" / f"{_rule_token}.json"
         _write_submission_sentinel(
             _sentinel,
             rule_token=_rule_token,
@@ -86,9 +82,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.event_id,
             )
 
-        flag_path = (
-            analysis_dir / "_status" / "_deleting" / f"scenario_evt-{args.event_id}.flag"
-        )
+        flag_path = analysis_dir / "_status" / "_deleting" / f"scenario_evt-{args.event_id}.flag"
         write_status_flag(
             flag_path,
             rule_name=f"delete_scenario_{args.event_id}",

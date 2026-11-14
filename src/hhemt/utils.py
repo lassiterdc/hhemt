@@ -1,18 +1,441 @@
+"""Shared filesystem, zarr/NetCDF publication, and small I/O helpers for hhemt.
+
+Most of the toolkit writes stores that other processes read, often on shared HPC
+filesystems where a writer can be killed mid-write. This module holds the pieces that
+keep those writes safe and findable: the crash-safe store and flag publishers, the
+chaptered per-scenario timeseries store and its merge, the resolver for an
+experiment's root consolidated store across layout versions, the selector that decides
+which report figures a re-render may delete, and the store writers. Three functions
+publish through the crash-safe store publisher: the zarr writers (`write_zarr`,
+`write_datatree_zarr`) and the chapter merge (`merge_chapters_to_unified`). The NetCDF
+writers write their output file in place, so a crash mid-write can leave a partial file.
+The remaining helpers are thin wrappers for YAML, JSON, templates, text files, sbatch
+submission and timestamps.
+"""
+
+import datetime
+import importlib.util
 import json
 import os
-import warnings
-from pathlib import Path
-import importlib.util
-from platformdirs import user_data_dir
-from string import Template
 import re
-import datetime
-import yaml
-import xarray as xr
 import shutil
-from typing import Any
+import stat
 import subprocess
-from typing import Optional, Literal, Callable
+import warnings
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from string import Template
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
+
+import xarray as xr
+import yaml
+from platformdirs import user_data_dir
+
+if TYPE_CHECKING:
+    from hhemt.config.analysis import ClearRawValue
+
+#: Root consolidated-store names, in RESOLUTION PRIORITY order. V0021 unified BOTH prior
+#: root stores -- a regular analysis's ``analysis_datatree.zarr`` and a sensitivity
+#: master's ``sensitivity_datatree.zarr`` -- into one ``experiment_datatree.zarr`` per
+#: experiment. The two retired names are RETAINED because a render bundle is a tarball no
+#: migration reaches, and an analysis dir that predates the migration still carries one.
+#:
+#: ORDER IS LOAD-BEARING and is not alphabetical, historical, or arbitrary. Every consumer
+#: routed through ``resolve_experiment_tree`` wants the EXPERIMENT-LEVEL AGGREGATE. On a
+#: root carrying BOTH retired names the aggregate is the sensitivity master's store, so
+#: ``sensitivity_datatree.zarr`` MUST precede ``analysis_datatree.zarr``: the latter at an
+#: experiment root is that experiment's own single-analysis tree, which is the aggregate
+#: only when it is the sole retired name present.
+#:
+#: Per-MEMBER stores under ``members/member_N/analysis_datatree.zarr`` are NOT renamed by
+#: V0021 and must not be resolved through here.
+ROOT_TREE_NAMES = (
+    "experiment_datatree.zarr",
+    "sensitivity_datatree.zarr",
+    "analysis_datatree.zarr",
+)
+EXPERIMENT_TREE_NAME = ROOT_TREE_NAMES[0]
+#: The REGULAR arm's producer-written name. `analysis.py` binds it unconditionally, so a
+#: regular analysis re-creates it on every consolidation whose skip gate does not hold --
+#: `fname_out.exists()` is a conjunct of that gate, so an absent path forces a rebuild.
+#: A ROOT CARRYING BOTH NAMES IS REACHED BY TWO ROUTES AND THEY ARE NOT THE SAME DEFECT.
+#: On the REGULAR arm, V0021 demoted this analysis's store under a member node and the
+#: producer then re-created the flat one: the retired name is the LIVE artifact and the
+#: unified one is a stale derived view of it. On the OTHER route, V0021's `elif` selected
+#: a sensitivity master's store and left a regular one stranded beside it: there the
+#: retired name is an orphan with no writer and no reader.
+#: `V0025__retire_stranded_regular_store` retires the SECOND case only, and refuses rather
+#: than guessing where its arm signals disagree. IT DOES NOT CLOSE THE FIRST, and no
+#: migration does -- a retirement there would move the producer's working store aside. An
+#: arm-aware producer binding does not close it either: on the regular arm that branch
+#: binds the name the unconditional binding already gives it. So the resolution below is
+#: what keeps the returned store correct on the regular arm, and it is not a placeholder
+#: for a repair that is coming.
+REGULAR_TREE_NAME = ROOT_TREE_NAMES[2]
+
+
+def arm_from_config_dir(root) -> bool | None:
+    """The ARM (`toggle_sensitivity_analysis`) recovered from a root's own config, or None.
+
+    THE ARM IS THE BASIS OF ROOT-STORE RESOLUTION and the resolvers below hold no analysis
+    object. A root ships `cfg_analysis.yaml` when it is a BUNDLE (copied at emit) or when a
+    producer has written one -- `eda()`, `publish()`, and both consolidation writers
+    (`consolidate_to_datatree` and `consolidate_sensitivity_datatree`). Presence is
+    therefore CONDITIONAL rather than population-keyed:
+    this returns None on a root that has none, and a caller that gets None keeps its prior
+    behaviour rather than acquiring a default. None means UNKNOWN and is never coerced to
+    False -- a missing config and a regular analysis are different states and a bool would
+    merge them.
+    """
+    import yaml
+
+    cfg = Path(root) / "cfg_analysis.yaml"
+    if not cfg.is_file():
+        return None
+    try:
+        loaded = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return None
+    value = loaded.get("toggle_sensitivity_analysis")
+    return bool(value) if isinstance(value, bool) else None
+
+
+def resolve_experiment_tree(root: str | Path, *, arm: bool | str | None = None) -> Path:
+    """Resolve an experiment's ROOT consolidated store by EXISTENCE.
+
+    Returns the first existing candidate in ``ROOT_TREE_NAMES`` priority order -- see
+    that tuple's note on why the order is not interchangeable. When NONE exists the
+    unified name is returned rather than None, so a caller's own absent-tree branch keeps
+    its `.exists()` shape and reports against the canonical name instead of a retired one.
+
+    ``arm`` is the OPTIONAL supplied arm. It changes the answer on the two-store
+    ``(experiment, analysis)`` pair, where the two routes disagree about which store is
+    current and the name order alone cannot say, and a REGULAR arm also returns
+    ``analysis_datatree.zarr`` whenever it exists, ahead of any other store beside it.
+    Accepts BOTH vocabularies
+    in use -- ``True``/``False`` and ``"sensitivity"``/``"regular"`` -- and RAISES on
+    anything else, because a silent mismatch between them would compare ``False !=
+    "regular"`` and report a corroborated call as uncorroborated.
+
+    When NO arm is supplied the arm is DISCOVERED from the root itself, in this order: the
+    root's own ``cfg_analysis.yaml`` (``arm_from_config_dir``), then the presence of a
+    ``members/`` directory, which only a sensitivity master carries (the same structural
+    signal ``classify_analysis_arm`` uses). A root with neither stays arm-unknown and gets
+    the regular answer, as it always has. Discovery runs for every store subset: a root
+    whose config names the regular arm returns ``analysis_datatree.zarr`` ahead of a
+    retired store beside it, and a root with neither a config nor ``members/`` resolves as
+    it did before.
+    """
+    root = Path(root)
+    if arm is None:
+        _arm: bool | None = arm_from_config_dir(root)
+        if _arm is None and (root / "members").is_dir():
+            _arm = True
+    elif isinstance(arm, bool):
+        _arm = arm
+    elif arm in ("sensitivity", "regular"):
+        _arm = arm == "sensitivity"
+    else:
+        raise ValueError(
+            f"resolve_experiment_tree: arm must be True/False, 'sensitivity'/'regular' or None; got {arm!r}"
+        )
+    present = [n for n in ROOT_TREE_NAMES if (root / n).exists()]
+    if present == [EXPERIMENT_TREE_NAME, REGULAR_TREE_NAME]:
+        if _arm is True:
+            # SUPPLIED SENSITIVITY ARM. On this arm the retired-name store cannot be this
+            # analysis's output -- nothing writes it at a master root -- so it is residue
+            # and the unified name is current. That is the OPPOSITE of the branch below,
+            # whose reasoning holds only on the regular arm, and it is why a name order
+            # alone cannot answer this subset.
+            return root / EXPERIMENT_TREE_NAME
+        # THE REGULAR TWO-STORE STATE. V0021 renamed this analysis's store to the unified
+        # name and CONSUMED the retired path; anything now at the retired path was written
+        # AFTER that, by the producer. So the unified name here is the migration-time
+        # snapshot and the retired name is current -- the opposite of the priority order
+        # above, which is correct for every other subset. Returning the producer-written
+        # store is the better of two contract violations, not a satisfaction of the
+        # contract: neither store satisfies "the experiment-level aggregate", because the
+        # migrated one is experiment-shaped and stale while this one is current and FLAT.
+        # That is why the warning is required rather than optional -- the return value
+        # cannot say "no store here is what you asked for", and the warning is also the
+        # only thing that tells an operator the repairing migration exists.
+        #
+        # Deduplication is FREE and deliberately not coded: the default warning filter
+        # keys on the message text, and `root` is interpolated, so one process warns once
+        # per distinct tree however many of this function's callers run.
+        warnings.warn(
+            f"{root} carries both {EXPERIMENT_TREE_NAME} and {REGULAR_TREE_NAME}. "
+            f"Neither is the experiment-level aggregate this resolver promises: the "
+            f"former is the migration-time snapshot, the latter is current but flat. "
+            f"Returning the current one. Run the layout migration to resolve the tree.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return root / REGULAR_TREE_NAME
+    if _arm is False and (root / REGULAR_TREE_NAME).exists():
+        # A root whose arm is KNOWN to be regular (supplied, or named by its own config) is a
+        # regular analysis, whose producer writes this store; any other store beside it is a
+        # snapshot or residue. The name order below would rank a third name ahead of it.
+        return root / REGULAR_TREE_NAME
+    for name in ROOT_TREE_NAMES:
+        cand = root / name
+        if cand.exists():
+            return cand
+    return root / EXPERIMENT_TREE_NAME
+
+
+class ExperimentTreeSummary(NamedTuple):
+    """What a renderer needs from a root consolidated store without opening it whole.
+
+    Attributes:
+        attrs: the root group's attributes, as ``xr.DataTree.attrs`` reports them.
+        members: the ``/member_*`` group paths directly under the root, sorted, each with its
+            leading slash (``"/member_0"``), as ``sorted(dt.groups)`` filtered to those names gives.
+        tier: ``"tritonswmm"`` when the first member (in sorted order) that carries any tier carries
+            the coupled ``tritonswmm/triton`` node, ``"triton_only"`` when it carries
+            ``triton_only/triton``, ``None`` when no member carries either.
+        models: every distinct model any member runs, in the order ``TRITON``, ``TRITON-SWMM``,
+            ``SWMM`` (``triton_only/triton``, ``tritonswmm/triton`` and ``swmm_only`` groups), empty
+            when no member holds one. Unlike ``tier`` this looks at EVERY member and does not stop
+            at the first tier found.
+    """
+
+    attrs: dict[str, Any]
+    members: tuple[str, ...]
+    tier: str | None
+    models: tuple[str, ...] = ()
+
+
+#: The models a member can run, in label order, with the group path under the member that records
+#: each. Mirrors ``_MODEL_TIERS`` in ``report_renderers/cross_experiment_disk_utilization.py``
+#: (a test compares the two), which cannot be imported here without a cycle.
+_SUMMARY_MODEL_TIERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("TRITON", ("triton_only", "triton")),
+    ("TRITON-SWMM", ("tritonswmm", "triton")),
+    ("SWMM", ("swmm_only",)),
+)
+
+
+def _is_group_chain(base: Path, *names: str) -> bool:
+    """Whether each directory along ``names`` under ``base`` is a stored zarr group.
+
+    A directory is a group when it holds a ``zarr.json`` whose ``node_type`` is ``"group"``. A
+    missing, unreadable or array document makes the whole chain false, matching what a full
+    ``open_datatree`` lists.
+    """
+    node = base
+    for name in names:
+        node = node / name
+        doc = node / "zarr.json"
+        try:
+            if json.loads(doc.read_text()).get("node_type") != "group":
+                return False
+        except (OSError, ValueError):
+            return False
+    return True
+
+
+def experiment_tree_summary(store: str | Path) -> ExperimentTreeSummary:
+    """Read a root consolidated store's attributes, member groups and model tier from its metadata.
+
+    A full ``xr.open_datatree`` reads the ``zarr.json`` of EVERY node in the store, which is
+    thousands of small reads on a combine's child trees, to answer three questions that live in
+    the root document and in directory listings: the root attributes (the root ``zarr.json``),
+    the member groups (the top-level directories that carry a ``zarr.json`` and are named
+    ``member_*``) and the model tier (whether ``{member}/tritonswmm/triton/zarr.json`` or
+    ``{member}/triton_only/triton/zarr.json`` exists). Every member is inspected, because the first
+    sorted member can lack both tier paths while a later one has one.
+
+    A store with no root ``zarr.json`` (a zarr-format-2 tree, whose root holds ``.zgroup``, or a path
+    that is not a store at all) falls back to ``xr.open_datatree`` and derives the same three answers
+    from it, so the caller sees exactly what a full open shows, including the error a full open
+    raises for a path that cannot be opened.
+
+    ``models`` is the union over every member, so a coupled member beside a SWMM-only one reports both.
+
+    A member counts by the existence of its ``zarr.json``. A tier counts only when every directory
+    on its path (for example ``tritonswmm`` and ``triton``, or ``swmm_only``) holds a ``zarr.json``
+    whose ``node_type`` is ``"group"``, because a full open lists only groups and never reaches a
+    subtree under a directory that lost its own document.
+
+    Not established: a member's ``node_type`` is not read; the toolkit writes members as groups.
+    """
+    store = Path(store)
+    root_doc = store / "zarr.json"
+    if not root_doc.is_file():
+        dt = open_store(str(store))
+        groups = set(dt.groups)
+        members = tuple(sorted(g for g in groups if g.count("/") == 1 and g.startswith("/member_")))
+        tier = None
+        for member in members:
+            if f"{member}/tritonswmm/triton" in groups:
+                tier = "tritonswmm"
+                break
+            if f"{member}/triton_only/triton" in groups:
+                tier = "triton_only"
+                break
+        models = tuple(
+            model
+            for model, path in _SUMMARY_MODEL_TIERS
+            if any(f"{member}/{'/'.join(path)}" in groups for member in members)
+        )
+        return ExperimentTreeSummary(dict(dt.attrs), members, tier, models)
+    attrs = dict(json.loads(root_doc.read_text()).get("attributes") or {})
+    members = tuple(
+        sorted(
+            f"/{child.name}"
+            for child in store.iterdir()
+            if child.name.startswith("member_") and child.is_dir() and (child / "zarr.json").is_file()
+        )
+    )
+    tier = None
+    for member in members:
+        node = store / member.lstrip("/")
+        if _is_group_chain(node, "tritonswmm", "triton"):
+            tier = "tritonswmm"
+            break
+        if _is_group_chain(node, "triton_only", "triton"):
+            tier = "triton_only"
+            break
+    models = tuple(
+        model
+        for model, path in _SUMMARY_MODEL_TIERS
+        if any(_is_group_chain(store / member.lstrip("/"), *path) for member in members)
+    )
+    return ExperimentTreeSummary(attrs, members, tier, models)
+
+
+#: The member-node name vocabularies, BOTH of them, inside a root consolidated store.
+#: `member_` is the current form: `V0021._resolve_member_group` returns the literal
+#: `member_0` for the regular arm's demoted one-member wrap, and
+#: `sensitivity_analysis.build_sensitivity_datatree` names each master node
+#: `f"{self.member_prefix}{member_id}"` with `member_prefix = "member_"`. `sa_` is the
+#: RETIRED form and it is still live on disk: `V0019__member_vocabulary` renames the
+#: on-disk container and flag tokens but states in its own
+#: `WHAT THIS MIGRATION DELIBERATELY DOES NOT REWRITE` section that "The consolidated
+#: `sensitivity_datatree.zarr` node names are NOT renamed here", so a master that has not
+#: re-consolidated since V0019 still carries `sa_*` nodes at layout 22. This is not a
+#: speculative widening -- `V0022` already enumerates both at `:194-195` and reads member
+#: groups by exactly this test in `_member_group_prefixes`.
+MEMBER_NODE_PREFIXES = ("sa_", "member_")
+
+
+def _member_node_count(store: Path) -> int:
+    """Count MEMBER nodes in a root consolidated store BY NAME, never by child count.
+
+    A bare child count is wrong on both arms and wrong for the same reason: a
+    `parameters` group is written UNCONDITIONALLY beside the members --
+    `MigrationContext._apply_zarr_unify_to_experiment_tree` writes it on the regular arm
+    and `build_sensitivity_datatree` sets `tree_dict["parameters"]` on the sensitivity
+    arm -- so every in-population store carries one group more than it has members.
+    Measured on the committed `tests/fixtures/legacy_layouts/v22` store, which holds ONE
+    member: a bare directory count returns 2, and a `zarr.json`-gated count returns 2 as
+    well, because `parameters` is a real zarr group. Counting by vocabulary returns 1.
+
+    NO `zarr.json` CONJUNCT, and the divergence from `V0025._member_group_count` is
+    DELIBERATE rather than an oversight. This function matches the only member-group
+    reader already landed in this repository, `V0022._member_group_prefixes`, which tests
+    `is_dir()` and the prefix and nothing else. A `zarr.json` conjunct changes the answer
+    on exactly one population -- a member directory that carries no group node, which is
+    the BROKEN hierarchy `_apply_zarr_unify_to_experiment_tree`'s own docstring describes
+    a bare directory move as producing -- and the two readers are right to differ there:
+    `V0025` MOVES a store and must refuse on a malformed tree, while this function
+    RETURNS a classification and would otherwise report less than the evidence supports.
+    """
+    if not store.is_dir():
+        return 0
+    return sum(1 for p in store.iterdir() if p.is_dir() and p.name.startswith(MEMBER_NODE_PREFIXES))
+
+
+def _normalize_arm(arm: bool | str | None) -> bool | None:
+    """Normalize a supplied arm to the `bool | None` form `arm_from_config_dir` returns.
+
+    `"sensitivity"`/`"regular"` is the form the cell enumeration asserts on; the `bool`
+    form is accepted so a caller holding `toggle_sensitivity_analysis` can pass it
+    through untranslated. Anything else RAISES rather than defaulting: a silently
+    ignored arm downgrades a corroborated answer to an uncorroborated one with no signal.
+    """
+    if arm is None or isinstance(arm, bool):
+        return arm
+    if arm == "sensitivity":
+        return True
+    if arm == "regular":
+        return False
+    raise ValueError(f"arm must be None, a bool, 'regular' or 'sensitivity'; got {arm!r}")
+
+
+def classify_analysis_arm(root: str | Path, *, arm: bool | str | None = None) -> tuple[str, str]:
+    """Classify a two-store analysis root by ARM, and disclose the arm's PROVENANCE.
+
+    THE BASIS IS THE ARM -- not a name ordering, and not the in-store generation stamp.
+    The instrument is a THREE-SIGNAL CONJUNCTION: the `members/` container at the
+    analysis root, the member-node cardinality inside the unified store, and the arm,
+    supplied by a caller that holds one and otherwise recovered from the root's own
+    `cfg_analysis.yaml` by `arm_from_config_dir`.
+
+    THE ARM IS AN OPTIONAL PARAMETER, DISCOVERED ONLY AS A FALLBACK. A site holding the
+    arm MUST supply it. Requiring it everywhere is unsatisfiable: `_child_model`
+    (`report_renderers/cross_experiment_disk_utilization.py`) is typed `(child: Path)`
+    and resolves a child root where no analysis object exists.
+
+    NO ON-ROOT DEFAULT IS TAKEN WHEN THE ARM IS ABSENT. An absent signal leaves the
+    conjunction two-membered and ANNOUNCED (`DEGRADED_NO_ARM`); a defaulted one would
+    make it three-membered and silent.
+
+    AN ABSENT ARM IS NOT AN UNNECESSARY ONE. Where the two structural signals decide the
+    root between them the arm is never read and the provenance is `not-needed`. Checking
+    for an absent arm BEFORE that branch reports a degradation that did not occur.
+
+    THE RETURN IS A PAIR, because disclosure is not detection: a classifier returning the
+    classification alone is right on most roots and still unusable, since no caller can
+    separate an answer resting on a corroborated arm from one resting on an
+    uncorroborated file.
+
+    Returns ``(classification, provenance)``. Classification is one of ``route1``,
+    ``route2``, ``INCONSISTENT``, ``UNDECIDED``, ``ARM_REVERTED``, ``ARM_DISAGREEMENT``,
+    ``DEGRADED_NO_ARM``, ``OUT_OF_POPULATION``; provenance is one of ``not-needed``,
+    ``absent``, ``supplied``, ``on-disk-UNCORROBORATED``, ``corroborated``,
+    ``supplied-vs-on-disk-DISAGREE``. This function READS ONLY: it moves nothing,
+    writes nothing, and raises only on an unrecognized `arm` value.
+    """
+    root = Path(root)
+    supplied = _normalize_arm(arm)
+
+    # POPULATION GATE -- exactly the two-store subset `resolve_experiment_tree` warns on.
+    if [n for n in ROOT_TREE_NAMES if (root / n).exists()] != [
+        EXPERIMENT_TREE_NAME,
+        REGULAR_TREE_NAME,
+    ]:
+        return ("OUT_OF_POPULATION", "not-needed")
+
+    has_members = (root / "members").is_dir()
+    member_nodes = _member_node_count(root / EXPERIMENT_TREE_NAME)
+
+    # THE ARM-NOT-NEEDED BRANCH IS FIRST, and its position is the whole of its content.
+    if not has_members:
+        if member_nodes > 1:
+            return ("INCONSISTENT", "not-needed")
+        return ("route1", "not-needed")
+
+    on_disk = arm_from_config_dir(root)
+    if supplied is None and on_disk is None:
+        return ("DEGRADED_NO_ARM", "absent")
+    if supplied is None:
+        effective, provenance = on_disk, "on-disk-UNCORROBORATED"
+    elif on_disk is None:
+        effective, provenance = supplied, "supplied"
+    elif supplied != on_disk:
+        return ("ARM_DISAGREEMENT", "supplied-vs-on-disk-DISAGREE")
+    else:
+        effective, provenance = supplied, "corroborated"
+
+    if effective is False:
+        # The container is a SENSITIVITY artifact; a regular arm beside it is reversion.
+        return ("ARM_REVERTED", provenance)
+    if member_nodes > 1:
+        return ("route2", provenance)
+    return ("UNDECIDED", provenance)
 
 
 class BatchJobSubmissionError(Exception):
@@ -29,7 +452,7 @@ class BatchJobSubmissionError(Exception):
         command: list,
         return_code: int,
         stderr: str,
-        dependent_job_id: Optional[int | str | list] = None,
+        dependent_job_id: int | str | list | None = None,
         dependency_type: str = "afterok",
     ):
         self.script_path = script_path
@@ -67,49 +490,90 @@ class BatchJobSubmissionError(Exception):
         return "\n".join(indent + line for line in text.split("\n"))
 
 
+def _tree_file_bytes(root: Path) -> int:
+    """Sum the sizes of the regular files under the directory ``root`` in one ``os.scandir`` pass.
+
+    Each entry's own ``stat`` supplies its size, so a file costs one stat call where the walk
+    this replaces (``Path.rglob`` plus ``is_file`` plus ``stat``) cost two. The count is the same:
+    a file reached through a symlink counts its TARGET's size, a dangling symlink and any other
+    non-regular entry count zero, and only real directories are descended, so a symlink to a
+    directory is neither entered nor counted. An unreadable directory contributes nothing, as an
+    unreadable entry did before.
+    """
+    total = 0
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(Path(entry.path))
+                            continue
+                        info = entry.stat()
+                        if stat.S_ISREG(info.st_mode):
+                            total += info.st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return total
+
+
 def fast_rmtree(
     path: str | Path,
     *,
     missing_ok: bool = True,
-    onerror: Optional[Callable] = None,
-    analysis_dir: Optional[str | Path] = None,
-) -> None:
-    """Fast, cross-platform directory delete.
+    onerror: Callable | None = None,
+) -> int:
+    """Delete a file, a symlink or a directory tree, fast; return the bytes measured first.
 
-    Uses OS-native delete commands for speed; falls back to shutil.rmtree.
+    Uses OS-native delete commands for a directory; falls back to shutil.rmtree.
 
-    When `analysis_dir` is provided AND `path` is not itself the analysis_dir,
-    `du_sentinels.restamp_parent_sentinels(path, analysis_dir=...)` is invoked
-    after the delete completes so parent-scope DU sentinels stay accurate. The
-    `path == analysis_dir` short-circuit converts the EXEMPT-site convention
-    (root-wipe — re-stamping a directory being deleted is meaningless) from a
-    prose comment into grep-detectable code (SE F-I Flag 2).
+    The existence test and the size measurement both FOLLOW symlinks. A live symlink
+    is unlinked and its target is kept, but the returned count is the TARGET's size.
+    A dangling symlink reads as missing: it is left in place and the call returns 0,
+    or raises FileNotFoundError when ``missing_ok`` is False.
+
+    THIS IS A PRIMITIVE, NOT AN ACCOUNTING SITE. It measures and deletes; it
+    maintains no DU sentinel. Every DU-counted deletion under src/hhemt/ routes
+    through `du_sentinels.delete_and_account`, which calls this and adjusts the
+    owning scope's sentinel once. Calling this directly
+    outside du_sentinels.py is a `check_du_sentinel_sites` violation unless the
+    site carries a still-valid `# EXEMPT-DU:` category.
 
     Parameters
     ----------
     path : str | Path
-        Directory path to delete.
+        File, symlink or directory to delete (see above for how a symlink is treated).
     missing_ok : bool
         If True, silently return when path does not exist.
     onerror : callable, optional
         Error handler passed to shutil.rmtree (fallback only).
-    analysis_dir : str | Path, optional
-        Root of the analysis tree this delete is scoped to. When provided,
-        parent-scope DU sentinels under `analysis_dir` are re-stamped after
-        the delete; when None, no re-stamping occurs (the caller is responsible
-        for sentinel accuracy out-of-band).
     """
     path = Path(path)
 
     if not path.exists():
         if missing_ok:
-            return
+            return 0
         raise FileNotFoundError(path)
+
+    # Measured BEFORE the delete -- afterwards there is nothing to measure. This is
+    # the pre-delete walk the docstring prices, over a tree about to be walked for
+    # deletion anyway.
+    freed = 0
+    if path.is_symlink() or path.is_file():
+        try:
+            freed = path.stat().st_size
+        except OSError:
+            pass
+    else:
+        freed = _tree_file_bytes(path)
 
     if path.is_symlink() or path.is_file():
         path.unlink()
-        _restamp_after_mutation(path, analysis_dir)
-        return
+        return freed
 
     try:
         if os.name == "nt":
@@ -129,32 +593,566 @@ def fast_rmtree(
     except Exception:
         shutil.rmtree(path, onerror=onerror)
 
-    _restamp_after_mutation(path, analysis_dir)
+    return freed
 
 
-def _restamp_after_mutation(
-    path: Path, analysis_dir: Optional[str | Path]
-) -> None:
-    """Re-stamp parent DU sentinels for `path` under `analysis_dir`.
+def _publish_flag_crash_safe(flag) -> None:
+    """Publish a completion FLAG crash-safely: CLEAR a stale temp, never PROMOTE it.
 
-    No-op when `analysis_dir` is None, when `path == analysis_dir` (root-wipe
-    short-circuit per SE F-I Flag 2), or when path resolution fails. Imports
-    `restamp_parent_sentinels` lazily to keep `utils.py` free of a top-level
-    dependency on `du_sentinels.py`.
+    A flag's content is a constant, so a leftover temp carries no recoverable
+    information -- unlike ``_publish_store_crash_safe``, whose recovery publishes.
+    On ANY exception from the replace the temp is unlinked and the exception is
+    RE-RAISED: swallowing it would let control fall through to the caller's
+    post-flag deletions behind an absent flag.
     """
-    if analysis_dir is None:
-        return
+    tmp = flag.with_suffix(flag.suffix + ".tmp")
+    if tmp.exists():
+        tmp.unlink()  # EXEMPT-DU: transient-intermediate
+    tmp.write_text("ok", encoding="utf-8")
     try:
-        path_resolved = Path(path).resolve()
-        analysis_resolved = Path(analysis_dir).resolve()
-    except OSError:
+        os.replace(tmp, flag)
+    except Exception:
+        if tmp.exists():
+            tmp.unlink()  # EXEMPT-DU: transient-intermediate
+        raise
+
+
+def _recover_and_clear_publish_temps(final, aside, tmp) -> None:
+    """Steps 0 and 1 of the crash-safe publish. Shared by the callable-wrapping
+    form below, so the .aside/.tmp
+    preference has exactly ONE implementation -- two copies is how it gets undone.
+
+    THE PREFERENCE IS ORDER-DERIVED, NOT PROVENANCE-DERIVED. Read this before
+    changing either branch.
+
+    An earlier draft preferred .aside on the ground that it is "trustworthy by
+    construction -- only ever a renamed complete `final`". That rests on the
+    ABSENT-or-COMPLETE invariant, WHICH THIS MODULE ESTABLISHES, so it does not
+    hold over stores written before this publish path existed: on the first run
+    under it, every `final` on disk was written by the unprotected path and may be a
+    silent-fill partial. Measured: with an inherited partial at .aside and a
+    complete store at .tmp, that draft restored the partial and deleted the
+    complete one, announcing that it was restoring the last known-good copy.
+    That is a regression against doing nothing -- clearing both would have left
+    `final` absent and let the rule re-run.
+
+    What holds instead is an ORDERING fact about this process: .aside is created
+    ONLY at step 3, which runs only after write_fn(tmp) RETURNED (and, in the
+    inline form, only after the streaming loop completed). So
+
+        aside.exists() and not final.exists()   ==>   .tmp is COMPLETE
+
+    and in that state .tmp is the newer complete store and .aside is whatever
+    `final` happened to be. Prefer .tmp.
+
+    RECOVERY PUBLISHES, and that is a deliberate widening of what this function
+    does. The os.rename(tmp, final) below promotes a PREVIOUS invocation's store
+    to `final`. After a force-rerun that store may reflect a superseded input
+    set, so a reader between the recovery and the current write's own publish can
+    see stale-but-complete data. It is transient unless the current write also
+    fails with retries exhausted; the alternative -- discarding a complete store
+    to leave `final` absent -- loses data the system still has.
+
+    The asymmetry stays real everywhere else. On the step-2 crash path .aside
+    does NOT exist, a mid-write .tmp is incomplete, and nothing can tell it from
+    a complete one -- so it is cleared, unconditionally, in every branch.
+    """
+    if aside.exists():
+        if not final.exists():
+            if tmp.exists():
+                # Died in the step3->step4 gap: .tmp is the complete new store.
+                os.rename(tmp, final)
+                fast_rmtree(aside)  # EXEMPT-DU: transient-intermediate
+            else:
+                warnings.warn(
+                    f"Recovering {aside}: a previous publish died mid-swap with no "
+                    f"replacement store present, so it is being restored to "
+                    f"{final.name}.",
+                    stacklevel=2,
+                )
+                os.rename(aside, final)
+        else:
+            # Died in the step4->step5 gap: the aside is superseded.
+            fast_rmtree(aside)  # EXEMPT-DU: transient-intermediate
+    if tmp.exists():
+        warnings.warn(f"Discarding un-publishable partial store {tmp}.", stacklevel=2)
+        fast_rmtree(tmp)  # EXEMPT-DU: transient-intermediate
+
+
+def _publish_store_crash_safe(write_fn, fname_out) -> None:
+    """Build a zarr store under a temp name and publish it by rename.
+
+    GUARANTEE, and it is exactly this one: `fname_out` is either ABSENT or a
+    COMPLETE store, never an INCOMPLETE one. It is NOT guaranteed that a complete
+    store survives somewhere after any crash -- on the FRESH path (no prior store)
+    a crash before the rename leaves nothing, and that is the relaunch's own path.
+
+    WHY THIS EXISTS: no sound completeness detector is possible. zarr omits an
+    all-fill chunk by default (write_empty_chunks unset anywhere in this tree), so
+    a legitimately dry corner of a flood-depth field is byte-identical to a killed
+    write, and a missing chunk READS as the fill value rather than raising.
+    Measured under a real SIGKILL: the store is present-but-incomplete for ~28% of
+    a direct mode="w" write, opens without error, reports the full expected length,
+    and returns NaN for the rows whose chunks never landed.
+
+    THE GUARANTEE IS SINGLE-WRITER. Two processes publishing the same `final` can
+    interleave steps 3 and 4 and defeat it. Do not read that as "the toolkit
+    prevents this": the arbitration is partial and checkable. Snakemake's
+    output-vs-output lock covers concurrent rules in ONE workflow, and
+    SnakemakeWorkflowBuilder._orchestrator_liveness_gate covers a second driver --
+    but reprocess runs with --nolock and that gate refuses on a live DRIVER, not
+    on live WORKERS, so two publishers can still reach one store. The failure it
+    degrades to is a loud rename/replace error, which is strictly better than
+    today's silent interleave, and that is the whole claim.
+
+    STEPS 0/3/4 ARE ONE INTERLOCK, NOT THREE PIECES OF HYGIENE. Step 0 guarantees
+    no `.aside` survives into step 3; step 3's rename is what frees `final` so
+    step 4's os.replace is legal (both raise "Directory not empty" onto a
+    non-empty target). "Optimising away" step 0 breaks step 3 on the SECOND
+    recovery run, not the first -- which is why it would survive testing.
+
+    COST: 1.00x peak on the fresh path (the temp occupies bytes the store would
+    have taken anyway) and 2.00x on the rewrite path, where old and new coexist
+    until step 5.
+    """
+    final = Path(fname_out)
+    aside = final.with_name(final.name + ".aside")
+    tmp = final.with_name(final.name + ".tmp")
+
+    _recover_and_clear_publish_temps(final, aside, tmp)
+    write_fn(tmp)  # step 2
+    if final.exists():
+        os.rename(final, aside)  # step 3
+    os.replace(tmp, final)  # step 4
+    if aside.exists():
+        fast_rmtree(aside)  # step 5  # EXEMPT-DU: transient-intermediate
+
+
+def chapters_dir_for(fname_out) -> Path:
+    """Sibling directory holding this store's per-chapter parts."""
+    root = Path(fname_out)
+    return root.with_name(root.name + ".chapters")
+
+
+def unified_flag_for(fname_out) -> Path:
+    """Completion flag for the merged store: ``{name}.done`` beside it.
+
+    The flag, not the store's existence, is what lets the chapters be deleted: it is
+    written only after the merged store has been published.
+    """
+    root = Path(fname_out)
+    return root.with_name(root.name + ".done")
+
+
+def chapter_store_for(chapters: Path, k: int) -> Path:
+    """Store path of chapter ``k``, zero-padded to five digits so name order is index order."""
+    return chapters / f"chapter_{k:05d}.zarr"
+
+
+def chapter_flag_for(chapters: Path, k: int) -> Path:
+    """Completion flag of chapter ``k``. A chapter counts as complete only when this exists."""
+    return chapters / f"chapter_{k:05d}.done"
+
+
+def verify_and_flag_chapter(store: Path, flag: Path, n_expected: int) -> None:
+    """Open the chapter store, confirm it is readable, THEN write the flag.
+
+    THE ORDER IS THE CONTRACT: write -> verify -> flag -> record -> clear raw. The
+    RECORD step appends the producing build to the chapter set's provenance history
+    and is what lets the chapter-set guard compare a resume against the builds that
+    actually flagged chapters. It follows the flag deliberately: recording before the
+    flag lands would name a build for a chapter a failed verify never flagged. The flag is a
+    positive completion marker -- its presence is the only evidence later steps accept
+    that the chapter finished -- and the clear that follows it destroys the raw inputs,
+    so the flag must not be written on an unchecked store.
+
+    WHAT THE FLAG ATTESTS, stated exactly, because an earlier docstring overclaimed
+    it. It attests that `to_zarr` RETURNED and that the resulting store OPENS. It
+    does NOT attest that the store's data is complete, and the size check below is
+    near-tautological on the success path: zarr writes the declared shape before the
+    chunk bytes, so if `to_zarr` returned the size is right by construction, and if
+    it did not return the flag is never written and `reap_unflagged_chapters`
+    removes the store. With `write_empty_chunks=False` an absent chunk is
+    byte-indistinguishable from a dry corner of a flood field, so no cheap check can
+    do better. The open() is retained because it is not vacuous -- it catches a
+    store that returned but cannot be read back -- and the size check is retained
+    because it costs one metadata read and catches a stale store at the same index.
+    """
+    from hhemt.exceptions import ProcessingError
+
+    ds = open_store(store, kind="zarr")
+    try:
+        n = ds.sizes.get("timestep", 0)
+        if n != n_expected:
+            raise ProcessingError(
+                operation="verify_and_flag_chapter",
+                filepath=str(store),
+                reason=f"chapter covers {n} timesteps, expected {n_expected}",
+            )
+    finally:
+        ds.close()
+    _publish_flag_crash_safe(flag)
+    # RECORD THE PRODUCING BUILD, and only now. The chapter-set guard compares the
+    # running build against this history, so the history must be the provenance of
+    # the FLAGGED chapters -- not a log of every invocation that entered the writer.
+    # Recorded here rather than at the two call sites because those two blocks are a
+    # measured drift surface (they have already diverged once) and a third flush site
+    # would silently miss it. Function-local import, matching ProcessingError above;
+    # provenance imports utils function-locally too, so no module-load edge is added.
+    from hhemt.provenance import record_chapter_build
+
+    record_chapter_build(flag.parent)
+
+
+def completed_chapters(chapters: Path) -> dict:
+    """Chapter index -> store path, for FLAGGED chapters whose store still exists."""
+    if not chapters.exists():
+        return {}
+    out = {}
+    for f in sorted(chapters.glob("chapter_*.done")):
+        k = int(f.stem.split("_")[1])
+        store = chapter_store_for(chapters, k)
+        if store.exists():
+            out[k] = store
+    return out
+
+
+def covered_timesteps(chapters: Path) -> set:
+    """The set of timestep VALUES already published by flagged chapters.
+
+    A SET OF COORDINATE VALUES, never a COUNT. The loop that consumes this skips
+    timesteps on three paths (a missing raw file, a variable that loaded nothing, a
+    chunk that loaded nothing), so the number of published timesteps and their
+    POSITION in `timestep_list` diverge whenever any timestep is skipped -- which on
+    a partially-written raw directory is the expected shape, not a corner case. A
+    count used as a slice index is silently wrong there; a value set is correct
+    under skipped timesteps, a non-contiguous chapter set, and chapters written out
+    of order.
+
+    DEPENDENCY THIS RESTS ON, named because nothing protects it: exact set membership
+    requires that `timestep` round-trips through zarr UNENCODED. return_dic_zarr_encodings
+    does not encode it today -- its float32 branch iterates ds.data_vars and its coordinate
+    loop handles only Unicode -- but NO test pins the property, so a one-line edit there
+    would silently break resume by making
+    `t not in _covered_ts` true for timesteps that ARE covered.
+    """
+    out = set()
+    for store in completed_chapters(chapters).values():
+        ds = open_store(store, kind="zarr")
+        try:
+            out.update(ds["timestep"].values.tolist())
+        finally:
+            ds.close()
+    return out
+
+
+def reap_unflagged_chapters(chapters: Path, *, scenario_dir: Path) -> None:
+    """STATE 3: a chapter store with no flag was interrupted mid-write. Delete it.
+
+    Never deletes a FLAGGED chapter -- after a raw clear a flagged chapter is the
+    SOLE copy of its timesteps, and deleting one is unrecoverable without re-running
+    the simulation.
+    """
+    if not chapters.exists():
         return
-    if path_resolved == analysis_resolved:
-        return
-    if not analysis_resolved.exists():
-        return
-    from hhemt.du_sentinels import restamp_parent_sentinels
-    restamp_parent_sentinels(Path(path), analysis_dir=analysis_resolved)
+    for store in sorted(chapters.glob("chapter_*.zarr")):
+        k = int(store.stem.split("_")[1])
+        if not chapter_flag_for(chapters, k).exists():
+            warnings.warn(f"Discarding unflagged (interrupted) chapter store {store}.", stacklevel=2)
+            from hhemt.du_sentinels import delete_and_account
+
+            delete_and_account([store], scope_dir=scenario_dir, scope="scenario")
+    # A chapter is published by rename (`write_zarr`), so an interrupted write leaves a `.zarr.tmp`
+    # sibling that the glob above does not match. It is a partial store that was never promoted,
+    # flagged chapter or not (a flagged chapter's published store is untouched by a rewrite in flight).
+    for partial in sorted(chapters.glob("chapter_*.zarr.tmp")):
+        warnings.warn(f"Discarding interrupted chapter write {partial}.", stacklevel=2)
+        from hhemt.du_sentinels import delete_and_account
+
+        delete_and_account([partial], scope_dir=scenario_dir, scope="scenario")
+
+
+def clear_raw_for_timesteps(df_outputs, timesteps, *, scenario_dir: Path) -> int:
+    """Delete ONLY the raw per-timestep files this chapter consumed. Returns bytes.
+
+    DELIBERATELY NOT `process_simulation._clear_raw_outputs`, and it MUST NOT be
+    refactored to share that helper's allowlist. `_CLEAR_RAW_DELETE_SUBDIRS`
+    contains `cfg/` (the config_NNNN.cfg HOTSTART CHECKPOINTS a walltime-killed sim
+    resumes from) and `performance/` (the per-checkpoint files V0008's
+    _aggregate_perf_tseries merges for wallclock). Calling it per chapter would
+    RAISE RuntimeError on a resumable multi-allocation run and SILENTLY destroy both
+    on a single-allocation one.
+
+    This helper preserves them BY CONSTRUCTION rather than by omission from a delete
+    list: it deletes only paths named in `df_outputs`, which contains the
+    per-variable per-timestep data files and nothing else.
+    """
+    # ONE accounting call for the whole chapter. The pre-2026-09-13 form called
+    # fast_rmtree(p, analysis_dir=...) per file, and each call re-summed the ANALYSIS
+    # scope over ~3,798 sentinel-less children -- 528 times per chapter flush, which
+    # stalled processing. The tool below stats only what it deletes and adjusts only
+    # this scenario's sentinel.
+    from hhemt.du_sentinels import delete_and_account
+
+    paths = df_outputs.loc[list(timesteps)].to_numpy().ravel()
+    return delete_and_account(paths, scope_dir=Path(scenario_dir), scope="scenario")
+
+
+#: Target on-disk chunk size for per-scenario spatial timeseries, in BYTES.
+#: 1.25 MiB, chosen to sit at the magnitude zarr's own auto-chunker selects for this
+#: data -- it picked (17, 135, 138) float32 = 1.21 MiB for a full chapter -- so
+#: declaring a grid changes WHICH cells share a chunk without changing I/O
+#: granularity. Raising it walks toward Blosc's 2,048 MiB max_buffer_size at fine
+#: DEM resolutions; lowering it multiplies object count on a parallel filesystem.
+CHUNK_BYTE_TARGET_BYTES: int = 1_310_720
+
+
+def _integer_cube_root(n: int) -> int:
+    """The exact integer floor of the cube root, by search. No floating point.
+
+    `round(n ** (1/3))` would do the same job in one line. It is rejected because
+    IEEE-754 does not require `pow` to be correctly rounded, so two machines can differ
+    by an ulp -- and a grid that differs between two nodes of one campaign is a
+    divergent chapter set the mixed-build guard CANNOT SEE, because that guard keys on
+    the TOOLKIT identity and the toolkit is identical. That is the same reason this
+    module owns the sizing rule rather than calling zarr's private `_guess_chunks`: the
+    derivation base must sit inside the boundary the guard can observe.
+    """
+    root = 1
+    while (root + 1) ** 3 <= n:
+        root += 1
+    return root
+
+
+def resolve_chunk_grid(
+    ny: int,
+    nx: int,
+    itemsize: int,
+    *,
+    byte_target: int = CHUNK_BYTE_TARGET_BYTES,
+    override_t: int | None = None,
+) -> tuple[int, int, int]:
+    """The (timestep, y, x) zarr chunk grid for a per-scenario spatial timeseries.
+
+    THE INPUT SET IS THE WHOLE POINT. Every argument is constant across a scenario BY
+    CONSTRUCTION -- `ny`/`nx` come from the processed DEM, `itemsize` from the stored
+    dtype -- so every chapter of one scenario receives the SAME grid, including the
+    short final one, and including a chapter written by a LATER invocation on the
+    resume path. A chunk larger than a short chapter's extent is accepted by zarr.
+
+    WHAT IS DELIBERATELY NOT AN INPUT, and why naming it matters more than the rule:
+    the scenario's timestep COUNT. It is scenario-constant as a concept and is NOT
+    constant in any expression reachable here -- `df_outputs` is a glob of the raw
+    output directory and `clear_raw_for_timesteps` deletes exactly what that glob
+    enumerates after every chapter flush, so a resumed invocation sees a shorter
+    frame. Deriving from it would make a resumed writer declare a grid the existing
+    chapters do not carry, which is the defect this function exists to remove.
+    Neither is the flush size an input, for the same reason: it resolves from the
+    process rule's SLURM memory allocation and is constant within one invocation only.
+
+    WHY THE TOOLKIT OWNS THIS RATHER THAN CALLING zarr's `_guess_chunks`. The
+    chapter-set build guard keys on the TOOLKIT identity in both execution modes --
+    the git sha natively, the `org.hhemt.hhemt_sha` image label in container -- so it
+    is structurally incapable of noticing a zarr version change. A zarr-private
+    derivation base would sit OUTSIDE the only mechanism protecting chapter-set
+    consistency: a zarr patch bump would change the declared grid, the guard would not
+    fire because the toolkit sha is unchanged, and the merge's uniformity assert would
+    then refuse every resume against pre-bump chapters. A rule versioned with the
+    toolkit is fully inside that boundary -- changing it changes the toolkit sha.
+
+    All three axes are sized. A time chunk over FULL-EXTENT spatial axes cannot reach
+    any sane byte target at fine DEMs, because with the spatial axes whole one
+    timestep is the floor: 1.13 MiB at 3.5 m, 11.43 MiB at 1.1 m, 112.87 MiB at
+    0.35 m.
+
+    `override_t` is `analysis_config.process_timestep_chunk`, which is a read-locality
+    knob and nothing else. It replaces the time component only; the spatial components
+    stay derived, so no user value can re-introduce an extent-dependent grid.
+    """
+    cells = max(1, byte_target // max(1, itemsize))
+    side = max(1, _integer_cube_root(cells))
+    y = min(int(ny), side)
+    x = min(int(nx), side)
+    t = max(1, cells // (y * x))
+    if override_t is not None:
+        t = max(1, int(override_t))
+    return (t, y, x)
+
+
+def merge_chapters_to_unified(chapters: Path, fname_out, *, scenario_dir: Path) -> None:
+    """STATES 4/5/6: concatenate flagged chapters into the unified store.
+
+    THE PUBLISH IS ATOMIC. `_publish_store_crash_safe` builds under a temp name and
+    renames, so `fname_out` is either absent or complete and an interrupted merge
+    leaves a `.tmp` sibling rather than a plausible-looking partial store at the
+    published path. That is what makes "the directory exists" mean "the write
+    finished" for every reader, none of which consults the completion flag. The
+    chapters are still present throughout -- the interlock holds them until the
+    unified flag lands, which is what makes a re-merge possible at all.
+
+    CONTIGUITY IS ASSERTED, not assumed. `completed_chapters` admits an interior
+    hole: a flag whose store was later removed leaves a gap, and concatenating
+    sorted(parts) over a gapped set yields a unified store missing an interior
+    timestep range and then FLAGS IT COMPLETE. The index set must be exactly
+    range(len(parts)).
+    """
+    from hhemt.exceptions import ProcessingError
+
+    final = Path(fname_out)
+    flag = unified_flag_for(final)
+    parts = completed_chapters(chapters)
+    if not parts:
+        raise ProcessingError(
+            operation="merge_chapters_to_unified",
+            filepath=str(chapters),
+            reason="no flagged chapter stores to merge",
+        )
+    if sorted(parts) != list(range(len(parts))):
+        raise ProcessingError(
+            operation="merge_chapters_to_unified",
+            filepath=str(chapters),
+            reason=(
+                f"chapter index set {sorted(parts)} is not contiguous from 0; a flagged "
+                "chapter's store is missing and merging would publish a store with an "
+                "interior gap and flag it complete"
+            ),
+        )
+    ds = xr.concat(
+        [open_store(parts[k], kind="zarr") for k in sorted(parts)],
+        dim="timestep",
+    )
+    # LOUD, NOT REPAIRED. With the grid declared once per scenario, a divergence
+    # arriving here means something upstream broke -- a partially-migrated chapter set,
+    # an operator-forced `allow_mixed_version_chapters`, a variable with different dims.
+    # `align_chunks=True` would rechunk it away and tell nobody, and `safe_chunks=False`
+    # is measured-corrupting (3.5-4.7% of cells silently to NaN, non-deterministically).
+    # A refusal naming the offending chapter and its grid is the correct instrument in a
+    # failure whose entire lesson is that silence is the danger. This FAILS CLOSED where
+    # a silent repair would succeed, and that is the intended trade.
+    # SCOPED TO THE NON-CONCAT AXES, and the scope is load-bearing in BOTH directions.
+    # The concat axis is legitimately repaired ten lines below by the _time_chunks
+    # unification, which stays in place -- so asserting uniformity there would
+    # duplicate a live repair and contradict the passing test that pins it
+    # (test_merged_store_keeps_the_inherited_time_chunk_grid[measured-production-shape]
+    # merges chapters stored at time-chunk 17 and 3 and expects success). The non-concat
+    # axes are exactly what that repair does NOT cover -- the retired comment said so in
+    # its own words -- and are where the divergence that terminated a campaign lived.
+    #
+    # NO `chunks is not None` GUARD, and its absence is deliberate. `open_zarr` reports
+    # the STORED grid and a zarr store always has one: measured, a chapter written with
+    # NO declared encoding comes back carrying the grid zarr guessed for it, never None.
+    # A None-guard here would be a branch that cannot be entered, and an unenterable
+    # branch reads to the next editor as a case that can happen.
+    _spatial: dict[str, set[tuple]] = {}
+    for _k in sorted(parts):
+        _chap = open_store(parts[_k], kind="zarr")
+        try:
+            for _name, _var in _chap.data_vars.items():
+                _g = tuple(
+                    int(_c) for _c, _d in zip(_var.encoding["chunks"], _var.dims, strict=True) if _d != "timestep"
+                )
+                _spatial.setdefault(str(_name), set()).add(_g)
+        finally:
+            _chap.close()
+    _diverged = {_n: sorted(_g) for _n, _g in _spatial.items() if len(_g) > 1}
+    if _diverged:
+        raise ProcessingError(
+            operation="merge_chapters_to_unified",
+            filepath=str(chapters),
+            reason=(
+                f"chapter stores do not share one non-concat chunk grid: {_diverged}. Every "
+                "chapter of one store must declare the grid utils.resolve_chunk_grid returns "
+                "for this scenario, so a divergence here is an upstream fault, not something "
+                "to repair at the merge. Do NOT reach for safe_chunks=False -- it is measured "
+                "to write without raising while silently losing 3.5-4.7% of cells to NaN, "
+                "which in a flood-depth field is indistinguishable from dry ground. "
+                "Discard the chapter set with a force at stage='process' and re-run."
+            ),
+        )
+    # THE INVARIANT THIS RELIES ON, AND WHERE IT IS ENFORCED. Every chapter of one
+    # store declares the SAME chunk grid on ALL THREE axes, because the writer resolves
+    # it once per scenario from `utils.resolve_chunk_grid(ny, nx, itemsize)` -- inputs
+    # that are constant across a scenario BY CONSTRUCTION, not by habit. So the boundary
+    # union `xr.concat` forms across chapters is trivially uniform on every axis and
+    # needs no repair here. The assert below is what makes that a checked precondition
+    # rather than an assumption; the chunk unification that follows is retained as the
+    # mechanism that carries the declared grid onto the published store.
+    #
+    # WHAT THE PREVIOUS COMMENT GOT WRONG, recorded so it is not re-derived. It argued
+    # the non-concat-axis case away on two grounds, both falsified by measurement:
+    # `xr.concat` does NOT unify a non-concat axis to the finer grid (it forms the
+    # COMMON REFINEMENT, the union of both boundary sets, which is ragged and is what
+    # the writer refuses); and the refusal is INDIFFERENT to which chapter is coarser,
+    # because a boundary union of two non-nested grids is ragged in either direction.
+    # Measured: twelve chapters at (17,135,138) and one short chapter at (2,269,276) --
+    # INCOMPARABLE, neither strictly coarser. DO NOT re-derive safety here from which
+    # chapter is coarser, from a chapter's time extent, or from the flush threshold.
+    # The safety is that no divergence is created upstream, and the assert proves it.
+    #
+    # Derive from data_vars ONLY -- coords carry their own grids and would send every
+    # case down the fallback branch, collapsing the time axis to a single chunk.
+    #
+    # SHARDED VARIABLES ARE LEFT OUT of that unification and handled one by one below. For a
+    # sharded array xarray reads `encoding["chunks"]` as the SHARD shape when it checks that
+    # dask chunks do not straddle a zarr chunk, so a dask grid sized to the inner chunk makes
+    # the write raise "would overlap multiple Dask chunks" -- measured on chapters written
+    # with `shards`, where today's unified write fails on the first sharded variable.
+    _time_chunks = {
+        int(_v.encoding["chunks"][_v.dims.index("timestep")])
+        for _v in ds.data_vars.values()
+        if "timestep" in _v.dims and _v.encoding.get("chunks") and not _v.encoding.get("shards")
+    }
+    if len(_time_chunks) == 1:
+        ds = ds.chunk({"timestep": _time_chunks.pop()})
+    elif _time_chunks:
+        for _v in (*ds.variables.values(), *ds.coords.values()):
+            if _v.encoding.get("shards"):
+                continue
+            _v.encoding.pop("chunks", None)
+            _v.encoding.pop("preferred_chunks", None)
+        ds = ds.chunk({"timestep": min(_time_chunks)})
+    # A sharded variable is written one whole shard per dask chunk on every axis, so its
+    # dask grid IS its shard shape; the shard shape itself is carried through unchanged.
+    _sharded = {
+        _n: _v.chunk(dict(zip(_v.dims, (int(_s) for _s in _v.encoding["shards"]), strict=True)))
+        for _n, _v in ds.data_vars.items()
+        if _v.encoding.get("shards")
+    }
+    if _sharded:
+        ds = ds.assign(_sharded)
+    # PUBLISH ATOMICALLY. `_publish_store_crash_safe` guarantees that `final` is either
+    # ABSENT or a COMPLETE store, never an incomplete one -- so "the directory exists"
+    # means "the write finished", which is what every reader of this store already
+    # assumes (`_open` gates on `.exists()`) and what nothing previously made true. A
+    # raise inside `to_zarr` used to leave a valid, openable zarr group carrying
+    # coordinates and zero data variables at the published path.
+    #
+    # THIS IS THE EXISTING PRIMITIVE, NOT A NEW ONE, and reaching for it rather than
+    # hand-rolling a temp-and-rename inherits a trap: its step-0 recover-and-clear
+    # cannot be optimised away, because omitting it breaks the rename on the SECOND
+    # recovery run -- which is why a hand-rolled version would pass its own tests. It
+    # is already the publisher for write_zarr and write_datatree_zarr.
+    #
+    # The single-writer caveat is the helper's own and is not repaired here: reprocess
+    # runs with --nolock and the orchestrator gate refuses on a live DRIVER rather than
+    # live WORKERS, so two publishers can still reach one store. That degrades to a loud
+    # rename error, which is strictly better than the silent interleave it replaces.
+    #
+    # THE MERGED STORE STATES ITS ENCODING instead of inheriting it. Each data variable's
+    # stored settings (chunk shape, shard shape when present, codecs, dtype, fill value) are
+    # passed to the writer explicitly, so a shard setting the chapters carry reaches the
+    # published store as a stated fact. `preferred_chunks` is a read-side hint the writer
+    # rejects when it is stated, so it is the one key left out. `chunks=None` because the
+    # dask grid was set above and an automatic rechunk would contradict it.
+    _merge_encoding = {
+        _n: {_k: _e for _k, _e in _v.encoding.items() if _k != "preferred_chunks"} for _n, _v in ds.data_vars.items()
+    }
+    write_zarr(ds, final, chunks=None, encoding=_merge_encoding)
+    _publish_flag_crash_safe(flag)
+    # STATE 6: chapters die ONLY now, after the unified flag.
+    from hhemt.du_sentinels import delete_and_account
+
+    delete_and_account([chapters], scope_dir=scenario_dir, scope="scenario")
 
 
 def fix_line_endings(file_path, target_ending="\n"):
@@ -189,7 +1187,6 @@ def fix_line_endings(file_path, target_ending="\n"):
             print(f"✓ Fixed line endings in: {file_path}")
             return True
         else:
-            # print(f"✓ Already correct: {file_path}")
             return False
 
     except Exception as e:
@@ -199,10 +1196,17 @@ def fix_line_endings(file_path, target_ending="\n"):
 
 def run_bash_script(
     bash_script: Path,
-    dependent_job_id: Optional[int | str | list] = None,
+    dependent_job_id: int | str | list[str] | None = None,
     dependency_type: Literal["afterok", "afterany"] = "afterok",
     verbose: bool = True,
 ):
+    """Submit ``bash_script`` with ``sbatch`` and return the SLURM job id as a string.
+
+    ``dependent_job_id`` adds ``--dependency={dependency_type}:{id}``; a list is joined
+    with commas, so it must hold strings. The id returned is the last token of sbatch's
+    stdout. A non-zero sbatch exit raises ``BatchJobSubmissionError`` carrying the
+    command and stderr.
+    """
     cmd = ["sbatch"]
     dpdndncy = ""
     if dependent_job_id:
@@ -211,9 +1215,7 @@ def run_bash_script(
         cmd.append(
             f"--dependency={dependency_type}:{dependent_job_id}",
         )
-        dpdndncy = (
-            f"\n dependent on job {dependent_job_id} using dependency={dependency_type}"
-        )
+        dpdndncy = f"\n dependent on job {dependent_job_id} using dependency={dependency_type}"
     cmd.append(str(bash_script))
 
     try:
@@ -240,6 +1242,7 @@ def run_bash_script(
 
 
 def archive_directory_contents(dir: Path):
+    """Move every entry of ``dir`` except ``_archive`` itself into ``dir/_archive``, creating it."""
     archive_dir = dir / "_archive"
     archive_dir.mkdir(exist_ok=True, parents=True)
     for item in dir.iterdir():
@@ -248,22 +1251,22 @@ def archive_directory_contents(dir: Path):
         shutil.move(str(item), archive_dir / item.name)
 
 
-def create_mask_from_shapefile(
-    da_to_mask, shapefile_path=None, series_single_row_of_gdf=None
-):  # , COORD_EPSG):
-    # da_to_mask, shapefile_path = da_sim_wlevel, f_mitigation_aois
+def create_mask_from_shapefile(da_to_mask, shapefile_path=None, series_single_row_of_gdf=None):
+    """Boolean mask on ``da_to_mask``'s grid, True inside the given geometries.
+
+    Pass the geometries as a vector file path or as one GeoDataFrame row; when both are
+    given the row wins, and when neither is given the call raises because no shapes
+    are bound. The mask uses ``da_to_mask.rio.transform()``, so the geometries must
+    already be in the raster's CRS -- nothing reprojects them.
+    """
     og_shape = da_to_mask.shape
-    xs = da_to_mask.x.to_series()
-    ys = da_to_mask.y.to_series()
-    from shapely.geometry import mapping
     import geopandas as gpd
     import rasterio.features
+    from shapely.geometry import mapping
 
     if shapefile_path is not None:
         gdf = gpd.read_file(shapefile_path)
-        shapes = [
-            mapping(geom) for geom in gdf.geometry
-        ]  # Convert geometries to GeoJSON-like format
+        shapes = [mapping(geom) for geom in gdf.geometry]  # Convert geometries to GeoJSON-like format
     if series_single_row_of_gdf is not None:
         shapes = [mapping(series_single_row_of_gdf.geometry)]
     mask = rasterio.features.geometry_mask(
@@ -276,16 +1279,19 @@ def create_mask_from_shapefile(
 
 
 def read_yaml(f_yaml: Path | str):
+    """Parse a YAML file with the safe loader, so arbitrary Python tags are refused."""
     return yaml.safe_load(Path(f_yaml).read_text())
 
 
 def write_yaml(data: dict, f_yaml: Path | str):
+    """Overwrite ``f_yaml`` with ``data``. Not atomic: a crash mid-write leaves a partial file."""
     with open(f_yaml, "w") as file:
         yaml.dump(data, file)
     return
 
 
 def get_package_root(package_name: str) -> Path:
+    """Directory holding an importable package's origin file; raises ImportError if it is not found."""
     spec = importlib.util.find_spec(package_name)
     if spec is None or spec.origin is None:
         raise ImportError(f"Package {package_name} not found")
@@ -293,17 +1299,24 @@ def get_package_root(package_name: str) -> Path:
 
 
 def get_package_data_root(package_name) -> Path:
+    """The platform's per-user data directory for ``package_name``. It is not created here."""
     return Path(user_data_dir(package_name))
 
 
 def fill_template(f_template: Path, mapping: dict):
-    with open(f_template, "r") as T:
+    """Fill a ``string.Template`` file from ``mapping`` and return the text.
+
+    Uses ``safe_substitute``, so a placeholder missing from ``mapping`` is left in the
+    output verbatim rather than raising.
+    """
+    with open(f_template) as T:
         template = Template(T.read())
         filled = template.safe_substitute(mapping)
     return filled
 
 
 def create_from_template(f_template: Path, mapping: dict, f_out: Path):
+    """Write ``fill_template``'s result to ``f_out``, creating parent directories, and return it."""
     filled = fill_template(f_template, mapping)
     f_out.parent.mkdir(parents=True, exist_ok=True)
     with open(f_out, "w+") as f1:
@@ -312,7 +1325,12 @@ def create_from_template(f_template: Path, mapping: dict, f_out: Path):
 
 
 def find_all_keys_in_template(f_template):
-    with open(f_template, "r") as f:
+    """Names inside ``{...}`` in a template file, de-duplicated in first-seen order.
+
+    Only braced placeholders are found: a bare ``$name`` that ``fill_template`` would
+    also substitute is not listed.
+    """
+    with open(f_template) as f:
         text = f.read()
     keys = re.findall(r"\{([^}]+)\}", text)
     unique_keys = list(dict.fromkeys(keys))
@@ -320,12 +1338,20 @@ def find_all_keys_in_template(f_template):
 
 
 def load_json(file: Path):
+    """Parse a JSON file."""
     with open(file) as f:
         log = json.load(f)
     return log
 
 
 def write_json(data: dict, file: Path):
+    """Write ``data`` to ``file`` atomically, creating parent directories.
+
+    The document is written and fsync'd under a per-process temp name, then moved over
+    ``file`` with ``os.replace``, so a reader never sees a partial document. The replace
+    is unconditional; use ``write_json_exclusive`` to refuse an existing file. Values
+    JSON cannot encode, such as paths and datetimes, are written as ``str()``.
+    """
     file.parent.mkdir(exist_ok=True, parents=True)
     pid = os.getpid()
     tmp_path = file.with_suffix(file.suffix + f".{pid}.tmp")
@@ -334,6 +1360,42 @@ def write_json(data: dict, file: Path):
         f.flush()
         os.fsync(f.fileno())
     tmp_path.replace(file)
+
+
+def write_json_exclusive(data: dict, file: Path):
+    """Create `file` with `data`, refusing if the name already exists.
+
+    The counterpart to `write_json` for the ONE case where a caller believes the
+    target is absent. `write_json` uses `os.replace`, which is unconditional and
+    therefore cannot distinguish creating a file from destroying one; this asks
+    the filesystem, via `O_CREAT | O_EXCL`, and raises `FileExistsError` when the
+    belief is wrong. A caller that inferred absence from a failed read has no
+    other way to check that inference -- a second read is the same instrument
+    that already gave the wrong answer.
+    """
+    file.parent.mkdir(exist_ok=True, parents=True)
+    # ATOMIC exclusive create. The former open(O_EXCL)-then-stream-json.dump on the
+    # FINAL name left a partial, unparseable document under that name for the whole
+    # dump window -- permanently if the process died inside it -- which is the in-tree
+    # producer of the "exists but does not parse" state. Now the complete document is
+    # written and fsync'd under a private temp name, and os.link publishes it under
+    # `file` in ONE operation that fails with FileExistsError if the name exists.
+    # os.link is used rather than os.replace because replace is unconditional and
+    # cannot refuse an existing name; link keeps the exclusive semantics. The temp
+    # name is unlinked on every path.
+    pid = os.getpid()
+    tmp_path = file.with_suffix(file.suffix + f".{pid}.excl.tmp")
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.link(tmp_path, file)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
 
 
 def replace_substring_in_file(file_path, old_substring, new_substring, verbose=False):
@@ -346,7 +1408,7 @@ def replace_substring_in_file(file_path, old_substring, new_substring, verbose=F
         new_substring (str): The substring to replace with.
     """
     # Read the file
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
     # Replace substring
@@ -360,12 +1422,14 @@ def replace_substring_in_file(file_path, old_substring, new_substring, verbose=F
 
 
 def read_text_file_as_string(file):
+    """Return a text file's whole contents."""
     with open(file) as f:
         contents = f.read()
     return contents
 
 
 def current_datetime():
+    """Local time with its UTC offset, as ISO 8601 to the second (e.g. ``2026-01-07T10:03:37-05:00``)."""
     return (
         datetime.datetime.now()
         .astimezone()
@@ -376,12 +1440,10 @@ def current_datetime():
 
 
 def current_datetime_string(filepath_friendly: bool = False):
-    """
-    Docstring for current_datetime_string
+    """Return ``current_datetime()``, optionally with every colon removed for use in a path.
 
-    Generates a datetime string following following  ISO 8601 format conventions.
-
-    :param filepath_friendly: If True, colons are replaced with nothing, e.g., 2026-01-07T10:03:37-05:00 becomes 2026-01-07T100337-0500
+    :param filepath_friendly: If True, colons are removed, e.g.
+        2026-01-07T10:03:37-05:00 becomes 2026-01-07T100337-0500
     :type filepath_friendly: bool
     """
     dts = current_datetime()
@@ -392,24 +1454,42 @@ def current_datetime_string(filepath_friendly: bool = False):
 
 
 def string_to_datetime(dt: str):
+    """Parse an ISO 8601 string, such as ``current_datetime()`` returns, into a datetime."""
     return datetime.datetime.fromisoformat(dt)
 
 
 def read_header(file, nlines):
+    """The first ``nlines`` lines of a text file, newlines kept; fewer if the file is shorter."""
     lst_lines = []
-    with open(file, "r") as f:
-        for i in range(nlines):
+    with open(file) as f:
+        for _i in range(nlines):
             line = f.readline()
             if not line:
-                break  # Stop if file has fewer than 6 lines
+                break  # end of file before `nlines` lines
             lst_lines.append(line)
     return lst_lines
 
 
 def read_text_file_as_list_of_strings(file):
+    """Return a text file's lines, each with its trailing newline kept."""
     with open(file) as f:
         contents = f.readlines()
     return contents
+
+
+_EMPTY_TRITON_LOG_FIELDS: dict[str, Any] = {
+    "nTasks": None,
+    "omp_threads_per_task": None,
+    "gpus_per_task": None,
+    "total_gpus": None,
+    "gpu_backend": None,
+    "build_type": None,
+    "triton_git_version": None,
+    "wall_time_s": None,
+    "machine": None,
+    "cpu": None,
+    "gpu": None,
+}
 
 
 def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
@@ -438,90 +1518,74 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
         - wall_time_s: float - Total wall time in seconds
         - machine: str - Machine name
         - cpu: str - CPU model
+        - gpu: str - GPU device model as reported by the runtime, or "none" on a
+          CPU-only build. Absent (None) on any log predating the GPU emission.
 
     Returns None for all fields if file doesn't exist or parsing fails.
     """
     if not log_file_path.exists():
-        return {
-            "nTasks": None,
-            "omp_threads_per_task": None,
-            "gpus_per_task": None,
-            "total_gpus": None,
-            "gpu_backend": None,
-            "build_type": None,
-            "triton_git_version": None,
-            "wall_time_s": None,
-            "machine": None,
-            "cpu": None,
-        }
+        return dict(_EMPTY_TRITON_LOG_FIELDS)
 
     try:
         content = read_text_file_as_string(log_file_path)
 
         # Initialize result dictionary with None values
-        result = {
-            "nTasks": None,
-            "omp_threads_per_task": None,
-            "gpus_per_task": None,
-            "total_gpus": None,
-            "gpu_backend": None,
-            "build_type": None,
-            "triton_git_version": None,
-            "wall_time_s": None,
-            "machine": None,
-            "cpu": None,
-        }
+        result = dict(_EMPTY_TRITON_LOG_FIELDS)
 
         # Parse each field using regex
         # Machine name
         match = re.search(r"Machine\s*:\s*(.+)", content)
         if match:
-            result["machine"] = match.group(1).strip()  # type: ignore
+            result["machine"] = match.group(1).strip()
 
         # CPU model
-        match = re.search(r"CPU\s*:\s*(.+)", content)
+        match = re.search(r"^CPU\s*:\s*(.+)$", content, re.M)
         if match:
-            result["cpu"] = match.group(1).strip()  # type: ignore
+            result["cpu"] = match.group(1).strip()
+
+        match = re.search(r"^GPU\s*:\s*(.+)$", content, re.M)
+        if match:
+            result["gpu"] = match.group(1).strip()
 
         # nTasks
         match = re.search(r"nTasks\s*:\s*(\d+)", content)
         if match:
-            result["nTasks"] = int(match.group(1))  # type: ignore
+            result["nTasks"] = int(match.group(1))
 
         # OMP threads per task
         match = re.search(r"OMP threads per task\s*:\s*(\d+)", content)
         if match:
-            result["omp_threads_per_task"] = int(match.group(1))  # type: ignore
+            result["omp_threads_per_task"] = int(match.group(1))
 
         # GPUs per task (handle "0 (CPU-only)" case)
         match = re.search(r"GPUs per task\s*:\s*(\d+)", content)
         if match:
-            result["gpus_per_task"] = int(match.group(1))  # type: ignore
+            result["gpus_per_task"] = int(match.group(1))
 
         # GPU backend
         match = re.search(r"GPU backend\s*:\s*(\S+)", content)
         if match:
-            result["gpu_backend"] = match.group(1).strip()  # type: ignore
+            result["gpu_backend"] = match.group(1).strip()
 
         # Total GPUs
         match = re.search(r"Total GPUs\s*:\s*(\d+)", content)
         if match:
-            result["total_gpus"] = int(match.group(1))  # type: ignore
+            result["total_gpus"] = int(match.group(1))
 
         # TRITON git version
         match = re.search(r"TRITON_GIT_VERSION\s*:\s*(.+)", content)
         if match:
-            result["triton_git_version"] = match.group(1).strip()  # type: ignore
+            result["triton_git_version"] = match.group(1).strip()
 
         # Build type
         match = re.search(r"Build type\s*:\s*(.+)", content)
         if match:
-            result["build_type"] = match.group(1).strip()  # type: ignore
+            result["build_type"] = match.group(1).strip()
 
         # Wall time
         match = re.search(r"TRITON total wall time \[s\]\s*:\s*([\d.]+)", content)
         if match:
-            result["wall_time_s"] = float(match.group(1))  # type: ignore
+            result["wall_time_s"] = float(match.group(1))
 
         return result
 
@@ -529,23 +1593,18 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
         warnings.warn(
             f"Failed to parse TRITON log file {log_file_path}: {str(e)}",
             UserWarning,
+            stacklevel=2,
         )
-        return {
-            "nTasks": None,
-            "omp_threads_per_task": None,
-            "gpus_per_task": None,
-            "total_gpus": None,
-            "gpu_backend": None,
-            "build_type": None,
-            "triton_git_version": None,
-            "wall_time_s": None,
-            "machine": None,
-            "cpu": None,
-        }
+        return dict(_EMPTY_TRITON_LOG_FIELDS)
 
 
 def return_dic_zarr_encodings(
-    ds: xr.Dataset, clevel: int = 5, *, store_float32: bool = False, time_chunk: int | None = None
+    ds: xr.Dataset,
+    clevel: int = 5,
+    *,
+    store_float32: bool = False,
+    time_chunk: int | None = None,
+    chunk_grid: tuple[int, int, int] | None = None,
 ) -> dict:
     """
     Create a dictionary of Zarr encodings for an xarray Dataset.
@@ -559,6 +1618,15 @@ def return_dic_zarr_encodings(
         The dataset to encode.
     clevel : int, default=5
         Compression level for Blosc.
+    store_float32 : bool, default=False
+        Store floating-point data variables as float32; integer variables are unaffected.
+    time_chunk : int or None
+        Chunk length along ``timestep`` for numeric variables that carry that axis;
+        every other axis keeps its full extent. Ignored when ``chunk_grid`` is given.
+    chunk_grid : tuple of (timestep, y, x) lengths, or None
+        Chunk lengths for numeric variables that carry ``timestep``, matched to the
+        dims BY NAME; an axis it does not name keeps its full extent, and no length is
+        clamped to the variable's own extent. Takes precedence over ``time_chunk``.
 
     Returns
     -------
@@ -571,18 +1639,29 @@ def return_dic_zarr_encodings(
     import zarr
 
     compressor = zarr.codecs.BloscCodec(  # type: ignore
-        cname="zstd", clevel=clevel, shuffle=zarr.codecs.BloscShuffle.shuffle  # type: ignore
+        cname="zstd",
+        clevel=clevel,
+        shuffle=zarr.codecs.BloscShuffle.shuffle,  # type: ignore
     )
 
     # Handle data variables
-    for var in ds.data_vars:  # type: ignore
+    for var in ds.data_vars:
         dtype_kind = ds[var].dtype.kind
         if dtype_kind in {"i", "u", "f"}:  # int / unsigned int / float
             enc = {"compressors": compressor}
             if store_float32 and dtype_kind == "f":
                 enc["dtype"] = "float32"
-            if time_chunk is not None and "timestep_min" in ds[var].dims:
-                ax = ds[var].dims.index("timestep_min")
+            if chunk_grid is not None and "timestep" in ds[var].dims:
+                # A DECLARED grid wins. The dims are matched BY NAME, never by
+                # position, so a variable whose axis order differs still receives the
+                # intended per-axis lengths; an axis the grid does not name keeps its
+                # full extent. No length is clamped to the variable's own extent:
+                # zarr accepts a chunk LARGER than the extent, and relying on that is
+                # what lets a short final chapter carry the same grid as its siblings.
+                _named = dict(zip(("timestep", "y", "x"), chunk_grid, strict=True))
+                enc["chunks"] = tuple(_named.get(d, s) for d, s in zip(ds[var].dims, ds[var].shape, strict=True))
+            elif time_chunk is not None and "timestep" in ds[var].dims:
+                ax = ds[var].dims.index("timestep")
                 chunks = list(ds[var].shape)
                 chunks[ax] = time_chunk
                 enc["chunks"] = tuple(chunks)
@@ -590,17 +1669,18 @@ def return_dic_zarr_encodings(
         # Optionally handle other types if needed
 
     # Handle coordinate encoding
-    for coord in ds.coords:  # type: ignore
-        dtype_kind = ds[coord].dtype.kind  # type: ignore
+    for coord in ds.coords:
+        dtype_kind = ds[coord].dtype.kind
         if dtype_kind == "U":  # Unicode string coordinates
             max_len_arr = ds[coord].str.len().max()
             max_len = int(max_len_arr.compute() if hasattr(max_len_arr.data, "compute") else max_len_arr.values)
-            encoding[coord] = {"dtype": f"<U{max_len}"}  # type: ignore
+            encoding[coord] = {"dtype": f"<U{max_len}"}
 
     return encoding
 
 
 def return_dic_autochunk(ds):
+    """A chunk spec asking dask to size every dimension of ``ds`` itself (``"auto"`` per dim)."""
     chunk_dict = {}
     for var in ds.dims:
         chunk_dict[var] = "auto"
@@ -678,17 +1758,17 @@ def estimate_timesteps_per_chunk(
 
 def prev_power_of_two(n: int | float) -> int:
     """
-    Return the largest power of 2 less than or equal to n.
+    Return the largest power of 2 less than or equal to n, with a floor of 1.
 
     Parameters
     ----------
     n : int or float
-        Input number (must be positive)
+        Input number, truncated to int. Any value below 1 returns 1.
 
     Returns
     -------
     int
-        Largest power of 2 <= n
+        Largest power of 2 <= n for n >= 1; 1 for any n below 1.
 
     Examples
     --------
@@ -700,8 +1780,6 @@ def prev_power_of_two(n: int | float) -> int:
     n = int(n)
     if n < 1:
         return 1
-    if n <= 0:
-        raise ValueError("n must be positive")
     return 1 << (n.bit_length() - 1)
 
 
@@ -781,7 +1859,6 @@ def compute_optimal_chunks(
     For determining how many timesteps to load during processing, use
     estimate_timesteps_per_chunk() instead.
     """
-    from typing import List
 
     # Handle non-spatial data (e.g., performance summaries)
     if spatial_coords is None:
@@ -851,14 +1928,10 @@ def compute_optimal_chunks(
     # Each nonspatial point contributes:
     # - spatial_chunk_points elements for each spatial variable
     # - 1 element for each non-spatial variable
-    elements_per_nonspatial_point = len(spatial_vars) * spatial_chunk_points + len(
-        nonspatial_vars
-    )
+    elements_per_nonspatial_point = len(spatial_vars) * spatial_chunk_points + len(nonspatial_vars)
 
     if elements_per_nonspatial_point > 0:
-        target_nonspatial_points = bytes_available / (
-            bytes_per_element * elements_per_nonspatial_point
-        )
+        target_nonspatial_points = bytes_available / (bytes_per_element * elements_per_nonspatial_point)
         target_nonspatial_points = max(1, int(target_nonspatial_points))
     else:
         # Edge case: no variables (shouldn't happen in practice)
@@ -889,7 +1962,8 @@ def compute_optimal_chunks(
             # Calculate how much "budget" remains for chunking
             remaining_budget = target_nonspatial_chunk // nonspatial_chunk_product
             chunk_size = min(coord_len, prev_power_of_two(remaining_budget))
-            # Ensure at least some chunking for large dimensions
+            # A LENGTH-0 dimension reaches this branch (only length 1 is caught above),
+            # and min(0, ...) would give it chunk length 0; this keeps it at 1.
             if chunk_size < 1:
                 chunk_size = 1
 
@@ -932,6 +2006,7 @@ def compute_optimal_chunks(
 
 
 def get_file_size_MiB(f: Path):
+    """Size in MiB (1024**2 bytes); a path whose final suffix is ``.zarr`` is summed as a directory."""
     if f.name.split(".")[-1] == "zarr":
         size_bytes = zarr_size_bytes(f)
     else:
@@ -940,64 +2015,378 @@ def get_file_size_MiB(f: Path):
 
 
 def zarr_size_bytes(zarr_path: Path) -> int:
+    """Sum of the apparent sizes of every file under a store directory, not the blocks it occupies."""
     return sum(f.stat().st_size for f in zarr_path.rglob("*") if f.is_file())
+
+
+#: Message of the ZarrUserWarning zarr raises on every consolidated-metadata write at format 3.
+#: The index is deliberate in this toolkit (it is what lets a reader open a store from one
+#: document), so the warning carries no information at the write sites below.
+_ZARR_V3_CONSOLIDATED_WARNING = ".*Consolidated metadata is currently not part in the Zarr format 3 specification.*"
+_ZARR_V3_CODEC_WARNING = ".*does not have a Zarr V3 specification.*"
+
+
+def _silence_zarr_write_warnings() -> None:
+    """Install the two message-matched filters the zarr write helpers share.
+
+    Call inside ``warnings.catch_warnings()`` so the filters leave with the block. Each is
+    matched by message, never by category, because both warnings are plain ZarrUserWarning
+    and a category filter would also hide the warnings a write SHOULD still surface.
+    """
+    warnings.filterwarnings("ignore", message=_ZARR_V3_CODEC_WARNING, category=Warning)
+    warnings.filterwarnings("ignore", message=_ZARR_V3_CONSOLIDATED_WARNING, category=Warning)
+
+
+def consolidate_zarr_store(store) -> None:
+    """Rebuild the consolidated-metadata index at the root of ``store`` from its documents on disk.
+
+    The one place the toolkit calls ``zarr.consolidate_metadata``. A group or attribute
+    written by any route after the last consolidation is invisible to a reader that trusts
+    the index, with no error, so every writer that changes a store's metadata ends here.
+    """
+    import zarr
+
+    with warnings.catch_warnings():
+        _silence_zarr_write_warnings()
+        zarr.consolidate_metadata(str(store))
 
 
 def write_datatree_zarr(
     tree: "xr.DataTree",
     fname_out: Path,
     compression_level: int = 5,
+    *,
+    encoding: dict | None = None,
+    zarr_format: int | None = None,
 ) -> None:
-    """Write a DataTree to a hierarchical zarr store.
+    """Write a DataTree to a hierarchical zarr store, with consolidated metadata.
 
-    Builds per-group encoding dicts from `return_dic_zarr_encodings()`
-    applied to each populated leaf node's dataset.
+    ``encoding=None`` builds per-group encoding dicts from `return_dic_zarr_encodings()`
+    applied to each populated leaf node's dataset at ``compression_level``; a dict is passed
+    to xarray verbatim and ``compression_level`` is then ignored. ``zarr_format=None`` keeps
+    xarray's default. The store is published through ``_publish_store_crash_safe``.
     """
-    encoding: dict = {}
-    for path, node in tree.subtree_with_keys:
-        if node.has_data:
-            key = path if path.startswith("/") else f"/{path}"
-            encoding[key] = return_dic_zarr_encodings(node.dataset, compression_level)
+    if encoding is None:
+        encoding = {}
+        for path, node in tree.subtree_with_keys:
+            if node.has_data:
+                key = path if path.startswith("/") else f"/{path}"
+                encoding[key] = return_dic_zarr_encodings(node.dataset, compression_level)
+    extra: dict[str, Any] = {} if zarr_format is None else {"zarr_format": zarr_format}
     with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=".*does not have a Zarr V3 specification.*",
-            category=Warning,
+        _silence_zarr_write_warnings()
+        _publish_store_crash_safe(
+            lambda _dest: tree.to_zarr(_dest, mode="w", encoding=encoding, consolidated=True, **extra),
+            fname_out,
         )
-        tree.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
 
 
-def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
-    encoding = return_dic_zarr_encodings(ds, compression_level)
+def write_zarr(
+    ds,
+    fname_out,
+    compression_level: int = 5,
+    chunks: str | dict | None = "auto",
+    *,
+    encoding: dict | None = None,
+    zarr_format: int | None = None,
+):
+    """Write a Dataset to a zarr store, with consolidated metadata, through the crash-safe publisher.
+
+    ``fname_out`` is either absent or complete afterwards, never partial (see
+    ``_publish_store_crash_safe``). With ``encoding=None`` numeric variables are
+    Blosc-compressed at ``compression_level``; a dict is passed to xarray verbatim (``{}``
+    meaning each variable's own ``.encoding``) and ``compression_level`` is then ignored.
+    ``chunks="auto"`` lets dask size every dimension, a dict sets them, and ``None`` leaves
+    the Dataset's chunking untouched -- the form a caller that states its own encoding uses,
+    because an automatic rechunk would contradict the encoding it stated. ``zarr_format=None``
+    keeps xarray's default.
+    """
+    if encoding is None:
+        encoding = return_dic_zarr_encodings(ds, compression_level)
     if chunks == "auto":
         chunks = return_dic_autochunk(ds)
-    ds = ds.chunk(chunks)
+    if chunks is not None:
+        ds = ds.chunk(chunks)
+    extra: dict[str, Any] = {} if zarr_format is None else {"zarr_format": zarr_format}
     with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=".*does not have a Zarr V3 specification.*",
-            category=Warning,
+        _silence_zarr_write_warnings()
+        _publish_store_crash_safe(
+            lambda _dest: ds.to_zarr(_dest, mode="w", encoding=encoding, consolidated=True, **extra),
+            fname_out,
         )
-        ds.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
 
 
-def write_zarr_then_netcdf(
-    ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"
-):
-    # encoding = return_dic_zarr_encodings(ds, compression_level)
+def _refuse_unaligned_shard_append(ds, store, group, append_dim: str) -> None:
+    """Raise unless every sharded array ``ds`` extends along ``append_dim`` grows by whole shards.
+
+    Appending a partial shard rewrites the shard's existing bytes under a concurrent reader,
+    so the extent must be a multiple of the shard length along ``append_dim``. A target that
+    does not exist yet, or an array that is not sharded, has nothing to refuse.
+    """
+    import zarr
+
+    from hhemt.exceptions import ProcessingError
+
+    try:
+        target = zarr.open_group(str(store), mode="r", path=group or "")
+    except (FileNotFoundError, zarr.errors.GroupNotFoundError):
+        return
+    for name, var in ds.data_vars.items():
+        if append_dim not in var.dims or name not in target:
+            continue
+        array = target[name]
+        shards = getattr(array, "shards", None)
+        if shards is None:
+            continue
+        shard_len = int(shards[var.dims.index(append_dim)])
+        extent = int(ds.sizes[append_dim])
+        if extent % shard_len:
+            raise ProcessingError(
+                operation="append_zarr",
+                filepath=str(store),
+                reason=(
+                    f"variable {name!r} is sharded with {shard_len} along {append_dim!r} and the append "
+                    f"adds {extent}, which is not a multiple of it; appending a partial shard rewrites "
+                    "the shard's existing bytes in place"
+                ),
+            )
+
+
+def zarr_store_has_index(path) -> bool:
+    """Whether the root of the zarr store at ``path`` carries a consolidated-metadata index.
+
+    Decided by reading ONE document: the root ``zarr.json``'s ``consolidated_metadata`` key for a
+    format 3 store, or the existence of the root ``.zmetadata`` for a format 2 store (whose index
+    document that is). A path that is not a directory, an unreadable root document and a store
+    with neither answer False, which is the safe direction: the caller then reads unindexed.
+    """
+    root = Path(path)
+    root_doc = root / "zarr.json"
+    if root_doc.is_file():
+        try:
+            return json.loads(root_doc.read_text(encoding="utf-8")).get("consolidated_metadata") is not None
+        except (OSError, ValueError):
+            return False
+    return (root / ".zmetadata").is_file()
+
+
+_UNSET: Any = object()
+
+
+def open_store(path, *, group: str | None = None, chunks: Any = _UNSET, kind: str = "datatree", **kwargs: Any):
+    """Open the zarr store at ``path`` lazily, through its consolidated index when it carries one.
+
+    ``consolidated=True`` when the store's root document carries an index (``zarr_store_has_index``),
+    ``consolidated=False`` otherwise. Decided by reading that one document, NEVER by xarray's
+    ``consolidated=None`` fallback, which warns on every open of an older store and silently ignores
+    a stale index. A store inside an open ``deferred_consolidation`` block has no index and is read
+    unindexed, which lists every group on disk. ``kind`` picks the xarray opener: ``"datatree"``
+    (``open_datatree``, the default), ``"dataset"`` (``open_dataset(engine="zarr")``) or ``"zarr"``
+    (``open_zarr``); ``group``, ``chunks`` (omitted means the opener's own default) and any further
+    keyword are passed through.
+    """
+    if chunks is not _UNSET:
+        kwargs["chunks"] = chunks
+    if group is not None:
+        kwargs["group"] = group
+    consolidated = Path(path).is_dir() and zarr_store_has_index(path)
+    if kind == "datatree":
+        return xr.open_datatree(path, engine="zarr", consolidated=consolidated, **kwargs)
+    if kind == "dataset":
+        return xr.open_dataset(path, engine="zarr", consolidated=consolidated, **kwargs)
+    if kind == "zarr":
+        return xr.open_zarr(path, consolidated=consolidated, **kwargs)
+    raise ValueError(f"open_store kind must be 'datatree', 'dataset' or 'zarr', got {kind!r}")
+
+
+#: Resolved root paths of the stores that have an open ``deferred_consolidation`` block.
+_DEFERRED_STORES: set[Path] = set()
+
+
+def invalidate_consolidated_index(store) -> None:
+    """Remove the consolidated-metadata index from the root ``zarr.json`` of ``store`` atomically.
+
+    The root document is rewritten without its ``consolidated_metadata`` key through a temporary
+    sibling and ``os.replace``, so an interruption leaves either the old document (whose index is
+    still true, because nothing has been appended yet) or the new one (no index). Only a format 3
+    root document carries an index in this key; a store with no root document is left alone. Call
+    it only from ``deferred_consolidation``: a store without an index is read unindexed, which is
+    why removing it first is what makes a batch of appends crash-safe.
+    """
+    root_doc = Path(store) / "zarr.json"
+    if not root_doc.is_file():
+        return
+    document = json.loads(root_doc.read_text(encoding="utf-8"))
+    if "consolidated_metadata" not in document:
+        return
+    del document["consolidated_metadata"]
+    partial = root_doc.with_name("zarr.json.partial")
+    partial.write_text(json.dumps(document), encoding="utf-8")
+    os.replace(partial, root_doc)
+
+
+@contextmanager
+def deferred_consolidation(store) -> Iterator[None]:
+    """Run a loop of appends into one store with the index removed, and rebuild it once at the end.
+
+    On entry the store's index is removed first (``invalidate_consolidated_index``), so from the
+    first append to the rebuild no reader can trust an index that lists fewer or more groups than
+    the store holds; inside, ``append_zarr(..., consolidate=False)`` is permitted for this store.
+    A NORMAL exit rebuilds the index once through ``consolidate_zarr_store`` (skipped when no store was
+    created). An exception leaves the store without an index and re-raises: an unindexed store is read unindexed and the
+    staleness check reports its absent index. Deliberately NOT a per-append consolidation, whose
+    cost grows with the square of the appends (xarray re-reads every metadata document of the
+    store on each consolidating write).
+    """
+    key = Path(store).resolve()
+    if key in _DEFERRED_STORES:
+        # NESTED block on a store an outer block already holds open: the outer block owns the one index rebuild.
+        # Rebuilding here would hand the outer block's remaining appends a store whose index is current and then
+        # stale, and would discard the store from the open set so those appends were refused.
+        yield
+        return
+    invalidate_consolidated_index(store)
+    _DEFERRED_STORES.add(key)
+    try:
+        yield
+    finally:
+        _DEFERRED_STORES.discard(key)
+    # A block that wrote nothing into a store that did not exist has no store to index.
+    if (Path(store) / "zarr.json").is_file():
+        consolidate_zarr_store(store)
+
+
+#: The root attributes of an analysis tree that stamp its summary build as complete. A consolidation removes them
+#: before it writes and writes them last, and the reprocess delete removes them before it deletes a summary branch,
+#: so a store that carries them was not interrupted in either.
+CONSOLIDATION_STAMP_ATTRS: tuple[str, ...] = ("consolidation_version", "consolidation_inputs_fingerprint")
+
+
+def _json_native(value: Any) -> Any:
+    """``value`` as a JSON-serialisable object (numpy scalars and arrays become Python ones)."""
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    return str(value)
+
+
+def zarr_root_attrs(store) -> dict[str, Any]:
+    """The attributes of the root group of the zarr store at ``store``, read from its root document alone.
+
+    The root ``zarr.json`` (format 3) or ``.zattrs`` (format 2) is read directly and never through the consolidated
+    index, which can be stale or absent. A store with no root document returns an empty dict.
+    """
+    root = Path(store)
+    doc = root / "zarr.json"
+    if doc.is_file():
+        try:
+            return dict(json.loads(doc.read_text(encoding="utf-8")).get("attributes") or {})
+        except (OSError, ValueError):
+            return {}
+    v2_doc = root / ".zattrs"
+    if v2_doc.is_file():
+        try:
+            return dict(json.loads(v2_doc.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return {}
+    return {}
+
+
+def update_zarr_root_attrs(store, attrs: dict[str, Any] | None = None, *, remove: tuple[str, ...] = ()) -> None:
+    """Set ``attrs`` on, and remove the names in ``remove`` from, the root group of a format 3 zarr store in place.
+
+    The root document is rewritten through a temporary sibling and ``os.replace``, so an interruption leaves either
+    the old document or the new one. Nothing else in the document changes, and no group or array is touched, which is
+    what lets a consolidation stamp the tree last (or unstamp it first) without rewriting a data group. The
+    consolidated index is NOT updated here: call it inside ``deferred_consolidation(store)``, whose exit rebuilds it
+    once. A store with no root document is left alone when only removing, and refused when setting, because a root
+    group must exist before it can carry attributes.
+    """
+    root_doc = Path(store) / "zarr.json"
+    if not root_doc.is_file():
+        if attrs:
+            from hhemt.exceptions import ProcessingError
+
+            raise ProcessingError(
+                operation="update_zarr_root_attrs",
+                filepath=str(store),
+                reason="the store has no root zarr.json to carry the attributes",
+            )
+        return
+    document = json.loads(root_doc.read_text(encoding="utf-8"))
+    current = dict(document.get("attributes") or {})
+    for name in remove:
+        current.pop(name, None)
+    for name, value in (attrs or {}).items():
+        current[name] = json.loads(json.dumps(value, default=_json_native))
+    document["attributes"] = current
+    partial = root_doc.with_name("zarr.json.partial")
+    partial.write_text(json.dumps(document), encoding="utf-8")
+    os.replace(partial, root_doc)
+
+
+def append_zarr(
+    ds,
+    store,
+    *,
+    group: str | None,
+    consolidate: bool = True,
+    mode: Literal["a", "w", "w-", "r+", "a-"] = "a",
+    encoding: dict | None = None,
+    zarr_format: int | None = None,
+    **to_zarr_kwargs: Any,
+) -> None:
+    """Write ``ds`` into ``group`` of an existing (or new) store IN PLACE, with the store's index current.
+
+    The in-place counterpart of ``write_zarr``: no temporary store and no rename, because the
+    store holds other groups that must not move. With ``consolidate=True`` xarray consolidates
+    the store root after the write, which already lists a group added by this call; there is no
+    second consolidation here. ``consolidate=False`` writes without touching the index and is
+    allowed ONLY inside ``with deferred_consolidation(store):`` for the same store, which removed
+    the index first and rebuilds it once; outside a block it raises ``ProcessingError``. ``mode``
+    ``"a"`` adds or extends, ``"w"`` replaces ``group`` (the whole store when ``group`` is None).
+    ``encoding`` is passed through for a new group and ``to_zarr_kwargs`` (for example
+    ``append_dim``) are passed to xarray. ``consolidated`` is not accepted; use ``consolidate``.
+    With ``append_dim`` set, a sharded target array is extended only by whole shards.
+    """
+    if "consolidated" in to_zarr_kwargs:
+        raise TypeError("append_zarr takes `consolidate`, not `consolidated`")
+    if not consolidate and Path(store).resolve() not in _DEFERRED_STORES:
+        from hhemt.exceptions import ProcessingError
+
+        raise ProcessingError(
+            operation="append_zarr",
+            filepath=str(store),
+            reason=(
+                "consolidate=False writes without updating the store's index, which leaves a stale "
+                "index when the write is interrupted; run it inside `with deferred_consolidation(store):`"
+            ),
+        )
+    append_dim = to_zarr_kwargs.get("append_dim")
+    if append_dim is not None:
+        _refuse_unaligned_shard_append(ds, store, group, append_dim)
+    if encoding is not None:
+        to_zarr_kwargs["encoding"] = encoding
+    if zarr_format is not None:
+        to_zarr_kwargs["zarr_format"] = zarr_format
+    with warnings.catch_warnings():
+        _silence_zarr_write_warnings()
+        ds.to_zarr(store, group=group, mode=mode, consolidated=consolidate, **to_zarr_kwargs)
+
+
+def write_zarr_then_netcdf(ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"):
+    """Write NetCDF at ``fname_out`` by way of a temporary ``{fname_out}.zarr``.
+
+    The Dataset is written to zarr, reopened lazily, and written to NetCDF; the
+    intermediate is then removed. A failure to remove it is printed, not raised, so a
+    stray ``.zarr`` can survive a successful call.
+    """
     if chunks == "auto":
         chunks = return_dic_autochunk(ds)
     ds = ds.chunk(chunks)
     # first write to zarr, then write to netcdf
     write_zarr(ds, f"{fname_out}.zarr", compression_level, chunks)
     # open and write
-    ds = xr.open_dataset(
-        f"{fname_out}.zarr",
-        engine="zarr",
-        chunks="auto",
-        consolidated=False,
-        decode_timedelta=False,
-    )
+    ds = open_store(f"{fname_out}.zarr", kind="dataset", chunks="auto", decode_timedelta=False)
     write_netcdf(ds, fname_out, compression_level, chunks)
     # delete zarr
     try:
@@ -1009,6 +2398,7 @@ def write_zarr_then_netcdf(
 
 
 def return_dic_netcdf_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
+    """NetCDF encodings: zlib with shuffle at ``clevel`` for numeric data variables only."""
     encoding = {}
     for var in ds.data_vars:
         if ds[var].dtype.kind in {"i", "u", "f"}:
@@ -1017,9 +2407,13 @@ def return_dic_netcdf_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
     return encoding
 
 
-def write_netcdf(
-    ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"
-):
+def write_netcdf(ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"):
+    """Write a Dataset to NetCDF with the h5netcdf engine.
+
+    Unlike ``write_zarr`` this writes ``fname_out`` directly, with no temp-and-rename,
+    so a crash mid-write leaves a partial file at that path. A Dataset that cannot be
+    rechunked is written as a shallow copy instead.
+    """
     encoding = return_dic_netcdf_encodings(ds, compression_level)
     if chunks == "auto":
         chunk_dict = return_dic_autochunk(ds)
@@ -1067,7 +2461,7 @@ def convert_datetime_to_str(obj: Any) -> Any:
     import pandas as pd
 
     # Handle datetime objects
-    if isinstance(obj, (datetime.datetime, pd.Timestamp)):
+    if isinstance(obj, datetime.datetime | pd.Timestamp):
         return obj.isoformat()
 
     elif isinstance(obj, dict):
@@ -1083,3 +2477,364 @@ def convert_datetime_to_str(obj: Any) -> Any:
         return {convert_datetime_to_str(v) for v in obj}
 
     return obj
+
+
+def sidecar_for(figure: Path) -> Path:
+    """The manifest sidecar `_figure_emission._emit_manifest_sidecar` writes for `figure`.
+
+    STEM-based, matching the single writer exactly: `foo.png` -> `foo.manifest.json`,
+    never `foo.png.manifest.json`. The suffix-appending form this replaces produced a
+    path the writer never creates, so every figure deletion silently orphaned its
+    sidecar. Keep this the only place the forward derivation is spelled.
+    """
+    return figure.parent / f"{figure.stem}.manifest.json"
+
+
+def figure_exists_for(sidecar: Path) -> bool:
+    """True when some non-sidecar file shares `sidecar`'s stem in its directory.
+
+    The extension is unknown at this end (both `.png` and `.html` figures are emitted),
+    so the probe is a glob -- and the sidecar-exclusion is load-bearing rather than
+    tidy: `stem + ".*"` matches the sidecar itself, so without the filter this returns
+    True unconditionally and the guards that consume it can never fire.
+    """
+    stem = sidecar.name.removesuffix(".manifest.json")
+    return any(p for p in sidecar.parent.glob(stem + ".*") if not p.name.endswith(".manifest.json"))
+
+
+#: Analysis-directory-relative path of the record the sensitivity-master writer leaves for
+#: the clear-raw value its production ``Snakefile`` was generated under. A separate
+#: process that runs ``render_report`` never holds the run's ``override_clear_raw``, so
+#: this file is the only way it can learn which ``plots/eda/`` figures that Snakefile has
+#: rules for. Only the production ``Snakefile`` writes it (not ``Snakefile.dryrun``, not
+#: ``Snakefile.reprocess``): a rehearsal or a reprocess generated under a different value
+#: must not change what the production Snakefile on disk says.
+RESOLVED_CLEAR_RAW_RECORD = "_status/resolved_clear_raw.json"
+
+
+def read_resolved_clear_raw_record(analysis_dir: Path) -> "ClearRawValue | None":
+    """The clear-raw value the production master ``Snakefile`` was generated under, or None.
+
+    None means "no usable record": the file is absent, is not JSON, or holds a value that
+    is not a ``ClearRawValue`` (``"all"``, ``"none"`` or a list of model names). An
+    unreadable record is treated as absent, so the caller reads the config value, which
+    is what every analysis did before the record existed.
+    """
+    record = Path(analysis_dir) / RESOLVED_CLEAR_RAW_RECORD
+    try:
+        value = load_json(record)["clear_raw"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if value in ("all", "none") or (isinstance(value, list) and all(isinstance(m, str) for m in value)):
+        return value
+    return None
+
+
+def write_resolved_clear_raw_record(analysis_dir: Path, clear_raw: "ClearRawValue") -> bool:
+    """Persist ``clear_raw`` for the production master Snakefile; True when the file changed.
+
+    Compare-and-write: a record that already holds ``clear_raw`` is left untouched, bytes
+    and modification time, so a write that changes nothing is not observable as one.
+    """
+    if read_resolved_clear_raw_record(analysis_dir) == clear_raw:
+        return False
+    write_json({"clear_raw": clear_raw}, Path(analysis_dir) / RESOLVED_CLEAR_RAW_RECORD)
+    return True
+
+
+def clear_raw_for_next_snakefile(
+    analysis, override_clear_raw: "ClearRawValue | None", for_reprocess: bool
+) -> "ClearRawValue | None":
+    """The clear-raw value a pre-delete helper hands ``report_rule_figure_stems``.
+
+    ``_reconcile_build_stamp_force`` and ``_apply_force_rerun`` run before the Snakefile of
+    their launch is written. On a submit with no override that Snakefile follows the
+    config, but ``report_rule_figure_stems`` given ``None`` would read
+    ``_status/resolved_clear_raw.json``, which holds the PREVIOUS run's value, so ``None``
+    is replaced by the config value. A reprocess is passed through unchanged because the
+    stems ignore every override for it. An analysis carrying no ``clear_raw`` yields
+    ``None``, which leaves the stems to their own fallbacks.
+    """
+    if for_reprocess or override_clear_raw is not None:
+        return override_clear_raw
+    return getattr(getattr(analysis, "cfg_analysis", None), "clear_raw", None)
+
+
+def report_rule_figure_stems(
+    analysis,
+    *,
+    override_clear_raw: "ClearRawValue | None" = None,
+    for_reprocess: bool = False,
+) -> frozenset[str]:
+    """The figures the analysis's active reporting set writes through its plot rules.
+
+    Each entry is a rule's output path relative to the analysis directory with its
+    extension placeholder removed, so ``plots/eda/config_diff_maps`` stands for every
+    extension that rule may emit. A ``{wildcard}`` in a template is kept and matches
+    one run of characters containing no ``/`` (see ``is_report_rule_figure``). Read from the
+    registry's rule-spec templates and nothing else.
+
+    This answers one question for two consumers that must agree: which figures under
+    a subtree the forced re-render otherwise spares (``plots/eda/``) are nevertheless
+    rebuilt by a report rule. ``select_regenerable_figures`` deletes them and
+    ``provenance.collect_plot_stamps`` checks their build stamps. A figure only
+    ``analysis.eda()`` writes is in neither set.
+
+    A template counts only when the generated Snakefile would both emit its rule and
+    request its output, because a figure is rebuilt only then. Deleting a figure whose
+    rule the Snakefile drops loses it, and checking it refuses a report that does not
+    show it. So the gates the workflow generators apply are applied here, through the
+    same predicate table (``_ReportingSetDispatchMixin._RENDERER_PREDICATES``) and the
+    same ``renderer_active`` test: a selection whose predicate is false, or whose
+    renderer is in ``report.disabled_renderers``, contributes nothing, and the
+    in-report EDA renderer also needs a non-empty ``eda.enabled_plots``, the condition
+    under which the generators request its figures.
+
+    ``analysis`` is duck-typed the way the render path resolves its category order:
+    ``_active_reporting_set`` when present (set at ``run()`` entry), else the set
+    ``cfg_analysis.report`` resolves to, using ``_cfg_report`` first when present. A
+    selection that fails to resolve falls back to the registry ``default`` set, which
+    writes no ``plots/eda/`` figure, so a bad config spares and skips every figure
+    there exactly as before this function existed. A missing ``eda`` block reads as
+    the ``eda_config`` default, and a missing disable list as empty.
+
+    The predicate inputs are derived from the analysis config the way the reprocess
+    generator derives them: ``has_eda_artifact`` is ``bool(eda.enabled_plots)``, and
+    ``has_preserved_raw_outputs`` is true when ``clear_raw`` is ``"none"`` or a list that
+    does not name the analysis's model. A predicate whose input cannot be derived from
+    the config reads as false, so its templates are omitted. None of those templates
+    lies under ``plots/eda/``, where this set is consulted.
+
+    The clear-raw value behind ``has_preserved_raw_outputs`` must be the one the Snakefile
+    the caller is about to run (or has run) was generated under, because the
+    sensitivity-master generator takes it from a run-time ``override_clear_raw`` while the
+    sensitivity reprocess generator takes it from the config alone. It resolves as
+    follows. With ``for_reprocess=True`` it is ``cfg_analysis.clear_raw`` and nothing
+    else: the override and the record are ignored. Otherwise a passed
+    ``override_clear_raw`` wins, then the value recorded in ``_status/resolved_clear_raw.json``
+    by the production master writer, then ``cfg_analysis.clear_raw``. A caller that
+    deletes figures before it writes its Snakefile must pass the value that Snakefile
+    will be generated under (the override, else the config), because the record then
+    describes the previous run.
+
+    Not established: that the record matches the production ``Snakefile`` on disk when a
+    tool other than the master writer replaced that Snakefile.
+    """
+    from hhemt.config.eda import eda_config
+    from hhemt.config.report import resolve_active_reporting_set
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.report_renderers._reporting_sets import (
+        ReportingSetCompositionError,
+        get_reporting_set,
+        renderer_active,
+    )
+    from hhemt.workflow import _ReportingSetDispatchMixin
+
+    active = getattr(analysis, "_active_reporting_set", None)
+    if active is None:
+        try:
+            cfg_report = getattr(analysis, "_cfg_report", None)
+            if cfg_report is None:
+                cfg_report = analysis.cfg_analysis.report
+            active = resolve_active_reporting_set(
+                cfg_report, is_sensitivity=analysis.cfg_analysis.toggle_sensitivity_analysis
+            )
+        except (ConfigurationError, ReportingSetCompositionError, KeyError):
+            active = get_reporting_set("default")
+
+    cfg_analysis = getattr(analysis, "cfg_analysis", None)
+    cfg_report = getattr(analysis, "_cfg_report", None) or getattr(cfg_analysis, "report", None)
+    disabled = list(getattr(cfg_report, "disabled_renderers", None) or ())
+    has_eda_artifact = bool((getattr(cfg_analysis, "eda", None) or eda_config()).enabled_plots)
+    clear_raw = getattr(cfg_analysis, "clear_raw", None)
+    if not for_reprocess:
+        if override_clear_raw is not None:
+            clear_raw = override_clear_raw
+        else:
+            analysis_dir = getattr(getattr(analysis, "analysis_paths", None), "analysis_dir", None)
+            recorded = read_resolved_clear_raw_record(analysis_dir) if analysis_dir is not None else None
+            if recorded is not None:
+                clear_raw = recorded
+    has_preserved_raw_outputs = clear_raw == "none"
+    if isinstance(clear_raw, list):
+        holder = getattr(analysis, "experiment", analysis)
+        model_types = holder._get_enabled_model_types() if hasattr(holder, "_get_enabled_model_types") else []
+        has_preserved_raw_outputs = bool(model_types) and model_types[0] not in clear_raw
+    predicate_inputs = {
+        "has_eda_artifact": has_eda_artifact,
+        "has_preserved_raw_outputs": has_preserved_raw_outputs,
+    }
+    predicates = _ReportingSetDispatchMixin._RENDERER_PREDICATES
+
+    stems: set[str] = set()
+    for selection in active.renderer_selection:
+        if selection.predicate_key is not None and not predicates[selection.predicate_key](predicate_inputs):
+            continue
+        if not renderer_active(selection.builder_key, disabled):
+            continue
+        if selection.builder_key == "eda_compute_sensitivity" and not has_eda_artifact:
+            continue
+        for tmpl in selection.rule_spec_template:
+            if tmpl.predicate_key is not None and not predicates[tmpl.predicate_key](predicate_inputs):
+                continue
+            stems.add(tmpl.output_path_template.removesuffix("__OUTPUT_EXT__"))
+    return frozenset(stems)
+
+
+def is_report_rule_figure(rel_stem: str, report_rule_stems) -> bool:
+    """True when the analysis-dir-relative figure stem ``rel_stem`` is one a report rule writes.
+
+    ``report_rule_stems`` comes from ``report_rule_figure_stems``. An exact match is
+    tried first; a stem carrying ``{wildcard}`` segments matches when each segment
+    spans characters other than ``/``, which is how Snakemake fills a wildcard here.
+    """
+    if rel_stem in report_rule_stems:
+        return True
+    for stem in report_rule_stems:
+        if "{" in stem:
+            pattern = "".join(
+                "[^/]+" if part.startswith("{") else re.escape(part) for part in re.split(r"(\{[^}]*\})", stem)
+            )
+            if re.fullmatch(pattern, rel_stem):
+                return True
+    return False
+
+
+def select_regenerable_figures(
+    analysis_dir,
+    root,
+    *,
+    keep: "Callable[[Path], bool] | None" = None,
+    on_select: "Callable[[Path], None] | None" = None,
+    report_rule_stems: "frozenset[str]" = frozenset(),
+) -> "list[Path]":
+    """Select regenerable figures under `root`, sparing unregenerable subtrees.
+
+    THE ONE PLACE THIS CODEBASE DECIDES WHICH FIGURES MAY BE DELETED, and the only
+    place the figure/sidecar pairing is spelled. It DELETES NOTHING: it returns the
+    deletion target list (each eligible figure, followed by its sidecar when one
+    exists), and the caller hands that list to ``du_sentinels.delete_and_account``,
+    which removes the paths and performs the single sentinel write. There is no
+    ``dry_run`` parameter because selection has no side effect -- a selector that
+    returned an empty list on a dry run would be lying about what is eligible -- so
+    the dry-run gate lives at each call site, in one expression per site.
+
+    Three callers route through it:
+    Analysis._invalidate_downstream_flags' reprocess pre-delete, workflow.py's
+    force-rerun render floor, and bundle/_emit.py's undeclared-figure prune. Before
+    this helper the eda exemption was present at two of those three and absent at the
+    third, which destroyed user-authored EDA plots on the default reprocess path.
+    Adding a fourth deletion path means calling this, not copying the walk.
+
+    WHAT IS SPARED, and why the key is analysis-dir-relative. Every path under
+    `root` is tested against constants.UNREGENERABLE_ANALYSIS_SUBTREES as a path
+    RELATIVE TO analysis_dir, not to `root`. That is what lets one registry name
+    both `plots/eda` and `eda_local`, which sit at different depths: a caller
+    sweeping `{analysis_dir}/plots` can only ever match the first, and a caller
+    sweeping the analysis root matches both. The subset each caller sees therefore
+    follows from its sweep root and is not a per-caller skip list anyone maintains.
+    Inside a matched subtree a figure is spared only when no active report rule writes
+    it: a figure whose stem is in ``report_rule_stems`` is selected anyway, because its
+    report rule rebuilds it. What stays spared is the figures nothing rebuilds, such as
+    those ``analysis.eda()`` writes under ``plots/eda/``.
+
+    THE ROOTING PRECONDITION IS THE GUARANTEE, AND IT IS SUFFICIENT ON ITS OWN.
+    The registry key is only computable when `root` is `analysis_dir` or lies under
+    it; on any other pair no entry could ever match and this function would delete
+    everything it walks -- fail-open, in the fix for a fail-open defect. So a
+    non-ancestor pair RAISES rather than being absorbed: it is a caller error, it is
+    a property of the two arguments alone, and it is checkable once.
+
+    NO PER-PATH FALLBACK IS NEEDED, and this paragraph exists so the next author
+    does not add one back. `Path.relative_to` compares path COMPONENTS and never
+    resolves a symlink, and `rglob` yields every result by prefixing `root` -- so if
+    `root` is lexically under `analysis_dir`, every yielded path is too, and a
+    symlink under `root` pointing outside the tree is yielded as the LINK's path,
+    not its target's. Measured: with a file symlink and a directory symlink placed
+    under plots/ and pointing outside the analysis dir, `relative_to` raised on
+    nothing and rglob did not descend through the directory link. A fail-closed
+    `except ValueError: continue` here would be unreachable -- and worse than
+    unreachable if the precondition were ever deleted, because it would convert a
+    loud fail-open into a SILENT no-op: zero deletions, zero bytes, no exception,
+    and on the preserved-flag arm the plot rules would simply stop re-firing.
+
+    THE DRY-RUN GATE IS THE CALLER'S. The cost of suppressing the deletion is that a
+    previewed DAG under-reports the plot rules a real run would fire, because on the
+    preserved-flag arm an absent output is the only remaining re-fire trigger. This
+    function takes no position on which way that trade falls; each call site carries
+    the decision in one expression.
+
+    ORPHAN SIDECARS SURVIVE. A `.manifest.json` is skipped at the top of the walk and
+    is selected only as the pair of a figure selected in the same iteration, so a
+    sidecar whose figure is already gone is reached by neither branch. The PAIRING is
+    `sidecar_for`, which is stem-based and therefore matches what the single writer
+    actually emits; the suffix-appending form this replaced named a path that never
+    existed, so every figure deletion silently orphaned its sidecar.
+
+    Parameters
+    ----------
+    analysis_dir : Path
+        Root the registry entries are relative to. Must be `root` or an ancestor of
+        it; anything else raises.
+    root : Path
+        Directory walked. Absent root is not an error; the helper returns an empty
+        list.
+    keep : callable, optional
+        Extra per-path eligibility test. Returning True spares the path. Used by
+        bundle/_emit.py to spare figures the Snakefile still declares; the other two
+        callers pass nothing.
+    on_select : callable, optional
+        Invoked with each eligible FIGURE path (never a sidecar) as it is selected.
+        Used for per-figure logging and for the bundle prune's `removed` list; never
+        for side effects the deletion depends on.
+    report_rule_stems : frozenset of str, optional
+        The figures the analysis's active reporting set writes, from
+        ``report_rule_figure_stems``. A figure inside an unregenerable subtree is
+        still selected when its stem is one of these, because a report rule rebuilds
+        it. Empty (the default) spares every such figure; bundle/_emit.py passes
+        nothing.
+
+    Returns
+    -------
+    list[Path]
+        The deletion targets, in walk order: each eligible figure followed by its
+        sidecar when one exists. Hand this to
+        ``du_sentinels.delete_and_account(targets, scope_dir=..., scope=...)``, which
+        deletes, measures what it deleted, and performs the single sentinel write.
+
+    Raises
+    ------
+    ValueError
+        When `root` is neither `analysis_dir` nor a descendant of it.
+    """
+    from hhemt.constants import UNREGENERABLE_ANALYSIS_SUBTREES
+
+    analysis_dir = Path(analysis_dir)
+    root = Path(root)
+    if not (root == analysis_dir or root.is_relative_to(analysis_dir)):
+        raise ValueError(
+            f"select_regenerable_figures: root {root} is not under analysis_dir "
+            f"{analysis_dir}, so no UNREGENERABLE_ANALYSIS_SUBTREES entry could "
+            f"match and every walked path would be eligible for deletion. This is a "
+            f"caller error, not a tree state."
+        )
+    if not root.exists():
+        return []
+    targets: list[Path] = []
+    for path in sorted(root.rglob("*")):
+        if path.is_dir() or path.name.endswith(".manifest.json"):
+            continue
+        rel = path.relative_to(analysis_dir).as_posix()
+        if any(rel == p or rel.startswith(p + "/") for p in UNREGENERABLE_ANALYSIS_SUBTREES):
+            rel_stem = (path.parent / path.stem).relative_to(analysis_dir).as_posix()
+            if not is_report_rule_figure(rel_stem, report_rule_stems):
+                continue
+        if keep is not None and keep(path):
+            continue
+        if on_select is not None:
+            on_select(path)
+        sidecar = sidecar_for(path)
+        targets.append(path)
+        if sidecar.exists():
+            targets.append(sidecar)
+    return targets

@@ -29,54 +29,58 @@ import pytest
 # Excluded: text-annotation methods (annotate, text, set_title, ...), colorbar,
 # layout setters. The list is the enforcement surface; adding a method here
 # expands the lint without code change.
-_ARTIST_METHODS: frozenset[str] = frozenset({
-    "plot",
-    "scatter",
-    "imshow",
-    "add_collection",
-    "add_patch",
-    "fill_between",
-    "fill_betweenx",
-    "contour",
-    "contourf",
-    "quiver",
-    "streamplot",
-    "bar",
-    "barh",
-    "step",
-    "stem",
-    "hexbin",
-    "pcolor",
-    "pcolormesh",
-    "matshow",
-    "errorbar",
-    "tricontour",
-    "tricontourf",
-    "tripcolor",
-})
+_ARTIST_METHODS: frozenset[str] = frozenset(
+    {
+        "plot",
+        "scatter",
+        "imshow",
+        "add_collection",
+        "add_patch",
+        "fill_between",
+        "fill_betweenx",
+        "contour",
+        "contourf",
+        "quiver",
+        "streamplot",
+        "bar",
+        "barh",
+        "step",
+        "stem",
+        "hexbin",
+        "pcolor",
+        "pcolormesh",
+        "matshow",
+        "errorbar",
+        "tricontour",
+        "tricontourf",
+        "tripcolor",
+    }
+)
 
 
 # Plotly trace classes (constructor names from `plotly.graph_objects`).
 # Curated; extend as new trace types appear in renderer bodies. Phase 1
 # substrate; Phases 2-5 add Plotly-using renderers that exercise this check.
-_PLOTLY_TRACE_CLASSES: frozenset[str] = frozenset({
-    "Heatmap",
-    "Scatter",
-    "Scattergl",
-    "Scattergeo",
-    "Scattermapbox",
-    "Bar",
-    "Box",
-    "Histogram",
-    "Histogram2d",
-    "Contour",
-    "Surface",
-    "Violin",
-    "Pie",
-    "Choropleth",
-    "Densitymapbox",
-    "Image",
-})
+_PLOTLY_TRACE_CLASSES: frozenset[str] = frozenset(
+    {
+        "Heatmap",
+        "Scatter",
+        "Scattergl",
+        "Scattergeo",
+        "Scattermapbox",
+        "Bar",
+        "Box",
+        "Histogram",
+        "Histogram2d",
+        "Contour",
+        "Surface",
+        "Violin",
+        "Pie",
+        "Choropleth",
+        "Densitymapbox",
+        "Image",
+    }
+)
 
 
 # go-import alias guard: every Plotly-using renderer must import as
@@ -87,16 +91,73 @@ _PLOTLY_TRACE_CLASSES: frozenset[str] = frozenset({
 _REQUIRED_GO_IMPORT_ALIAS = "go"
 
 
-_RENDERERS_DIR = (
-    Path(__file__).resolve().parents[1]
-    / "src" / "hhemt" / "report_renderers"
-)
+_RENDERERS_DIR = Path(__file__).resolve().parents[1] / "src" / "hhemt" / "report_renderers"
 
 
 def _renderer_files() -> list[Path]:
-    return sorted(
-        p for p in _RENDERERS_DIR.glob("*.py")
-        if not p.stem.startswith("_")
+    return sorted(p for p in _RENDERERS_DIR.glob("*.py") if not p.stem.startswith("_"))
+
+
+#: Root-store names V0021 retired. A renderer that hardcodes one is a provenance-
+#: fragility site: the value reaches a written `*.manifest.json` through
+#: `asdict(ProvenanceRef)`, and a name embedded in a GLOB fails silently rather than
+#: loudly (an empty match collapses the declared channel set without emptying it, so
+#: the ADR-6 Gate-A non-empty check never fires).
+_RETIRED_ROOT_STORES = ("sensitivity_datatree.zarr",)
+
+
+def _all_renderer_modules() -> list[Path]:
+    """Every renderer module INCLUDING `_`-prefixed ones.
+
+    `_renderer_files()` excludes them; `_figure_emission.py` is `_`-prefixed and does
+    hardcode a store name, so this check needs the wider set.
+    """
+    return sorted(_RENDERERS_DIR.rglob("*.py"))
+
+
+def _docstring_constant_ids(tree: ast.AST) -> set[int]:
+    """Ids of the `ast.Constant` nodes that ARE docstrings.
+
+    Docstrings legitimately name retired stores when describing history or a
+    per-member store, so they are excluded by identity rather than by heuristic.
+    """
+    out: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            body = getattr(node, "body", [])
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                out.add(id(body[0].value))
+    return out
+
+
+@pytest.mark.parametrize("path", _all_renderer_modules(), ids=lambda p: p.name)
+def test_renderer_does_not_hardcode_a_retired_root_store_name(path: Path) -> None:
+    """A renderer must resolve the root consolidated store by NAME CONSTANT, never
+    by a hardcoded literal.
+
+    Anchored on a property that exists in both the pre-fix and post-fix worlds --
+    the COUNT of non-docstring string constants embedding a retired store name --
+    so it discriminates on behaviour rather than on any wording the fix introduces.
+    """
+    tree = ast.parse(path.read_text(), filename=str(path))
+    docstrings = _docstring_constant_ids(tree)
+    offenders = [
+        (node.lineno, node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+        and any(retired in node.value for retired in _RETIRED_ROOT_STORES)
+    ]
+    assert not offenders, (
+        f"{path.name}: {len(offenders)} hardcoded retired root-store name(s) at "
+        f"line(s) {[ln for ln, _ in offenders]}. Import EXPERIMENT_TREE_NAME / "
+        f"ROOT_TREE_NAMES from hhemt.utils instead."
     )
 
 
@@ -108,10 +169,7 @@ def _attach_parents(tree: ast.AST) -> None:
 
 def _is_artist_context_call(call: ast.Call) -> bool:
     """True if `call` looks like `<expr>.artist(...)`."""
-    return (
-        isinstance(call.func, ast.Attribute)
-        and call.func.attr == "artist"
-    )
+    return isinstance(call.func, ast.Attribute) and call.func.attr == "artist"
 
 
 def _is_plotly_trace_call(call: ast.Call) -> bool:
@@ -191,10 +249,7 @@ def _lint_source(src: str, filename: str = "<synthetic>") -> list[str]:
         if not isinstance(node, ast.Call):
             continue
         # matplotlib branch: <expr>.<artist_method>(...)
-        if (
-            isinstance(node.func, ast.Attribute)
-            and node.func.attr in _ARTIST_METHODS
-        ):
+        if isinstance(node.func, ast.Attribute) and node.func.attr in _ARTIST_METHODS:
             if not _has_artist_with_ancestor(node):
                 violations.append(
                     f"{filename}:{node.lineno}: "
@@ -220,23 +275,79 @@ def test_artist_calls_enclosed_in_provenance_block(path: Path) -> None:
     violations = _lint_source(source, filename=path.name)
     if violations:
         msg = "\n".join(violations)
-        raise AssertionError(
-            f"Provenance discipline violations in {path.name}:\n{msg}"
-        )
+        raise AssertionError(f"Provenance discipline violations in {path.name}:\n{msg}")
 
 
-# Pure DELEGATING adapters: renderers that expose the uniform render(...) signature
-# but create ZERO artists, delegating all figure emission (and its provenance) to a
-# module that itself carries the discipline. `eda_compute_sensitivity` (Gotcha 67d /
-# R11) delegates to `hhemt.eda._plotting.render_eda_plots`, which emits via
-# `emit_plot_with_sources` and owns the provenance block.
+# Renderers that create ZERO artists locally and therefore cannot satisfy the
+# "at least one `with <name>.artist(...)` block" proxy below. This is a NAME LIST
+# and there is no getting around that: a module that creates no artists is, at the
+# AST level, indistinguishable from one that forgot to. What the list buys is that
+# each entry's RATIONALE is machine-checked rather than merely asserted in a
+# comment -- the two entries have DIFFERENT shapes and a single shared rationale
+# would be false of one of them.
 #
-# The exemption is SELF-POLICING, not a bare allowlist: an exempt module must
-# additionally be proven to contain ZERO artist-producing calls (asserted below).
-# The instant someone adds an `ax.plot(...)` or a `go.Scatter(...)` to a listed
-# module, the exemption STOPS APPLYING and this test fails -- so the alias-rebind
-# guard this test exists to provide is fully preserved.
-_DELEGATING_RENDERERS: frozenset[str] = frozenset({"eda_compute_sensitivity.py"})
+#   "pure_delegate"  -- owns NO provenance. Delegates figure emission AND its
+#                       provenance to a module that carries the discipline itself.
+#                       `eda_compute_sensitivity` (Gotcha 67d / R11) delegates to
+#                       `hhemt.eda._plotting.render_eda_plots`, which emits via
+#                       `emit_plot_with_sources` and owns the provenance block.
+#                       Counter-assertion: zero artist calls AND binds NO
+#                       ProvenanceLog (binding one would mean it owns provenance
+#                       after all, i.e. it is the other kind).
+#
+#   "composer"       -- OWNS provenance. Binds a ProvenanceLog, threads it into
+#                       delegate builders that write into it, and hands it to
+#                       `emit_plot_with_sources(provenance=...)` itself.
+#                       `per_sim_event_page` composes the per-model figures built
+#                       by `per_sim_peak_flood_depth` / `per_sim_conduit_flow`.
+#                       Counter-assertion: zero artist calls AND binds a
+#                       ProvenanceLog AND threads it to a `provenance=` kwarg.
+#
+# KNOWN CEILING, stated so nobody prices this higher than it is: "zero artist
+# calls" is an AST-visible property, and an alias-rebind (`plot = ax.plot;
+# plot(...)`) produces zero AST-visible artist calls BY CONSTRUCTION. So the
+# counter-assertion catches a DIRECT `ax.plot(...)` added to an exempt module --
+# it does NOT catch the alias-rebind this test's docstring names. That limitation
+# is inherent to the exemption and predates this entry; it is why the list is kept
+# to modules whose composer/delegate shape is independently reviewed, not opened
+# to a general structural predicate.
+#
+# Why NOT a general "accept any zero-artist module that owns a ProvenanceLog"
+# rule: measured against the current tree, NINE other renderers (workflow_
+# performance, metadata, errors_and_warnings, per_analysis_summary,
+# scenario_status_appendix, disk_utilization, and the three cross_experiment_*
+# modules) also have zero AST-visible artist calls and bind a threaded
+# ProvenanceLog -- they pass today only because they additionally carry a
+# `with prov.artist(...)` block declaring the provenance of work done inside HTML
+# helper functions. A general predicate would stop REQUIRING those blocks,
+# trading guard strength on nine modules to accommodate one.
+_EXEMPT_RENDERER_KINDS: dict[str, str] = {
+    "eda_compute_sensitivity.py": "pure_delegate",
+    "per_sim_event_page.py": "composer",
+}
+_DELEGATING_RENDERERS: frozenset[str] = frozenset(_EXEMPT_RENDERER_KINDS)
+
+
+def _binds_provenance_log(tree: ast.AST) -> set[str]:
+    """Names bound to a `ProvenanceLog()` construction."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            func = node.value.func
+            ctor = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
+            if ctor == "ProvenanceLog":
+                names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return names
+
+
+def _threads_provenance_kwarg(tree: ast.AST, names: set[str]) -> bool:
+    """True if some call receives `provenance=<one of names>`."""
+    return any(
+        kw.arg == "provenance" and isinstance(kw.value, ast.Name) and kw.value.id in names
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        for kw in node.keywords
+    )
 
 
 @pytest.mark.parametrize("path", _renderer_files(), ids=lambda p: p.name)
@@ -247,10 +358,20 @@ def test_renderer_module_has_provenance_block(path: Path) -> None:
     even if no direct artist methods are detected (e.g., when artists are
     produced by external helpers like `plot_continuous_raster`).
 
-    Exception: a pure delegating adapter (``_DELEGATING_RENDERERS``) creates no
-    artists at all and therefore cannot alias-rebind one. It must instead prove it
-    produces ZERO artist-creating calls -- a strictly stronger property than being
-    wrapped in a provenance block.
+    Exception: a module listed in ``_EXEMPT_RENDERER_KINDS`` creates no artists
+    locally, so it cannot satisfy this proxy. It must instead prove ZERO
+    artist-creating calls AND satisfy its declared exemption KIND's own
+    counter-assertion (``pure_delegate`` binds no ProvenanceLog; ``composer`` binds
+    one and threads it to the emit).
+
+    That is NOT strictly stronger than being wrapped in a provenance block, and the
+    earlier wording here claimed it was. An alias-rebind (``plot = ax.plot;
+    plot(...)``) produces a ``Call`` whose ``func`` is a ``Name`` rather than an
+    ``Attribute``, so it yields zero AST-visible artist calls BY CONSTRUCTION --
+    which is exactly what the zero-call counter-assertion accepts as proof of
+    innocence. The counter-assertion catches a DIRECT ``ax.plot(...)`` added to an
+    exempt module; it does not catch a rebind. See the ceiling note on
+    ``_EXEMPT_RENDERER_KINDS``.
     """
     source = path.read_text()
 
@@ -267,21 +388,48 @@ def test_renderer_module_has_provenance_block(path: Path) -> None:
             for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and (
-                (
-                    isinstance(node.func, ast.Attribute)
-                    and node.func.attr in _ARTIST_METHODS
-                )
+                (isinstance(node.func, ast.Attribute) and node.func.attr in _ARTIST_METHODS)
                 or _is_plotly_trace_call(node)
             )
         ]
+        kind = _EXEMPT_RENDERER_KINDS[path.name]
         assert not artist_calls, (
-            f"{path.name} is listed in _DELEGATING_RENDERERS (exempt from the "
+            f"{path.name} is listed in _EXEMPT_RENDERER_KINDS (exempt from the "
             f"provenance-block requirement) but creates "
             f"{len(artist_calls)} artist(s) at line(s) "
             f"{[n.lineno for n in artist_calls]}. A module that creates artists "
             f"MUST bind a ProvenanceLog and wrap them in `with prov.artist(...)`; "
-            f"remove it from _DELEGATING_RENDERERS."
+            f"remove it from _EXEMPT_RENDERER_KINDS."
         )
+        # Per-kind counter-assertion: the exemption's stated RATIONALE must hold,
+        # not just the zero-artist precondition it shares with the other kind.
+        log_names = _binds_provenance_log(tree)
+        if kind == "pure_delegate":
+            assert not log_names, (
+                f"{path.name} is exempt as a 'pure_delegate' (owns NO provenance; "
+                f"the delegate module carries the discipline) but binds a "
+                f"ProvenanceLog to {sorted(log_names)}. A module that owns a "
+                f"ProvenanceLog is a 'composer', not a pure delegate -- either "
+                f"reclassify it in _EXEMPT_RENDERER_KINDS or drop the log."
+            )
+        elif kind == "composer":
+            assert log_names, (
+                f"{path.name} is exempt as a 'composer' (creates no artists "
+                f"locally but OWNS the provenance its delegates write into) yet "
+                f"binds no ProvenanceLog. A composer must bind one and hand it to "
+                f"`emit_plot_with_sources(provenance=...)`; if provenance is "
+                f"genuinely owned downstream, reclassify it as 'pure_delegate'."
+            )
+            assert _threads_provenance_kwarg(tree, log_names), (
+                f"{path.name} is exempt as a 'composer' and binds a ProvenanceLog "
+                f"{sorted(log_names)}, but never passes it as `provenance=` to an "
+                f"emit call -- so nothing it collects reaches the manifest sidecar. "
+                f"Thread it into `emit_plot_with_sources(..., provenance=prov)`."
+            )
+        else:  # pragma: no cover -- guarded by the mapping's own vocabulary
+            raise AssertionError(
+                f"{path.name}: unknown exemption kind {kind!r}; expected one of {{'pure_delegate', 'composer'}}."
+            )
         return
 
     tree = ast.parse(source, filename=str(path))
@@ -311,7 +459,7 @@ def test_renderer_module_has_provenance_block(path: Path) -> None:
 def test_plotly_trace_in_provenance_block_compliant() -> None:
     """Lint must accept ``go.Heatmap(...)`` wrapped in
     ``with prov.artist(...):``."""
-    src = textwrap.dedent('''
+    src = textwrap.dedent("""
         import plotly.graph_objects as go
 
         def render(analysis, report_cfg, output_path, **kwargs):
@@ -320,7 +468,7 @@ def test_plotly_trace_in_provenance_block_compliant() -> None:
             with prov.artist("depth_raster"):
                 fig.add_trace(go.Heatmap(z=[[1, 2], [3, 4]]))
             return fig
-    ''')
+    """)
     violations = _lint_source(src)
     assert violations == [], f"Expected zero violations, got {violations}"
 
@@ -328,18 +476,16 @@ def test_plotly_trace_in_provenance_block_compliant() -> None:
 def test_plotly_trace_outside_provenance_block_rejected() -> None:
     """Lint must reject ``go.Heatmap(...)`` outside any
     ``with prov.artist(...):`` block."""
-    src = textwrap.dedent('''
+    src = textwrap.dedent("""
         import plotly.graph_objects as go
 
         def render(analysis, report_cfg, output_path, **kwargs):
             fig = go.Figure()
             fig.add_trace(go.Heatmap(z=[[1, 2], [3, 4]]))
             return fig
-    ''')
+    """)
     violations = _lint_source(src)
-    assert any(
-        "Heatmap" in v for v in violations
-    ), f"Expected violation for unprotected go.Heatmap; got {violations}"
+    assert any("Heatmap" in v for v in violations), f"Expected violation for unprotected go.Heatmap; got {violations}"
 
 
 def test_plotly_alias_rebind_rejected() -> None:
@@ -347,7 +493,7 @@ def test_plotly_alias_rebind_rejected() -> None:
     renderer modules — alias rebinds bypass the ``go.<TraceClass>`` matcher
     in :func:`_is_plotly_trace_call`. Parallel to the matplotlib-side
     alias-rebind guard the existing module documents (per its docstring)."""
-    src = textwrap.dedent('''
+    src = textwrap.dedent("""
         import plotly.graph_objects as go_alias
 
         def render(analysis, report_cfg, output_path, **kwargs):
@@ -355,11 +501,11 @@ def test_plotly_alias_rebind_rejected() -> None:
             with prov.artist("depth_raster"):
                 fig.add_trace(go_alias.Heatmap(z=[[1, 2], [3, 4]]))
             return fig
-    ''')
+    """)
     violations = _lint_source(src)
-    assert any(
-        "alias" in v.lower() or "go_alias" in v for v in violations
-    ), f"Expected violation for non-`go` Plotly alias; got {violations}"
+    assert any("alias" in v.lower() or "go_alias" in v for v in violations), (
+        f"Expected violation for non-`go` Plotly alias; got {violations}"
+    )
 
 
 # ============================================================================
@@ -376,11 +522,7 @@ def _emit_call_source_paths_arg(tree: ast.AST) -> list[ast.AST]:
     """
     args: list[ast.AST] = []
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "emit_plot_with_sources"
-        ):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "emit_plot_with_sources":
             kw = {k.arg: k.value for k in node.keywords}
             if "source_paths" in kw:
                 args.append(kw["source_paths"])
@@ -397,9 +539,7 @@ def test_renderer_declares_nonliteral_empty_sources(path: Path) -> None:
     gate (Gate-A in _figure_emission), not here."""
     tree = ast.parse(path.read_text(), filename=str(path))
     for arg in _emit_call_source_paths_arg(tree):
-        is_empty_literal = (
-            isinstance(arg, (ast.List, ast.Tuple)) and len(arg.elts) == 0
-        )
+        is_empty_literal = isinstance(arg, ast.List | ast.Tuple) and len(arg.elts) == 0
         assert not is_empty_literal, (
             f"{path.name}: emit_plot_with_sources called with a literal "
             f"empty source_paths. Pass real sources or, for a genuinely "

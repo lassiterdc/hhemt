@@ -73,6 +73,24 @@ def build_weather(params, dest: Path) -> Path:
     rain_events = np.broadcast_to(rain, (_N_SYNTH_EVENTS, len(rain))).copy()
     tide_events = np.broadcast_to(tide, (_N_SYNTH_EVENTS, len(tide))).copy()
 
+    # RAGGED MODE. Every event above is the same length and fully finite, so the
+    # union-of-finite trim is the identity on this fixture and trimmed and
+    # untrimmed code are byte-identical -- the CI tier is structurally blind to
+    # the padded-event class rather than merely silent on it. When
+    # params.ragged_event_fractions is set, NaN-pad each event's tail to the named
+    # fraction, reproducing a rectangular store holding ragged events. The
+    # generator source hash covers this file (cache.py::_generator_source_hash),
+    # so changing this block auto-invalidates every cached fixture.
+    fracs = getattr(params, "ragged_event_fractions", None)
+    if fracs:
+        n_time = rain_events.shape[1]
+        for idx, frac in enumerate(fracs):
+            if idx >= _N_SYNTH_EVENTS:
+                break
+            n_finite = max(int(round(n_time * float(frac))), 0)
+            rain_events[idx, n_finite:] = np.nan
+            tide_events[idx, n_finite:] = np.nan
+
     if params.compound_event:
         # 2026-06-15 compound coastal-pluvial event (the experiment runs only
         # event 0): rain_events[0] already carries the triangular rain burst;

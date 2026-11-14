@@ -15,19 +15,24 @@
     # conda env create -f environment.yaml
     # conda (or source) activate hhemt
 # IMPORTANT: after creating the environment, run BOTH post-create steps, in order:
-  # pip install --no-deps "swmmio==0.8.5"
+  # pip install --no-deps "swmm-toolkit==0.15.5" "pyswmm==2.1.0" "swmmio==0.8.2"
   # pip install -e . --no-deps
-  # (both required — without them, imports of hhemt fail AND pyswmm is downgraded)
+  # (both required — without them the env has NO SWMM engine and imports of hhemt fail.
+  #  All three SWMM packages are post-create because conda-forge cannot satisfy pyproject's
+  #  swmm-toolkit>=0.15.3 floor — its 0.15 line stops at 0.15.2. See the SWMM block below.)
 #
 # WHY swmmio is installed here with --no-deps instead of in the `pip:` block below:
-#   swmmio 0.8.5 metadata declares `pyswmm<2.0,>=1.2` and `numpy<2.0`. conda runs the
-#   ENTIRE `pip:` block as ONE `pip install -U -r <tmpfile>` (conda/env/installers/pip.py),
-#   so pip satisfies those caps by DOWNGRADING the conda-installed pyswmm 2.0.1 -> 1.5.1
-#   and numpy 2.x -> 1.26.4, and reinstalls ~10 further conda packages from PyPI. That
-#   breaks prepare_scenario's SWMM-runoff step upstream of every render.
-#   hhemt only ever calls `swmmio.Model(...)` (.inp parsing); swmmio imports pyswmm solely
-#   in its CLI wrapper and its own tests, so the `<2.0` cap is not load-bearing here and
-#   --no-deps is safe. swmmio's real runtime deps are declared in the conda section below.
+#   `--no-deps` prevents `pip install -U` from touching the conda graph at all. conda runs
+#   the ENTIRE `pip:` block as ONE `pip install -U -r <tmpfile>`
+#   (conda/env/installers/pip.py), so any spec in that block can displace conda-installed
+#   packages during a single joint resolve.
+#   The HISTORICAL risk was specific to swmmio 0.8.5, whose metadata declared
+#   `pyswmm<2.0,>=1.2` and `numpy<2.0` and so downgraded the conda pyswmm 2.0.1 -> 1.5.1.
+#   That risk is GONE at the pinned 0.8.2: it declares NO `pyswmm` requirement at all, and
+#   its numpy/pandas entries are FLOORS (`numpy>=1.16.4`, `pandas>=0.24.2`), not caps.
+#   `--no-deps` now guards only against PyPI wheels displacing conda's numpy/pandas.
+#   Do NOT restore swmmio to the `pip:` block on the strength of that: the guard is still
+#   load-bearing, and `scripts/check_env_lock_consistency.py` refuses it either way.
 #   `pip install -e . --no-deps` for the same reason: pyproject.toml leaves pyswmm unpinned.
 name: hhemt
 channels:
@@ -36,10 +41,14 @@ channels:
 dependencies:
   - python=3.11
   - filelock
-  - typer
-  - pydantic
+  - typer>=0.26,<1
+  - pydantic=2.7  # pyproject requires ==2.7.*; declared here because the conda env is
+                  # the ONLY source of the runtime graph under `pip install -e . --no-deps`.
+                  # Until 2026-08-26 this was held only by hsmodels' transitive pin.
   - pyyaml
-  - zarr
+  - aenum  # swmm-toolkit imports it, and the post-create `pip install --no-deps` skips its dependencies
+  - julian  # pyswmm imports it, for the same reason
+  - zarr>=3.1.4
   - netcdf4
   - scipy
   - pydap
@@ -50,7 +59,7 @@ dependencies:
   - dask
   - matplotlib
   - seaborn
-  - jinja2
+  - jinja2>=3.1  # restates pyproject's constraint verbatim (see check_env_lock_consistency (f))
   - sparse
   - pint
   - bagit
@@ -63,10 +72,13 @@ dependencies:
   - pyproj
   - shapely
   # swmmio runtime deps — declared explicitly because swmmio is installed with
-  # --no-deps post-create (see header). `numpy<2` / `pandas<3` re-declare the caps
-  # swmmio 0.8.5 would otherwise have imposed via pip: the project is validated on
-  # numpy 1.26.4 / pandas 2.3.3, and conda-forge now ships numpy 2.4.6 / pandas 3.0.3
+  # --no-deps post-create (see header). `numpy<2` / `pandas<3` are VALIDATION pins, not
+  # swmmio caps: swmmio 0.8.2 declares `numpy>=1.16.4` / `pandas>=0.24.2` with no upper
+  # bound at all (the `<2.0` cap belonged to the retired 0.8.5). The project is validated
+  # on numpy 1.26.4 / pandas 2.3.3, and conda-forge now ships numpy 2.4.6 / pandas 3.0.3
   # for py311 — without these pins a fresh solve silently jumps two major versions.
+  # Do NOT delete them on the grounds that swmmio no longer caps numpy; it never did at
+  # the version this project pins, and the validation reason is the load-bearing one.
   - "numpy<2"
   - "pandas<3"
   - geojson
@@ -84,35 +96,60 @@ dependencies:
   - requests>=2.25
   - globus-sdk>=3.0
   - datashader>=0.16
+  # Ten module-level imports that pyproject declared nowhere until the D142 ruling.
+  # numpy and pandas are already declared above as VALIDATION pins; the other eight
+  # are added here because assertion (e) requires environment.yaml to be a superset.
+  - xarray>=2026.2
+  - packaging
+  - rasterio
+  - psutil
+  - nbformat
+  - affine
+  - platformdirs
+  - pydantic-core
   # build tools
   - cmake
   - openmpi
   - gxx_linux-64
   # other stuff
   - coverage
-  - pytest
+  - pytest>=9,<9.2
   - pytest-xdist>=3.0
   - py-spy>=0.3.14
   - ruff=0.15.10
-  - ty
+  - ty=0.0.49
   - pre-commit
   - ipdb
   - ipykernel
   - pip
   - "setuptools<78"  # hsclient uses pkg_resources, removed from setuptools>=78
-  # SWMM Python engine from conda-forge, NOT the PyPI wheel: the PyPI
-  # swmm-toolkit 0.17.0 wheel heap-corrupts in pyswmm Simulation.execute()
-  # (free(): tcache 2 / SIGABRT) on modern glibc, and 0.17.0 also has an
-  # Output.node_series "Input Error 422" reader regression. conda-forge
-  # swmm-toolkit=0.15 (0.15.2) is clean on both; pyswmm=2.0.1 is the matching pin.
+  # SWMM Python engine: installed POST-CREATE with `pip install --no-deps`, NOT declared
+  # as a conda dependency here. This is the same treatment `swmmio` already gets, for a
+  # sharper reason: conda-forge CANNOT satisfy pyproject's floor at all.
   #
-  # INVARIANT (enforced by scripts/check_env_lock_consistency.py): NOTHING in the
-  # `pip:` block below may name or depend on pyswmm / swmm-toolkit / swmmio. conda
-  # runs the whole `pip:` block as a single `pip install -U -r`, and any pip spec
-  # that constrains pyswmm will silently uninstall the conda one. swmmio is
-  # therefore installed post-create with --no-deps (see header).
-  - swmm-toolkit=0.15
-  - pyswmm=2.0.1
+  #   pyproject.toml requires  swmm-toolkit>=0.15.3,<0.16
+  #   conda-forge's 0.15 line  stops at 0.15.2  (`conda search -c conda-forge
+  #                            --override-channels "swmm-toolkit=0.15"`)
+  #
+  # The intersection is EMPTY, so any conda spec here is either unsolvable (>=0.15.3) or
+  # below the declared floor (=0.15 -> 0.15.2). It was `=0.15.5` from 790ccb10 until this
+  # change, which made `conda env create -f environment.yaml` fail outright with
+  # PackagesNotFoundError on EVERY host -- the documented Option-A install path in
+  # docs/how-to/installation.md. Before 790ccb10 it was `=0.15`, which solved and then
+  # silently installed 0.15.2 under the floor, because the runtime guard
+  # _assert_validated_swmm_stack only tests startswith("0.15.") and is looser than pyproject.
+  #
+  # Do NOT "fix" this by restoring a conda pin in either direction. The engine is not
+  # conda-exclusive: pyproject.toml states so directly ("The validated engine is NOT
+  # conda-exclusive"), the pre-abi3 PyPI 0.15.x wheel is the same engine
+  # (swmm_get_version 52004), and abi3 lands at 0.16.1 -- so 0.16.2/0.17.0 are the flagged
+  # free()/SIGABRT teardown lineage and 0.15.x is not.
+  #
+  # INVARIANT (enforced by scripts/check_env_lock_consistency.py): NOTHING in the `pip:`
+  # block below may name or depend on pyswmm / swmm-toolkit / swmmio. conda runs the whole
+  # `pip:` block as a single `pip install -U -r`, and any pip spec that constrains pyswmm
+  # will silently uninstall a conda-managed one. All three are therefore installed
+  # post-create with --no-deps (see the header block at the top of this file).
   - pip:
       - hsclient
       # !=0.2.1.post1: the .post1 re-upload ships only an armv7l wheel; PEP 440

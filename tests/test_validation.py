@@ -1,18 +1,16 @@
 """Tests for preflight validation infrastructure."""
 
 import pytest
-from pathlib import Path
 
-from hhemt.validation import (
-    ValidationResult,
-    ValidationIssue,
-    IssueLevel,
-    preflight_validate,
-    validate_system_config,
-    validate_analysis_config,
-)
-from hhemt.config.loaders import load_system_config, load_analysis_config
 from hhemt.exceptions import ConfigurationError
+from hhemt.validation import (
+    IssueLevel,
+    ValidationIssue,
+    ValidationResult,
+    preflight_validate,
+    validate_analysis_config,
+    validate_system_config,
+)
 
 
 def test_validation_result_basic():
@@ -76,9 +74,9 @@ def test_validation_issue_str():
     assert "Set constant_mannings value" in s
 
 
-def test_validate_system_config_paths(norfolk_multi_sim_analysis):
+def test_validate_system_config_paths(synth_multi_sim_analysis):
     """Test system config path validation on real config."""
-    cfg_sys = norfolk_multi_sim_analysis._system.cfg_system
+    cfg_sys = synth_multi_sim_analysis._system.cfg_system
     result = validate_system_config(cfg_sys)
 
     # Real config should be valid
@@ -87,9 +85,9 @@ def test_validate_system_config_paths(norfolk_multi_sim_analysis):
     assert result.is_valid or result.has_warnings  # May have warnings
 
 
-def test_validate_analysis_config_basic(norfolk_multi_sim_analysis):
+def test_validate_analysis_config_basic(synth_multi_sim_analysis):
     """Test analysis config validation on real config."""
-    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+    cfg_analysis = synth_multi_sim_analysis.cfg_analysis
     result = validate_analysis_config(cfg_analysis)
 
     # Real config should be valid
@@ -98,10 +96,10 @@ def test_validate_analysis_config_basic(norfolk_multi_sim_analysis):
     assert result.is_valid or result.has_warnings  # May have warnings
 
 
-def test_preflight_validate_integration(norfolk_multi_sim_analysis):
+def test_preflight_validate_integration(synth_multi_sim_analysis):
     """Test full preflight validation."""
-    cfg_sys = norfolk_multi_sim_analysis._system.cfg_system
-    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+    cfg_sys = synth_multi_sim_analysis._system.cfg_system
+    cfg_analysis = synth_multi_sim_analysis.cfg_analysis
 
     result = preflight_validate(cfg_sys, cfg_analysis)
 
@@ -126,12 +124,12 @@ def test_validation_model_selection_fails_when_all_disabled():
     pass
 
 
-def test_validate_data_consistency(norfolk_multi_sim_analysis):
+def test_validate_data_consistency(synth_multi_sim_analysis):
     """Test data cross-consistency validation."""
     from hhemt.validation import validate_data_consistency
 
-    cfg_sys = norfolk_multi_sim_analysis._system.cfg_system
-    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+    cfg_sys = synth_multi_sim_analysis._system.cfg_system
+    cfg_analysis = synth_multi_sim_analysis.cfg_analysis
 
     result = validate_data_consistency(cfg_sys, cfg_analysis)
 
@@ -141,12 +139,11 @@ def test_validate_data_consistency(norfolk_multi_sim_analysis):
     assert result.is_valid or result.has_warnings
 
 
-def test_validate_storm_tide_when_disabled(norfolk_multi_sim_analysis):
+def test_validate_storm_tide_when_disabled(synth_multi_sim_analysis):
     """Test storm tide validation when toggle disabled."""
-    from hhemt.validation import _validate_storm_tide_data
-    from hhemt.validation import ValidationResult
+    from hhemt.validation import ValidationResult, _validate_storm_tide_data
 
-    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+    cfg_analysis = synth_multi_sim_analysis.cfg_analysis
     result = ValidationResult()
 
     # Norfolk test case has toggle_storm_tide_boundary=False
@@ -156,12 +153,11 @@ def test_validate_storm_tide_when_disabled(norfolk_multi_sim_analysis):
     assert result.is_valid
 
 
-def test_validate_units_requires_rainfall_units(norfolk_multi_sim_analysis):
+def test_validate_units_requires_rainfall_units(synth_multi_sim_analysis):
     """Test units validation requires explicit rainfall_units."""
-    from hhemt.validation import _validate_units
-    from hhemt.validation import ValidationResult
+    from hhemt.validation import ValidationResult, _validate_units
 
-    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+    cfg_analysis = synth_multi_sim_analysis.cfg_analysis
     result = ValidationResult()
 
     _validate_units(cfg_analysis, result)
@@ -170,15 +166,15 @@ def test_validate_units_requires_rainfall_units(norfolk_multi_sim_analysis):
     assert result.is_valid or result.has_warnings
 
 
-def test_analysis_validate_method(norfolk_multi_sim_analysis):
+def test_analysis_validate_method(synth_multi_sim_analysis):
     """Test Analysis.validate() method integration."""
     # Call validate() on the analysis instance
-    result = norfolk_multi_sim_analysis.validate()
+    result = synth_multi_sim_analysis.validate()
 
     # Verify we get a ValidationResult
-    assert hasattr(result, 'is_valid')
-    assert hasattr(result, 'errors')
-    assert hasattr(result, 'warnings')
+    assert hasattr(result, "is_valid")
+    assert hasattr(result, "errors")
+    assert hasattr(result, "warnings")
 
     # Real Norfolk config should be valid
     if not result.is_valid:
@@ -189,10 +185,10 @@ def test_analysis_validate_method(norfolk_multi_sim_analysis):
     assert result.is_valid, f"Validation failed with {len(result.errors)} errors"
 
 
-def test_analysis_validate_raise_if_invalid(norfolk_multi_sim_analysis):
+def test_analysis_validate_raise_if_invalid(synth_multi_sim_analysis):
     """Test Analysis.validate().raise_if_invalid() pattern."""
     # This should not raise on valid config
-    norfolk_multi_sim_analysis.validate().raise_if_invalid()
+    synth_multi_sim_analysis.validate().raise_if_invalid()
 
     # If we get here, validation passed (no ConfigurationError raised)
     assert True
@@ -227,7 +223,7 @@ def test_preflight_runtime_exceeds_partition_cap_fails(synth_multi_sim_analysis,
     hpc_yaml.write_text(
         _yaml.safe_dump(
             {
-                "system_name": "tiny-cluster",
+                "hpc_name": "tiny-cluster",
                 "default_account": "acct",
                 "partitions": {"tiny": {"max_runtime": 5}},
             }
@@ -268,7 +264,7 @@ def test_preflight_1job_duration_exceeds_partition_cap_fails(synth_multi_sim_ana
     hpc_yaml.write_text(
         _yaml.safe_dump(
             {
-                "system_name": "tiny-cluster",
+                "hpc_name": "tiny-cluster",
                 "default_account": "acct",
                 "partitions": {"tiny": {"max_runtime": 5}},
             }
@@ -297,9 +293,7 @@ def test_dq6_per_row_partition_requires_batch_job(tmp_path):
     )
 
     csv = tmp_path / "sens.csv"
-    pd.DataFrame(
-        {"sa_id": [0, 1], "hpc.partition": ["gpu-a6000", "gpu-a100"]}
-    ).to_csv(csv, index=False)
+    pd.DataFrame({"sa_id": [0, 1], "hpc.partition": ["gpu-a6000", "gpu-a100"]}).to_csv(csv, index=False)
 
     # 1_job_many_srun_tasks + >1 distinct partition -> invalid, with batch_job hint.
     cfg_bad = SimpleNamespace(
@@ -337,9 +331,7 @@ def test_dq6_single_partition_allowed_under_1job(tmp_path):
     )
 
     csv = tmp_path / "sens.csv"
-    pd.DataFrame(
-        {"sa_id": [0, 1], "hpc.partition": ["gpu-a6000", "gpu-a6000"]}
-    ).to_csv(csv, index=False)
+    pd.DataFrame({"sa_id": [0, 1], "hpc.partition": ["gpu-a6000", "gpu-a6000"]}).to_csv(csv, index=False)
     cfg = SimpleNamespace(
         toggle_sensitivity_analysis=True,
         multi_sim_run_method="1_job_many_srun_tasks",
@@ -363,9 +355,5 @@ def test_null_software_dir_no_required_path_error(synth_multi_sim_analysis):
     null_cfg = cfg_sys.model_copy(update={"TRITONSWMM_software_directory": None})
 
     result = validate_system_config(null_cfg)
-    offending = [
-        e for e in result.errors if e.field == "system.TRITONSWMM_software_directory"
-    ]
-    assert not offending, (
-        f"null TRITONSWMM_software_directory wrongly flagged: {offending}"
-    )
+    offending = [e for e in result.errors if e.field == "system.TRITONSWMM_software_directory"]
+    assert not offending, f"null TRITONSWMM_software_directory wrongly flagged: {offending}"

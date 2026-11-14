@@ -1,0 +1,8 @@
+# Enabled in .vale.ini for the two pages BanLinux is switched off on.
+extends: existence
+message: '''Linux'' appears more than once on a page that may name it.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '(?<![-\w])Linux(?![-\w])'

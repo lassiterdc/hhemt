@@ -7,15 +7,14 @@ for dynamic concurrency (cores passed via CLI, not hardcoded in profile).
 
 import pytest
 import yaml
+
 import tests.fixtures.test_case_catalog as cases
 
 
 @pytest.fixture
-def norfolk_1job_cpu_only():
-    """Norfolk test case configured for 1-job mode (CPU-only)."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False
-    )
+def synth_1job_cpu_only():
+    """Synthetic test case configured for 1-job mode (CPU-only)."""
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure for 1-job mode with CPU-only
@@ -30,11 +29,9 @@ def norfolk_1job_cpu_only():
 
 
 @pytest.fixture
-def norfolk_1job_with_gpus():
-    """Norfolk test case configured for 1-job mode with GPUs."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False
-    )
+def synth_1job_with_gpus():
+    """Synthetic test case configured for 1-job mode with GPUs."""
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure for 1-job mode with GPUs
@@ -51,11 +48,11 @@ def norfolk_1job_with_gpus():
     return analysis
 
 
-def test_1job_profile_no_cores_cpu_only(norfolk_1job_cpu_only):
+def test_1job_profile_no_cores_cpu_only(synth_1job_cpu_only):
     """Verify 1-job profile doesn't hardcode cores (CPU-only)."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_cpu_only
+    analysis = synth_1job_cpu_only
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
 
     # Generate profile
@@ -66,13 +63,11 @@ def test_1job_profile_no_cores_cpu_only(norfolk_1job_cpu_only):
     config_file = config_dir / "config.yaml"
     assert config_file.exists(), "Config file should be created"
 
-    with open(config_file, "r") as f:
+    with open(config_file) as f:
         config = yaml.safe_load(f)
 
     # Cores should NOT be in profile (passed via CLI in SBATCH script)
-    assert (
-        "cores" not in config
-    ), "cores should not be hardcoded in profile for 1-job mode"
+    assert "cores" not in config, "cores should not be hardcoded in profile for 1-job mode"
 
     # Should have keep-going and latency-wait
     assert config["keep-going"] is True, "Should continue on failures"
@@ -82,11 +77,11 @@ def test_1job_profile_no_cores_cpu_only(norfolk_1job_cpu_only):
     assert "resources" not in config, "Should not have GPU resources for CPU-only mode"
 
 
-def test_1job_profile_with_gpu_resources(norfolk_1job_with_gpus):
+def test_1job_profile_with_gpu_resources(synth_1job_with_gpus):
     """Verify 1-job profile does NOT include GPU resources (passed via CLI instead)."""
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
-    analysis = norfolk_1job_with_gpus
+    analysis = synth_1job_with_gpus
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
 
     # Generate profile
@@ -95,13 +90,11 @@ def test_1job_profile_with_gpu_resources(norfolk_1job_with_gpus):
 
     # Read the config file
     config_file = config_dir / "config.yaml"
-    with open(config_file, "r") as f:
+    with open(config_file) as f:
         config = yaml.safe_load(f)
 
     # GPU resources should NOT be in profile (passed via CLI in SBATCH script)
-    assert (
-        "resources" not in config
-    ), "GPU resources should not be in profile (passed via CLI)"
+    assert "resources" not in config, "GPU resources should not be in profile (passed via CLI)"
 
     # Should not have cores either
     assert "cores" not in config, "cores should not be hardcoded"

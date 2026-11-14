@@ -1,10 +1,9 @@
-import pandas as pd
 from typing import TYPE_CHECKING
-from hhemt.plot_utils import plot_discrete_raster, plot_continuous_raster
-from matplotlib.axes import Axes
-from typing import Optional
-import rioxarray as rxr
+
 import matplotlib.pyplot as plt
+import rioxarray as rxr
+
+from hhemt.plot_utils import plot_continuous_raster
 
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
@@ -17,7 +16,6 @@ class TRITONSWMM_system_plotting:
         self.sys_paths = system.sys_paths
 
     def processed_dem(self, ax=None):
-
         dem_outside_watershed_height = self.cfg_system.dem_outside_watershed_height
         dem_building_height = self.cfg_system.dem_building_height
         dem_processed = self.sys_paths.dem_processed
@@ -32,8 +30,8 @@ class TRITONSWMM_system_plotting:
         rds_dem_fullres_for_plotting = self._process_dem_for_plotting(
             rds_dem_unprocessed, dem_outside_watershed_height, dem_building_height
         )
-        vmin = rds_dem_fullres_for_plotting.min()  # type: ignore
-        vmax = rds_dem_fullres_for_plotting.max()  # type: ignore
+        vmin = rds_dem_fullres_for_plotting.min()
+        vmax = rds_dem_fullres_for_plotting.max()
         if ax is None:
             fig, ax = plt.subplots(1, 2, figsize=(5, 4), layout="constrained")
         ax2 = plot_continuous_raster(
@@ -51,17 +49,16 @@ class TRITONSWMM_system_plotting:
         return ax
 
     def processed_mannings(self, ax=None):
-
         rds_mannings = self._system.mannings_rds
-        vmin = rds_mannings.min()  # type: ignore
-        vmax = rds_mannings.max()  # type: ignore
+        vmin = rds_mannings.min()
+        vmax = rds_mannings.max()
         watershed_shapefile = self.cfg_system.watershed_gis_polygon
         res = self.cfg_system.target_dem_resolution
         ax_title = f"Mannings ({res}m)"
         if ax is None:
             fig, ax = plt.subplots(1, 2, figsize=(5, 4), layout="constrained")
         ax2 = plot_continuous_raster(
-            rds_mannings,  # type: ignore
+            rds_mannings,
             cbar_lab="mannings",
             cmap="viridis",
             watershed_shapefile=watershed_shapefile,
@@ -80,9 +77,7 @@ class TRITONSWMM_system_plotting:
         self.processed_dem(ax=axes[0])
         self.processed_mannings(ax=axes[1])
 
-    def _process_dem_for_plotting(
-        self, rds_dem, dem_out_of_watershed=None, dem_building_height=None
-    ):
+    def _process_dem_for_plotting(self, rds_dem, dem_out_of_watershed=None, dem_building_height=None):
         """
         Docstring for _process_dem_for_plotting
 
@@ -100,30 +95,3 @@ class TRITONSWMM_system_plotting:
             mask_not_building = rds_dem != dem_building_height
             rds_dem_plot_ready = rds_dem_plot_ready.where(mask_not_building)
         return rds_dem_plot_ready
-
-    def landuse_raster(
-        self,
-        landuse_raster,
-        landuse_lookup,
-        landuse_colname,
-        landuse_description_colname,
-        landuse_plot_color_colname,
-        watershed_shapefile,
-        watershed_shapefile_color="black",
-        ax: Optional[Axes] = None,
-    ):
-        rds = rxr.open_rasterio(landuse_raster)
-        df_lu_lookup = pd.read_csv(landuse_lookup).set_index(landuse_colname)
-        labs = df_lu_lookup[landuse_description_colname]
-        colors = df_lu_lookup[landuse_plot_color_colname]
-
-        ax = plot_discrete_raster(
-            rds,
-            cbar_lab="",
-            colors=colors,
-            labs=labs,
-            watershed_shapefile=watershed_shapefile,
-            watershed_shapefile_color=watershed_shapefile_color,
-            ax=ax,
-        )
-        return ax

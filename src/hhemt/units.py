@@ -11,7 +11,10 @@ value to convert) so the call sites read as
 
 from __future__ import annotations
 
+import functools
 from typing import Literal
+
+import pyproj
 
 # ---- Time conversion constants ---------------------------------------------
 SECONDS_PER_MINUTE: float = 60.0
@@ -63,21 +66,36 @@ TIME_AXIS_PROVENANCE_UNITS_HOURS: str = "hours from event start"
 
 
 # ---- Map / spatial labels --------------------------------------------------
-# CRS-keyed spatial axis labels. Norfolk's horizontal_epsg=32147 is
-# NAD83 / Virginia South (ftUS) — rendering "Easting (m)" against ftUS
-# coordinates is a semantic regression the helper prevents.
+# CRS-keyed spatial axis labels. The unit is read from the CRS definition itself
+# (the axis unit of the EPSG entry), so an axis label can never disagree with the
+# coordinates it labels. EPSG 32147 (NAD83 / Virginia South) is metric; EPSG 2284
+# (the same zone in US survey feet) is not.
 
-_EPSG_TO_HORIZONTAL_UNIT: dict[int, str] = {
-    32147: "ft",   # NAD83 / Virginia South (ftUS)
-    # extend as additional projections appear in production configs
+_HORIZONTAL_UNIT_SHORT_NAMES: dict[str, str] = {
+    "metre": "m",
+    "US survey foot": "ft",
+    "foot": "ft",
 }
 
 
+@functools.cache
 def _crs_horizontal_unit_label(crs_epsg: int | None) -> str:
-    """Default to 'm' for unknown EPSG codes (most projected CRSs are metric)."""
+    """Short label of the horizontal axis unit of EPSG `crs_epsg`.
+
+    Meters give "m" and both foot definitions give "ft"; any other axis unit
+    (for example "degree") is returned under its pyproj name. Falls back to "m"
+    when `crs_epsg` is None or pyproj cannot resolve the code.
+    """
     if crs_epsg is None:
         return "m"
-    return _EPSG_TO_HORIZONTAL_UNIT.get(crs_epsg, "m")
+    try:
+        axis_info = pyproj.CRS.from_epsg(crs_epsg).axis_info
+    except pyproj.exceptions.CRSError:
+        return "m"
+    if not axis_info:
+        return "m"
+    unit_name = axis_info[0].unit_name
+    return _HORIZONTAL_UNIT_SHORT_NAMES.get(unit_name, unit_name)
 
 
 def easting_axis_label(crs_epsg: int | None) -> str:
@@ -92,9 +110,9 @@ def northing_axis_label(crs_epsg: int | None) -> str:
 # both the elevation unit (m / ftUS / ft) and the datum (NAVD88, etc.).
 # Add rows here when a new vertical CRS appears in production configs.
 _EPSG_TO_VERTICAL_UNIT_AND_DATUM: dict[int, tuple[str, str]] = {
-    5703: ("m", "NAVD88"),       # NAVD88 height (meters)
-    6360: ("ftUS", "NAVD88"),    # NAVD88 height (US survey feet)
-    8228: ("ft", "NAVD88"),      # NAVD88 height (international feet)
+    5703: ("m", "NAVD88"),  # NAVD88 height (meters)
+    6360: ("ftUS", "NAVD88"),  # NAVD88 height (US survey feet)
+    8228: ("ft", "NAVD88"),  # NAVD88 height (international feet)
 }
 
 

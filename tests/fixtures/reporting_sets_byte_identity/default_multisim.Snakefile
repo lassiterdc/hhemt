@@ -7,8 +7,8 @@ from datetime import datetime as _dt
 from hhemt.report_renderers._figure_emission import format_sources_rst as _fmt_sources_rst
 
 try:
-    from importlib.metadata import version as _pkg_version
-    _toolkit_version = _pkg_version("hhemt")
+    from hhemt.provenance import _describe_version
+    _toolkit_version = _describe_version()
 except Exception:
     _toolkit_version = "unknown"
 
@@ -22,7 +22,18 @@ config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}
 report: "report/workflow_description.rst"
 
 SIM_IDS = ['event_index.0', 'event_index.1', 'event_index.2']
+REPORT_EVENT_IDS = ['event_index.0', 'event_index.1', 'event_index.2']
 ILOC_BY_EVENT_ID = {'event_index.0': 0, 'event_index.1': 1, 'event_index.2': 2}
+
+from hhemt.report_plot_ids import (
+    event_sidebar_labels_from_status as _event_sidebar_labels_from_status,
+    report_label_value as _report_label_value,
+    member_labels_from_status as _member_labels_from_status,
+)
+
+_EVENT_SIDEBAR_LABELS = _event_sidebar_labels_from_status(workflow.basedir)
+_MEMBER_LABELS = _member_labels_from_status(workflow.basedir)
+
 
 rule all:
     input:
@@ -30,14 +41,14 @@ rule all:
         "scenario_status.csv",
         "workflow_summary.md",
         "plots/system_overview.html",
-        expand("plots/per_sim/{event_id}/peak_flood_depth__evt.{event_id}.html", event_id=SIM_IDS),
-        expand("plots/per_sim/{event_id}/conduit_flow__evt.{event_id}.html", event_id=SIM_IDS),
+        expand("plots/per_sim/{event_id}/event_page__evt.{event_id}.html", event_id=REPORT_EVENT_IDS),
         "plots/per_analysis/summary_table.html",
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
         "plots/metadata.html",
-        "analysis_report.zip",
+        "plots/workflow_performance.html",
+        "analysis_report.format",
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
 # scenario_status.csv and workflow_summary.md on the success path via the
@@ -74,18 +85,16 @@ rule setup:
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --process-system-inputs \
             \
-            --compile-triton-swmm \
-            --compile-triton-only \
-            --compile-swmm \
             \
             --flag-output {output} \
             --rule-name setup \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule prepare_scenario:
     input: "_status/a_setup_complete.flag"
     output: "_status/b_prepare_evt-{event_id}_complete.flag"
+    priority: 10
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/prepare_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
@@ -108,13 +117,14 @@ rule prepare_scenario:
             --flag-output {output} \
             --rule-name prepare_scenario \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule run_triton:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_triton_evt-{event_id}_complete.flag"
     retries: 2
+    priority: 0
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/triton_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
@@ -138,13 +148,14 @@ rule run_triton:
             --flag-output {output} \
             --rule-name run_triton \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule run_tritonswmm:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_tritonswmm_evt-{event_id}_complete.flag"
     retries: 2
+    priority: 0
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/tritonswmm_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
@@ -168,13 +179,14 @@ rule run_tritonswmm:
             --flag-output {output} \
             --rule-name run_tritonswmm \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule run_swmm:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_swmm_evt-{event_id}_complete.flag"
     retries: 2
+    priority: 20
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/swmm_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
@@ -198,7 +210,7 @@ rule run_swmm:
             --flag-output {output} \
             --rule-name run_swmm \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_triton:
@@ -206,12 +218,40 @@ rule process_triton:
     output: "_status/d_process_triton_evt-{event_id}_complete.flag"
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/process_triton_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
+    # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
+    # `return max(job.restart_times for job in self.jobs)`; jobs.py:1763-1769's
+    # attempt setter propagates the incremented attempt to EVERY member; and
+    # jobs.py:1518-1520's remove_existing_output iterates every member and deletes
+    # its outputs at group start. So one member's failure re-runs the WHOLE group
+    # from scratch, at the highest retry count any member declares, with no
+    # skip-what-succeeded path.
+    #
+    # Inert today: the three process_* rules in this group all take the global
+    # restart-times baseline, so the max() is that baseline. It stops being inert the
+    # moment a rule carrying its own high `retries:` joins -- the sim rules emit
+    # _resolved_simulate_retries(), deliberately raised for hotstart-resume sweeps.
+    # Grouping a sim with its own process job was evaluated 2026-09-02 and REJECTED
+    # for exactly this: a deterministic process failure would re-run a ~100-minute
+    # simulation up to the SIM's retry count, across a 3,798-event ensemble.
+    # DO NOT add a rule with its own `retries:` directive to this group.
+    #
+    # THIS REJECTION IS ABOUT SNAKEMAKE `group:` (GroupJob retry/output semantics) AND
+    # NOTHING ELSE. A SINGLE COMBINED RULE that runs the sim runner and then the process
+    # runner in one shell (analysis_config.process_in_sim_rule=True, 2026-09-12) is a
+    # different mechanism: no member outputs are removed at group start and no attempt
+    # counter propagates, and its safety under `retries:` rests on the SIM RUNNER's
+    # own idempotence -- run_simulation.prepare_simulation_command returns None when
+    # model_run_completed (the per-model log field), so a processing failure re-runs
+    # only the processing pass, never the solver. Executed 2026-09-12 on a completed
+    # synth scenario. Do not read the paragraph above as forbidding that rule.
+    priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
         slurm_partition="None",
-        runtime=120,
+        runtime=240,
         tasks=1,
         cpus_per_task=2,
         mem_mb=12000,
@@ -229,7 +269,7 @@ rule process_triton:
             --flag-output {output} \
             --rule-name process_triton \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_tritonswmm:
@@ -237,12 +277,40 @@ rule process_tritonswmm:
     output: "_status/d_process_tritonswmm_evt-{event_id}_complete.flag"
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/process_tritonswmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
+    # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
+    # `return max(job.restart_times for job in self.jobs)`; jobs.py:1763-1769's
+    # attempt setter propagates the incremented attempt to EVERY member; and
+    # jobs.py:1518-1520's remove_existing_output iterates every member and deletes
+    # its outputs at group start. So one member's failure re-runs the WHOLE group
+    # from scratch, at the highest retry count any member declares, with no
+    # skip-what-succeeded path.
+    #
+    # Inert today: the three process_* rules in this group all take the global
+    # restart-times baseline, so the max() is that baseline. It stops being inert the
+    # moment a rule carrying its own high `retries:` joins -- the sim rules emit
+    # _resolved_simulate_retries(), deliberately raised for hotstart-resume sweeps.
+    # Grouping a sim with its own process job was evaluated 2026-09-02 and REJECTED
+    # for exactly this: a deterministic process failure would re-run a ~100-minute
+    # simulation up to the SIM's retry count, across a 3,798-event ensemble.
+    # DO NOT add a rule with its own `retries:` directive to this group.
+    #
+    # THIS REJECTION IS ABOUT SNAKEMAKE `group:` (GroupJob retry/output semantics) AND
+    # NOTHING ELSE. A SINGLE COMBINED RULE that runs the sim runner and then the process
+    # runner in one shell (analysis_config.process_in_sim_rule=True, 2026-09-12) is a
+    # different mechanism: no member outputs are removed at group start and no attempt
+    # counter propagates, and its safety under `retries:` rests on the SIM RUNNER's
+    # own idempotence -- run_simulation.prepare_simulation_command returns None when
+    # model_run_completed (the per-model log field), so a processing failure re-runs
+    # only the processing pass, never the solver. Executed 2026-09-12 on a completed
+    # synth scenario. Do not read the paragraph above as forbidding that rule.
+    priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
         slurm_partition="None",
-        runtime=120,
+        runtime=240,
         tasks=1,
         cpus_per_task=2,
         mem_mb=12000,
@@ -260,7 +328,7 @@ rule process_tritonswmm:
             --flag-output {output} \
             --rule-name process_tritonswmm \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule process_swmm:
@@ -268,12 +336,40 @@ rule process_swmm:
     output: "_status/d_process_swmm_evt-{event_id}_complete.flag"
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/process_swmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
+    # A GROUP IS THE RETRY UNIT, AND IT INHERITS THE MAXIMUM retries: OF ITS MEMBERS.
+    # Verified against the pinned snakemake 9.15.0: jobs.py:1786-1787 is
+    # `return max(job.restart_times for job in self.jobs)`; jobs.py:1763-1769's
+    # attempt setter propagates the incremented attempt to EVERY member; and
+    # jobs.py:1518-1520's remove_existing_output iterates every member and deletes
+    # its outputs at group start. So one member's failure re-runs the WHOLE group
+    # from scratch, at the highest retry count any member declares, with no
+    # skip-what-succeeded path.
+    #
+    # Inert today: the three process_* rules in this group all take the global
+    # restart-times baseline, so the max() is that baseline. It stops being inert the
+    # moment a rule carrying its own high `retries:` joins -- the sim rules emit
+    # _resolved_simulate_retries(), deliberately raised for hotstart-resume sweeps.
+    # Grouping a sim with its own process job was evaluated 2026-09-02 and REJECTED
+    # for exactly this: a deterministic process failure would re-run a ~100-minute
+    # simulation up to the SIM's retry count, across a 3,798-event ensemble.
+    # DO NOT add a rule with its own `retries:` directive to this group.
+    #
+    # THIS REJECTION IS ABOUT SNAKEMAKE `group:` (GroupJob retry/output semantics) AND
+    # NOTHING ELSE. A SINGLE COMBINED RULE that runs the sim runner and then the process
+    # runner in one shell (analysis_config.process_in_sim_rule=True, 2026-09-12) is a
+    # different mechanism: no member outputs are removed at group start and no attempt
+    # counter propagates, and its safety under `retries:` rests on the SIM RUNNER's
+    # own idempotence -- run_simulation.prepare_simulation_command returns None when
+    # model_run_completed (the per-model log field), so a processing failure re-runs
+    # only the processing pass, never the solver. Executed 2026-09-12 on a completed
+    # synth scenario. Do not read the paragraph above as forbidding that rule.
+    priority: 100
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
         slurm_partition="None",
-        runtime=120,
+        runtime=240,
         tasks=1,
         cpus_per_task=2,
         mem_mb=12000,
@@ -291,7 +387,7 @@ rule process_swmm:
             --flag-output {output} \
             --rule-name process_swmm \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule consolidate_scenario:
@@ -299,9 +395,11 @@ rule consolidate_scenario:
     output:
         flag="_status/f_consolidate_scenario_evt-{event_id}_complete.flag",
         du_sentinel="sims/{event_id}/_status/_du.json",
+    priority: 100
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/consolidate_scenario_evt-{event_id}.log"
-    group: "process_evt_{event_id}"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    params:
+        event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
         slurm_partition="None",
         runtime=10,
@@ -318,7 +416,8 @@ rule consolidate_scenario:
             --flag-output {output.flag} \
             --rule-name consolidate_scenario \
             --event-id {wildcards.event_id} \
-            > {log} 2>&1
+            --event-iloc {params.event_iloc} \
+            2>&1 | tee {log}
         """
 
 rule consolidate:
@@ -343,7 +442,7 @@ rule consolidate:
             --which TRITON \
             --flag-output {output} \
             --rule-name consolidate \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_system_overview:
@@ -357,8 +456,7 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/boundary.geojson', 'variables': []}],
-        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/boundary.geojson``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
@@ -368,91 +466,35 @@ rule plot_system_overview:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
-def _per_sim_flood_depth_sources(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_per_sim_source_paths,
-    )
-    return collect_per_sim_source_paths(
-        "peak_flood_depth",
-        wildcards.event_id,
-        rainfall_datavar='RG_synth',
-        storm_tide_datavar='water_level',
-        dem_rel_path='../elevation_10.00m.dem',
-        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/watershed.geojson',
-    )
-
-def _per_sim_conduit_flow_sources(wildcards):
-    from hhemt.report_renderers._figure_emission import (
-        collect_per_sim_source_paths,
-    )
-    return collect_per_sim_source_paths(
-        "conduit_flow",
-        wildcards.event_id,
-        rainfall_datavar='RG_synth',
-        storm_tide_datavar='water_level',
-        dem_rel_path='../elevation_10.00m.dem',
-        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/watershed.geojson',
-    )
-
-rule plot_per_sim_peak_flood_depth:
+rule plot_per_sim_event_page:
     input:
         consolidated = "_status/e_consolidate_complete.flag",
     output:
         report(
-            "plots/per_sim/{event_id}/peak_flood_depth__evt.{event_id}.html",
-            caption="report/captions/per_sim_peak_flood_depth.rst",
+            "plots/per_sim/{event_id}/event_page__evt.{event_id}.html",
+            caption="report/captions/per_sim_event_page.rst",
             category="Per Simulation Results",
-            labels={"event_id": "{event_id}", "figure": "Peak flood depth"},
+            labels=(lambda w: {"figure": "Simulation results", "event": _report_label_value(_EVENT_SIDEBAR_LABELS, w.event_id, "event")}),
         )
     wildcard_constraints:
         event_id="[A-Za-z0-9_.]+",
     params:
-        source_paths = _per_sim_flood_depth_sources,
-        source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_flood_depth_sources(w)),
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
         event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
-    log: "logs/plots/per_sim_peak_flood_depth_{event_id}.log"
+    log: "logs/plots/per_sim_event_page_{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
-    resources: mem_mb=4000, time_min=15
+    resources: mem_mb=8000, time_min=30
     shell:
         """
-        {PYTHON} -m hhemt.report_renderers._cli per_sim_peak_flood_depth \
+        {PYTHON} -m hhemt.report_renderers._cli per_sim_event_page \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --event-iloc {params.event_iloc} \
             --output {output} \
-            > {log} 2>&1
-        """
-
-rule plot_per_sim_conduit_flow:
-    input:
-        consolidated = "_status/e_consolidate_complete.flag",
-    output:
-        report(
-            "plots/per_sim/{event_id}/conduit_flow__evt.{event_id}.html",
-            caption="report/captions/per_sim_conduit_flow.rst",
-            category="Per Simulation Results",
-            labels={"event_id": "{event_id}", "figure": "Conduit flow"},
-        )
-    wildcard_constraints:
-        event_id="[A-Za-z0-9_.]+",
-    params:
-        source_paths = _per_sim_conduit_flow_sources,
-        source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_conduit_flow_sources(w)),
-        event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
-    log: "logs/plots/per_sim_conduit_flow_{event_id}.log"
-    conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
-    resources: mem_mb=4000, time_min=15
-    shell:
-        """
-        {PYTHON} -m hhemt.report_renderers._cli per_sim_conduit_flow \
-            --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
-            --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
-            --event-iloc {params.event_iloc} \
-            --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_per_analysis_summary_table:
@@ -468,8 +510,7 @@ rule plot_per_analysis_summary_table:
             labels={"figure": "Summary table"},
         )
     params:
-        source_paths = [{'path': 'sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.0/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.0/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.1/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.1/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.1/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.1/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.2/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.2/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.2/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.2/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}],
-        source_paths_rst = '- ``sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.0/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.0/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.1/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.1/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.1/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.1/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.2/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.2/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.2/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.2/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/per_analysis_summary_table.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=5
@@ -479,7 +520,7 @@ rule plot_per_analysis_summary_table:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_scenario_status_appendix:
@@ -495,8 +536,7 @@ rule plot_scenario_status_appendix:
             labels={"figure": "Per-scenario status table"},
         )
     params:
-        source_paths = [{'path': 'scenario_status.csv', 'variables': ['event_id', 'model_type', 'status', 'runtime_s', 'continuity_error_pct', 'notes']}],
-        source_paths_rst = '- ``scenario_status.csv``\n\n  - ``event_id``\n  - ``model_type``\n  - ``status``\n  - ``runtime_s``\n  - ``continuity_error_pct``\n  - ``notes``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/scenario_status_appendix.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -506,12 +546,13 @@ rule plot_scenario_status_appendix:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_errors_and_warnings:
     input:
         "scenario_status.csv",
+        "validation_report.json",
         consolidated = "_status/e_consolidate_complete.flag",
     output:
         report(
@@ -522,8 +563,7 @@ rule plot_errors_and_warnings:
             labels={"figure": "Validation report"},
         )
     params:
-        source_paths = [{'path': 'scenario_status.csv', 'variables': ['scenario_setup', 'run_completed', 'actual_nTasks', 'actual_omp_threads', 'actual_total_gpus', 'actual_gpu_backend']}, {'path': 'sims/<event_id>/log_<model_type>.json', 'variables': ['simulation_completed (per scenario × model_type)']}, {'path': '../system_log.json', 'variables': ['compilation_successful', 'compilation_triton_only_successful', 'compilation_swmm_successful']}],
-        source_paths_rst = '- ``scenario_status.csv``\n\n  - ``scenario_setup``\n  - ``run_completed``\n  - ``actual_nTasks``\n  - ``actual_omp_threads``\n  - ``actual_total_gpus``\n  - ``actual_gpu_backend``\n\n- ``sims/<event_id>/log_<model_type>.json``\n\n  - ``simulation_completed (per scenario × model_type)``\n\n- ``../system_log.json``\n\n  - ``compilation_successful``\n  - ``compilation_triton_only_successful``\n  - ``compilation_swmm_successful``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/errors_and_warnings.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -533,7 +573,7 @@ rule plot_errors_and_warnings:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_disk_utilization:
@@ -547,8 +587,7 @@ rule plot_disk_utilization:
             labels={"figure": "Disk Utilization"},
         )
     params:
-        source_paths = [{'path': '_status/_du.json', 'variables': ['disk_utilization_bytes', 'sub_path_breakdown']}],
-        source_paths_rst = '- ``_status/_du.json``\n\n  - ``disk_utilization_bytes``\n  - ``sub_path_breakdown``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/disk_utilization.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -558,11 +597,13 @@ rule plot_disk_utilization:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule plot_metadata:
     input:
+        "scenario_status.csv",
+        "validation_report.json",
         consolidated = "_status/e_consolidate_complete.flag",
     output:
         report(
@@ -572,8 +613,7 @@ rule plot_metadata:
             labels={"figure": "Metadata"},
         )
     params:
-        source_paths = [{'path': 'ro-crate-metadata.json', 'variables': ['provenance']}],
-        source_paths_rst = '- ``ro-crate-metadata.json``\n\n  - ``provenance``\n',
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
     log: "logs/plots/metadata.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=1000, time_min=5
@@ -583,16 +623,66 @@ rule plot_metadata:
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
-            > {log} 2>&1
+            2>&1 | tee {log}
+        """
+
+rule plot_workflow_performance:
+    input:
+        "scenario_status.csv",
+        consolidated = "_status/e_consolidate_complete.flag",
+    output:
+        report(
+            "plots/workflow_performance.html",
+            caption="report/captions/workflow_performance.rst",
+            category="Workflow Performance",
+            labels={"figure": "Workflow performance"},
+        )
+    params:
+        source_paths_rst = lambda w, output: __import__("hhemt.workflow", fromlist=["_sources_rst_from_manifest"])._sources_rst_from_manifest(output[0]),
+    log: "logs/plots/workflow_performance.log"
+    conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    resources: mem_mb=1000, time_min=5
+    shell:
+        """
+        {PYTHON} -m hhemt.report_renderers._cli workflow_performance \
+            --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
+            --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
+            --output {output} \
+            2>&1 | tee {log}
         """
 
 localrules: export_scenario_status
 
 rule export_scenario_status:
-    input: "_status/e_consolidate_complete.flag"
+    input:
+        "_status/e_consolidate_complete.flag",
+        "_status/toolkit_build.stamp",
     output:
         csv = "scenario_status.csv",
         md  = "workflow_summary.md",
+        # The read-model is written by THIS rule's shell (the post-CSV
+        # persist_validation_report call in export_scenario_status.main) and was previously
+        # undeclared. Snakemake builds its DAG from declared interfaces, so an undeclared
+        # side-effect write to a file that plot_errors_and_warnings declares as an INPUT
+        # (_build_plot_rule_block_errors_and_warnings) cannot propagate: the plot
+        # rule is evaluated against the JSON's mtime at BUILD time, classified up to date,
+        # excluded -- and then this rule rewrites the JSON after the DAG is fixed, creating
+        # an inversion with no scheduled consumer.
+        #
+        # SAFETY (measured): two rules declaring one output is NOT a silent smell
+        # -- Snakemake raises AmbiguousRuleException at DAG BUILD naming both rules. This
+        # declaration does not create that case: no other rule declares or writes the
+        # read-model; its only other writer, TRITONSWMM_analysis.eda, runs in-process
+        # outside the workflow and declares nothing. The invariant this rests on is that the
+        # read-model stays declared in EXACTLY ONE rule; break it and the failure is loud.
+        #
+        # SCOPE, stated so this is not over-read: declaring the output is a real fix for a
+        # real defect. It is NOT established as the cause of the 2026-08-13 failures --
+        # run 3's job stats ("all 1, render_report 1, total 2") show this rule never ran,
+        # so something else wrote the read-model at 01:44:50, and that writer is
+        # analysis.eda(), which calls persist_validation_report in-process, outside the
+        # workflow.
+        read_model = "validation_report.json",
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/export_scenario_status.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources:
@@ -607,25 +697,23 @@ rule export_scenario_status:
         {PYTHON} -m hhemt.export_scenario_status \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """
 
 rule render_report:
     input:
         "plots/system_overview.html",
-        expand("plots/per_sim/{event_id}/peak_flood_depth__evt.{event_id}.html", event_id=SIM_IDS),
-        expand("plots/per_sim/{event_id}/conduit_flow__evt.{event_id}.html", event_id=SIM_IDS),
+        expand("plots/per_sim/{event_id}/event_page__evt.{event_id}.html", event_id=REPORT_EVENT_IDS),
         "plots/per_analysis/summary_table.html",
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
         "plots/metadata.html",
+        "plots/workflow_performance.html",
         "scenario_status.csv",
     output:
-        "analysis_report.{format}"
-    wildcard_constraints:
-        format="zip|html"
-    log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/render_report_{format}.log"
+        "analysis_report.format"
+    log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/render_report.log"
     resources:
         slurm_partition="None",
         runtime=30,
@@ -638,6 +726,5 @@ rule render_report:
         {PYTHON} -m hhemt.render_report_runner \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
-            --format {wildcards.format} \
-            > {log} 2>&1
+            2>&1 | tee {log}
         """

@@ -1,0 +1,10 @@
+{
+  "n_events": 2,
+  "model_types": [
+    "tritonswmm"
+  ],
+  "members": [
+    1,
+    2
+  ]
+}

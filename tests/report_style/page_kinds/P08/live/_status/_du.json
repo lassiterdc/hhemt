@@ -1,0 +1,1 @@
+{"disk_utilization_bytes": 4194304, "computed_at": "2026-01-01T00:00:00+00:00", "scope": "analysis", "walk_errors": 0, "cleared_bytes_own": 0, "cleared_bytes_total": 0, "absent_children": 0, "sub_path_breakdown": {"sims": 3145728, "analysis_datatree.zarr": 1048576}}

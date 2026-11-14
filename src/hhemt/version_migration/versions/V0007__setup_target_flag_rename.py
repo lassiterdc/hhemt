@@ -38,6 +38,7 @@ order would briefly leave the tree in a half-migrated state where the
 filesystem reflects the rename but Snakemake's metadata still references the
 old name.
 """
+
 from __future__ import annotations
 
 from hhemt.version_migration.context import MigrationContext

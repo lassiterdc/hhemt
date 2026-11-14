@@ -1,0 +1,7 @@
+# A word written twice in a row.
+extends: repetition
+message: "'%s' is repeated."
+level: warning
+alpha: true
+tokens:
+  - '[^\s]+'

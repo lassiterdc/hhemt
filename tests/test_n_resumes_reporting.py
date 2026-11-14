@@ -6,6 +6,7 @@ so they validate the n_resumes column placement, the #10 hide_constant_columns
 co-design, and the NaN->JSON-null serialization without needing the compiled
 TRITON-SWMM pipeline (which the end-to-end synth_* tests require).
 """
+
 from __future__ import annotations
 
 import re
@@ -43,11 +44,13 @@ def test_reorder_places_n_resumes_directly_after_run_completed():
     assert cols.index("n_resumes") == cols.index("run_completed") + 1
 
 
-def test_appendix_hides_all_zero_n_resumes_column():
-    # No resumes anywhere -> n_resumes is constant 0 -> auto-hidden (P2 co-design).
+def test_appendix_keeps_all_zero_n_resumes_column():
+    # b4: resume-health fields (n_resumes, run_completed) are exempt from constant-column
+    # hiding and head Performance Breakdown, so an all-zero n_resumes stays VISIBLE (reverses
+    # the earlier P2 auto-hide co-design so the reader always sees the resume posture).
     df = _df_status_like([0, 0], [np.nan, 5.0])
     html = _build_tabulator_html(df, report_config(), True, "aid", [])
-    assert "n_resumes" not in html
+    assert "n_resumes" in html
 
 
 def test_appendix_keeps_varying_n_resumes_column():

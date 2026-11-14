@@ -1,13 +1,31 @@
 # Toolchain-bearing tier: provisions the hhemt conda env (cmake + mpic++ +
-# swmm-toolkit conda-forge pin) so the compile-bearing synth render tests
-# (test_synth_04 / test_synth_05 / test_synth_eda_facade) actually RUN instead
-# of skipping. Wireable as a required main status check by the release-gate PIP
-# (ADR-7); no continue-on-error.
+# swmm-toolkit conda-forge pin) so the compile-bearing synth tests
+# (test_synth_00 compile / test_synth_01::test_hydrology_variant_local_runoff_invariant /
+# test_synth_04 / test_synth_05 / test_synth_07_reprocess /
+# test_synth_08_sensitivity_reprocess / test_synth_eda_facade) actually RUN instead
+# of skipping. The run: block below is an explicit allowlist — not a marker or glob.
+#
+# COVERAGE DEBT (measured 2026-07-21): the compile-tier fixture
+# `tritonswmm_cpu_compiled` gates 94 test functions across ~20 modules; this
+# allowlist covers 59 of them after the 07/08 addition. The remaining ~35 run in
+# NO CI job — they skip in test.yml (pip runner, no cmake/mpic++) and are not named
+# here. That is why commit fd3c7c1 landed on develop with two stale assertions and
+# all five workflows green. Widen this list in LOCALLY-VERIFIED batches: a module
+# added blind can red-line `compile-synth-render-gate`, which is a REQUIRED status
+# check on main, and block a release. Do NOT convert this to a glob — the
+# test_synth_01 node-scoping below is load-bearing (see the next paragraph).
+# test_synth_01 is node-scoped to the hydrology-continuity guard on purpose: the
+# module's full single-sim pipeline (test_run_sim/test_process_sim/...) needs
+# TRITON-only, which the tritonswmm_cpu_compiled fixture does not build (it builds
+# only TRITON-SWMM + SWMM), so running the whole module here would fail.
+# Wireable as a required main status check by the release-gate PIP (ADR-7); no
+# continue-on-error.
 name: Compile-bearing synth render-gate tier
 
 on:
-  pull_request:
-    branches: [ "main" ]
+  # Push to develop only: the release PR (develop -> main) reads compile-synth-render-gate from
+  # the develop push run on its head SHA. A pull_request trigger on main ran this heaviest job a
+  # second time for the same SHA.
   push:
     branches: [ "develop" ]
   workflow_dispatch:
@@ -23,6 +41,22 @@ jobs:
   compile-synth-render-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # CI-HOST MPI SETTING (job level, so every step inherits it; probe run 43559333054).
+    # On a runner whose Azure host exposes the MANA verbs device (/sys/class/infiniband holds
+    # mana_0), Open MPI 5.0.11 selects the `cm` PML (libfabric MTL, "select: init returned
+    # priority 25") over `ob1` (priority 20), and the first local message between two ranks
+    # aborts with MPI_ERR_OTHER in MPI_Isend. On the nine runners without the device the ofi
+    # components fail to initialise and `ob1` is selected by default. On the MANA runner the
+    # cases default, `pml ^ucx`, `smsc ^cma` and PMIX_MCA_gds=hash all failed (0 of 6 rank-size completions, 2 ranks x 3 message sizes);
+    # `pml ob1` with `btl self,sm` passed 3 of 3 repetitions (6 of 6 rank-size completions each). Pinning
+    # exactly that configuration is correct here because this is a SINGLE-NODE runner: no
+    # inter-node transport is needed. It is a CI-host setting, NOT a toolkit launch setting:
+    # the HPC systems the toolkit targets expose no MANA device and must keep Open MPI's own
+    # selection. The toolkit's solver launch inherits these through os.environ
+    # (run_simulation_runner.py passes env={**os.environ, **env} to the `bash -lc` mpirun).
+    env:
+      OMPI_MCA_pml: ob1
+      OMPI_MCA_btl: self,sm
     defaults:
       run:
         shell: bash -el {0}
@@ -34,9 +68,10 @@ jobs:
         with:
           activate-environment: hhemt
           # environment.yaml (NOT environment-lock.yaml). The lock is NOT a fix:
-          # its own `pip:` block still carried `swmmio==0.8.5` with no pip-side
-          # pyswmm pin, so `conda env create -f environment-lock.yaml` re-ran the
-          # identical downgrade (pyswmm 2.0.1 -> 1.5.1) — a conda-env-export lock
+          # its own `pip:` block still carried swmmio 0.8.5 with no pip-side
+          # pyswmm pin, and that release DID cap `pyswmm<2.0`, so `conda env create
+          # -f environment-lock.yaml` re-ran the identical downgrade
+          # (pyswmm 2.0.1 -> 1.5.1) — a conda-env-export lock
           # records observed state, not a solvable spec, and cannot even reproduce
           # its own conda pyswmm=2.0.1 line. The root-cause fix lives in
           # environment.yaml: swmmio is out of the `pip:` block (installed
@@ -47,16 +82,36 @@ jobs:
           # developer actually runs (docs/how-to/installation.md Option A).
           environment-file: environment.yaml
           auto-activate-base: false
+          # Same input and reason as type-gate.yml: conda appends its implicit `defaults`
+          # channel below the two channels environment.yaml names, and the solver then
+          # searches three channels' repodata (measured in type-gate.yml's comment: file
+          # channels only 14m56s against 61m17s with `defaults`, same 433 packages).
+          # environment.yaml names `conda-forge` and `bioconda` and no `defaults`, so this
+          # makes CI honour the file as written.
+          conda-remove-defaults: "true"
+
+      - name: Guard - defaults channel removed (fails in seconds, not after a slow solve)
+        # Provisioning above already solved; this still catches a remove-defaults that
+        # silently stopped taking effect, the way type-gate.yml's solve step does, so the
+        # next solve is not the one that reveals it.
+        run: |
+          conda config --show channels
+          if conda config --show channels | grep -qx -- '  - defaults'; then
+            echo "defaults channel still configured; conda-remove-defaults did not take effect"
+            exit 1
+          fi
 
       - name: Install swmmio (--no-deps — preserve conda pyswmm 2.x / numpy 1.x)
-        # swmmio 0.8.5 metadata caps `pyswmm<2.0` and `numpy<2.0`. A dependency-
-        # resolving install would DOWNGRADE the conda pyswmm 2.0.1 -> 1.5.1 (breaking
-        # prepare_scenario's SWMM-runoff step upstream of every render) and clobber a
-        # dozen conda packages with PyPI wheels. hhemt only uses `swmmio.Model` (.inp
-        # parsing) — swmmio imports pyswmm solely in its CLI wrapper and own tests — so
-        # the cap is not load-bearing and --no-deps is safe. swmmio's real runtime deps
-        # (geojson / pyshp / networkx / numpy / pandas / pyproj / ...) come from conda.
-        run: pip install --no-deps "swmmio==0.8.5"
+        # --no-deps prevents `pip install -U` from touching the conda graph at all.
+        # The HISTORICAL hazard was swmmio 0.8.5, whose metadata capped `pyswmm<2.0`
+        # and `numpy<2.0`, so a resolving install DOWNGRADED the conda pyswmm
+        # 2.0.1 -> 1.5.1 (breaking prepare_scenario's SWMM-runoff step upstream of
+        # every render). At the pinned 0.8.2 that risk is gone — it declares no
+        # `pyswmm` requirement and its numpy/pandas entries are floors, not caps — so
+        # --no-deps now guards only against PyPI wheels displacing conda's
+        # numpy/pandas. swmmio's real runtime deps (geojson / pyshp / networkx /
+        # numpy / pandas / pyproj / ...) come from conda.
+        run: pip install --no-deps "swmm-toolkit==0.15.5" "pyswmm==2.1.0" "swmmio==0.8.2"
 
       - name: Install project (editable, test extras)
         # `--no-deps`: the conda env (environment.yaml) already provides the full
@@ -90,8 +145,56 @@ jobs:
       - name: Guard — environment-lock.yaml swmm-provenance consistency
         run: python scripts/check_env_lock_consistency.py
 
+      - name: Host fingerprint (decides H1 on every run, pass or fail)
+        # Diagnosability, not a gate: this step records what the runner offers the MPI
+        # solver and NEVER fails the job, because a refused `mpirun` is the finding and
+        # a red here would hide the pytest result that follows it. The load-bearing line
+        # is `mpirun -np 2 true`: it launches two ranks of a solver-free program, so a
+        # runner whose MPI refuses two ranks (too few slots, a binding policy) shows as
+        # a non-zero rc here on every run instead of only inside a failed simulation
+        # (R1 / H1 of the release-pr-reds shape). The rc is printed as `mpirun_np2_rc=N`.
+        run: |
+          set +e
+          {
+            echo "### Host fingerprint"
+            echo '```text'
+            echo "nproc=$(nproc)"
+            echo "--- lscpu"
+            lscpu
+            echo "--- hwloc core count"
+            if command -v hwloc-calc >/dev/null 2>&1; then
+              echo "hwloc_cores=$(hwloc-calc --number-of core all 2>&1)"
+            else
+              echo "hwloc_cores=unavailable (hwloc-calc not on PATH)"
+            fi
+            echo "--- ompi_info"
+            if command -v ompi_info >/dev/null 2>&1; then
+              ompi_info --version 2>&1 | head -n 3
+            else
+              echo "ompi_info=unavailable (not on PATH)"
+            fi
+            echo "--- infiniband (a MANA host lists mana_0 here; see the job-level OMPI_MCA_ env)"
+            ls -l /sys/class/infiniband 2>&1
+            echo "--- Open MPI pml/mtl/btl components"
+            if command -v ompi_info >/dev/null 2>&1; then
+              ompi_info --parsable 2>&1 | grep -E '^mca:(pml|mtl|btl):[A-Za-z0-9_]+:version:"component:'
+            else
+              echo "components=unavailable (ompi_info not on PATH)"
+            fi
+            echo "--- OMPI_MCA_ environment"
+            env | grep '^OMPI_MCA_' | sort
+            echo "--- solver-free two-rank launch"
+            timeout 120 mpirun -np 2 true 2>&1
+            echo "mpirun_np2_rc=$?"
+            echo '```'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
+
       - name: Compile-bearing synth render-gate tests (serial, toolchain-required)
         env:
+          # The runner IS the toolchain venue; this RELAXES the fail-closed compile
+          # guard armed by default in the repo-root conftest.
+          HHEMT_COMPILE_VENUE: "toolchain"
           HHEMT_REQUIRE_COMPILE_TIER: "1"
           TRITON_SWMM_REQUIRE_BUNDLE_FIXTURE: "1"
           # NOTE (ADR-18): HHEMT_ENABLE_PROVENANCE_AUDIT is deliberately NOT set here.
@@ -109,7 +212,31 @@ jobs:
         run: |
           pytest -p no:xdist -v \
             tests/test_synth_00_compile_models.py \
+            tests/test_synth_01_singlesim.py::test_hydrology_variant_local_runoff_invariant \
             tests/test_synth_04_multisim_with_snakemake.py \
             tests/test_synth_05_sensitivity_analysis_with_snakemake.py \
+            tests/test_synth_07_reprocess.py \
+            tests/test_synth_08_sensitivity_reprocess.py \
             tests/test_synth_eda_facade.py \
             --deselect tests/test_synth_04_multisim_with_snakemake.py::test_snakemake_workflow_end_to_end
+
+      - name: Upload failure diagnostics (simulation logs and status files)
+        # Before this step a failed run kept nothing that named the failing rule: the
+        # compile-tier job uploaded no artifact, so the Actions page could not say which
+        # Snakemake rule or which member of a multi-sim analysis failed. `if: failure()`
+        # scopes it to a red pytest step and costs a green run nothing.
+        # `include-hidden-files: true` is required, not optional: the cache root is
+        # `~/.cache/...` and upload-artifact v4+ skips any path under a dot-directory by
+        # default, which would upload zero files and report success.
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: compile-gate-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ~/.cache/hhemt/synthetic_test_runs/**/logs/**
+            ~/.cache/hhemt/synthetic_test_runs/**/_status/**
+            /tmp/pytest-of-runner/**/logs/**
+            /tmp/pytest-of-runner/**/_status/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,7 +1,13 @@
 """Command-line interface for H&H Ensemble Modeling Toolkit.
 
-Provides a Snakemake-first single-command CLI for running TRITON-SWMM
-workflows with support for production, testcase, and case-study profiles.
+The toolkit's operations are Python methods on the analysis and bundle objects. This
+module exposes them to a shell user as the Typer application behind the ``hhemt``
+console script: one subcommand per operation (``run``, ``reprocess``, ``delete``,
+``bundle``, ``combine``, and so on), each of which builds the objects it needs from
+the paths it is given, calls into the toolkit, and reports the outcome as an exit
+code. The simulation workflows themselves are planned and executed by Snakemake
+inside the toolkit calls these commands make. ``hhemt test`` is a sub-application
+mounted from ``suite/_cli.py``.
 """
 
 import json
@@ -9,31 +15,27 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from .exceptions import (
     CLIValidationError,
-    CompilationError,
     ConfigurationError,
     ProcessingError,
     SimulationError,
     WorkflowError,
-    WorkflowPlanningError,
 )
-from .profile_catalog import (
-    list_case_studies,
-    list_testcases,
-    load_profile_catalog,
-)
+from .orchestration import RunMode  # typer reads the --mode enum annotation at import time
 from .recompute import RecomputeScope  # typer reads the --scope enum annotation at import time
+from .suite._cli import test_app as _test_app
 
 
 def _parse_override_clear_raw(value: str | None) -> str | list | None:
     """Parse the ``--override-clear-raw`` CLI flag value.
 
     Accepts ``"all"``, ``"none"``, or a JSON list (e.g. ``'["tritonswmm","swmm"]'``).
-    Phase 3 plants this helper; Phase 4 reuses the same shape for
-    ``--override-force-rerun``.
+    ``--override-force-rerun`` is parsed by ``_parse_override_force_rerun`` below,
+    which reuses this helper's shape.
     """
     if value is None:
         return None
@@ -51,12 +53,27 @@ def _parse_override_clear_raw(value: str | None) -> str | list | None:
 def _parse_override_force_rerun(value: str | None) -> str | dict | None:
     """Parse the ``--override-force-rerun`` CLI flag value.
 
-    Accepts ``"all"``, ``"none"``, or a JSON dict with one of
-    ``"sa_id"`` / ``"event_iloc"`` keys mapping to a list of values
-    (e.g. ``'{"sa_id":[0,5,22]}'`` for sensitivity, or
-    ``'{"event_iloc":[3,7]}'`` for non-sensitivity).
+    Accepts the legacy subject-only forms -- ``"all"``, ``"none"``, or a JSON dict with one
+    of ``"sa_id"`` / ``"event_iloc"`` keys mapping to a list of values (e.g.
+    ``'{"sa_id":[0,5,22]}'`` for sensitivity, ``'{"event_iloc":[3,7]}'`` otherwise) -- and
+    the two-axis form carrying a stage floor::
 
-    Per cleanup-rerun-delete-redesign Phase 4.
+        '{"subject": "all", "stage": "render"}'
+        '{"subject": {"sa_id": ["serial_6_r1"]}, "stage": "process"}'
+        '{"subject": {"event_iloc": [3, 7]}, "models": ["triton", "tritonswmm"]}'
+
+    ``models`` names WHICH model types to force; omit it for every enabled model, which is
+    the historical behaviour. Naming a subset leaves the unnamed model types' completion
+    state untouched, so a correct model type is not invalidated by a force aimed at a
+    damaged one.
+
+    ``stage`` is a FLOOR: that stage and everything downstream re-run. Values are
+    ``simulate`` (default, the historical meaning) / ``process`` / ``consolidate`` /
+    ``render``. The last three are ``reprocess_snakefile_generator.START_STAGES``, so the
+    toolkit carries one stage vocabulary. Bundling is not on the axis -- it emits no
+    Snakemake rule and is always explicit. A subject-scoped ``render`` floor is rejected at
+    config-load: ``plots/`` holds cross-sub aggregates with no subject token, so a scoped
+    re-render would leave them stale.
     """
     if value is None:
         return None
@@ -66,8 +83,9 @@ def _parse_override_force_rerun(value: str | None) -> str | dict | None:
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise typer.BadParameter(
-            f"--override-force-rerun expects 'all', 'none', or a JSON dict "
-            f"like '{{\"sa_id\":[0,5]}}'; got: {value!r} ({exc})"
+            f"--override-force-rerun expects 'all', 'none', a JSON subject dict like "
+            f"'{{\"sa_id\":[0,5]}}', or a JSON stage form like "
+            f'\'{{"subject":"all","stage":"render"}}\'; got: {value!r} ({exc})'
         ) from exc
 
 
@@ -76,20 +94,56 @@ app = typer.Typer(
     help="H&H Ensemble Modeling Toolkit: Coupled hydrodynamic-stormwater simulation orchestration",
     no_args_is_help=True,
 )
+
+
+@app.callback()
+def _root(ctx: typer.Context) -> None:
+    """Root callback: one worktree-resolution guard for every CLI invocation.
+
+    This is the single funnel for the console script, `python -m hhemt`, and
+    `python src/hhemt/cli.py`. Placing the guard here rather than in each command, or
+    in each runner module's `__main__` block, keeps it at ONE site: per-command copies
+    of one assert are many sites that must be edited together, and a command added
+    without its copy would run unguarded.
+
+    The runner modules' `__main__` blocks are deliberately NOT guarded: they are
+    subprocess-launched by Snakemake rules and inherit PYTHONPATH from the parent,
+    which this guard has already validated when the parent came through the CLI.
+    """
+    from hhemt._worktree_guard import assert_worktree_source
+
+    assert_worktree_source(strict=True)
+
+
+# `hhemt test {subject} {action}`. Mounted here rather than declared inline so the
+# subject seam lives in `suite/_cli.py` and a session adding a subject edits ONE file.
+# The root `_root` callback still fires through both nesting levels (measured
+# CALLCHAIN=root>test>plan on Typer 0.26.7 / Click 8.4.1), so the worktree-source
+# guard is not bypassed by the nesting. The import lives in the top block; only the
+# mount needs `app`, so nothing here requires a module-level import out of order.
+app.add_typer(_test_app, name="test")
+
 console = Console()
 console_err = Console(stderr=True)
+
+
+def print_verbatim(value: object) -> None:
+    """Print `str(value)` to stdout exactly as returned, for a result the user must read as-is.
+
+    Rich's `console.print` would otherwise change it in two ways: a dataclass is rendered as a
+    nested constructor dump rather than through its `__str__` (a `WorkflowStatus` prints its
+    fields, not its report), and a string is parsed as markup and emoji codes, so a `[word]`
+    such as the rule token `[run_tritonswmm]` or a directory named `[draft]` is deleted with
+    no error. `soft_wrap=True` keeps a long path from being broken across lines.
+    """
+    console.print(str(value), markup=False, emoji=False, soft_wrap=True)
 
 
 @app.command(name="run")
 def run_command(
     # ═══════════════════════════════════════════════════════════════
-    # Required Arguments (unless using list actions)
+    # Required Arguments
     # ═══════════════════════════════════════════════════════════════
-    profile: str | None = typer.Option(
-        None,
-        "--profile",
-        help="Execution profile: production, testcase, or case-study",
-    ),
     system_config: Path | None = typer.Option(
         None,
         "--system-config",
@@ -120,10 +174,17 @@ def run_command(
     # ═══════════════════════════════════════════════════════════════
     # Execution Control
     # ═══════════════════════════════════════════════════════════════
-    from_scratch: bool = typer.Option(
-        False,
-        "--from-scratch",
-        help="Clear run artifacts and execute from fresh state",
+    mode: RunMode = typer.Option(
+        RunMode.resume,
+        "--mode",
+        help=(
+            "resume (default) continues from the last checkpoint and never deletes "
+            "completed simulations; fresh DELETES the analysis directory first and "
+            "rebuilds everything, and is refused while the directory holds completed work "
+            "(this command has no override for that refusal; run-experiment does). To "
+            "re-run completed scenarios without a wipe, use --overwrite or "
+            "--override-force-rerun."
+        ),
     ),
     override_clear_raw: str = typer.Option(
         None,
@@ -145,15 +206,36 @@ def run_command(
         ),
         callback=lambda value: _parse_override_force_rerun(value),
     ),
-    resume: bool = typer.Option(
-        True,
-        "--resume",
-        help="Continue from completed state (default behavior)",
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help=(
+            "Run in debug mode. Today it does exactly one thing: a coupled simulation that "
+            "starts from the beginning (a clean start) asks the solver to keep the previous "
+            "run's snapshot files, renamed rather than removed. Without --debug the toolkit asks for "
+            "them to be removed."
+        ),
+    ),
+    override_live_driver: str = typer.Option(
+        None,
+        "--override-live-driver",
+        help=(
+            "Assert that ONE recorded orchestration driver is dead, naming its exact "
+            "driver_id. Not a force flag: any other live-or-indeterminate driver still "
+            "refuses. Read the id from a *.json under "
+            "{analysis_dir}/_status/_orchestrator/, or from "
+            "hpc/sentinel_ops/report_sentinel_state.py. Prefer re-running from the "
+            "sentinel's origin host, which yields a measurement instead of a belief."
+        ),
     ),
     overwrite: bool = typer.Option(
         False,
         "--overwrite",
-        help="Recreate outputs even if completion logs indicate success",
+        help=(
+            "Re-run every simulation even if completion logs indicate success. Shorthand for "
+            "--override-force-rerun all; never deletes the analysis directory (that is "
+            "--mode fresh)."
+        ),
     ),
     dry_run: bool = typer.Option(
         False,
@@ -174,50 +256,8 @@ def run_command(
         help="Processing scope: TRITON, SWMM, or both",
     ),
     # ═══════════════════════════════════════════════════════════════
-    # Scenario/Event Selection
+    # Status
     # ═══════════════════════════════════════════════════════════════
-    event_ilocs: str | None = typer.Option(
-        None,
-        "--event-ilocs",
-        help="Comma-separated event indices (e.g., '0,1,2,10')",
-    ),
-    event_range: str | None = typer.Option(
-        None,
-        "--event-range",
-        help="Event range START:END (e.g., '0:100', inclusive start, exclusive end)",
-    ),
-    # ═══════════════════════════════════════════════════════════════
-    # Profile-Specific Options
-    # ═══════════════════════════════════════════════════════════════
-    testcase: str | None = typer.Option(
-        None,
-        "--testcase",
-        help="Testcase name (required when --profile testcase)",
-    ),
-    case_study: str | None = typer.Option(
-        None,
-        "--case-study",
-        help="Case study name (required when --profile case-study)",
-    ),
-    tests_case_config: Path | None = typer.Option(
-        None,
-        "--tests-case-config",
-        help="Path to tests_and_case_studies.yaml profile catalog",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
-    ),
-    list_testcases_flag: bool = typer.Option(
-        False,
-        "--list-testcases",
-        help="Print available testcases and exit",
-    ),
-    list_case_studies_flag: bool = typer.Option(
-        False,
-        "--list-case-studies",
-        help="Print available case studies and exit",
-    ),
     status_flag: bool = typer.Option(
         False,
         "--status",
@@ -283,50 +323,55 @@ def run_command(
         "--log-level",
         help="Python logging level: DEBUG, INFO, WARNING, ERROR",
     ),
+    build_sifs: bool = typer.Option(
+        False,
+        "--build-sifs",
+        help="Build any missing SIF first, INSIDE this mode's detached driver, then submit ([Q315] 1/6).",
+    ),
+    build_sifs_no_wait: bool = typer.Option(
+        False, "--no-wait", help="With --build-sifs: build and verify only; do NOT submit the experiment."
+    ),
+    force_sif_rebuild: bool = typer.Option(
+        False,
+        "--force-sif-rebuild",
+        help=(
+            "With --build-sifs: unlink the planned identities' manifests so they rebuild "
+            "(images replaced only on success)."
+        ),
+    ),
+    override_sif_build_config: Path | None = typer.Option(
+        None, "--sif-build-config", help="With --build-sifs: the sif_build_config YAML (venue + resources)."
+    ),
 ):
-    """Run TRITON-SWMM workflow with specified profile and configuration.
+    """Run TRITON-SWMM workflow from a system and analysis configuration.
 
     This command orchestrates the full TRITON-SWMM workflow including system
     setup, scenario preparation, simulation execution, and output processing.
 
     Examples:
 
-        # Production run with default resume behavior
-        $ triton-swmm run --profile production \\
+        # Run with default resume behavior
+        $ hhemt run \\
             --system-config system.yaml --analysis-config analysis.yaml
 
-        # Fresh run with selected events
-        $ triton-swmm run --profile production \\
+        # Delete the analysis directory and rebuild everything
+        $ hhemt run \\
             --system-config system.yaml --analysis-config analysis.yaml \\
-            --from-scratch --event-ilocs 0,1,2
+            --mode fresh
 
-        # Testcase with HPC overrides
-        $ triton-swmm run --profile testcase --testcase norfolk_smoke \\
+        # Run with HPC overrides
+        $ hhemt run \\
             --system-config system.yaml --analysis-config analysis.yaml \\
             --partition debug --walltime 00:20:00
 
     """
+
+    from .cli_utils import EXIT_CODE_MAP, label_for, map_exception_to_exit_code, report_workflow_result
+
     try:
         # ═══════════════════════════════════════════════════════════════
-        # Stage 1: Action Flags (Early Exit)
+        # Stage 1: Required Argument Check
         # ═══════════════════════════════════════════════════════════════
-        if list_testcases_flag:
-            _handle_list_testcases(tests_case_config)
-            raise typer.Exit(0)
-
-        if list_case_studies_flag:
-            _handle_list_case_studies(tests_case_config)
-            raise typer.Exit(0)
-
-        # ═══════════════════════════════════════════════════════════════
-        # Stage 2: Required Argument Check (for non-list actions)
-        # ═══════════════════════════════════════════════════════════════
-        if not profile:
-            raise CLIValidationError(
-                argument="--profile",
-                message="--profile is required",
-                fix_hint="Specify production, testcase, or case-study",
-            )
         if not system_config:
             raise CLIValidationError(
                 argument="--system-config",
@@ -341,49 +386,33 @@ def run_command(
             )
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 3: Argument Validation
+        # Stage 2: Argument Validation
         # ═══════════════════════════════════════════════════════════════
         _validate_cli_arguments(
-            profile=profile,
-            from_scratch=from_scratch,
-            resume=resume,
             verbose=verbose,
             quiet=quiet,
-            event_ilocs=event_ilocs,
-            event_range=event_range,
-            testcase=testcase,
-            case_study=case_study,
             model=model,
             which=which,
             redownload=redownload,
             log_level=log_level,
             walltime=walltime,
+            overwrite=overwrite,
+            override_force_rerun=override_force_rerun,
         )
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 4: Profile Resolution (if applicable)
-        # ═══════════════════════════════════════════════════════════════
-        # Note: Profile resolution for testcase/case-study profiles is
-        # deferred to future phases. For now, production profiles use
-        # config files directly without merging profile catalog entries.
-
-        if profile in ["testcase", "case-study"]:
-            # Future: Load catalog, resolve profile entry, merge with configs
-            raise CLIValidationError(
-                argument="--profile",
-                message=f"Profile type '{profile}' not yet implemented",
-                fix_hint="Use --profile production for now",
-            )
-
-        # ═══════════════════════════════════════════════════════════════
-        # Stage 5: Config Loading & System/Analysis Instantiation
+        # Stage 3: Config Loading & System/Analysis Instantiation
         # ═══════════════════════════════════════════════════════════════
         if not quiet:
             console.print("[cyan]Loading configurations...[/cyan]")
 
         from .analysis import TRITONSWMM_analysis
         from .system import TRITONSWMM_system
+        from .validation import assert_both_configs_load
 
+        # Report BOTH documents' load errors in one round, which is what
+        # docs/how-to/config-filling.md promises of this command.
+        assert_both_configs_load(system_config, analysis_config)
         system = TRITONSWMM_system(system_config)
         analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis  # Link back
@@ -392,124 +421,107 @@ def run_command(
             console.print("[green]✓[/green] Configurations loaded")
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 6: Preflight Validation
+        # Stage 4: Preflight Validation
         # ═══════════════════════════════════════════════════════════════
         if not quiet:
             console.print("[cyan]Running preflight validation...[/cyan]")
 
-        validation_result = analysis.validate()
+        validation_result = analysis.validate(build_sifs=build_sifs)
 
         if validation_result.has_warnings:
             for warning in validation_result.warnings:
-                console.print(f"[yellow]Warning:[/yellow] {warning.message}")
+                console.print(f"[yellow]Warning:[/yellow] {escape(str(warning.message))}")
 
         if not validation_result.is_valid:
             console_err.print("[bold red]Validation failed:[/bold red]")
             for error in validation_result.errors:
-                console_err.print(f"  • {error.message}")
+                console_err.print(f"  • {escape(str(error.message))}")
             raise typer.Exit(2)
 
         if not quiet:
             console.print("[green]✓[/green] Validation passed")
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 7a: Status Report (if requested)
+        # Stage 5a: Status Report (if requested)
         # ═══════════════════════════════════════════════════════════════
         if status_flag:
-            status = analysis.get_workflow_status()
-            console.print(status)
+            print_verbatim(analysis.get_workflow_status())
             raise typer.Exit(0)
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 7b: Dry-Run Output (if requested)
+        # Stage 5b: Dry-Run Output (if requested)
         # ═══════════════════════════════════════════════════════════════
         if dry_run:
             _print_dry_run_summary(locals())
             console.print("\n[yellow]Dry-run mode: Snakemake DAG will be validated but not executed[/yellow]")
-            # Continue to Stage 8 with dry_run=True
+            # Continue to Stage 6 with dry_run=True
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 8: Workflow Orchestration
+        # Stage 6: Workflow Orchestration
         # ═══════════════════════════════════════════════════════════════
 
-        # Determine execution mode from CLI flags
-        # Map CLI flags to orchestration layer modes
-        if from_scratch:
-            run_mode = "fresh"
-        elif overwrite:
-            run_mode = "overwrite"
-        else:
-            run_mode = "resume"
+        # Determine execution mode from CLI flags. --mode is a parse-time closed choice over
+        # orchestration.RunMode (fresh or resume), so no hand check of its value is needed.
+        # Re-running completed work without a wipe is the force_rerun axis, so --overwrite is
+        # carried THERE rather than as a third mode. Deliberately NOT a run_mode value: run()
+        # has no parameter that could carry one, so a mode label alone was announced on the
+        # console and silently dropped. run() keeps its boolean, so the mode is converted once.
+        from_scratch = mode == RunMode.fresh
+        run_mode = mode.value
+        if overwrite:
+            override_force_rerun = "all"
+            run_mode = f"{run_mode}, force_rerun=all"
 
-        # Determine execution context (local vs SLURM)
-        if analysis.in_slurm or analysis.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
-            execution_mode = "slurm"
-        else:
-            execution_mode = "local"
+        # Execution locus is resolved in exactly ONE place, analysis.run()'s
+        # `execution_mode == "auto"` branch. This site previously carried its own
+        # copy, which was BOTH env-reading (`analysis.in_slurm`, promoting a
+        # local-configured analysis inside an allocation) AND incomplete (it omitted
+        # the batch_job arm, so a batch_job config resolved "local"). Delegating
+        # removes both defects rather than repairing them in parallel.
+        execution_mode = "auto"
 
         if not quiet:
-            console.print(f"\n[cyan]Submitting workflow in {execution_mode} mode ({run_mode})...[/cyan]")
+            console.print(f"\n[cyan]Submitting workflow ({run_mode}); locus auto-detected from config...[/cyan]")
 
         # Execute workflow via high-level orchestration API
         result = analysis.run(
-            mode=run_mode,
-            phases=None,  # Run all phases
-            events=None,  # Process all events
+            from_scratch=from_scratch,
             execution_mode=execution_mode,
             dry_run=dry_run,
             verbose=verbose,
             override_clear_raw=override_clear_raw,
             override_force_rerun=override_force_rerun,
+            override_live_driver=override_live_driver,
+            debug=debug,
+            build_sifs=build_sifs,
+            build_sifs_no_wait=build_sifs_no_wait,
+            force_sif_rebuild=force_sif_rebuild,
+            override_sif_build_config=override_sif_build_config,
         )
 
-        # Check workflow result
-        if not result.success:
-            console_err.print(f"[bold red]Workflow Error:[/bold red] {result.message}")
-            raise typer.Exit(3)
-
-        if dry_run:
-            console.print("\n[bold green]✓ Dry-run validation complete![/bold green]")
-            console.print("[dim]No simulations were executed.[/dim]")
-        else:
-            console.print("[bold green]✓ Workflow complete![/bold green]")
-            if execution_mode == "slurm" and result.job_id:
-                console.print(f"[dim]SLURM Job ID: {result.job_id}[/dim]")
-            if result.execution_time:
-                console.print(f"[dim]Execution time: {result.execution_time:.1f}s[/dim]")
-
-        raise typer.Exit(0)
+        # Report the result through the ONE reporter both workflow verbs share: it tests
+        # `success` before printing anything green (dry-run included) and returns the
+        # documented exit code (0, or 3 for a workflow that ran and reported failure).
+        raise typer.Exit(
+            report_workflow_result(result, verb="run", dry_run=dry_run, console=console, console_err=console_err)
+        )
 
     except typer.Exit:
         # Re-raise Typer exits (clean exits with specific codes)
         raise
 
-    except CLIValidationError as e:
-        console_err.print(f"[bold red]Argument Error:[/bold red] {e}")
-        raise typer.Exit(2) from e
-
-    except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
-        raise typer.Exit(2) from e
-
-    except (CompilationError, WorkflowError, WorkflowPlanningError) as e:
-        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
-        raise typer.Exit(3) from e
-
-    except SimulationError as e:
-        console_err.print(f"[bold red]Simulation Error:[/bold red] {e}")
-        raise typer.Exit(4) from e
-
-    except ProcessingError as e:
-        console_err.print(f"[bold red]Processing Error:[/bold red] {e}")
-        raise typer.Exit(5) from e
-
-    except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
-        if verbose:
+    except Exception as exc:
+        # EXIT_CODE_MAP is the single source of the published exit-code table; the label
+        # comes from the same class-keyed vocabulary (`Argument Error`, `Configuration
+        # Error`, `Workflow Error`, `Simulation Error`, `Processing Error`, else
+        # `Unexpected Error`).
+        code = map_exception_to_exit_code(exc)
+        console_err.print(f"[bold red]{label_for(exc)}:[/bold red] {escape(str(exc))}")
+        if verbose and code == EXIT_CODE_MAP[Exception]:
             import traceback
 
             console_err.print(traceback.format_exc())
-        raise typer.Exit(10) from e
+        raise typer.Exit(code) from exc
 
 
 @app.command(name="cleanup-orphans")
@@ -558,20 +570,20 @@ def cleanup_orphans_command(
         help="Print each orphan path and deletion",
     ),
 ):
-    """List or delete sub-analysis directories orphaned by sensitivity CSV edits.
+    """List or delete member directories orphaned by sensitivity CSV edits.
 
-    When sensitivity sub-analyses are removed from the CSV and the workflow is
+    When sensitivity members are removed from the CSV and the workflow is
     re-run, their output directories remain on disk. This command identifies
     those orphans and optionally removes them.
 
     Examples:
 
         # List orphans (no deletion)
-        $ triton-swmm cleanup-orphans --system-config system.yaml \\
+        $ hhemt cleanup-orphans --system-config system.yaml \\
             --analysis-config analysis.yaml
 
         # Actually delete
-        $ triton-swmm cleanup-orphans --system-config system.yaml \\
+        $ hhemt cleanup-orphans --system-config system.yaml \\
             --analysis-config analysis.yaml --apply --force
     """
     try:
@@ -605,7 +617,7 @@ def cleanup_orphans_command(
         total = n_dirs + n_flags + n_groups + n_fingerprints
 
         if total == 0:
-            console.print("[green]No orphan sub-analysis artifacts found.[/green]")
+            console.print("[green]No orphan member artifacts found.[/green]")
         elif dry_run:
             console.print(
                 f"[yellow]Found orphans (dry-run; nothing deleted): "
@@ -616,8 +628,8 @@ def cleanup_orphans_command(
                 console.print(f"  dir: {p}")
             for p in result["status_flags"]:
                 console.print(f"  flag: {p}")
-            for sa_id in result["datatree_groups"]:
-                console.print(f"  datatree-group: sa_{sa_id}")
+            for member_id in result["datatree_groups"]:
+                console.print(f"  datatree-group: member_{member_id}")
             for p in result["input_fingerprints"]:
                 console.print(f"  input-fingerprint: {p}")
         else:
@@ -625,9 +637,9 @@ def cleanup_orphans_command(
             master_flag_removed = result.get("master_flag_removed", False)
             extras = []
             if zarr_removed:
-                extras.append("sensitivity_datatree.zarr")
+                extras.append("the consolidated experiment tree")
             if master_flag_removed:
-                extras.append("f_consolidate_master_complete.flag")
+                extras.append("f_consolidate_experiment_complete.flag")
             extras_msg = f" plus {' and '.join(extras)}" if extras else ""
             console.print(
                 f"[green]Deleted {n_dirs} orphan dir(s), {n_flags} status flag(s), "
@@ -640,10 +652,10 @@ def cleanup_orphans_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -701,7 +713,7 @@ def reprocess_command(
             "regenerate report+plots only."
         ),
     ),
-    # Phase 3: R8 SLURM-offload toggle for the opt-in deletion.
+    # SLURM-offload toggle for the opt-in deletion.
     delete_via_slurm: bool | None = typer.Option(
         None,
         "--delete-via-slurm/--no-delete-via-slurm",
@@ -750,18 +762,20 @@ def reprocess_command(
     simulation outputs without re-running sims.
 
     Builds a scope-limited Snakefile at ``{analysis_dir}/Snakefile.reprocess``
-    and runs it against a separate ``.snakemake_reprocess/`` working dir so
-    the reprocess driver can coexist with a live simulation driver. Runs
-    the Phase-1 reconciliation guard before submission.
+    and runs it in the analysis directory itself, with ``--nolock``, so the
+    reprocess driver can coexist with a live simulation driver; it is refused
+    only when the ``_status/_orchestrator/`` liveness gate finds a live
+    orchestration driver for the same analysis. Runs the submission-sentinel
+    reconciliation guard before submission.
 
     Examples:
 
         # Re-aggregate datatree + render (common case)
-        $ triton-swmm reprocess --system-config system.yaml \\
+        $ hhemt reprocess --system-config system.yaml \\
             --analysis-config analysis.yaml --start-with consolidate
 
         # Re-render report only against existing plots
-        $ triton-swmm reprocess --system-config system.yaml \\
+        $ hhemt reprocess --system-config system.yaml \\
             --analysis-config analysis.yaml --start-with render
     """
     try:
@@ -771,13 +785,13 @@ def reprocess_command(
         if start_with not in ("process", "consolidate", "render"):
             console_err.print(
                 f"[bold red]Error:[/bold red] --start-with must be one of "
-                f"'process', 'consolidate', 'render'; got {start_with!r}."
+                f"'process', 'consolidate', 'render'; got {escape(repr(start_with))}."
             )
             raise typer.Exit(2)
         if execution_mode not in ("auto", "local", "slurm"):
             console_err.print(
                 f"[bold red]Error:[/bold red] --execution-mode must be one of "
-                f"'auto', 'local', 'slurm'; got {execution_mode!r}."
+                f"'auto', 'local', 'slurm'; got {escape(repr(execution_mode))}."
             )
             raise typer.Exit(2)
 
@@ -801,19 +815,20 @@ def reprocess_command(
             console.print(f"[green]Reprocess completed:[/green] {result.get('message', '(no message)')}")
             raise typer.Exit(0)
         else:
-            console_err.print(f"[bold red]Reprocess failed:[/bold red] {result.get('message', '(no message)')}")
+            message = str(result.get("message", "(no message)"))
+            console_err.print(f"[bold red]Reprocess failed:[/bold red] {escape(message)}")
             raise typer.Exit(1)
 
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(1) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -865,9 +880,9 @@ def recompute_plan_command(
         help="Print progress messages",
     ),
 ):
-    """Print the ADR-16 dry-run recompute plan for a bug-fix commit.
+    """Print the dry-run recompute plan for a bug-fix commit.
 
-    Classifies this analysis's ADR-15-stamped scopes against ``--commit`` via the
+    Classifies this analysis's version-stamped scopes against ``--commit`` via the
     git ancestry predicate, resolves the recompute tier from the explicit
     ``--scope`` and the analysis's ``clear_raw`` state, and prints the recommended
     ``RecomputeAction`` plus the call it would dispatch into. DRY-RUN ONLY: it never
@@ -876,7 +891,7 @@ def recompute_plan_command(
     Examples:
 
         # What would repairing bug-fix HEAD require, if the bug is in consolidation?
-        $ triton-swmm recompute-plan --system-config system.yaml \\
+        $ hhemt recompute-plan --system-config system.yaml \\
             --analysis-config analysis.yaml --commit HEAD --scope consolidation
     """
     try:
@@ -920,13 +935,13 @@ def recompute_plan_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(1) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -964,7 +979,7 @@ def check_invalidating_fixes_command(
         "--check-remote/--no-check-remote",
         help=(
             "Also check the canonical git remote for invalidating fixes registered at a "
-            "later version than your install (ADR-17 version-skew discovery, opt-in). "
+            "later version than your install (version-skew discovery, opt-in). "
             "Best-effort raw HTTPS GET; offline degrades to a non-silent INFO, never blocks."
         ),
     ),
@@ -974,20 +989,20 @@ def check_invalidating_fixes_command(
         help="Print progress messages",
     ),
 ):
-    """Print the ADR-17 invalidating-fix registry-match report for this analysis.
+    """Print the invalidating-fix registry-match report for this analysis.
 
-    Classifies this analysis's ADR-15-stamped scopes against the in-repo registry
+    Classifies this analysis's version-stamped scopes against the in-repo registry
     (``src/hhemt/invalidating_fixes.yaml``) and prints any matched calculation-
     invalidating fixes plus the resolver's recommended ``RecomputeAction``.
 
     NON-BLOCKING: exits 0 EVEN WHEN matches are found — a registered invalidating fix
-    is INFORMATION, not a CLI failure (ADR-17 forbids mapping matches to a non-zero
-    exit). Non-zero is reserved for genuine config/IO errors. Read-only: never submits
+    is INFORMATION, not a CLI failure, so a match never maps to a non-zero
+    exit. Non-zero is reserved for genuine config/IO errors. Read-only: never submits
     a workflow, never touches the filesystem.
 
     Examples:
 
-        $ triton-swmm check-invalidating-fixes --system-config system.yaml \\
+        $ hhemt check-invalidating-fixes --system-config system.yaml \\
             --analysis-config analysis.yaml
     """
     try:
@@ -1025,7 +1040,7 @@ def check_invalidating_fixes_command(
                 for m in info:
                     console.print(f"[dim]INFO: {m.summary}[/dim]")
 
-        # Opt-in remote version-skew discovery (ADR-17 / git Q1). Best-effort, never
+        # Opt-in remote version-skew discovery. Best-effort, never
         # blocks: an unreachable remote degrades to a non-silent INFO (exit still 0).
         if check_remote:
             from .invalidating_fixes_skew import _REGISTRY_RAW_URL, discover_version_skew
@@ -1055,41 +1070,60 @@ def check_invalidating_fixes_command(
                     "default branch).[/green]"
                 )
 
-        # Non-blocking: matches are INFORMATION, not a failure. Exit 0 (ADR-17 / Q6).
+        # Non-blocking: matches are INFORMATION, not a failure. Exit 0.
         raise typer.Exit(0)
 
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(1) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
 @app.command(name="eda")
 def eda_command(
     system_config: Path = typer.Option(
-        ...,
+        None,
         "--system-config",
         exists=True,
         file_okay=True,
         dir_okay=False,
         readable=True,
-        help="Path to system configuration YAML file",
+        help="Path to system configuration YAML file (mutually exclusive with --analysis-dir)",
     ),
     analysis_config: Path = typer.Option(
-        ...,
+        None,
         "--analysis-config",
         exists=True,
         file_okay=True,
         dir_okay=False,
         readable=True,
-        help="Path to analysis configuration YAML file",
+        help="Path to analysis configuration YAML file (mutually exclusive with --analysis-dir)",
+    ),
+    analysis_dir: Path = typer.Option(
+        None,
+        "--analysis-dir",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to a completed analysis directory; re-derives configs from its "
+        "cfg_analysis.yaml + cfg_system.yaml (mutually exclusive with --system-config/--analysis-config).",
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
     ),
     override_eda_config: Path = typer.Option(
         None,
@@ -1097,13 +1131,43 @@ def eda_command(
         help="Runtime override for cfg_analysis.eda (a YAML path).",
     ),
 ):
-    """Run the in-process EDA loop (calc -> plots -> doc), producing eda_report/eda_report.html."""
+    """Run the in-process EDA loop (calc -> plots -> doc), producing eda_report/eda_report.html.
+
+    Provide EITHER --analysis-dir (re-derives configs from the directory's persisted
+    cfg_analysis.yaml + cfg_system.yaml) OR the explicit --system-config + --analysis-config pair.
+    """
     try:
         from .analysis import TRITONSWMM_analysis
         from .system import TRITONSWMM_system
 
-        system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        if analysis_dir is not None:
+            if system_config is not None or analysis_config is not None:
+                raise ConfigurationError(
+                    field="analysis_dir",
+                    message="--analysis-dir is mutually exclusive with --system-config/--analysis-config.",
+                )
+            resolved_system_config = analysis_dir / "cfg_system.yaml"
+            resolved_analysis_config = analysis_dir / "cfg_analysis.yaml"
+            if not resolved_system_config.exists() or not resolved_analysis_config.exists():
+                raise ConfigurationError(
+                    field="analysis_dir",
+                    message=(
+                        f"{analysis_dir} is not a valid analysis directory: "
+                        f"cfg_system.yaml and cfg_analysis.yaml must both be present "
+                        f"(they are written by a prior analysis.run()/eda())."
+                    ),
+                )
+        else:
+            if system_config is None or analysis_config is None:
+                raise ConfigurationError(
+                    field="system_config",
+                    message="Provide either --analysis-dir or both --system-config and --analysis-config.",
+                )
+            resolved_system_config = system_config
+            resolved_analysis_config = analysis_config
+
+        system = TRITONSWMM_system(resolved_system_config)
+        analysis = TRITONSWMM_analysis(resolved_analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
         result = analysis.eda(override_eda_config=override_eda_config)
         console.print(f"[green]EDA notebook written:[/green] {result.notebook_path}")
@@ -1118,13 +1182,13 @@ def eda_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(5) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -1155,10 +1219,11 @@ def synth_experiment_command(
         help="Load-smoke: validate config + build matrix in memory, no files written / no model generated.",
     ),
 ):
-    """Load-smoke the synthetic compute-config experiment: validate the config
-    (coupling + partition-cap validators) and build the partition-as-axis matrix;
-    unless --dry-run, also write the matrix CSV and generate the synthetic model.
-    The full ensemble run is via scripts/experiments/synth_compute_config.py (Phase 3)."""
+    """Load-smoke the synthetic experiment: validate the config
+    (coupling + partition-cap validators) and build the matrix, the compute-config
+    rows for an empty dem_resolution_ladder and the DEM-resolution rows for a set
+    ladder; unless --dry-run, also write the matrix CSV and generate the synthetic model.
+    The full ensemble run is via scripts/experiments/synth_compute_config.py."""
     try:
         from .toolkit import Toolkit
 
@@ -1166,9 +1231,10 @@ def synth_experiment_command(
             config, hpc_system_config=hpc_system_config, dest_dir=dest_dir, dry_run=dry_run
         )
         cfg = result["config"]
+        swept = f"ladder={cfg.dem_resolution_ladder}" if cfg.dem_resolution_ladder else f"ranks={cfg.rank_sweep}"
         console.print(
             f"[green]synthetic_experiment_config validated[/green] "
-            f"({result['n_matrix_rows']} matrix rows; ranks={cfg.rank_sweep}, "
+            f"({result['n_matrix_rows']} matrix rows; {swept}, "
             f"grid={cfg.n_cols}x{cfg.n_rows} @ {cfg.cell_size_m} m)"
         )
         if dry_run:
@@ -1177,21 +1243,731 @@ def synth_experiment_command(
             console.print(f"[green]Matrix CSV:[/green] {result['matrix_csv']}")
             console.print(f"[green]Synthetic model:[/green] {result['model_dir']}")
             console.print(
-                "[yellow]Note:[/yellow] this scaffolds the experiment inputs; the full ensemble "
+                "[yellow]Note:[/yellow] this prepares the experiment inputs; the full ensemble "
                 "run is via scripts/experiments/synth_compute_config.py (Phase 3)."
             )
         raise typer.Exit(0)
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(5) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
+
+
+@app.command(name="run-experiment")
+def run_experiment_command(
+    experiment: Path = typer.Option(
+        ...,
+        "--experiment",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to a schema-conformant experiment definition directory.",
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help=(
+            "Target cluster key, e.g. 'uva'. Optional when the experiment definition declares exactly one "
+            "cluster under hpc_system_config; required when it declares none or several."
+        ),
+    ),
+    hpc_system_config: Path = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Override the experiment definition's declared hpc_system_config for this cluster.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan only; write nothing."),
+    mode: RunMode = typer.Option(
+        RunMode.resume,
+        "--mode",
+        help=(
+            "resume (default) continues from the last checkpoint and never deletes "
+            "completed simulations; fresh DELETES the analysis directory first and "
+            "rebuilds everything (refused while it holds completed work unless "
+            "--override-wipe-nonempty is given). To re-run completed scenarios without "
+            "a wipe, use --override-force-rerun."
+        ),
+    ),
+    override_force_rerun: str = typer.Option(
+        None,
+        "--override-force-rerun",
+        help=(
+            "Runtime override for the experiment definition's analysis config's force_rerun, for this "
+            'invocation only. Accepts "all", "none", or a JSON dict: '
+            '\'{"sa_id":["member_3"]}\' (sensitivity) or \'{"event_iloc":[3,7]}\' '
+            "(non-sensitivity). When omitted, the config field is read."
+        ),
+        callback=lambda value: _parse_override_force_rerun(value),
+    ),
+    override_wipe_nonempty: bool = typer.Option(
+        False,
+        "--override-wipe-nonempty",
+        help=(
+            "Permit --mode fresh to delete an analysis directory that still holds "
+            "completed simulations, consolidated output, or in-flight sentinels. "
+            "DISTINCT from --yes, which only accepts the override table."
+        ),
+    ),
+    override_clean_restart_members: str | None = typer.Option(
+        None,
+        "--override-clean-restart-members",
+        help=(
+            "Comma-separated sensitivity member ids to CLEAN-RESTART (e.g. '38,39'). "
+            "Each named member's runtime children are wiped, INCLUDING the per-model log "
+            "that carries n_resumes, so the member re-runs from checkpoint 0 AND its "
+            "resume counter resets to 0. DISTINCT from --override-force-rerun, which "
+            "prunes the checkpoints but leaves n_resumes where it was — a member "
+            "restarted that way runs fresh while still being scored as the RESUME arm of "
+            "a clean/resume pair. Use this one when the member must re-run as a CLEAN "
+            "member."
+        ),
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help=(
+            "Run in debug mode. Today it does exactly one thing: a coupled simulation that "
+            "starts from the beginning (a clean start) asks the solver to keep the previous "
+            "run's snapshot files, renamed rather than removed. Without --debug the toolkit asks for "
+            "them to be removed."
+        ),
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Accept the override gate non-interactively. Required for any CLI override in a non-TTY context.",
+    ),
+    wait: bool | None = typer.Option(
+        None,
+        "--wait/--no-wait",
+        help=(
+            "Block until the workflow completes (batch_job). Default: auto — waits when "
+            "running inside an sbatch allocation ($SLURM_JOB_ID set, so the tmux "
+            "orchestrator would otherwise be orphaned when the allocation ends), "
+            "detaches on a login node."
+        ),
+    ),
+):
+    """Run a schema-conformant experiment definition.
+
+    The experiment definition's experiment.yaml is the single config. Any CLI argument that overrides
+    a descriptor-declared value prints both values and requires confirmation.
+    """
+
+    from .cli_utils import label_for, map_exception_to_exit_code, report_workflow_result
+
+    try:
+        from .experiment_definition import run_experiment
+
+        result = run_experiment(
+            experiment,
+            _resolve_experiment_cluster(experiment, cluster),
+            dry_run=dry_run,
+            hpc_system_config_yaml=hpc_system_config,
+            assume_yes=yes,
+            wait=wait,
+            mode=mode,
+            override_wipe_nonempty=override_wipe_nonempty,
+            override_force_rerun=override_force_rerun,
+            # Parsed HERE rather than in a typer callback so an empty or
+            # whitespace-only value resolves to None (wipe nothing) instead of to a
+            # one-element list holding the empty string, which `_clean_restart_wipe`
+            # would resolve to a `member_` directory that cannot exist.
+            override_clean_restart_member_ids=(
+                [s.strip() for s in override_clean_restart_members.split(",") if s.strip()] or None
+                if override_clean_restart_members
+                else None
+            ),
+            debug=debug,
+        )
+        # A refused submit must not read as success to the shell: tk.run RETURNS a
+        # WorkflowResult and does not raise. The shared
+        # reporter tests `success` before printing anything green, on the --dry-run arm too,
+        # and returns the documented code (0, or 3 for a workflow that ran and reported failure).
+        raise typer.Exit(
+            report_workflow_result(
+                result, verb="run-experiment", dry_run=dry_run, console=console, console_err=console_err
+            )
+        )
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        # One mapping for both workflow verbs: EXIT_CODE_MAP decides the code and the
+        # class-keyed label vocabulary decides the stderr prefix.
+        code = map_exception_to_exit_code(exc)
+        console_err.print(f"[bold red]{label_for(exc)}:[/bold red] {escape(str(exc))}")
+        raise typer.Exit(code) from exc
+
+
+def _resolve_experiment_cluster(definition_dir: Path, cluster: str | None) -> str:
+    """Return the cluster an experiment-definition verb targets, shared by `run-experiment` and `reset`.
+
+    An explicit `--cluster` is returned unchanged and the experiment definition is not read: a cluster the
+    definition does not declare can still resolve its hpc_system_config through the deployment
+    fallbacks, so refusing it here would refuse a working invocation. Without `--cluster`,
+    the experiment definition's `hpc_system_config` keys are the declared clusters; exactly one is the
+    default, and none or several raise `CLIValidationError` (exit 2) naming what was found,
+    because guessing among several would aim a destructive verb at the wrong tree.
+    """
+    if cluster is not None:
+        return cluster
+    from .experiment_definition import load_experiment_definition
+
+    declared = sorted(load_experiment_definition(definition_dir).hpc_system_config)
+    if len(declared) == 1:
+        return declared[0]
+    if not declared:
+        raise CLIValidationError(
+            argument="--cluster",
+            message=f"{definition_dir}/experiment.yaml declares no cluster under hpc_system_config",
+            fix_hint="Pass --cluster {name}",
+        )
+    raise CLIValidationError(
+        argument="--cluster",
+        message=f"{definition_dir}/experiment.yaml declares {len(declared)} clusters: {', '.join(declared)}",
+        fix_hint=f"Pass --cluster with one of: {', '.join(declared)}",
+    )
+
+
+@app.command(name="reset")
+def reset_command(
+    experiment: Path = typer.Option(
+        ...,
+        "--experiment",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to the experiment definition directory (the one holding experiment.yaml).",
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help=(
+            "Target cluster key. Optional when the experiment definition declares exactly one cluster under "
+            "hpc_system_config; required when it declares none or several."
+        ),
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Override the experiment definition's declared hpc_system_config for this cluster.",
+    ),
+    override_in_flight: bool = typer.Option(
+        False,
+        "--override-in-flight",
+        help="Bypass the live-SLURM-sentinel refusal. Use only when you know the jobs are dead.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the interactive confirmation prompt (use for scripted invocation).",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print what would be deleted (count of scenarios / members + disk size estimate) "
+        "without deleting anything.",
+    ),
+):
+    """Delete an experiment's whole analysis tree, so its next run starts from nothing.
+
+    Reset is a command and never a config field, so no experiment config can request it. It
+    finds the experiment the way `run-experiment` does, from the experiment definition directory and its
+    cluster, and then runs the same distributed delete as `hhemt delete`, which refuses while
+    simulations are still in flight. Without `--yes` it asks for confirmation first. With
+    `--dry-run` it prints the same preview as `hhemt delete --dry-run` and deletes nothing.
+
+    Example:
+
+        $ hhemt reset --experiment experiments/norfolk_design_storm --yes
+    """
+
+    from .cli_utils import label_for, map_exception_to_exit_code
+
+    try:
+        from .experiment_definition import build_case_from_definition, load_experiment_definition
+
+        resolved = _resolve_experiment_cluster(experiment, cluster)
+        tk = build_case_from_definition(
+            load_experiment_definition(experiment), experiment, resolved, hpc_system_config_yaml=hpc_system_config
+        )
+        analysis = tk.analysis
+        analysis_dir = analysis.analysis_paths.analysis_dir
+        console.print(f"Reset targets cluster {resolved!r}: deletes {analysis_dir}")
+
+        if dry_run:
+            _print_delete_dry_run_summary(analysis)
+            console.print("[yellow]Dry-run only — no deletion performed.[/yellow]")
+            raise typer.Exit(0)
+
+        if not yes:
+            response = input("Proceed with reset? Type 'y' or 'yes' to confirm: ").strip().lower()
+            if response not in ("y", "yes"):
+                console_err.print("[yellow]Aborted.[/yellow]")
+                raise typer.Exit(1)
+
+        analysis.delete(override_in_flight=override_in_flight)
+
+        if analysis_dir.exists():
+            console_err.print(
+                "[bold yellow]analysis_dir preserved — see [delete] log messages above for "
+                "missing sentinels.[/bold yellow]"
+            )
+            raise typer.Exit(1)
+        console.print("[green]Experiment reset: analysis tree deleted.[/green]")
+        raise typer.Exit(0)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        code = map_exception_to_exit_code(exc)
+        console_err.print(f"[bold red]{label_for(exc)}:[/bold red] {escape(str(exc))}")
+        raise typer.Exit(code) from exc
+
+
+def build_experiment_analysis(experiment: Path, cluster: str | None):
+    """Build the analysis an experiment definition describes, on its resolved cluster.
+
+    The shared front half of every `--experiment` verb (`publish`, `reprex emit`, `status`,
+    `test analysis`): the cluster comes from `_resolve_experiment_cluster`, so an experiment definition with
+    several declared clusters is refused with exit 2 rather than guessed, and the analysis is
+    built exactly as `run-experiment` builds it. Returns the analysis, never the Toolkit.
+    """
+    from .experiment_definition import build_case_from_definition, load_experiment_definition
+
+    resolved = _resolve_experiment_cluster(experiment, cluster)
+    return build_case_from_definition(load_experiment_definition(experiment), experiment, resolved).analysis
+
+
+def _experiment_publisher(analysis):
+    """The object whose `publish`/`reprex_bundle` facades own this experiment's outputs.
+
+    A sensitivity experiment's consolidated outputs belong to its sensitivity object, which
+    carries facades of the same names; calling the master analysis's instead would deposit or
+    bundle the wrong tree.
+    """
+    if analysis.cfg_analysis.toggle_sensitivity_analysis:
+        return analysis.sensitivity
+    return analysis
+
+
+def _exit_on_error(exc: Exception) -> None:
+    """Print a verb failure with its class-keyed label and exit with the mapped code."""
+
+    from .cli_utils import label_for, map_exception_to_exit_code
+
+    code = map_exception_to_exit_code(exc)
+    console_err.print(f"[bold red]{label_for(exc)}:[/bold red] {escape(str(exc))}")
+    raise typer.Exit(code) from exc
+
+
+_PUBLISH_TARGETS = ("zenodo", "hydroshare")
+
+
+@app.command(name="publish")
+def publish_command(
+    experiment: Path = typer.Option(
+        ...,
+        "--experiment",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to the experiment definition directory (the one holding experiment.yaml).",
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help="Target cluster key. Optional when the experiment definition declares exactly one cluster.",
+    ),
+    target: str = typer.Option(..., "--target", help="Where to deposit: zenodo or hydroshare."),
+    software_doi: str | None = typer.Option(
+        None, "--software-doi", help="DOI of the toolkit release the data was produced by."
+    ),
+    reprex_bundle: bool = typer.Option(
+        False,
+        "--reprex-bundle",
+        help="Deposit the round-trippable reprex bundle instead of the analysis-directory set.",
+    ),
+    exclude_config: Path | None = typer.Option(
+        None,
+        "--exclude-config",
+        exists=True,
+        dir_okay=False,
+        help="With --reprex-bundle: the config naming inputs to leave out of the bundle.",
+    ),
+    container_def: list[Path] | None = typer.Option(
+        None,
+        "--container-def",
+        exists=True,
+        dir_okay=False,
+        help="With --reprex-bundle: a container definition file to carry. Repeatable.",
+    ),
+) -> None:
+    """Deposit an experiment's outputs to a DOI-minting repository.
+
+    By default the deposit is the analysis-directory set: the consolidated results, their
+    provenance record and the two configs. With `--reprex-bundle` it is the round-trippable
+    reprex bundle instead, which is the only form that accepts `--exclude-config` and
+    `--container-def`. The dataset license is read from the analysis config, so no flag sets
+    it. Credentials are read by the repository adapter, not by this command.
+
+    Example:
+
+        $ hhemt publish --experiment experiments/norfolk_design_storm --target zenodo
+    """
+    try:
+        if target not in _PUBLISH_TARGETS:
+            raise CLIValidationError(
+                argument="--target",
+                message=f"Unknown target {target!r}",
+                fix_hint=f"Use one of: {', '.join(_PUBLISH_TARGETS)}",
+            )
+        if not reprex_bundle and (exclude_config is not None or container_def):
+            given = "--exclude-config" if exclude_config is not None else "--container-def"
+            raise CLIValidationError(
+                argument=f"{given}/--reprex-bundle",
+                message=f"{given} applies only to a reprex-bundle deposit",
+                fix_hint=f"Add --reprex-bundle, or drop {given}",
+            )
+        publisher = _experiment_publisher(build_experiment_analysis(experiment, cluster))
+        if reprex_bundle:
+            record = publisher.publish_reprex_bundle(
+                target,
+                exclude_config=exclude_config,
+                software_doi=software_doi,
+                container_defs=list(container_def) if container_def else None,
+            )
+        else:
+            record = publisher.publish(target, software_doi=software_doi)
+        console.print(record)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
+
+
+reprex_app = typer.Typer(
+    help="Emit an experiment's reprex bundle, check that one can run on your cluster, or write its runnable config.",
+    no_args_is_help=True,
+)
+app.add_typer(reprex_app, name="reprex")
+
+
+@reprex_app.command(name="emit")
+def reprex_emit_command(
+    experiment: Path = typer.Option(
+        ...,
+        "--experiment",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to the experiment definition directory (the one holding experiment.yaml).",
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help="Target cluster key. Optional when the experiment definition declares exactly one cluster.",
+    ),
+    container_def: list[Path] | None = typer.Option(
+        None,
+        "--container-def",
+        exists=True,
+        dir_okay=False,
+        help="A container definition file to carry in the bundle. Repeatable.",
+    ),
+) -> None:
+    """Write the experiment's reprex bundle and print the directory it was written to.
+
+    A reprex bundle is the experiment's render bundle upgraded so that someone on another
+    cluster can re-run it: it carries the inputs, a runnable config template and the
+    provenance record, and no value specific to the person who produced it.
+    """
+    try:
+        publisher = _experiment_publisher(build_experiment_analysis(experiment, cluster))
+        out = publisher.reprex_bundle(container_defs=list(container_def) if container_def else None)
+        print_verbatim(out)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
+
+
+@reprex_app.command(name="check")
+def reprex_check_command(
+    bundle: Path = typer.Option(
+        ...,
+        "--bundle",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to an unpacked reprex bundle directory.",
+    ),
+    reprex_config_path: Path = typer.Option(
+        ...,
+        "--reprex-config",
+        exists=True,
+        dir_okay=False,
+        help="Your reprex_config YAML: account, login node, image directory, scratch, partitions.",
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Your cluster's hpc_system_config YAML. Required: the check runs against this file.",
+    ),
+) -> None:
+    """Check whether a reprex bundle can run on your cluster, and print what to amend.
+
+    Verifies the bundle's container image digest when it names one, runs the preflight
+    checks against your cluster's partitions, and prints the result: whether it is
+    runnable, the sensitivity rows that exceed a partition's limits, and suggested config
+    amendments. The HPC profile is your own; a bundle never carries one.
+
+    Exits 0 when the bundle fits your cluster, 1 when it does not, and 2 or above when the
+    check could not run.
+    """
+    try:
+        from .bundle import Bundle
+        from .config.loaders import load_hpc_system_config, yaml_to_model
+        from .config.reprex_config import reprex_config
+
+        hpc_path = hpc_system_config
+        if not hpc_path:
+            raise CLIValidationError(
+                argument="--hpc-system-config",
+                message="No hpc_system_config given: pass --hpc-system-config",
+                fix_hint="Pass --hpc-system-config {your cluster's hpc_system_config.yaml}",
+            )
+        result = Bundle.from_directory(bundle).reprex(
+            yaml_to_model(reprex_config_path, reprex_config),
+            load_hpc_system_config(Path(hpc_path)),
+        )
+        console.print(result)
+        # Exit 1 is reserved for "the check ran and the bundle does not fit": no exception
+        # class maps to 1 in EXIT_CODE_MAP, so a script can tell a negative answer from a
+        # check that could not run (2 or above) without reading the printed result.
+        if not result.runnable:
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
+
+
+@reprex_app.command(name="config")
+def reprex_config_command(
+    bundle: Path = typer.Option(
+        ...,
+        "--bundle",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to an unpacked reprex bundle directory (the one holding cfg_system.yaml).",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        dir_okay=False,
+        help="File to write. Default: system_config.yaml inside the bundle directory.",
+    ),
+    software_dir: Path | None = typer.Option(
+        None,
+        "--software-dir",
+        file_okay=False,
+        help=(
+            "A writable directory for the SWMM and TRITON-SWMM builds. Set it to run the experiment: "
+            "the config then points the two build directories at its swmm and tritonswmm subdirectories. "
+            "Default: both stay null, which suits rendering and EDA from the bundle."
+        ),
+    ),
+) -> None:
+    """Write a runnable system_config.yaml from a reprex bundle and print the path it wrote.
+
+    The bundle carries a scrubbed system config whose paths are relative to the bundle.
+    This command resolves them to absolute paths under the bundle directory, so the inputs
+    you fetched into the bundle load as they are, and keeps every other value as the
+    bundle has it.
+    """
+    try:
+        from .bundle._emit import reconstitute_runnable_config
+
+        if not (bundle / "cfg_system.yaml").is_file():
+            raise CLIValidationError(
+                argument="--bundle",
+                message=f"{bundle} holds no cfg_system.yaml, so it is not a reprex bundle directory",
+                fix_hint="Pass the unpacked directory that `hhemt reprex emit` wrote or `hhemt ingest` fetched.",
+            )
+        written = reconstitute_runnable_config(bundle, target_path=output, software_dir=software_dir)
+        print_verbatim(written)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
+
+
+@app.command(name="cancel")
+def cancel_command(
+    experiment: Path | None = typer.Option(
+        None,
+        "--experiment",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to the experiment definition directory (the one holding experiment.yaml).",
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help="With --experiment: target cluster key. Optional when the definition declares exactly one cluster.",
+    ),
+    system_config: Path | None = typer.Option(
+        None,
+        "--system-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to the system configuration YAML file. Give it with --analysis-config instead of --experiment.",
+    ),
+    analysis_config: Path | None = typer.Option(
+        None,
+        "--analysis-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to the analysis configuration YAML file. Give it with --system-config instead of --experiment.",
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="With --system-config and --analysis-config: optional path to the per-HPC-system configuration YAML file.",
+    ),
+    rule_class: list[str] | None = typer.Option(
+        None,
+        "--rule-class",
+        help=(
+            "Cancel only the jobs whose rule name starts with this prefix, pending and running, and leave "
+            "the other jobs running. Repeatable. Without it the whole workflow is cancelled."
+        ),
+    ),
+    wait_timeout: int = typer.Option(
+        120,
+        "--wait-timeout",
+        help="Maximum seconds to wait for the workflow process to exit after the cancel signal.",
+    ),
+) -> None:
+    """Cancel the running workflow of an analysis and print the cancellation record.
+
+    Name the analysis the way you started it: an experiment folder (`--experiment`, with
+    `--cluster` when the definition declares several clusters), or the configuration pair
+    (`--system-config` with `--analysis-config`). Exactly one of the two forms is required.
+
+    The record that `analysis.cancel()` returns is printed as it stands. The command exits 0
+    when the record's `success` is true and 1 otherwise, so a script can tell a refused or
+    unanswerable cancellation from a clean one. A `jobs_were_running` of `None` means the
+    command could not establish whether jobs were running.
+    """
+    try:
+        given_experiment = experiment is not None
+        given_pair = system_config is not None or analysis_config is not None
+        if given_experiment == given_pair:
+            raise CLIValidationError(
+                argument="--experiment/--system-config",
+                message=(
+                    "Give --experiment or the --system-config and --analysis-config pair, not both and not neither"
+                    if given_experiment
+                    else "Give --experiment or the --system-config and --analysis-config pair"
+                ),
+                fix_hint="Use the form you started the run with: `hhemt cancel --experiment DIR` or "
+                "`hhemt cancel --system-config CFG_SYS --analysis-config CFG_ANA`",
+            )
+        if given_pair and (system_config is None or analysis_config is None):
+            raise CLIValidationError(
+                argument="--system-config/--analysis-config",
+                message="--system-config and --analysis-config are given together",
+                fix_hint="Add the missing one, or use --experiment",
+            )
+        if given_experiment and hpc_system_config is not None:
+            raise CLIValidationError(
+                argument="--hpc-system-config",
+                message="--hpc-system-config applies only with --system-config and --analysis-config",
+                fix_hint="Drop it; --experiment reads the cluster from the experiment definition",
+            )
+        if given_pair and cluster is not None:
+            raise CLIValidationError(
+                argument="--cluster",
+                message="--cluster applies only with --experiment",
+                fix_hint="Drop --cluster, or use --experiment",
+            )
+
+        if given_experiment:
+            analysis = build_experiment_analysis(experiment, cluster)
+        else:
+            from .analysis import TRITONSWMM_analysis
+            from .system import TRITONSWMM_system
+
+            system = TRITONSWMM_system(system_config)
+            analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
+            system._analysis = analysis
+
+        record = analysis.cancel(
+            wait_timeout=wait_timeout,
+            rule_classes=tuple(rule_class) if rule_class else None,
+        )
+        print_verbatim(record)
+        if record.get("success") is not True:
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
+
+
+@app.command(name="status")
+def status_command(
+    experiment: Path = typer.Option(
+        ...,
+        "--experiment",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to the experiment definition directory (the one holding experiment.yaml).",
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help="Target cluster key. Optional when the experiment definition declares exactly one cluster.",
+    ),
+) -> None:
+    """Print how far an experiment's workflow has got, phase by phase.
+
+    Reads the experiment's logs and outputs; it submits nothing and changes nothing.
+    """
+    try:
+        print_verbatim(build_experiment_analysis(experiment, cluster).get_workflow_status())
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
 
 
 @app.command(name="static-plots")
@@ -1214,6 +1990,15 @@ def static_plots_command(
         readable=True,
         help="Path to analysis configuration YAML file",
     ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="snakemake --dry-run only"),
 ):
     """Generate publication static figures (static_plots/) — one Snakemake rule per static-plot ID."""
@@ -1222,7 +2007,7 @@ def static_plots_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
         result = analysis.static_plots(dry_run=dry_run)
         console.print(f"[green]Static plots:[/green] {result.get('message', 'submitted')}")
@@ -1230,13 +2015,13 @@ def static_plots_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(5) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -1285,14 +2070,14 @@ def delete_command(
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
-        help="Print what would be deleted (count of scenarios / sub-analyses + "
+        help="Print what would be deleted (count of scenarios / members + "
         "disk size estimate) without deleting anything.",
     ),
     skip_preview: bool = typer.Option(
         False,
         "--skip-preview",
-        help="Skip the per-sub-analysis disk-utilization preview before "
-        "deletion. Useful when the preview's per-sub-analysis `du -sh` "
+        help="Skip the per-member disk-utilization preview before "
+        "deletion. Useful when the preview's per-member `du -sh` "
         "walks dominate runtime on large Lustre trees (~minutes per TiB). "
         "Without the preview the user has no size context at the "
         "confirmation prompt; typically combined with --yes.",
@@ -1301,7 +2086,7 @@ def delete_command(
     """Delete an entire analysis tree via distributed Snakemake workflow.
 
     Generates a Snakefile.delete with per-scenario (regular analysis) or
-    per-sub-analysis (sensitivity) delete rules plus an analysis-level
+    per-member (sensitivity) delete rules plus an analysis-level
     consolidation rule, then submits the workflow. On full success, the
     orchestrator removes ``analysis_dir/`` atomically; if any per-rule
     sentinel is missing, ``analysis_dir/`` is preserved for debugging.
@@ -1309,20 +2094,18 @@ def delete_command(
     Refuses by default when ``_status/_submitted/*.json`` sentinels indicate
     live SLURM jobs. Pass ``--override-in-flight`` to bypass.
 
-    Per cleanup-rerun-delete-redesign Phase 2.
-
     Examples:
 
         # Inspect what would be deleted without acting
-        $ triton-swmm delete --system-config system.yaml \\
+        $ hhemt delete --system-config system.yaml \\
             --analysis-config analysis.yaml --dry-run
 
         # Delete after dry-run confirmation
-        $ triton-swmm delete --system-config system.yaml \\
+        $ hhemt delete --system-config system.yaml \\
             --analysis-config analysis.yaml --yes
 
         # Delete despite orphaned in-flight sentinels (use sparingly)
-        $ triton-swmm delete --system-config system.yaml \\
+        $ hhemt delete --system-config system.yaml \\
             --analysis-config analysis.yaml --override-in-flight --yes
     """
     try:
@@ -1364,21 +2147,19 @@ def delete_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
-        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(1) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
 def _print_delete_dry_run_summary(analysis) -> None:
-    """Print a per-scenario / per-sub-analysis breakdown of what
+    """Print a per-scenario / per-member breakdown of what
     ``analysis.delete()`` would remove from disk, plus a total size estimate.
-
-    Per cleanup-rerun-delete-redesign Phase 2.
     """
     analysis_dir = analysis.analysis_paths.analysis_dir
     if not analysis_dir.exists():
@@ -1432,14 +2213,14 @@ def _print_delete_dry_run_summary(analysis) -> None:
     console.print(f"[bold]Delete preview for[/bold] {analysis_dir}")
     total = 0
     if analysis.cfg_analysis.toggle_sensitivity_analysis:
-        subanalyses_dir = analysis_dir / "subanalyses"
-        sa_ids = list(analysis.sensitivity.df_setup.index.astype(str))
-        console.print(f"  Sensitivity master with {len(sa_ids)} sub-analyses:")
-        for sa_id in sa_ids:
-            sa_dir = subanalyses_dir / f"sa_{sa_id}"
-            size = _du_via_sentinel(sa_dir)[0]
+        members_dir = analysis_dir / "members"
+        member_ids = list(analysis.sensitivity.df_setup.index.astype(str))
+        console.print(f"  Sensitivity master with {len(member_ids)} members:")
+        for member_id in member_ids:
+            member_dir = members_dir / f"member_{member_id}"
+            size = _du_via_sentinel(member_dir)[0]
             total += size
-            console.print(f"    sa_{sa_id}: {_fmt(size)}  ({sa_dir})")
+            console.print(f"    member_{member_id}: {_fmt(size)}  ({member_dir})")
     else:
         sims_dir = analysis_dir / "sims"
         scen_dirs = sorted(sims_dir.glob("*")) if sims_dir.exists() else []
@@ -1476,6 +2257,15 @@ def cleanup_orphan_delete_sentinels_command(
         dir_okay=False,
         readable=True,
     ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
     dry_run: bool = typer.Option(
         True,
         "--dry-run/--apply",
@@ -1504,11 +2294,11 @@ def cleanup_orphan_delete_sentinels_command(
     Examples:
 
         # List dead/alive delete-sentinels (nothing removed)
-        $ triton-swmm cleanup-orphan-delete-sentinels --system-config system.yaml \\
+        $ hhemt cleanup-orphan-delete-sentinels --system-config system.yaml \\
             --analysis-config analysis.yaml
 
         # Remove the dead ones
-        $ triton-swmm cleanup-orphan-delete-sentinels --system-config system.yaml \\
+        $ hhemt cleanup-orphan-delete-sentinels --system-config system.yaml \\
             --analysis-config analysis.yaml --apply --force
     """
     try:
@@ -1516,7 +2306,7 @@ def cleanup_orphan_delete_sentinels_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
 
         if not dry_run and not force:
@@ -1560,10 +2350,10 @@ def cleanup_orphan_delete_sentinels_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -1582,6 +2372,15 @@ def cleanup_stale_metadata_command(
         ...,
         "--analysis-config",
         help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
         exists=True,
         file_okay=True,
         dir_okay=False,
@@ -1606,7 +2405,7 @@ def cleanup_stale_metadata_command(
 ):
     """List or delete orphaned ``.snakemake/metadata/`` records left by past rule-output renames.
 
-    The Phase 8 rule-output renames (``.png``/``.svg`` → ``.html`` for
+    The plot rules' output renames (``.png``/``.svg`` → ``.html`` for
     system_overview, per_sim plots, and sensitivity_benchmarking) leave orphaned
     metadata records that Snakemake will trigger a one-shot full plot rebuild
     against on first post-rename invocation. This command identifies those
@@ -1615,11 +2414,11 @@ def cleanup_stale_metadata_command(
     Examples:
 
         # List orphans (no deletion)
-        $ triton-swmm cleanup-stale-metadata --system-config system.yaml \\
+        $ hhemt cleanup-stale-metadata --system-config system.yaml \\
             --analysis-config analysis.yaml
 
         # Actually delete
-        $ triton-swmm cleanup-stale-metadata --system-config system.yaml \\
+        $ hhemt cleanup-stale-metadata --system-config system.yaml \\
             --analysis-config analysis.yaml --apply --force
     """
     try:
@@ -1627,7 +2426,7 @@ def cleanup_stale_metadata_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
 
         if not dry_run and not force:
@@ -1655,10 +2454,10 @@ def cleanup_stale_metadata_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -1677,6 +2476,15 @@ def cleanup_settled_markers_command(
         ...,
         "--analysis-config",
         help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
         exists=True,
         file_okay=True,
         dir_okay=False,
@@ -1712,11 +2520,11 @@ def cleanup_settled_markers_command(
     Examples:
 
         # List settled markers (no deletion)
-        $ triton-swmm cleanup-settled-markers --system-config system.yaml \\
+        $ hhemt cleanup-settled-markers --system-config system.yaml \\
             --analysis-config analysis.yaml
 
         # Actually delete
-        $ triton-swmm cleanup-settled-markers --system-config system.yaml \\
+        $ hhemt cleanup-settled-markers --system-config system.yaml \\
             --analysis-config analysis.yaml --apply --force
     """
     try:
@@ -1724,7 +2532,7 @@ def cleanup_settled_markers_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
 
         if not dry_run and not force:
@@ -1751,10 +2559,10 @@ def cleanup_settled_markers_command(
     except typer.Exit:
         raise
     except ConfigurationError as e:
-        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(2) from e
     except Exception as e:
-        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {escape(str(e))}")
         raise typer.Exit(10) from e
 
 
@@ -1763,75 +2571,11 @@ def cleanup_settled_markers_command(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def _handle_list_testcases(catalog_path: Path | None) -> None:
-    """Print available testcases and exit."""
-    try:
-        catalog = load_profile_catalog(catalog_path)
-        testcases = list_testcases(catalog)
-
-        if not testcases:
-            console.print("[yellow]No testcases defined in catalog.[/yellow]")
-            return
-
-        table = Table(title="Available Testcases", show_header=True, header_style="bold cyan")
-        table.add_column("Name", style="green")
-        table.add_column("Description")
-
-        for name, description in testcases:
-            table.add_row(name, description)
-
-        console.print(table)
-
-    except ConfigurationError as e:
-        console_err.print(f"[bold red]Error loading catalog:[/bold red] {e}")
-        raise typer.Exit(2) from e
-
-
-def _handle_list_case_studies(catalog_path: Path | None) -> None:
-    """Print available case studies and exit."""
-    try:
-        catalog = load_profile_catalog(catalog_path)
-        case_studies = list_case_studies(catalog)
-
-        if not case_studies:
-            console.print("[yellow]No case studies defined in catalog.[/yellow]")
-            return
-
-        table = Table(title="Available Case Studies", show_header=True, header_style="bold cyan")
-        table.add_column("Name", style="green")
-        table.add_column("Description")
-
-        for name, description in case_studies:
-            table.add_row(name, description)
-
-        console.print(table)
-
-    except ConfigurationError as e:
-        console_err.print(f"[bold red]Error loading catalog:[/bold red] {e}")
-        raise typer.Exit(2) from e
-
-
 def _validate_cli_arguments(**kwargs) -> None:
     """Validate business logic constraints on CLI arguments.
 
     Raises CLIValidationError on validation failure.
     """
-    # Mutually exclusive: --from-scratch and --resume
-    if kwargs["from_scratch"] and kwargs["resume"]:
-        raise CLIValidationError(
-            argument="--from-scratch/--resume",
-            message="Cannot use both --from-scratch and --resume",
-            fix_hint="Choose one or omit both (default is --resume)",
-        )
-
-    # Mutually exclusive: --event-ilocs and --event-range
-    if kwargs["event_ilocs"] and kwargs["event_range"]:
-        raise CLIValidationError(
-            argument="--event-ilocs/--event-range",
-            message="Cannot use both --event-ilocs and --event-range",
-            fix_hint="Choose one event selection method",
-        )
-
     # Mutually exclusive: --verbose and --quiet
     if kwargs["verbose"] and kwargs["quiet"]:
         raise CLIValidationError(
@@ -1840,29 +2584,14 @@ def _validate_cli_arguments(**kwargs) -> None:
             fix_hint="Choose one output mode",
         )
 
-    # Profile validation
-    valid_profiles = ["production", "testcase", "case-study"]
-    if kwargs["profile"] not in valid_profiles:
+    # --overwrite is shorthand for --override-force-rerun all, so any OTHER explicit
+    # force_rerun value contradicts it. Refused rather than resolved by precedence, because
+    # either silent winner discards half of what the user typed.
+    if kwargs["overwrite"] and kwargs["override_force_rerun"] not in (None, "all"):
         raise CLIValidationError(
-            argument="--profile",
-            message=f"Invalid profile: {kwargs['profile']}",
-            fix_hint=f"Must be one of: {', '.join(valid_profiles)}",
-        )
-
-    # Conditional requirement: testcase profile requires --testcase
-    if kwargs["profile"] == "testcase" and not kwargs["testcase"]:
-        raise CLIValidationError(
-            argument="--testcase",
-            message="--testcase NAME required when --profile testcase",
-            fix_hint="Specify testcase name or use --list-testcases to see available options",
-        )
-
-    # Conditional requirement: case-study profile requires --case-study
-    if kwargs["profile"] == "case-study" and not kwargs["case_study"]:
-        raise CLIValidationError(
-            argument="--case-study",
-            message="--case-study NAME required when --profile case-study",
-            fix_hint="Specify case study name or use --list-case-studies to see available options",
+            argument="--overwrite/--override-force-rerun",
+            message="--overwrite means --override-force-rerun all, which contradicts the value also given",
+            fix_hint="Pass --overwrite alone, or --override-force-rerun alone",
         )
 
     # Model validation
@@ -1917,13 +2646,6 @@ def _print_dry_run_summary(args: dict) -> None:
     """Print dry-run summary showing resolved configuration without execution."""
     console.print("\n[bold cyan]═══ Dry-Run Summary ═══[/bold cyan]\n")
 
-    # Profile information
-    console.print(f"[bold]Profile:[/bold] {args['profile']}")
-    if args["profile"] == "testcase":
-        console.print(f"[bold]Testcase:[/bold] {args['testcase']}")
-    elif args["profile"] == "case-study":
-        console.print(f"[bold]Case Study:[/bold] {args['case_study']}")
-
     # Configuration files
     console.print("\n[bold]Configuration Files:[/bold]")
     console.print(f"  System:   {args['system_config']}")
@@ -1933,16 +2655,7 @@ def _print_dry_run_summary(args: dict) -> None:
     console.print("\n[bold]Execution Mode:[/bold]")
     console.print(f"  Model:  {args['model']}")
     console.print(f"  Which:  {args['which']}")
-    console.print(f"  Resume: {args['resume']}")
-    console.print(f"  From scratch: {args['from_scratch']}")
-
-    # Event selection
-    if args["event_ilocs"] or args["event_range"]:
-        console.print("\n[bold]Event Selection:[/bold]")
-        if args["event_ilocs"]:
-            console.print(f"  Indices: {args['event_ilocs']}")
-        if args["event_range"]:
-            console.print(f"  Range: {args['event_range']}")
+    console.print(f"  Mode:   {args['mode'].value}")
 
     # HPC overrides (if any)
     hpc_overrides = {
@@ -1956,6 +2669,47 @@ def _print_dry_run_summary(args: dict) -> None:
             console.print(f"  {key}: {value}")
 
     console.print("\n[yellow]Note: Dry-run mode - no execution performed.[/yellow]\n")
+
+
+def _list_excludable_callback(value: bool) -> bool:
+    """Print the excludable-input catalog and EXIT — before option validation.
+
+    ``is_eager=True`` + ``typer.Exit`` is load-bearing, not stylistic. The ``bundle``
+    command's ``--system-config`` and ``--analysis-config`` are REQUIRED options, so a
+    non-eager flag would demand two configs from an operator whose entire purpose in
+    running this is to DISCOVER the field names before authoring anything. That is
+    structurally the same defect as the retired ``--profile`` option, which was required
+    and therefore reached every invocation. An eager callback is processed before required
+    options are enforced (the same mechanism ``--help`` uses).
+    """
+    if not value:
+        return value
+
+    from hhemt.bundle._path_policy import _EXCLUDABLE_CATALOG
+
+    console.print(
+        "\n[bold]Inputs that MAY be excluded from a reprex bundle[/bold] (opt-out).\n"
+        "A bundle with no exclude-config is SELF-CONTAINED: every input below is carried.\n"
+        "Excluding an input carries it BY REFERENCE instead — supply a [cyan]citation[/cyan] "
+        "(required) and, if a consumer can download it directly, a [cyan]contentUrl[/cyan].\n"
+        "Omit [cyan]contentUrl[/cyan] for licensed/restricted data: ingest then fails closed "
+        "with your citation, which is the correct outcome — not a degraded one.\n"
+    )
+    for name, entry in sorted(_EXCLUDABLE_CATALOG.items()):
+        if entry.excludable:
+            console.print(
+                f"  [green]{name}[/green]\n      {entry.description}\n      cost: {entry.reproducibility_cost}"
+            )
+        else:
+            console.print(
+                f"  [red]{name}[/red] (NOT excludable)\n      {entry.description}\n      {entry.reproducibility_cost}"
+            )
+    console.print(
+        "\nOrdering: the excluded input must ALREADY have a durable record — the toolkit has "
+        "no per-file deposit helper. Deposit it (or locate the third-party source) FIRST, "
+        "then author the exclude-config.\n"
+    )
+    raise typer.Exit(0)
 
 
 @app.command(name="bundle")
@@ -1978,6 +2732,28 @@ def bundle_command(
         readable=True,
         help="Path to analysis configuration YAML file",
     ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help=(
+            "Optional per-cluster hpc_system_config YAML. When given, the bundle "
+            "carries a scrubbed hpc_system_config.identity.yaml so the combine "
+            "compatibility checker sees the compute-config surface (INFORMATIONAL)."
+        ),
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    case_manifest: Path = typer.Option(
+        None,
+        "--case-manifest",
+        help=(
+            "Optional case.yaml (a CaseManifest). When given, the bundle "
+            "carries case.yaml so the combine checker sources case_name (BLOCKING: "
+            "two different case studies refuse to combine)."
+        ),
+    ),
     output: Path = typer.Option(
         None,
         "--output",
@@ -1986,28 +2762,370 @@ def bundle_command(
             "{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip."
         ),
     ),
+    exclude_config: Path = typer.Option(
+        None,
+        "--exclude-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help=(
+            "Governed opt-out: an operator-authored YAML naming inputs to carry BY "
+            "REFERENCE instead of in-bundle. Omit for a SELF-CONTAINED bundle (the default). "
+            "Run --list-excludable to see what may be opted out."
+        ),
+    ),
+    list_excludable: bool = typer.Option(
+        False,
+        "--list-excludable",
+        callback=_list_excludable_callback,
+        is_eager=True,
+        help="Print the excludable-input catalog and exit (no configs required).",
+    ),
+    experiment_config: Path = typer.Option(
+        None,
+        "--experiment-config",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help=(
+            "Optional experiment definition DIRECTORY (containing experiment.yaml), recorded as the "
+            "bundle's experiment identity. Images are carried by manifest; no .def is needed."
+        ),
+    ),
+    omit_output_zarrs: bool = typer.Option(
+        False,
+        "--omit-output-zarrs",
+        help=(
+            "Carry every output .zarr store without its chunk files (metadata documents only). "
+            "`combine` refuses the resulting bundle, and re-running a data figure inside it is "
+            "refused. Report regeneration from the bundled figures still works."
+        ),
+    ),
+    allow_stale_figures: bool = typer.Option(
+        False,
+        "--allow-stale-figures",
+        help=(
+            "Bundle a sensitivity analysis even though it holds figures of members no longer in its "
+            "setup table. By default the emit is refused. With this flag the stale figures are carried "
+            "as they are and listed under stale_figures_included in bundle_manifest.json."
+        ),
+    ),
 ) -> None:
     """Emit a portable render bundle for local renderer iteration.
 
     Walks *.manifest.json provenance sidecars under {analysis_dir}/plots/
-    and copies the union of declared source paths into a self-contained
+    and streams the union of declared source paths into a self-contained
     zip with relative-path configs and the HPC-baseline
-    analysis_report.{html,zip} under bundle_baseline/.
+    analysis_report.html under bundle_baseline/ (the baseline zip is not
+    carried). Producer directories, the interpreter path, the login name and
+    the SLURM account in the archive's text files are replaced by {hhemt_*}
+    placeholders; declared inputs and binary files are copied unchanged.
 
     Requires render_report() to have been invoked at least once on the
     target analysis (so manifest sidecars exist). Raises FileNotFoundError
     if no manifests are found.
-    """
-    from hhemt.analysis import TRITONSWMM_analysis
-    from hhemt.system import TRITONSWMM_system
 
-    system = TRITONSWMM_system(system_config)
-    analysis = TRITONSWMM_analysis(analysis_config, system)
-    if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
-        bundle_path = analysis.sensitivity.bundle_report_data(output)
-    else:
-        bundle_path = analysis.bundle_report_data(output)
-    console.print(f"[green]Bundle emitted:[/green] {bundle_path}")
+    Sizing: this command has no toolkit walltime -- it is not a workflow rule. Its
+    runtime scales with the NUMBER of files the figures declared (every file under a
+    fully-declared zarr store counts), not with bytes; a store a figure read for
+    metadata only is carried without its chunk files. Run it in a login-node tmux
+    session rather than under an sbatch with a guessed time limit; if you must submit
+    it, size the limit from the declared-file count, not from the analysis size.
+    """
+    try:
+        from hhemt.analysis import TRITONSWMM_analysis
+        from hhemt.system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(
+            analysis_config,
+            system,
+            hpc_system_config_yaml=hpc_system_config,
+            case_manifest_yaml=case_manifest,
+        )
+        from hhemt.bundle import emit_bundle
+
+        if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
+            target = analysis.sensitivity.experiment
+        else:
+            target = analysis
+        bundle_path = emit_bundle(
+            target,
+            output,
+            exclude_config=exclude_config,
+            omit_output_zarrs=omit_output_zarrs,
+            allow_stale_figures=allow_stale_figures,
+        )
+        if exclude_config is None:
+            console.print(f"[green]Bundle emitted (self-contained):[/green] {bundle_path}")
+        else:
+            console.print(f"[green]Bundle emitted (with by-reference inputs):[/green] {bundle_path}")
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _exit_on_error(exc)
+
+
+def _require_build_host(build_host, build_hpc_config: Path) -> None:
+    """Refuse a --build-hpc-config that is not a build host. The capability lives on the
+    ContainerSpec (`container.builds_containers`), never at the top level of hpc_system_config;
+    a config with no `container:` block is a native-only cluster and cannot build either."""
+    cspec = getattr(build_host, "container", None)
+    if cspec is None or not getattr(cspec, "builds_containers", False):
+        raise CLIValidationError(
+            "--build-hpc-config",
+            f"{build_hpc_config} does not declare container.builds_containers: true — not a build host.",
+        )
+
+
+@app.command(name="build-sifs")
+def build_sifs_command(
+    build_hpc_config: Path = typer.Option(
+        ...,
+        "--build-hpc-config",
+        help="The BUILD host's hpc_system_config (builds_containers: true). Never defaulted.",
+    ),
+    sif_build_config: Path = typer.Option(
+        ...,
+        "--sif-build-config",
+        help="sif_build_config YAML: sif_root, build partition, cpus/mem/walltime, toolkit_root.",
+    ),
+    experiment: list[Path] = typer.Option(
+        [],
+        "--experiment",
+        help="Experiment definition directory (repeatable); its system/analysis configs + hpc map derive the targets.",
+    ),
+    system_config: list[Path] = typer.Option(
+        [], "--system-config", help="Raw triplet (repeatable, positional with --analysis-config/--target-hpc-config)."
+    ),
+    analysis_config: list[Path] = typer.Option([], "--analysis-config"),
+    target_hpc_config: list[Path] = typer.Option([], "--target-hpc-config"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan table ([Q312] counts) and write nothing."),
+    only: list[str] = typer.Option([], "--only", help="KEY or FAMILY[:HW] from the dry-run table."),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Unlink existing manifests for the planned identities (images are replaced only on success).",
+    ),
+    foreground: bool = typer.Option(
+        False,
+        "--foreground",
+        help="Drive the build DAG in THIS shell instead of a detached chain ([Q315] 6: detached is the default).",
+    ),
+) -> None:
+    """Build every SIF the named experiments need, by identity, into sif_root. ONE verb."""
+    from hhemt.config.hpc_system import hpc_system_config as _hpc_model
+    from hhemt.config.loaders import yaml_to_model
+    from hhemt.config.sif_build import sif_build_config as _sb_model
+    from hhemt.sif.driver import detach, driver_command, run_build_dag
+    from hhemt.sif.plan import ExperimentInputs, plan_sif_set
+    from hhemt.sif.snakefile_generator import reconcile_sif_root, write_sif_snakefile
+    from hhemt.validation import running_identity
+
+    try:
+        build_host = yaml_to_model(build_hpc_config, _hpc_model)
+        _require_build_host(build_host, build_hpc_config)
+        sb = yaml_to_model(sif_build_config, _sb_model)
+        experiments: list[ExperimentInputs] = []
+        if experiment:
+            from hhemt.config.analysis import analysis_config as _ana_model
+            from hhemt.config.system import system_config as _sys_model
+            from hhemt.experiment_definition import (
+                expand_config_vars,
+                experiment_definition_id,
+                load_experiment_definition,
+                resolve_hpc_system_config,
+            )
+
+            for exp_dir in experiment:
+                definition = load_experiment_definition(exp_dir)
+                cfg_sys = yaml_to_model(expand_config_vars(Path(exp_dir) / definition.system_config), _sys_model)
+                cfg_ana = yaml_to_model(expand_config_vars(Path(exp_dir) / definition.analysis_config), _ana_model)
+                cluster = next(iter(definition.hpc_system_config))
+                target = yaml_to_model(
+                    resolve_hpc_system_config(cluster, definition=definition, definition_dir=exp_dir), _hpc_model
+                )
+                experiments.append(ExperimentInputs(experiment_definition_id(exp_dir), cfg_sys, cfg_ana, target, None))
+        if not (len(system_config) == len(analysis_config) == len(target_hpc_config)):
+            raise CLIValidationError(
+                "--system-config",
+                "raw triplets must be given in equal numbers of --system-config/--analysis-config/--target-hpc-config.",
+            )
+        for s, a, h in zip(system_config, analysis_config, target_hpc_config, strict=True):
+            from hhemt.config.analysis import analysis_config as _ana_model
+            from hhemt.config.system import system_config as _sys_model
+
+            experiments.append(
+                ExperimentInputs(
+                    f"{s.stem}",
+                    yaml_to_model(s, _sys_model),
+                    yaml_to_model(a, _ana_model),
+                    yaml_to_model(h, _hpc_model),
+                    None,
+                )
+            )
+        if not experiments:
+            raise CLIValidationError("--experiment", "name at least one --experiment DIR or one raw config triplet.")
+        plan = plan_sif_set(
+            experiments,
+            sif_root=sb.sif_root,
+            running_sha=running_identity().sha,
+            recipes_dir=sb.recipes_dir,
+            toolkit_root=sb.toolkit_root,
+            force=force,
+        )
+        if only:
+            keep = {
+                k
+                for k, i in plan.entries.items()
+                if k in only or i.family in only or f"{i.family}:{i.gpu_hardware}" in only
+            }
+            plan.entries = {k: v for k, v in plan.entries.items() if k in keep}
+            plan.covers = {k: v for k, v in plan.covers.items() if k in keep}
+        console.print(plan.table())
+        if dry_run:
+            return
+        reconcile_sif_root(
+            sb.sif_root,
+            walltime_min=sb.walltime_min,
+            force_keys=set(plan.entries) if force else set(),
+            planned_keys=set(plan.entries),
+        )
+        snakefile = write_sif_snakefile(plan, sif_root=sb.sif_root, build_host=build_host, sif_build_cfg=sb)
+        keys = set(plan.entries) - plan.already_built
+        if not keys:
+            console.print("[green]every planned identity is already built[/green]")
+            return
+        if foreground:
+            rc = run_build_dag(snakefile, sif_root=sb.sif_root, keys=keys)
+            raise typer.Exit(0 if rc == 0 else 3)
+        log = Path(sb.sif_root) / "_build" / "driver.log"
+        pid = detach([driver_command(snakefile, sb.sif_root, keys)], log=log)
+        console.print(
+            f"build DAG detached (pid {pid}); {len(keys)} identit{'y' if len(keys) == 1 else 'ies'} to build; "
+            f"log: {log}"
+        )
+        console.print("This is a launch RECEIPT (Gotcha 69): read the log or re-run with --dry-run to see 'built'.")
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001 — mapped to the CLI exit-code contract
+        from hhemt.cli_utils import map_exception_to_exit_code
+
+        code = map_exception_to_exit_code(exc)
+        console.print(f"[red]build-sifs failed:[/red] {escape(str(exc))}")
+        raise typer.Exit(code) from exc
+
+
+@app.command(name="ingest")
+def ingest_command(
+    doi: str = typer.Option(
+        None,
+        "--doi",
+        help="DOI of the published reprex bundle (e.g. 10.5281/zenodo.123456).",
+    ),
+    pid: str = typer.Option(
+        None,
+        "--pid",
+        help="Host-native id (Zenodo record id / HydroShare resource id).",
+    ),
+    host: str = typer.Option(
+        "zenodo",
+        "--host",
+        help="Deposit host: 'zenodo' or 'hydroshare'.",
+    ),
+    sha256: str = typer.Option(
+        None,
+        "--sha256",
+        help="Optional sha256 pin on the fetched bundle zip (integrity check).",
+    ),
+    target_dir: Path = typer.Option(
+        None,
+        "--target-dir",
+        help="Directory to fetch + reconstitute into (default: a fresh temp dir).",
+    ),
+    software_dir: Path = typer.Option(
+        None,
+        "--software-dir",
+        help=(
+            "Target-side directory for the toolkit's SWMM/TRITON build dirs "
+            "(default: {bundle_root}/software). These are toolkit-owned build outputs, "
+            "not bundled inputs."
+        ),
+    ),
+    hpc_system_config: Path = typer.Option(
+        None,
+        "--hpc-system-config",
+        help=(
+            "Path to YOUR cluster's hpc_system_config.yaml; this option is the only "
+            "place it comes from. The bundle never carries one, and it is "
+            "REQUIRED for a container-mode bundle: the ContainerSpec that renders "
+            "`apptainer exec {sif}` lives on it. Start from a worked example at "
+            "test_data/norfolk_coastal_flooding/hpc_system_config_{uva,frontier}.yaml, "
+            "or from the shape sketched in the bundle's hpc_system_config.template.yaml."
+        ),
+    ),
+    sif_build_config: Path | None = typer.Option(
+        None,
+        "--sif-build-config",
+        help=(
+            "Your sif_build_config YAML (build partition/account/resources). Required when a "
+            "carried image is absent under your container.sif_root and must be rebuilt on this "
+            "checkout (which must be at the bundle's hhemt_sha)."
+        ),
+    ),
+) -> None:
+    """Fetch a published reprex bundle by DOI/PID, reconstitute it, and print the
+    runnable configs.
+
+    A self-contained bundle (the default emit) carries every declared input, so the
+    reconstituted experiment runs from scratch. Ingesting a DOI and running it executes
+    shell derived from the fetched config — ingest only deposits you trust. Use
+    ``--sha256`` to pin the fetched bundle-zip integrity.
+    """
+    from hhemt.cli_utils import map_exception_to_exit_code
+    from hhemt.experiments import TRITON_SWMM_experiment
+
+    try:
+        if not (doi or pid):
+            raise CLIValidationError("doi", "Provide at least one of --doi or --pid.")
+        exp = TRITON_SWMM_experiment.from_doi(
+            doi=doi,
+            pid=pid,
+            host=host,
+            expected_sha256=sha256,
+            target_dir=target_dir,
+            software_dir=software_dir,
+            hpc_system_config_yaml=hpc_system_config,
+            sif_build_config_yaml=sif_build_config,
+        )
+    except Exception as exc:  # noqa: BLE001 — mapped to the CLI exit-code contract
+        code = map_exception_to_exit_code(exc)
+        console.print(f"[red]ingest failed:[/red] {escape(str(exc))}")
+        raise typer.Exit(code) from exc
+
+    bundle_root = exp.bundle_root
+    analysis_dir = exp.analysis.analysis_paths.analysis_dir
+    console.print(f"[green]Ingested bundle:[/green] {bundle_root}")
+    console.print(f"[green]Reconstituted analysis_dir:[/green] {analysis_dir}")
+    # The printed command has to RUN as pasted. A reconstituted batch_job analysis
+    # refuses to validate (exit 2, "Required for multi_sim_run_method='batch_job'")
+    # without --hpc-system-config, so the flag is appended whenever the analysis ingest
+    # built carries one, from the same attribute it was constructed with. It is
+    # conditional because a native bundle ingested without one would otherwise print
+    # "--hpc-system-config None", which fails at typer's parser.
+    _hpc_system_config_arg = (
+        f" --hpc-system-config {exp.analysis.hpc_system_config_yaml}"
+        if exp.analysis.hpc_system_config_yaml is not None
+        else ""
+    )
+    console.print(
+        "Run it with:\n"
+        f"  hhemt run --system-config {bundle_root}/system_config.yaml "
+        f"--analysis-config {bundle_root}/analysis_config.yaml"
+        f"{_hpc_system_config_arg}"
+    )
 
 
 @app.command(name="combine")
@@ -2015,31 +3133,100 @@ def combine_command(
     bundles: list[Path] = typer.Argument(
         ...,
         exists=True,
-        file_okay=False,
+        file_okay=True,
         dir_okay=True,
         readable=True,
-        help="Two or more completed render-bundle directories to combine.",
+        help="Two or more completed render bundles to combine: bundle directories or bundle .zip files.",
     ),
     output: Path = typer.Option(
         None,
         "--output",
         "-o",
         help=(
-            "Target directory for the combined bundle. Defaults to {first_bundle}/../combined_{n}bundles_{git_sha}/."
+            "Target for the combined bundle: {output}.zip (a value ending .zip is used as given), or a "
+            "directory with --unzipped. Defaults to {first_bundle}/../combined_{n}bundles_{git_sha}."
+        ),
+    ),
+    declare_solver_split: bool = typer.Option(
+        False,
+        "--declare-solver-split",
+        help=(
+            "Assert that these bundles run DIFFERENT pinned solver versions ON PURPOSE. Downgrades the "
+            "cross-sha block to a warning; the divergence is still reported and still appears in the "
+            "combined report. Without this, a cross-sha combine is refused."
+        ),
+    ),
+    unzipped: bool = typer.Option(
+        False,
+        "--unzipped",
+        help=(
+            "Write the combined bundle as a folder at --output instead of as a zip. The folder holds each "
+            "experiment's full bundle under child_crates/{experiment_id}/."
+        ),
+    ),
+    workdir: Path = typer.Option(
+        None,
+        "--workdir",
+        file_okay=False,
+        dir_okay=True,
+        help=(
+            "Directory under which the combine makes its private working folder (the inputs' render "
+            "sets are extracted there, and it is removed when the combine ends). Defaults to the "
+            "system temporary directory."
         ),
     ),
 ) -> None:
     """Combine N completed render bundles into one cross-experiment report + standalone bundle.
 
-    Runs a metadata-compatibility check across the bundles (aborting on any
-    blocking divergence), merges their consolidated trees, renders one
-    cross-experiment report, and emits a standalone combined RO-Crate bundle at
-    ``output``. Returns a ``CombinedBundle`` whose report is regenerable.
+    Each input is a bundle directory or a bundle ``.zip`` file, and the combine modifies
+    neither. The combine extracts each input's render set (everything but raw solver
+    output) into a private working folder, checks metadata compatibility across the bundles
+    (aborting on any blocking divergence), renders one cross-experiment report, and emits
+    a standalone combined RO-Crate bundle as one zip (``{output}.zip``, or a
+    ``combined_{n}bundles_{git_sha}.zip`` beside the first bundle; ``--unzipped`` writes a
+    folder instead), then prints the path. ``hhemt report-from-bundle`` regenerates the
+    report from the combined zip or from the folder.
     """
     from hhemt.bundle import combine_bundle
 
-    cb = combine_bundle(bundles, output_path=output)
+    cb = combine_bundle(
+        bundles,
+        output_path=output,
+        declare_solver_split=declare_solver_split is True,
+        workdir=workdir if isinstance(workdir, Path) else None,
+        unzipped=unzipped is True,
+    )
     console.print(f"[green]Combined bundle emitted:[/green] {cb.root}")
+
+
+def _is_combined_bundle(bundle_path: Path) -> bool:
+    """Whether ``bundle_path`` is a combined bundle (``hhemt combine`` output) and not a single-analysis bundle.
+
+    ``bundle_path`` is a bundle zip or an unpacked bundle directory. A combined bundle holds
+    ``child_crates`` and ``bundle_manifest.json`` and carries no root ``cfg_analysis.yaml``; a
+    single-analysis bundle carries that config at its root. The root ``cfg_analysis.yaml`` decides
+    when both kinds' files are present, because the single-bundle path is the command's original
+    one and a bundle that holds the config is read as that kind. A zip is read from its entry
+    names, so the check unpacks nothing.
+    """
+    import zipfile
+
+    if bundle_path.is_file():
+        try:
+            with zipfile.ZipFile(bundle_path) as zf:
+                names = zf.namelist()
+        except (OSError, zipfile.BadZipFile):
+            return False
+        return (
+            "bundle_manifest.json" in names
+            and any(n.startswith("child_crates/") for n in names)
+            and "cfg_analysis.yaml" not in names
+        )
+    return (
+        (bundle_path / "child_crates").is_dir()
+        and (bundle_path / "bundle_manifest.json").is_file()
+        and not (bundle_path / "cfg_analysis.yaml").exists()
+    )
 
 
 @app.command(name="report-from-bundle")
@@ -2050,46 +3237,69 @@ def report_from_bundle_command(
         file_okay=True,
         dir_okay=True,
         readable=True,
-        help="Path to the bundle zip (or unpacked bundle directory).",
+        help="Path to the bundle zip (or unpacked bundle directory), single or combined.",
     ),
-    format: str = typer.Option(
-        "zip",
+    format: str | None = typer.Option(
+        None,
         "--format",
-        help="Output format: 'zip' (single-HTML wrapped in a zip — default) or 'html' (uncompressed single-file).",
+        help=(
+            "Output format: 'zip' (single-HTML wrapped in a zip) or 'html' (uncompressed single-file). "
+            "Default: the report_html_mode setting of the bundle's analysis config; a combined bundle "
+            "carries no analysis config and reads 'auto'."
+        ),
+    ),
+    declare_stale_plots: bool = typer.Option(
+        False,
+        "--declare-stale-plots",
+        help=(
+            "Render although the bundle's figures carry a build stamp that differs from the running "
+            "build, or no stamp. Without this flag the render refuses with a StalePlotsError."
+        ),
     ),
 ) -> None:
-    # Render a fresh analysis_report from a portable render bundle.
-    #
-    # Per Plan Phase 3's rewire, this is a thin wrapper over
-    # Bundle.from_directory(bundle_root).regenerate_report(format=format).
-    # The Bundle class derives the static_backend from the bundle's
-    # cfg_analysis.yaml (cfg-controlled default 'plotly' per Plan
-    # Phase 2 D3 + Decision 4); no static_backend kwarg is threaded
-    # through the CLI per Decision 3.3D.
-    #
-    import zipfile
+    """Render a fresh analysis_report from a portable render bundle.
 
+    The bundle is a single-analysis bundle (``hhemt bundle``) or a combined bundle
+    (``hhemt combine``), each given as a zip or as an unpacked directory. A bundle that
+    holds ``child_crates`` and ``bundle_manifest.json`` and no root ``cfg_analysis.yaml``
+    is a combined bundle and renders through ``CombinedBundle.regenerate_report``; any
+    other bundle renders through ``Bundle.regenerate_report``. The single-analysis
+    ``Bundle`` derives the static_backend from the bundle's ``cfg_analysis.yaml``
+    (default 'plotly'), so the command threads no static_backend option.
+    """
     from hhemt.bundle import Bundle, _get_toolkit_git_sha
+    from hhemt.bundle._combine import CombinedBundle, unpack_member_zip
 
-    if bundle_path.is_file() and bundle_path.suffix == ".zip":
-        unpack_dir = bundle_path.parent / bundle_path.stem
-        unpack_dir.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(bundle_path) as zf:
-            zf.extractall(unpack_dir)
-        bundle_root = unpack_dir
-    elif bundle_path.is_dir():
-        bundle_root = bundle_path
-    else:
+    is_zip = bundle_path.is_file() and bundle_path.suffix == ".zip"
+    if not is_zip and not bundle_path.is_dir():
         raise CLIValidationError(
             argument="bundle_path",
             message=f"{bundle_path} is neither a .zip file nor a directory",
             fix_hint=("Pass a path to a bundle.zip produced by `hhemt bundle`, or to an unpacked bundle directory."),
         )
 
-    bundle = Bundle.from_directory(bundle_root)
+    if _is_combined_bundle(bundle_path):
+        bundle = CombinedBundle.from_zip(bundle_path) if is_zip else CombinedBundle.from_directory(bundle_path)
+        bundle_root = bundle.root
+        bundle_manifest = json.loads((bundle_root / "bundle_manifest.json").read_text())
+    else:
+        bundle_root = unpack_member_zip(bundle_path) if is_zip else bundle_path
+        try:
+            bundle = Bundle.from_directory(bundle_root)
+        except FileNotFoundError as exc:
+            raise CLIValidationError(
+                argument="bundle_path",
+                message=(
+                    f"{bundle_path} holds neither a single-analysis bundle's files "
+                    f"(bundle_manifest.json and cfg_analysis.yaml) nor a combined bundle's files "
+                    f"(bundle_manifest.json and child_crates, no cfg_analysis.yaml)"
+                ),
+                fix_hint="Pass a bundle produced by `hhemt bundle` or `hhemt combine`, as a zip or unpacked.",
+            ) from exc
+        bundle_manifest = bundle.manifest
 
     local_sha = _get_toolkit_git_sha(strict=False)
-    bundle_sha = bundle.manifest.get("toolkit_git_sha", "unknown")
+    bundle_sha = bundle_manifest.get("toolkit_git_sha", "unknown")
     if bundle_sha != "unknown" and local_sha != "unknown" and bundle_sha != local_sha:
         console.print(
             f"[yellow]Toolkit git SHA divergence:[/yellow] bundle={bundle_sha}, "
@@ -2116,8 +3326,145 @@ def report_from_bundle_command(
         fast_rmtree(locks_dir)
         locks_dir.mkdir(parents=True, exist_ok=True)
 
-    rendered = bundle.regenerate_report(format=format)
+    rendered = bundle.regenerate_report(format=format, declare_stale_plots=declare_stale_plots)
     console.print(f"[green]Report rendered:[/green] {rendered}")
+
+
+# `hhemt cache {verb}`. The subject seam is `hhemt.cache`: the four on-disk roots the
+# synthetic test tier reuses live in `src/hhemt/cache/paths.py`, so this app reports on them
+# without importing the test tree. `status` is read-only BY CONSTRUCTION -- it creates no
+# root -- because a verb that materialized a root while reporting on it would manufacture
+# the state it is describing.
+cache_app = typer.Typer(
+    help="Report the on-disk caches the synthetic test tier reuses, and the tier address they are keyed on.",
+    no_args_is_help=True,
+)
+app.add_typer(cache_app, name="cache")
+
+
+@cache_app.command(name="status")
+def cache_status_command() -> None:
+    """Print each cache root with its presence, and the tier address this checkout resolves to.
+
+    The address is derived from the CHECKOUT the working directory belongs to rather than
+    from the directory itself, so running from a subdirectory of a checkout reports the
+    same tier as running from its root. Without that, this verb reports a machine as cold
+    while the checkout's trees sit on disk -- and it is the verb the cache's own evidence
+    claims are read against.
+
+    Read-only: no root is created, so an absent root stays absent and the report says so.
+    """
+    # Function-local import so `hhemt run` and every other verb keep `platformdirs` and this
+    # package off their import path; the cost of a second import here is a dict hit.
+    from hhemt.cache import paths as cache_paths
+
+    cwd = Path.cwd()
+    address = cache_paths.tier_address_for(cwd)
+    root = cache_paths.checkout_root(cwd)
+
+    table = Table(title="hhemt cache status")
+    table.add_column("root", no_wrap=True)
+    table.add_column("path", overflow="fold")
+    table.add_column("state", no_wrap=True)
+    for label, path in (
+        ("T0 model artifacts", cache_paths.synthetic_models_root()),
+        ("T1 analysis trees", cache_paths.synthetic_runs_root()),
+        ("T2 compiled builds", cache_paths.software_root(address)),
+        ("T3 source checkout", cache_paths.canonical_root()),
+    ):
+        table.add_row(label, str(path), "present" if path.exists() else "absent")
+    console.print(table)
+    console.print(f"tier_address: {address}", markup=False, soft_wrap=True)
+    root_text = str(root) if root is not None else "(not inside a git checkout)"
+    console.print(f"checkout_root: {root_text}", markup=False, soft_wrap=True)
+
+
+@cache_app.command(name="clear")
+def cache_clear_command(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="actually remove the in-scope roots; without it the verb only lists what it would remove",
+    ),
+    include_compile_tier: bool = typer.Option(
+        False,
+        "--include-compile-tier",
+        help="remove the compiled-build tier even where no compile venue is permitted",
+    ),
+    include_source_clone: bool = typer.Option(
+        False,
+        "--include-source-clone",
+        help="also remove the shared TRITON source checkout (restoring it re-downloads)",
+    ),
+) -> None:
+    """List the cache roots a clear would remove, and remove them with ``--apply``.
+
+    DESTRUCTIVE ONLY WITH ``--apply``. The bare invocation lists every root with its
+    scope and its liveness state and removes nothing, so an operator can see what the
+    flags would do before anything is deleted.
+
+    THE COMPILED-BUILD TIER IS GATED ON THE COMPILE VENUE. With no permitted venue this
+    machine cannot rebuild a compiled solver, so clearing that tier would leave it
+    missing until someone runs on a machine that can. ``--apply`` therefore removes T0
+    and T1, leaves ``_software`` in place, prints the gate notice, and exits 2.
+    ``--include-compile-tier`` is the operator's explicit override and takes T2 too.
+
+    The split matters more than it looks: a wholesale refusal would leave the two cheap
+    tiers unclearable on exactly the machines where clearing them is safe, and the only
+    route back to them would be the override that also destroys T2.
+
+    Exit codes follow the toolkit's published table: 0 when the listing ran or the clear
+    completed with every in-scope tier removed, 2 when the compile gate left T2 in place
+    (a configuration precondition, the same class ``ConfigurationError`` maps to).
+    """
+    # Function-local import, matching `cache status` above: this package pulls
+    # `filelock` and `hhemt.utils`, which no other verb's import path should pay for.
+    from hhemt.cache.clear import TIER_LABELS, apply_clear, plan_clear
+
+    plan = plan_clear(
+        include_compile_tier=include_compile_tier,
+        include_source_clone=include_source_clone,
+    )
+
+    table = Table(title="hhemt cache clear" + ("" if apply else " (dry run)"))
+    table.add_column("tier", no_wrap=True)
+    table.add_column("path", overflow="fold")
+    table.add_column("action", no_wrap=True)
+    table.add_column("why", overflow="fold")
+    for decision in plan.decisions:
+        if decision.live:
+            action = "skip (in use)"
+            why = "held lock(s): " + ", ".join(decision.live)
+        elif decision.removes:
+            action = "remove"
+            why = decision.note
+        else:
+            action = "keep"
+            why = decision.note
+        table.add_row(f"{decision.tier} {TIER_LABELS[decision.tier]}", str(decision.path), action, why)
+    console.print(table)
+    console.print(f"tier_address: {plan.address}", markup=False, soft_wrap=True)
+
+    if not apply:
+        if plan.refused:
+            # The notice carries no Rich markup of its own; `markup=False` keeps any
+            # bracket in the operator-facing text literal rather than parsing it away.
+            console_err.print(plan.refusal, markup=False, soft_wrap=True, style="bold red")
+        console.print(
+            "dry run: nothing was removed. Pass --apply to remove the tiers marked `remove`.",
+            markup=False,
+        )
+        return
+
+    removed = apply_clear(plan)
+    if not removed:
+        console.print("nothing to remove: every in-scope root is already absent.")
+    for tier, reclaimed in removed:
+        console.print(f"removed {tier} {TIER_LABELS[tier]}: {reclaimed} bytes", markup=False)
+
+    if plan.refused:
+        console_err.print(plan.refusal, markup=False, soft_wrap=True, style="bold red")
+        raise typer.Exit(code=2)
 
 
 if __name__ == "__main__":

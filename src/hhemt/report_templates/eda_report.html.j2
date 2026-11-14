@@ -14,13 +14,17 @@
     body { font-family: sans-serif; margin: 0; padding: 1rem 2rem; }
     h1 { color: {{ brand.primary_color | default('#232D4B') }}; }
     .eda-figure { margin: 2rem 0; }
+    .eda-figure-title { color: {{ brand.primary_color | default('#232D4B') }}; font-size: 1.15rem; margin: 0 0 0.5rem 0; }
     .eda-datasets { margin: 2rem 0; }
   </style>
 </head>
 <body>
   <h1>{{ title }}</h1>
-  {% for div in figure_divs %}
-  <div class="eda-figure">{{ div | safe }}</div>
+  {% for block in figure_blocks %}
+  <div class="eda-figure">
+    {% if block.title %}<h2 class="eda-figure-title">{{ block.title | e }}</h2>{% endif %}
+    {{ block.div | safe }}
+  </div>
   {% endfor %}
   {% for table in tables %}
   <div class="eda-datasets">

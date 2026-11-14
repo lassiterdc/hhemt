@@ -7,6 +7,7 @@ placeholder figure (R6 / Phase 3).
 
 from __future__ import annotations
 
+import html
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,11 +20,36 @@ import swmmio
 from plotly.subplots import make_subplots
 
 from hhemt import units
+from hhemt.config.viz_vocabulary import VminVmaxStrategy
+from hhemt.figure_panels import (
+    WATERSHED_LEGEND_GROUP,
+    WATERSHED_LEGEND_LABEL,
+    watershed_legend_marker,
+)
+from hhemt.report_renderers.system_overview import _draw_static_subplot_label, _resolve_inp_sources
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.config.report import report_config
     from hhemt.config.static_plots import StaticPlotBaseConfig
+
+
+def event_hydraulics_inp(analysis, event_iloc) -> Path:
+    """The hydraulics (else combined) ``.inp`` that carries an event's conduit geometry.
+
+    A live scenario answers from its own scenario paths, as before. A removed scenario (record pending or done) has
+    no directory and no log, and building its processing object would re-create directories, so it answers with
+    the prepared ``.inp`` the removal kept beside the records (``_resolve_inp_sources``); every scenario of an
+    analysis shares one network, so the geometry is the same.
+    """
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.scenario_records import event_is_removed
+
+    evt = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
+    if event_is_removed(analysis.analysis_paths.analysis_dir, evt):
+        return Path(_resolve_inp_sources(analysis)[1])
+    proc = analysis._retrieve_sim_run_processing_object(event_iloc)
+    return Path(getattr(proc.scen_paths, "swmm_hydraulics_inp", None) or proc.scen_paths.swmm_full_inp)
 
 
 def render(
@@ -32,6 +58,7 @@ def render(
     output_path: Path,
     *,
     event_iloc: int,
+    model_type: str | None = None,
     static_cfg: StaticPlotBaseConfig | None = None,
     **kwargs,
 ) -> Path:
@@ -50,6 +77,7 @@ def render(
         emit_plot_with_sources,
         per_sim_map_ticks,
     )
+    from hhemt.report_renderers._model_arms import resolve_arm_group
     from hhemt.report_renderers._provenance import ProvenanceLog
     from hhemt.report_renderers.system_overview import _apply_rcparams
 
@@ -64,6 +92,24 @@ def render(
     )
     # Publication path (ADR-3): static_cfg FORCES the matplotlib branch regardless
     # of report_cfg.interactive.static_backend (static plots are matplotlib-only).
+    # Model-type dispatch via the single-source arm matrix (_model_arms), which
+    # replaces a coupled-wins if/elif chain. The chain's `elif` was unreachable
+    # whenever the coupled arm was enabled, so a three-model analysis rendered
+    # the coupled arm and silently dropped the standalone-SWMM conduits.
+    # model_type=None reproduces the retired behaviour exactly (first arm in
+    # MODEL_ORDER, which is "tritonswmm"); the composite page passes an explicit
+    # arm so every applicable arm is rendered. Resolved ABOVE the use_plotly
+    # dispatch so `link_group` is in scope for the plotly branch (S6 ordering
+    # requirement); the lookup is pure.
+    enabled = analysis._get_enabled_model_types()
+    link_group = resolve_arm_group("conduit_flow", enabled, model_type=model_type)
+    if link_group is None:
+        return _emit_model_type_skip_placeholder(
+            output_path,
+            "conduit_flow not applicable for triton-only analyses",
+            report_cfg.figure_defaults.savefig_dpi,
+        )
+
     use_plotly = False if static_cfg is not None else (static_backend == "plotly")
     if use_plotly:
         return _render_plotly_branch(
@@ -71,6 +117,7 @@ def render(
             report_cfg,
             output_path,
             event_iloc=event_iloc,
+            link_group=link_group,
             prov=prov,
         )
 
@@ -85,23 +132,8 @@ def render(
         plt.rcParams["font.family"] = static_cfg.font_family
         plt.rcParams["font.size"] = static_cfg.font_sizes[FontTarget.axis_label]
 
-    proc = analysis._retrieve_sim_run_processing_object(event_iloc)
-
-    # Model-type dispatch (Gotcha 5 from the master plan).
-    enabled = analysis._get_enabled_model_types()
-    if "tritonswmm" in enabled:
-        link_group = "/tritonswmm/swmm_link"
-    elif "swmm" in enabled:
-        link_group = "/swmm_only/swmm_link"
-    else:
-        return _emit_model_type_skip_placeholder(
-            output_path,
-            "conduit_flow not applicable for triton-only analyses",
-            report_cfg.figure_defaults.savefig_dpi,
-        )
-
     # Read from the consolidated analysis DataTree. The link group carries
-    # `max_over_full_flow`, `max_flow_cms`, and `link_id` for every event_iloc.
+    # `max_over_full_flow`, `max_flow`, and `link_id` for every event_iloc.
     link_summary_path = analysis.analysis_paths.analysis_datatree_zarr
     # Consumer-side defense-in-depth (R6): a partial-completion render soft-skips
     # with a VISIBLE labeled placeholder (which still writes output_path) rather
@@ -118,7 +150,7 @@ def render(
         raise AssertionError(f"consolidated tree missing expected group {link_group}; available: {sorted(tree.groups)}")
     ds_links = tree[link_group].to_dataset()
     max_over_full_da = ds_links["max_over_full_flow"].sel(event_iloc=event_iloc)
-    peak_flow_da = ds_links["max_flow_cms"].sel(event_iloc=event_iloc)
+    peak_flow_da = ds_links["max_flow"].sel(event_iloc=event_iloc)
     max_over_full = max_over_full_da.values
     peak_flow = peak_flow_da.values
     link_ids = ds_links["link_id"].values
@@ -131,7 +163,7 @@ def render(
     # [CONDUITS] + [COORDINATES] sections); the prior version of this code read
     # `swmm_hydro_inp` which is the hydrology-only variant (no [CONDUITS]) and
     # produced a blank figure (iter-2 user feedback 2026-04-27).
-    inp_path = Path(getattr(proc.scen_paths, "swmm_hydraulics_inp", None) or proc.scen_paths.swmm_full_inp)
+    inp_path = event_hydraulics_inp(analysis, event_iloc)
     model = swmmio.Model(str(inp_path))
     coords_df = model.inp.coordinates
     conduits_df = model.inp.conduits
@@ -158,11 +190,27 @@ def render(
     )
 
     weather_event_indexers = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+    # FORCING-READ: render-hydrology
     weather_path = Path(analysis.cfg_analysis.weather_timeseries)
+    # PATH-ONLY resolution: the free function never instantiates a
+    # TRITONSWMM_scenario (whose constructor mkdirs processed/ swmm/ out_swmm/) and
+    # creates no directory -- required because this render path runs under the
+    # provenance audit. It is NOT read-free: on the no-CSV branch it opens
+    # weather_path itself for the axis endpoints. That is audit-safe here ONLY because
+    # weather_path is already in this renderer's source_paths for the
+    # load_event_hydrology_data call below -- a caller that does not declare it would
+    # trip the audit's actual-reads-subset-declared assertion.
+    from hhemt.scenario import resolve_event_window
+
     hydro_data = load_event_hydrology_data(
         weather_path,
         analysis.cfg_analysis,
         weather_event_indexers,
+        window=resolve_event_window(
+            analysis.cfg_analysis,
+            weather_event_indexers,
+            cache=analysis.__dict__.setdefault("_event_window_cache", {}),
+        ),
     )
 
     # Subiteration 9.4 C7-parity-2 — load DEM bounds (same source peak_flood_depth
@@ -213,6 +261,7 @@ def render(
     )
     gs_hydro_inner = gs_hydro_outer[0, 0].subgridspec(2, 1, height_ratios=[1, 1])
     ax1 = fig.add_subplot(gs_util[0, 0])
+    _draw_static_subplot_label(ax1, static_cfg)
     cax_util = fig.add_subplot(gs_util_cbar[0, 1])
     ax2 = fig.add_subplot(gs_peak[0, 0], sharex=ax1, sharey=ax1)
     cax_peak = fig.add_subplot(gs_peak_cbar[0, 1])
@@ -241,13 +290,17 @@ def render(
     UTILIZATION_CMAP = static_cfg.utilization_cmap if static_cfg is not None else map_cfg.utilization_cmap
     PEAK_FLOW_CMAP = static_cfg.peak_flow_cmap if static_cfg is not None else map_cfg.peak_flow_cmap
     if static_cfg is not None:
-        peak_flow_vmax = (
-            float(static_cfg.peak_flow_vmax)
-            if static_cfg.peak_flow_vmax is not None
-            else float(peak_flow.max() or 1.0)
-        )
+        if static_cfg.peak_flow_vmax is not None:
+            peak_flow_vmax = float(static_cfg.peak_flow_vmax)
+        elif static_cfg.vmin_vmax_strategy == VminVmaxStrategy.quantile and static_cfg.vmax_quantile is not None:
+            # `vmin_vmax_strategy="quantile"`: the colour bar's upper bound is the
+            # `vmax_quantile` of the peak flows, clipping top-end outliers. The default
+            # `absolute` keeps the maximum.
+            peak_flow_vmax = float(np.nanquantile(np.asarray(peak_flow, dtype=float), static_cfg.vmax_quantile) or 1.0)
+        else:
+            peak_flow_vmax = float(peak_flow.max() or 1.0)
     else:
-        peak_flow_vmax = _resolve_peak_flow_vmax(peak_flow, cfg)
+        peak_flow_vmax = _shared_peak_flow_vmax(analysis, cfg) or _resolve_peak_flow_vmax(peak_flow, cfg)
     panels = [
         (
             ax1,
@@ -424,14 +477,65 @@ def render(
         analysis_dir=analysis.analysis_paths.analysis_dir,
         dpi=(static_cfg.savefig_dpi if static_cfg is not None else report_cfg.figure_defaults.savefig_dpi),
         output_format=(
-            static_cfg.output_format
-            if static_cfg is not None
-            else ("svg" if output_path.suffix == ".svg" else "png")
+            static_cfg.output_format if static_cfg is not None else ("svg" if output_path.suffix == ".svg" else "png")
         ),
         bbox_inches_tight=(static_cfg.bbox_inches_tight if static_cfg is not None else True),
         emit_preview=(static_cfg is None),
         provenance=prov,
     )
+
+
+def _shared_peak_flow_vmax(analysis, cfg, model_types=None) -> float | None:
+    """Cross-ARM and cross-EVENT vmax for the peak-flow colourbar.
+
+    The sibling depth/WSE resolvers in per_sim_peak_flood_depth have been
+    cross-EVENT since iter-15/iter-19; peak flow never had one, so its colourbar
+    was per-figure. That was survivable while one conduit figure existed per
+    event and invisible while only one arm was rendered. It is neither once the
+    composite page places the TRITON-SWMM and standalone-SWMM conduit panels
+    adjacent in one scroll.
+
+    Returns None when no arm exposes a usable summary, so the caller falls back
+    to the per-figure `_resolve_peak_flow_vmax` and behaviour degrades to the
+    historical form rather than to an exception. An explicit `cfg.vmax` still
+    wins at the call site -- this resolver is consulted only when it is unset.
+    """
+    from hhemt.report_renderers._model_arms import groups_for
+
+    if cfg.vmax is not None:
+        return float(cfg.vmax)
+    enabled = analysis._get_enabled_model_types()
+    try:
+        tree = analysis.process.open_datatree()
+    except (ValueError, FileNotFoundError):
+        return None
+    groups = [g for g in groups_for("conduit_flow", model_types or enabled) if g in tree.groups]
+    if not groups:
+        return None
+    collected: list[np.ndarray] = []
+    for _group in groups:
+        ds_links = tree[_group].to_dataset()
+        if "max_flow" not in ds_links:
+            continue
+        for _ev in analysis.df_sims.index:
+            try:
+                vals = ds_links["max_flow"].sel(event_iloc=int(_ev)).values
+            except KeyError:
+                continue
+            if hasattr(vals, "compute"):
+                vals = vals.compute()
+            finite = vals[np.isfinite(vals)]
+            if finite.size > 0:
+                collected.append(finite)
+    if not collected:
+        return None
+    combined = np.concatenate(collected)
+    if cfg.vmax_quantile is not None:
+        q = float(np.nanquantile(combined, cfg.vmax_quantile))
+        if np.isfinite(q) and q > 0.0:
+            return q
+    m = float(np.nanmax(combined))
+    return m if np.isfinite(m) and m > 0.0 else None
 
 
 def _resolve_peak_flow_vmax(peak_flow: np.ndarray, cfg) -> float:
@@ -470,15 +574,37 @@ def _emit_model_type_skip_placeholder(
     message: str,
     dpi: int,
 ) -> Path:
-    """Centered-text figure explaining a model-type skip (Gotcha 5).
+    """Centered-text placeholder explaining a model-type skip (Gotcha 5).
 
     Keeps the Snakemake rule output present so the DAG does not fail, while
-    making the inapplicability visible in the report.
+    making the inapplicability visible in the report. Format-aware: the plotly
+    report branch owns an ``.html`` ``output_path`` (matplotlib cannot save
+    ``.html``), so an ``.html`` target emits a self-contained HTML document and
+    every other suffix (``.png``/``.svg``/... — the matplotlib/publication path)
+    keeps the matplotlib centered-text figure. This is a module-private
+    degenerate-case emitter, so it persists via ``Path.write_text`` /
+    ``Figure.savefig`` directly (trusted by test_figure_save_discipline.py) and
+    declares no data source (a skip figure has none).
     """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.suffix.lower() == ".html":
+        safe = html.escape(message)
+        output_path.write_text(
+            "<!DOCTYPE html>\n"
+            '<html lang="en"><head><meta charset="utf-8">'
+            f"<title>{safe}</title></head>"
+            '<body style="margin:0;height:100vh;display:flex;'
+            "align-items:center;justify-content:center;"
+            'font-family:system-ui,-apple-system,sans-serif;">'
+            f'<div style="max-width:80%;text-align:center;color:#555;'
+            f'font-size:1rem;line-height:1.4;">{safe}</div>'
+            "</body></html>\n",
+            encoding="utf-8",
+        )
+        return output_path
     fig, ax = plt.subplots(figsize=(8, 3), layout="constrained")
     ax.text(0.5, 0.5, message, ha="center", va="center", fontsize=12, wrap=True)
     ax.axis("off")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     return output_path
@@ -490,6 +616,7 @@ def _build_conduit_flow_figure(
     output_path: Path,
     *,
     event_iloc: int,
+    link_group: str,
     prov,
 ):
     """Figure-construction half of `_render_plotly_branch`, extracted verbatim so a
@@ -505,7 +632,18 @@ def _build_conduit_flow_figure(
 
     # Side-effect import: registers `triton_journal` Plotly template.
     from hhemt.report_renderers import _plotly_theme  # noqa: F401
+    from hhemt.report_renderers._figure_emission import (
+        PER_SIM_FIG_H_PX,
+        PER_SIM_FIG_W_PX,
+        PER_SIM_HSPACE,
+        PER_SIM_TOP_MARGIN_PX,
+        apply_per_sim_map_axes,
+        per_sim_bottom_margin_px,
+        per_sim_colorbar,
+        per_sim_plot_area_h_px,
+    )
     from hhemt.report_renderers._hydrology_panel import (
+        draw_event_hydrology_panel_plotly,
         load_event_hydrology_data,
     )
     from hhemt.report_renderers._map_bounds import (
@@ -519,20 +657,11 @@ def _build_conduit_flow_figure(
     cfg = report_cfg.per_sim.conduit_flow
     map_cfg = report_cfg.per_sim.map
 
-    proc = analysis._retrieve_sim_run_processing_object(event_iloc)
-
-    # ---- Model-type dispatch (mirror of matplotlib branch) --------------
-    enabled = analysis._get_enabled_model_types()
-    if "tritonswmm" in enabled:
-        link_group = "/tritonswmm/swmm_link"
-    elif "swmm" in enabled:
-        link_group = "/swmm_only/swmm_link"
-    else:
-        return _emit_model_type_skip_placeholder(
-            output_path,
-            "conduit_flow not applicable for triton-only analyses",
-            report_cfg.figure_defaults.savefig_dpi,
-        )
+    # Model-type dispatch removed: `link_group` is now a REQUIRED keyword
+    # parameter, mirroring `_build_peak_flood_depth_figure`'s long-standing
+    # `triton_group`. The caller resolves the arm from the _model_arms matrix,
+    # which is what lets the composite page call this seam once per applicable
+    # arm instead of once per event.
 
     # ---- Data prep ------------------------------------------------------
     link_summary_path = analysis.analysis_paths.analysis_datatree_zarr
@@ -553,7 +682,7 @@ def _build_conduit_flow_figure(
         raise AssertionError(f"consolidated tree missing expected group {link_group}; available: {sorted(tree.groups)}")
     ds_links = tree[link_group].to_dataset()
     max_over_full_da = ds_links["max_over_full_flow"].sel(event_iloc=event_iloc)
-    peak_flow_da = ds_links["max_flow_cms"].sel(event_iloc=event_iloc)
+    peak_flow_da = ds_links["max_flow"].sel(event_iloc=event_iloc)
     max_over_full = max_over_full_da.values
     peak_flow = peak_flow_da.values
     link_ids = ds_links["link_id"].values
@@ -562,7 +691,7 @@ def _build_conduit_flow_figure(
     peak_flow_attrs = dict(peak_flow_da.attrs)
     peak_flow_name = peak_flow_da.name
 
-    inp_path = Path(getattr(proc.scen_paths, "swmm_hydraulics_inp", None) or proc.scen_paths.swmm_full_inp)
+    inp_path = event_hydraulics_inp(analysis, event_iloc)
     model = swmmio.Model(str(inp_path))
     coords_df = model.inp.coordinates
     conduits_df = model.inp.conduits
@@ -580,11 +709,27 @@ def _build_conduit_flow_figure(
             coords_by_id[str(row.Index)] = (p_in, p_out)
 
     weather_event_indexers = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+    # FORCING-READ: render-hydrology
     weather_path = Path(analysis.cfg_analysis.weather_timeseries)
+    # PATH-ONLY resolution: the free function never instantiates a
+    # TRITONSWMM_scenario (whose constructor mkdirs processed/ swmm/ out_swmm/) and
+    # creates no directory -- required because this render path runs under the
+    # provenance audit. It is NOT read-free: on the no-CSV branch it opens
+    # weather_path itself for the axis endpoints. That is audit-safe here ONLY because
+    # weather_path is already in this renderer's source_paths for the
+    # load_event_hydrology_data call below -- a caller that does not declare it would
+    # trip the audit's actual-reads-subset-declared assertion.
+    from hhemt.scenario import resolve_event_window
+
     hydro_data = load_event_hydrology_data(
         weather_path,
         analysis.cfg_analysis,
         weather_event_indexers,
+        window=resolve_event_window(
+            analysis.cfg_analysis,
+            weather_event_indexers,
+            cache=analysis.__dict__.setdefault("_event_window_cache", {}),
+        ),
     )
     times_min = hydro_data["times_min"]
     # Phase 3 inheritance (F-I-7): hydrology x-axis in HOURS from event start.
@@ -650,7 +795,7 @@ def _build_conduit_flow_figure(
         ],
         row_heights=[1, 1],
         column_widths=[1, 1, 0.8],
-        horizontal_spacing=0.06,
+        horizontal_spacing=PER_SIM_HSPACE,
         vertical_spacing=0.06,
         subplot_titles=("Max / full flow", "Peak flow", "Flood Drivers"),
     )
@@ -659,7 +804,26 @@ def _build_conduit_flow_figure(
     fig.update_layout(
         template="triton_journal",
         showlegend=False,
-        margin=dict(l=10, r=10, t=40, b=130),
+        # Width/height DECLARED (I7-7 prerequisite) and bottom margin DERIVED from the
+        # colorbar band -- identical treatment to per_sim_peak_flood_depth, from the
+        # same shared constants, which is the point.
+        width=PER_SIM_FIG_W_PX,
+        height=PER_SIM_FIG_H_PX,
+        margin=dict(
+            l=10,
+            r=10,
+            t=PER_SIM_TOP_MARGIN_PX,
+            b=per_sim_bottom_margin_px(),
+        ),
+    )
+
+    # Map-panel x geometry + centred colorbar paper-x, shared with
+    # per_sim_peak_flood_depth. Called before the panel loop because the colorbar
+    # dicts consume the returned x values.
+    _cb_x = apply_per_sim_map_axes(
+        fig,
+        bounds=bounds,
+        crs_epsg=_dem_da.rio.crs.to_epsg() if _dem_da.rio.crs is not None else None,
     )
 
     # ---- Utilization + peak-flow panels (binned-trace approach) ----------
@@ -677,7 +841,7 @@ def _build_conduit_flow_figure(
             "vmin": 0.0,
             "vmax": 1.0,
             "cmap_name": UTILIZATION_CMAP,
-            "colorbar_x": 0.16,
+            "colorbar_x": _cb_x[1],
         },
         {
             "col": 2,
@@ -687,9 +851,9 @@ def _build_conduit_flow_figure(
             "var_attrs": peak_flow_attrs,
             "label": units.flow_axis_label(),
             "vmin": float(cfg.vmin) if cfg.vmin is not None else 0.0,
-            "vmax": _resolve_peak_flow_vmax(peak_flow, cfg),
+            "vmax": _shared_peak_flow_vmax(analysis, cfg) or _resolve_peak_flow_vmax(peak_flow, cfg),
             "cmap_name": PEAK_FLOW_CMAP,
-            "colorbar_x": 0.52,
+            "colorbar_x": _cb_x[2],
         },
     ]
     values_by_id_per_panel = {p["axes_id"]: dict(zip(link_ids, p["values"], strict=True)) for p in panels}
@@ -727,7 +891,7 @@ def _build_conduit_flow_figure(
                 kind="line2d",
                 note=(
                     f"conduit lines (bin {bin_idx}/{N_BINS}, "
-                    f"mid_val={mid_val:.3f}, n={len(conduits_in_bin)}) — "
+                    f"mid_val={mid_val:.3f}, n={len(conduits_in_bin)}), "
                     f"per-conduit channels registered in inner loop"
                 ),
             ) as a:
@@ -793,14 +957,7 @@ def _build_conduit_flow_figure(
                         cmax=p["vmax"],
                         showscale=True,
                         color=[p["vmin"]],
-                        colorbar=dict(
-                            title=p["label"],
-                            orientation="h",
-                            y=-0.22,
-                            len=0.30,
-                            x=p["colorbar_x"],
-                            thickness=12,
-                        ),
+                        colorbar=per_sim_colorbar(p["label"], p["colorbar_x"]),
                     ),
                     showlegend=False,
                     hoverinfo="skip",
@@ -844,12 +1001,57 @@ def _build_conduit_flow_figure(
                     mode="lines",
                     line=dict(color=map_cfg.watershed_overlay_color, width=map_cfg.watershed_overlay_width),
                     hoverinfo="skip",
+                    # Iter-9 A1: surfaced as a legend entry, named identically to the
+                    # peak-flood and config-diff swatches. This site is inside a per-COLUMN
+                    # loop, so a literal True would emit one entry per map column.
+                    #
+                    # Iter-10 D: every boundary trace is now showlegend=False and the entry
+                    # is carried by the marker proxy below — a `mode="lines"` trace renders
+                    # a LINE glyph and plotly exposes no per-trace override, so a RECTANGLE
+                    # key needs a markers-mode trace.
                     showlegend=False,
-                    name="watershed",
+                    legendgroup="watershed_extent",
+                    name=WATERSHED_LEGEND_LABEL,
                 ),
                 row=1,
                 col=col_idx,
             )
+    with prov.artist(
+        axes_id="ax_utilization_plotly",
+        kind="legend",
+        note="watershed legend key (dummy Scatter, no plotted points)",
+    ) as a:
+        a.add_channel("x", watershed_ref)
+        # Iter-10 D: one proxy for the whole figure, emitted OUTSIDE the per-column loop —
+        # inside it, this would reproduce the duplicate-entry defect the Iter-9 note above
+        # describes. `square-open` matches the unfilled rect `figure_panels.watershed_swatch`
+        # draws for the config-diff family. The togglability invariant
+        # (tests/test_synth_legend_toggle_audit.py) holds without an invisible peer: this
+        # trace shares `watershed_extent` with the per-column boundary traces, which plot
+        # data, so one legend click toggles the boundary on every map column.
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                marker=watershed_legend_marker(
+                    color=map_cfg.watershed_overlay_color,
+                    line_width=map_cfg.watershed_overlay_width,
+                ),
+                hoverinfo="skip",
+                showlegend=True,
+                # Iteration-11 item 6: glyph, group and label now all read
+                # `hhemt.figure_panels`, so this key and the stacked-panel families'
+                # `watershed_swatch` cannot drift apart again. Only the LEGEND-VISIBLE site is
+                # routed through the constants; the `name=` on the `showlegend=False` boundary
+                # traces above is inert (they carry `hoverinfo="skip"` and emit no entry) and
+                # is deliberately left alone, so this file has exactly ONE behavioural site.
+                legendgroup=WATERSHED_LEGEND_GROUP,
+                name=WATERSHED_LEGEND_LABEL,
+            ),
+            row=1,
+            col=1,
+        )
 
     # ---- Hydrology panel (rainfall row 1 + BC water level row 2) --------
     rain_units = units.rainfall_provenance_units(analysis.cfg_analysis.rainfall_units)
@@ -865,51 +1067,44 @@ def _build_conduit_flow_figure(
         selection={"event_iloc": int(event_iloc)},
     )
     panel_cfg = report_cfg.per_sim.hydrology_panel
-    with prov.artist(
-        axes_id="ax_rain_plotly",
-        kind="bar",
-        note="rainfall time series (event hydrology — top sub-panel)",
-    ) as a:
-        a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
-        a.add_channel("y", rain_ref, units=rain_units)
-        fig.add_trace(
-            go.Bar(
-                x=times_hr,
-                y=rainfall,
-                marker=dict(color=panel_cfg.rain_color),
-                name="rainfall",
-                showlegend=False,
-                hovertemplate="t: %{x:.2f} hr<br>rain: %{y:.2f}<extra></extra>",
-            ),
-            row=1,
-            col=3,
-        )
     bc_ref = ProvenanceRef(
         source_path=weather_rel,
         variable=bc_var if bc_var is not None else "",
         attrs=bc_attrs,
         selection={"event_iloc": int(event_iloc)},
     )
+    # Both Flood Drivers traces and both wrapped y titles now come from the SAME shared
+    # helper per_sim_peak_flood_depth uses. This family previously drew rainfall with
+    # `go.Bar`, whose auto-width bars leave inter-bar gaps and render constant rainfall
+    # as a picket fence -- the defect the sibling family fixed in iteration 21 and this
+    # one never received. `kind` on the provenance artist changes from "bar" to "line2d"
+    # to match the trace that is now drawn.
+    with prov.artist(
+        axes_id="ax_rain_plotly",
+        kind="line2d",
+        note="rainfall time series (event hydrology, top sub-panel)",
+    ) as a:
+        a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
+        a.add_channel("y", rain_ref, units=rain_units)
     with prov.artist(
         axes_id="ax_bc_plotly",
         kind="line2d",
-        note="boundary condition water level (event hydrology — bottom sub-panel)",
+        note="boundary condition water level (event hydrology, bottom sub-panel)",
     ) as a:
         a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", bc_ref, units=bc_units)
-        fig.add_trace(
-            go.Scatter(
-                x=times_hr,
-                y=bc_water_level,
-                mode="lines",
-                line=dict(color=panel_cfg.bc_line_color, width=panel_cfg.bc_line_width),
-                name="bc_water_level",
-                showlegend=False,
-                hovertemplate="t: %{x:.2f} hr<br>BC: %{y:.3f} m<extra></extra>",
-            ),
-            row=2,
-            col=3,
-        )
+    _col3_panel_h_px = per_sim_plot_area_h_px() * 0.47
+    draw_event_hydrology_panel_plotly(
+        fig,
+        times_hr=times_hr,
+        rainfall=rainfall,
+        bc_water_level=bc_water_level,
+        panel_cfg=panel_cfg,
+        rainfall_units=analysis.cfg_analysis.rainfall_units,
+        storm_tide_units=analysis.cfg_analysis.storm_tide_units,
+        axis_extent_px=_col3_panel_h_px,
+        time_axis_title=units.TIME_AXIS_FROM_EVENT_START_HOURS,
+    )
 
     # ---- Axes setup -----------------------------------------------------
     from hhemt.config.report import resolve_target_crs
@@ -918,13 +1113,11 @@ def _build_conduit_flow_figure(
     crs_for_labels = target_crs.to_epsg()
     # Phase 3 inheritance (F-I-10): link col-2 map axes to col-1 via `matches=`
     # so interactive pan/zoom on either panel synchronises the other.
+    # Map x-axis range + cleared x titles are already applied by
+    # `apply_per_sim_map_axes` above (shared with per_sim_peak_flood_depth); the
+    # Flood Drivers axes are set inside `draw_event_hydrology_panel_plotly`. Only the
+    # map y-axes and the col-2 `matches=` links remain family-local here.
     for col in (1, 2):
-        x_kwargs = dict(
-            range=[bounds[0], bounds[2]],
-            title_text=units.easting_axis_label(crs_for_labels),
-            row=1,
-            col=col,
-        )
         y_kwargs = dict(
             range=[bounds[1], bounds[3]],
             scaleanchor=f"x{col}",
@@ -934,35 +1127,9 @@ def _build_conduit_flow_figure(
             col=col,
         )
         if col == 2:
-            x_kwargs["matches"] = "x"
+            fig.update_xaxes(matches="x", row=1, col=col)
             y_kwargs["matches"] = "y"
-        fig.update_xaxes(**x_kwargs)
         fig.update_yaxes(**y_kwargs)
-    # Phase 3 inheritance (F-I-7): hydrology x-axes now in hours from event start.
-    fig.update_xaxes(
-        range=[float(times_hr[0]), float(times_hr[-1])],
-        title_text="",
-        row=1,
-        col=3,
-    )
-    fig.update_yaxes(
-        title_text=units.rainfall_axis_label(analysis.cfg_analysis.rainfall_units),
-        row=1,
-        col=3,
-    )
-    fig.update_xaxes(
-        range=[float(times_hr[0]), float(times_hr[-1])],
-        title_text=units.TIME_AXIS_FROM_EVENT_START_HOURS,
-        row=2,
-        col=3,
-    )
-    fig.update_yaxes(
-        title_text=units.bc_water_level_axis_label(
-            analysis.cfg_analysis.storm_tide_units or "m",
-        ),
-        row=2,
-        col=3,
-    )
 
     # ---- Emit -----------------------------------------------------------
     plotly_config = {
@@ -983,8 +1150,17 @@ def _build_conduit_flow_figure(
         },
     }
     return (
-        fig, plotly_config, link_summary_path, inp_path, weather_path,
-        sys_paths, watershed_shp, max_over_full, peak_flow, coords_by_id, N_BINS,
+        fig,
+        plotly_config,
+        link_summary_path,
+        inp_path,
+        weather_path,
+        sys_paths,
+        watershed_shp,
+        max_over_full,
+        peak_flow,
+        coords_by_id,
+        N_BINS,
     )
 
 
@@ -994,6 +1170,7 @@ def _render_plotly_branch(
     output_path: Path,
     *,
     event_iloc: int,
+    link_group: str,
     prov,
 ) -> Path:
     """Plotly MV port (pre-/design-figure): static 3-panel figure with utilization
@@ -1003,18 +1180,33 @@ def _render_plotly_branch(
     no max_over_full filter slider, no legend-click magnitude-class toggling.
     """
     from hhemt.report_renderers._figure_emission import (
+        PER_SIM_FIG_H_PX,
+        PER_SIM_FIG_W_PX,
         emit_plot_with_sources,
     )
 
     _built = _build_conduit_flow_figure(
-        analysis, report_cfg, output_path,
-        event_iloc=event_iloc, prov=prov,
+        analysis,
+        report_cfg,
+        output_path,
+        event_iloc=event_iloc,
+        link_group=link_group,
+        prov=prov,
     )
     if isinstance(_built, Path):
         return _built
     (
-        fig, plotly_config, link_summary_path, inp_path, weather_path,
-        sys_paths, watershed_shp, max_over_full, peak_flow, coords_by_id, N_BINS,
+        fig,
+        plotly_config,
+        link_summary_path,
+        inp_path,
+        weather_path,
+        sys_paths,
+        watershed_shp,
+        max_over_full,
+        peak_flow,
+        coords_by_id,
+        N_BINS,
     ) = _built
 
     html_text = pio.to_html(
@@ -1051,8 +1243,8 @@ def _render_plotly_branch(
         fig.write_image(
             output_path.with_suffix(".svg"),
             engine="kaleido",
-            width=1400,
-            height=600,
+            width=PER_SIM_FIG_W_PX,
+            height=PER_SIM_FIG_H_PX,
             scale=1,
         )
     except Exception as exc:  # noqa: BLE001 — Kaleido failure is non-fatal
@@ -1073,7 +1265,8 @@ def _render_plotly_branch(
         manifest_data={
             "event_iloc": int(event_iloc),
             "max_over_full_max": float(np.nanmax(max_over_full)),
-            "peak_flow_max_cms": float(np.nanmax(peak_flow)),
+            "peak_flow_max": float(np.nanmax(peak_flow)),
+            "peak_flow_max_units": "m3 s-1",
             "conduit_count": int(len(coords_by_id)),
             "binned_traces_per_panel": int(N_BINS),
         },

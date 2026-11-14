@@ -102,7 +102,7 @@ class GlobusTransferManager:
             filter_sim_outputs: If True, exclude large intermediate sim files
                                 (see ``_SIM_OUTPUT_EXCLUDE_PATTERNS``).
             exclude_dirs:       Directory path suffixes to exclude via Globus
-                                filter rules (e.g. ``["subanalyses/"]``).
+                                filter rules (e.g. ``["members/"]``).
 
         Returns:
             Globus task ID string.  Pass to :meth:`wait` to block until done.
@@ -142,7 +142,7 @@ class GlobusTransferManager:
             # with the domain(s) demanded by the endpoint policy, then retry once.
             domains = authz.session_required_single_domain or []
             print(
-                f"[Globus] Session policy requires domain(s): {domains}. " "Re-authenticating...",
+                f"[Globus] Session policy requires domain(s): {domains}. Re-authenticating...",
                 flush=True,
             )
             self.transfer_client = self._get_authenticated_client(
@@ -187,7 +187,7 @@ class GlobusTransferManager:
                 raise GlobusTransferError(task_id=task_id, status=status)
 
             if deadline and time.time() > deadline:
-                raise TimeoutError(f"Globus transfer {task_id} did not complete within " f"{timeout_minutes} minutes.")
+                raise TimeoutError(f"Globus transfer {task_id} did not complete within {timeout_minutes} minutes.")
 
             time.sleep(polling_interval)
 

@@ -1,6 +1,6 @@
-System map for **{{ snakemake.config['analysis_id'] }}**.
+Model inputs for **{{ snakemake.config['analysis_id'] }}**.
 
-Overlays the watershed polygon (red), TRITON DEM extent (blue dashed), boundary-condition shapefile location (orange markers), and SWMM nodes (black points) and links (gray lines) extracted from a representative scenario via swmmio. The map is rendered in the system CRS configured by ``system_config.crs.horizontal_epsg``.
+The **TRITON DEM** panel shows the processed elevation raster with its color range confined to the modeled area; wall and outside-watershed fill cells take the configured over-color. The **Manning's n** panel shows the processed roughness raster on the DEM's grid. Maps are drawn in the CRS set by ``system_config.crs.horizontal_epsg``.
 
 **Sources:**
 

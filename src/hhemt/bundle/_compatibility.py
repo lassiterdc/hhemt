@@ -9,30 +9,28 @@ DISTINCT from ADR-17's bug-registry ``severity`` (output-invalidation):
 share one report?). See the decision doc
 ``compatibilityseverity is orthogonal to adr17 severity``.
 
-Read surface (as-built, verified 2026-07-04). The pre-foundation skeleton assumed
-the ADR-6 embedded JSON-LD core carried the identity fields; the LANDED foundation
-does not. The RO-Crate embedded core + co-located ``ro-crate-metadata.json`` carry
-only name/analysis_id/system_id/schemaVersion/softwareVersion/variableMeasured/
-per-part sha256/hasPart — NOT the model toggles, sensitivity axes, or ``case_name``
-(``analysis._case_manifest`` is never set at emit, so the core's ``name`` degrades
-to ``analysis_id``; ``case.yaml`` is NOT copied into the bundle). HPC identity
-(gpu_hardware/partition/account) migrated off ``system_config`` to
-``hpc_system_config``, which is NOT serialized into the bundle — so no HPC field
-reaches the checker (the ``_classify`` "hpc" branch is unit-tested directly, never
-reached via a real read). Therefore the comparison surface is sourced from the
-bundle's ``cfg_system.yaml`` + ``cfg_analysis.yaml`` (written by
-``_emit._copy_configs_with_relative_paths``) plus ``schemaVersion`` from the
-RO-Crate sidecar for version-skew. Always-divergent identifiers (``analysis_id``,
-toolkit git-sha) are EXCLUDED from the divergence surface; ``analysis_id`` is kept
-only as the bundle LABEL. ``case_name`` is not bundled today, so it is not sourced
-(bundling ``case.yaml`` so ``case_name`` becomes comparable is a routed follow-up).
+Read surface (as-built, Phase 5). The pre-foundation skeleton assumed the ADR-6
+embedded JSON-LD core carried the identity fields; the LANDED foundation does not. The
+comparison surface is therefore sourced from each bundle's ``cfg_system.yaml`` (model
+toggles + ``target_dem_resolution``) + ``cfg_analysis.yaml`` (``weather_events_to_simulate``
++ ``sensitivity_analysis``, written by ``_emit.emit_relative_config_pair``), plus
+``schemaVersion`` from the co-located ``ro-crate-metadata.json`` for version-skew. Phase 5
+additionally bundles ``case.yaml`` (the CaseManifest, copied by ``_emit._copy_supporting_files``
+from the analysis's ``case_manifest_yaml`` arg) so ``case_name`` is now sourced and classifies
+BLOCKING via ``_EXPERIMENT_IDENTITY_FIELDS`` (two different case studies refuse to combine), and
+a SCRUBBED ``hpc_system_config.identity.yaml`` (emitted by ``_emit._emit_hpc_identity`` carrying
+only the allow-listed ``partitions`` + ``gpu_allocation_flavor``) so the compute-config surface
+now reaches the checker over a REAL read and classifies INFORMATIONAL via the ``_classify`` "hpc"
+branch (UVA vs Frontier is expected, non-blocking). Always-divergent identifiers (``analysis_id``,
+toolkit git-sha) are EXCLUDED from the divergence surface; ``analysis_id`` is kept only as the
+bundle LABEL.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from hhemt.version_migration.constants import BUNDLE_MANIFEST_FILENAME
@@ -47,6 +45,17 @@ from hhemt.version_migration.constants import BUNDLE_MANIFEST_FILENAME
 _CFG_SYSTEM_FILENAME = "cfg_system.yaml"
 _CFG_ANALYSIS_FILENAME = "cfg_analysis.yaml"
 _ROCRATE_FILENAME = "ro-crate-metadata.json"
+_CASE_MANIFEST_FILENAME = "case.yaml"
+_HPC_IDENTITY_FILENAME = "hpc_system_config.identity.yaml"
+
+#: Fields sourced from the SCRUBBED hpc_system_config.identity.yaml. The first fields
+#: to reach _classify's "hpc" branch over a REAL read. A divergence is INFORMATIONAL
+#: (UVA vs Frontier), never blocking.
+_HPC_IDENTITY_COMPARISON_FIELDS: tuple[str, ...] = (
+    "partitions",
+    "gpu_allocation_flavor",
+)
+_HPC_IDENTITY_FIELDS: frozenset[str] = frozenset(_HPC_IDENTITY_COMPARISON_FIELDS)
 
 # Curated comparison surface (the bundled identity + sensitivity fields). Kept
 # small and explicit so the divergence report stays signal-rich rather than
@@ -57,6 +66,8 @@ _CFG_SYSTEM_COMPARISON_FIELDS: tuple[str, ...] = (
     "toggle_tritonswmm_model",
     "toggle_swmm_model",
     "target_dem_resolution",
+    # pinned solver: a different sha = a different experiment (BLOCKING via _EXPERIMENT_IDENTITY_FIELDS)
+    "TRITONSWMM_branch_key",
 )
 _CFG_ANALYSIS_COMPARISON_FIELDS: tuple[str, ...] = (
     "weather_events_to_simulate",
@@ -68,7 +79,7 @@ _CFG_ANALYSIS_COMPARISON_FIELDS: tuple[str, ...] = (
 _RESERVED_LABEL_FIELDS: frozenset[str] = frozenset({"analysis_id"})
 
 
-class CompatibilitySeverity(str, Enum):  # noqa: UP042 -- (str, Enum) is deliberate (NOT StrEnum); see recompute.py
+class CompatibilitySeverity(StrEnum):
     """Combine-admissibility severity (NOT ADR-17 output-invalidation severity)."""
 
     INFORMATIONAL = "informational"  # expected divergence (HPC bucket): UVA vs Frontier
@@ -115,6 +126,15 @@ _EXPERIMENT_IDENTITY_FIELDS: frozenset[str] = frozenset(
         "toggle_tritonswmm_model",
         "toggle_triton_model",
         "toggle_swmm_model",
+        # A different pinned TRITON sha is a different solver, so an UNDECLARED cross-sha combine is
+        # BLOCKING: combining two arms at different solver versions without saying so would publish a
+        # silently-wrong North-Star figure. A DECLARED split (combine_bundle(declare_solver_split=True))
+        # downgrades this one field to WARNING, which admits the combine while leaving the divergence
+        # visible in the report — non-silence is the property this guard protects, not the refusal.
+        # A split pin is a legitimate design: running the clean arm at a fix's ANCESTOR and the resume
+        # arm at the fix makes a bit-identical result evidence for BOTH the fix working AND no
+        # regression against that ancestor, which one shared pin cannot show.
+        "TRITONSWMM_branch_key",
     }
 )
 
@@ -134,6 +154,8 @@ def _field_bucket(field_name: str) -> str:
     """
     from hhemt.config.reprex_taxonomy import field_bucket  # function-local: avoids the bundle.__init__ import cycle
 
+    if field_name in _HPC_IDENTITY_FIELDS:
+        return "hpc"  # compute-divergence surface (bundled hpc_system_config.identity.yaml)
     try:
         return field_bucket(field_name)  # config Path fields only
     except KeyError:
@@ -204,8 +226,9 @@ def _read_jsonld_core(bundle_root: Path) -> dict:
     Always-divergent identifiers (``analysis_id``, toolkit git-sha) are EXCLUDED
     from the divergence surface; ``analysis_id`` is returned only under the
     reserved ``"analysis_id"`` key that ``check_bundle_compatibility`` uses for
-    labeling, never for divergence. ``case_name`` is not bundled today and is not
-    sourced (see module docstring).
+    labeling, never for divergence. Phase 5 additionally sources ``case_name`` from
+    the bundled ``case.yaml`` (BLOCKING) and the scrubbed compute-config fields from
+    ``hpc_system_config.identity.yaml`` (INFORMATIONAL); see the module docstring.
 
     A missing cfg file yields no fields from it (not an error) — the checker
     compares whatever identity surface each bundle actually carries.
@@ -221,6 +244,15 @@ def _read_jsonld_core(bundle_root: Path) -> dict:
         if fname in anad:
             core[fname] = anad[fname]
 
+    hpcd = _load_yaml(bundle_root / _HPC_IDENTITY_FILENAME)
+    for fname in _HPC_IDENTITY_COMPARISON_FIELDS:
+        if fname in hpcd:
+            core[fname] = hpcd[fname]
+
+    cased = _load_yaml(bundle_root / _CASE_MANIFEST_FILENAME)
+    if "case_name" in cased:
+        core["case_name"] = cased["case_name"]  # BLOCKING (already in _EXPERIMENT_IDENTITY_FIELDS)
+
     rocrate = bundle_root / _ROCRATE_FILENAME
     if rocrate.exists():
         schema_version = _rocrate_schema_version(rocrate)
@@ -232,12 +264,66 @@ def _read_jsonld_core(bundle_root: Path) -> dict:
     return core
 
 
-def check_bundle_compatibility(bundle_roots: list[Path]) -> CompatibilityReport:
+#: Paired model-arm toggles (F1). tritonswmm FIRST (longer token) — mirrors
+#: combined_snakefile_generator._MODEL_TOKENS. Kept local (leaf-safe); a future refactor may
+#: lift _base_experiment / _MODEL_TOKENS to a shared bundle leaf consumed by both modules.
+_MODEL_TOKENS: tuple[str, ...] = ("_tritonswmm", "_triton")
+_PAIRED_MODEL_TOGGLES: frozenset[str] = frozenset({"toggle_triton_model", "toggle_tritonswmm_model"})
+
+
+def _base_experiment(eid: str) -> str:
+    """The analysis-id with its trailing model token stripped (synth_cc_clean_triton and
+    synth_cc_clean_tritonswmm both collapse to synth_cc_clean). Mirrors
+    combined_snakefile_generator._base_experiment (kept local to keep this module leaf-safe)."""
+    for _tok in _MODEL_TOKENS:
+        if eid.endswith(_tok):
+            return eid[: -len(_tok)]
+    return eid
+
+
+def _downgrade_paired_model_arms(report: CompatibilityReport, eids: list[str]) -> None:
+    """Auto-detect (F1): downgrade the paired model-toggle divergence from BLOCKING to WARNING
+    for the WHOLE combine set — and ONLY when — (a) the ONLY blocking-classified divergence
+    anywhere is toggle_triton_model / toggle_tritonswmm_model (no other experiment-identity
+    field blocks) AND (b) the eids genuinely collapse to fewer base experiments than eids (some
+    base carries >=2 model arms). This admits a both-models combine (one experiment's two arms,
+    or the 4-way clean/resume x triton/tritonswmm) while two unrelated single-arm experiments
+    (expA_triton + expB_tritonswmm: 2 bases == 2 eids, no collapse) STILL block."""
+    all_blocking = {d.field_name for d in report.divergences if d.severity is CompatibilitySeverity.BLOCKING}
+    real_collapse = len({_base_experiment(e) for e in eids}) < len(eids)
+    if not (all_blocking and all_blocking <= _PAIRED_MODEL_TOGGLES and real_collapse):
+        return
+    report.divergences = [
+        CompatibilityDivergence(
+            field_name=d.field_name,
+            bucket=d.bucket,
+            severity=CompatibilitySeverity.WARNING,  # both-arms-of-one-experiment: admissible (F1)
+            bundle_a=d.bundle_a,
+            bundle_b=d.bundle_b,
+            value_a=d.value_a,
+            value_b=d.value_b,
+        )
+        if (d.field_name in _PAIRED_MODEL_TOGGLES and d.severity is CompatibilitySeverity.BLOCKING)
+        else d
+        for d in report.divergences
+    ]
+
+
+def check_bundle_compatibility(
+    bundle_roots: list[Path],
+    *,
+    declare_solver_split: bool = False,
+) -> CompatibilityReport:
     """Compare N bundles' metadata pairwise; return a CompatibilityReport.
 
     Iterates each pair, unions their comparison field sets (excluding reserved
     label keys), and emits a CompatibilityDivergence (classified via _classify)
     for each field whose values differ. R2/R3: callers abort on report.blocking.
+
+    ``declare_solver_split`` is the operator asserting that the bundles run DIFFERENT
+    pinned solvers on purpose. It downgrades the ``TRITONSWMM_branch_key`` divergence
+    from BLOCKING to WARNING — the divergence is still reported, so the combined report
+    still carries it. Default False keeps an accidental cross-sha combine refused.
     """
     report = CompatibilityReport()
     roots = sorted(bundle_roots)
@@ -261,4 +347,26 @@ def check_bundle_compatibility(bundle_roots: list[Path]) -> CompatibilityReport:
                             value_b=vb,
                         )
                     )
+    # ORDER IS THE MECHANISM. This runs BEFORE _downgrade_paired_model_arms because that function
+    # relaxes the model toggles only when `all_blocking <= _PAIRED_MODEL_TOGGLES`. Leaving the sha
+    # BLOCKING here would keep it in `all_blocking`, fail that subset test, and re-block the paired
+    # model toggles too — so a 4-way clean/resume x triton/tritonswmm combine that worked at a shared
+    # pin would stop working, for a reason the error text never names. Downgrading first shrinks
+    # `all_blocking` back to the toggles and the existing test passes untouched.
+    if declare_solver_split:
+        report.divergences = [
+            CompatibilityDivergence(
+                field_name=d.field_name,
+                bucket=d.bucket,
+                severity=CompatibilitySeverity.WARNING,
+                bundle_a=d.bundle_a,
+                bundle_b=d.bundle_b,
+                value_a=d.value_a,
+                value_b=d.value_b,
+            )
+            if d.field_name == "TRITONSWMM_branch_key"
+            else d
+            for d in report.divergences
+        ]
+    _downgrade_paired_model_arms(report, [cores[r].get("analysis_id", str(r)) for r in roots])
     return report

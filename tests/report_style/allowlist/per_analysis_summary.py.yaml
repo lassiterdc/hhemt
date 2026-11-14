@@ -1,0 +1,6 @@
+source: src/hhemt/report_renderers/per_analysis_summary.py
+entries:
+- rule: retired_word
+  string: sims
+  status: permitted
+  reason: Directory name in a path the renderer builds to find model logs; the page never prints it.

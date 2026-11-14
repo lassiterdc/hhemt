@@ -1,0 +1,4 @@
+{"attempt": 0, "wall_s": 117.61507987976074, "completed": false, "slurm_jobid": "18396225", "slurm_step_id": "0"}
+{"attempt": 1, "wall_s": 103.74779772758484, "completed": false, "slurm_jobid": "18396225", "slurm_step_id": "0"}
+{"attempt": 2, "wall_s": 123.68411421775818, "completed": false, "slurm_jobid": "18396225", "slurm_step_id": "0"}
+{"attempt": 3, "wall_s": 91.07386589050293, "completed": true, "slurm_jobid": "18396225", "slurm_step_id": "0"}

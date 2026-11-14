@@ -1,0 +1,7 @@
+extends: existence
+message: 'Cut a sentence-final ''one''.'
+level: warning
+ignorecase: false
+nonword: true
+raw:
+  - '\sone\.'

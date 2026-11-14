@@ -1,0 +1,7 @@
+extends: existence
+message: 'Avoid ''which'': start a new sentence or name the referent.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '(?<![\n])(?<!^)\bwhich\b|(?<=(?:^|\n))which\b(?!\s*:\s|\s*(?:\n|$))'

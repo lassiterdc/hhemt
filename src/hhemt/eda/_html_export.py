@@ -42,6 +42,10 @@ def export_eda_html(
             timeout=timeout,
             kernel_name=kernel_name,
             resources={"metadata": {"path": str(root)}},
+            # Raise the kernel app's log threshold above WARNING so the benign
+            # "Kernel is running over TCP without encryption" message
+            # (ipykernel/kernelapp.py) does not clutter the EDA loop console.
+            extra_arguments=["--IPKernelApp.log_level=ERROR"],
         )
         client.execute()
         exporter = HTMLExporter(embed_images=True)

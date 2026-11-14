@@ -1,0 +1,10 @@
+# The match is the token that ends in the first comma, with the rest of the suite's pattern in a 
+# lookahead, so the alert lands on the physical line of the comma even when the list is hard-wrapped 
+# or indented as a list item (Vale drops an alert whose matched text is not contiguous in the source).
+extends: existence
+message: 'Put a comma before the closing ''and'' or ''or'' of a list of three or more.'
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\S*,(?=\s+(?:[\w''’-]+\s+){0,2}[\w''’-]+\s+(?:and|or)\s+[\w''’-]+)'

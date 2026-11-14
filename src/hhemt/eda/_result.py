@@ -29,11 +29,11 @@ class EdaResult:
 
 @dataclass(frozen=True)
 class EdaReportResult:
-    """Return value of analysis.eda() / Bundle.eda() (the facade layer).
+    """Return value of ``analysis.eda()`` and ``Bundle.eda()``, the facade layer.
 
-    Carries the three artifact classes the facade produces: the assembled doc,
-    the rendered EDA plots, and the calc-stage verdicts (empty on Bundle.eda,
-    which skips calc).
+    Carries the artifact classes the facade produces. The classes are the assembled doc,
+    the rendered EDA plots, and the calc-stage verdicts. The verdicts stay empty on ``Bundle.eda()``,
+    where calc is skipped.
     """
 
     report_path: Path | None

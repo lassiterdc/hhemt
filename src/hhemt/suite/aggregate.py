@@ -1,0 +1,2169 @@
+"""Aggregate per-chunk artifacts into one verdict for an hhemt suite run.
+
+A suite run partitions the collected tests into CHUNKS, each run as one pytest
+session (one element of a SLURM array). The run directory holds a `manifest.json`
+written at plan time -- the collected node ids, the chunk assignment and the source
+sha the run is pinned to -- and, per chunk, a `chunk-NN.status.json` sidecar and a
+`chunk-NN.junit.xml`. `aggregate()` turns those files into one result; `main()` adds the
+version-conformance check and writes the summary `.json` and `.md` beside them.
+
+Two vocabularies, at two granularities, and they are not interchangeable.
+
+CHUNK state
+    PASS     ran to completion with no failing or unevaluated test
+    FAIL     ran to completion with a non-zero pytest exit and no VOID cause --
+             a failing test, an erroring one, or any other exit code not listed
+             under VOID
+    VOID     ran, but its own preconditions were violated, so its numbers are
+             not evidence: an expected session fixture did not complete setup,
+             the source sha differed from the pinned one or moved under it, the
+             tree was dirty, processes disagreed on hhemt.__file__ or none
+             recorded it, the import guard exited 99, pytest reported
+             INTERRUPTED/INTERNAL_ERROR/USAGE_ERROR, SLURM killed it, or it left
+             no junit file. `classify_chunk` is where that list is enforced.
+    MISSING  the manifest declares this chunk and no status sidecar exists
+
+TEST outcome
+    PASSED               the body ran and asserted true
+    FAILED               the body ran and asserted false
+    UNEVALUATED          setup or teardown raised, so the body never ran
+    SKIPPED_STRUCTURAL   the environment forbids the assertion, so this site can never
+                         evaluate it -- a scheduler-gated test inside a SLURM allocation
+                         is the standing case. NOT benign: it is the complement the run
+                         did not cover, and it is reported by node id.
+    SKIPPED_INCIDENTAL   not on STRUCTURAL_SKIP_REASONS -- an ABSENCE of evidence, not
+                         evidence of benignity. The class holds TWO populations. A skip
+                         whose guard reads the HOST or VENUE (an optional dependency,
+                         a credential, a core count, symlink support) is a capability
+                         gate and benign. A skip whose guard reads a property of the
+                         FIXTURE the test itself selected ("not present in fixture",
+                         "not enabled for this fixture", "requires ... not set on synth
+                         fixture") forfeits coverage that WAS available and is NOT
+                         benign. The junit skip message is carried per node id so a
+                         reader can tell the two apart; this module does NOT classify
+                         them, and a header that said "benign" for the whole class was
+                         asserting a property the classifier cannot establish. A fixture
+                         property that is itself downstream of a host capability (a
+                         compile that did not succeed) is the one measured residual:
+                         legitimate, and its reason should name the host fact.
+    ABSENT               the manifest collected it and no junit entry mentions it
+
+A run reports a SCOPE and never a bare verdict. `scope=array` means the run covered only
+what a scheduler context can evaluate; `scope=union` is the only form that supports a
+suite-level claim. Collapsing structural and incidental skips into one `skipped` count is
+the same error as collapsing VOID into FAIL: it hides that two runs did not attempt the
+same work.
+
+MISSING is enumerated from the manifest rather than from the directory listing,
+because a listing cannot report the absence of something it does not know to
+expect. UNEVALUATED is kept apart from FAILED because a dead session fixture
+takes down every test co-located with it, and "which test broke" is the wrong
+question to invite about tests that never ran.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+from datetime import UTC, datetime
+from pathlib import Path
+
+#: pytest exit codes that mean the session did not deliver a verdict.
+NON_VERDICT_EXITS = {2, 3, 4}
+
+#: Exit code the toolkit's repo-root import guard uses.
+IMPORT_GUARD_EXIT = 99
+
+#: Skip reasons that mean THIS SITE CAN NEVER EVALUATE THE TEST, as opposed to a
+#: local, incidental absence. Exact-match on the junit skip message. Adding a pattern
+#: widens the declared complement; it must never be widened to silence a real skip.
+#:
+#: EXACT-MATCH IS A COUPLING TO THE `skipif` REASON STRINGS IN THIS REPO'S OWN TESTS, AND IT
+#: HAS ALREADY BROKEN ONCE. A RETIRED entry, "Only runs on non-HPC systems.", matched 17
+#: tests until every mark carrying it was removed (see
+#: `tests/utils_for_testing.py::on_scheduler_node`, whose docstring records the removal).
+#: From 2026-08-25 this tuple matched ZERO tests, so `structurally_excluded`
+#: read 0 and `summary.md` printed "None -- every collected test was evaluable at this
+#: scope" while a scheduler-gated test sat in the INCIDENTAL bucket. The failure is
+#: silent in the reassuring direction: a narrowed pattern makes the run look MORE
+#: complete, not less. No test currently compares this tuple against those reason strings
+#: (they sit in `tests/test_doi_roundtrip_e2e.py` and
+#: `tests/test_synth_09_from_doi_run_proof.py`), so the next rename goes unnoticed; when
+#: such a `skipif` reason changes, this tuple must change with it.
+#:
+#: RUNTIME SHADOWING, a SECOND way this tuple silently under-matches: the entry
+#: "live-deposit run-proof; do not launch on an HPC scheduler node." is never PRODUCED on
+#: a scheduler node, because the three tests in tests/test_doi_roundtrip_e2e.py declare an
+#: operator env gate AHEAD of their scheduler gate and pytest's first truthy skipif wins.
+#: They skip with the OPERATOR reason, land in SKIPPED_INCIDENTAL, and never reach
+#: `structural`. The tuple can therefore match zero (the rename case above) AND, with both
+#: entries current, match only one of the four tests that declare an entry: those three,
+#: plus the one in tests/test_synth_09_from_doi_run_proof.py that carries the "Local
+#: coupled run-proof" reason. Both failures are silent in the reassuring direction.
+STRUCTURAL_SKIP_REASONS: tuple[str, ...] = (
+    "Local coupled run-proof; do not launch on an HPC scheduler node.",
+    "live-deposit run-proof; do not launch on an HPC scheduler node.",
+)
+
+#: SLURM states that invalidate a chunk regardless of what its junit says.
+KILLED_STATES = {"TIMEOUT", "PREEMPTED", "CANCELLED", "NODE_FAIL", "OUT_OF_MEMORY"}
+
+
+#: The suffix pytest-xdist's ``--dist loadgroup`` appends to a test's reported name: ``@{xdist_group name}``. The group
+#: text has no ``@``, no bracket and no whitespace (it holds letters, digits, ``:``, ``+``, ``_``, ``-``, ``.``).
+_XDIST_GROUP_SUFFIX = re.compile(r"@[^@\[\]\s]+$")
+
+
+def _strip_group_suffix(name: str) -> str:
+    """Drop a trailing xdist ``@{group}`` suffix from a junit test name, and nothing else.
+
+    Only a suffix AFTER the last character of the name matters: an ``@`` inside a parametrised id's brackets
+    (``test_x[a@b]``) is part of the id and is kept, because the pattern excludes a bracket after the ``@``. A name
+    with no suffix is returned unchanged."""
+    return _XDIST_GROUP_SUFFIX.sub("", name)
+
+
+def _node_id(tc) -> tuple[str, bool]:
+    """Reconstruct the pytest node id from a junit testcase element.
+
+    pytest's junit splits an id across TWO attributes: `file` carries the path and
+    `classname` carries the dotted MODULE path plus any enclosing class chain, while
+    `name` carries only the final component. Building the id from `file` + `name`
+    therefore DROPS every class segment, so `tests/x.py::TestC::test_m` is
+    reconstructed as `tests/x.py::test_m` and matches no manifest entry.
+
+    Returns (node_id, derivable). `derivable` is False when `classname` does not
+    extend the module prefix implied by `file` -- the caller records those rather
+    than letting an unreconstructable id fall silently into ABSENT, which is the
+    failure this function exists to end.
+    """
+    f = tc.get("file") or ""
+    name = _strip_group_suffix(tc.get("name") or "")
+    cls = tc.get("classname") or ""
+    if not f:
+        return name, False
+    prefix = str(Path(f).with_suffix("")).replace(os.sep, ".")
+    if cls == prefix:
+        return f"{f}::{name}", True
+    if cls.startswith(prefix + "."):
+        chain = cls[len(prefix) + 1 :].split(".")
+        return f"{f}::" + "::".join([*chain, name]), True
+    return f"{f}::{name}", False
+
+
+def parse_junit(path: Path) -> dict[str, str]:
+    """Map node id -> PASSED | FAILED | UNEVALUATED | SKIPPED_STRUCTURAL | SKIPPED_INCIDENTAL."""
+    outcomes: dict[str, str] = {}
+    root = ET.parse(path).getroot()
+    for tc in root.iter("testcase"):
+        node_id, _ = _node_id(tc)
+        kinds = {c.tag for c in tc}
+        if "error" in kinds:
+            outcome = "UNEVALUATED"
+        elif "failure" in kinds:
+            outcome = "FAILED"
+        elif "skipped" in kinds:
+            sk = tc.find("skipped")
+            msg = (sk.get("message") or "") if sk is not None else ""
+            outcome = "SKIPPED_STRUCTURAL" if msg in STRUCTURAL_SKIP_REASONS else "SKIPPED_INCIDENTAL"
+        else:
+            outcome = "PASSED"
+        # A test can appear twice in one file once the group suffix is stripped (once suffixed, once plain, e.g. a
+        # retry): fold the two by the cross-chunk rule, which keeps the more severe evaluated outcome.
+        merge_outcomes(outcomes, {node_id: outcome}, problems=[])
+    return outcomes
+
+
+def unevaluated_reasons(path: Path) -> dict[str, list[str]]:
+    """Group unevaluated node ids by the first line of their error text."""
+    groups: dict[str, list[str]] = defaultdict(list)
+    root = ET.parse(path).getroot()
+    for tc in root.iter("testcase"):
+        err = tc.find("error")
+        if err is None:
+            continue
+        node_id, _ = _node_id(tc)
+        msg = (err.get("message") or (err.text or "")).strip().splitlines()
+        groups[msg[0] if msg else "unknown"].append(node_id)
+    return {k: sorted(v) for k, v in groups.items()}
+
+
+def skip_reasons(path: Path) -> dict[str, str]:
+    """Map skipped node id -> its junit `<skipped message=...>`, verbatim.
+
+    The SIBLING of `unevaluated_reasons`: a second parser over the same junit that
+    carries the reason in its OWN mapping. It never touches `outcomes`, and that is the
+    design rather than a convenience. `outcomes` is `dict[str, str]` and FOUR consumers
+    key on its VALUE by exact match -- `_of`'s `o == kind`, the `_EVALUATED_OUTCOMES`
+    membership tests in `merge_outcomes` and in the declared-complement check, and
+    `merge_outcomes`' terminal structural-wins branch. Widening that value to carry the
+    reason (a `(class, reason)` tuple) defeats all four without raising: `_of("FAILED")` returns
+    `[]` and the run reports zero failures; the one raising site, `_OUTCOME_SEVERITY[old]`,
+    is reachable only when both values pass the membership test the tuple already broke.
+    Measured, not reasoned. The run is still NOT-GREEN — every bucket empties, so the
+    partition identity trips — but the count lies while the verdict does not, and the
+    failing test is unnamed. A separate mapping leaves every one of those comparisons
+    byte-identical.
+
+    Every `<skipped>` element is recorded, whatever else the testcase carries; the payload
+    filters to the INCIDENTAL set, so a node `parse_junit` classifies as UNEVALUATED or
+    FAILED never reaches the rendered block even if its junit also carries a `<skipped>`.
+    """
+    reasons: dict[str, str] = {}
+    root = ET.parse(path).getroot()
+    for tc in root.iter("testcase"):
+        sk = tc.find("skipped")
+        if sk is None:
+            continue
+        node_id, _ = _node_id(tc)
+        reasons[node_id] = (sk.get("message") or "").strip()
+    return reasons
+
+
+#: What a slug-root entry IS, decided from raw evidence rather than from a name list. The
+#: slug root is the per-worktree runs directory the synthetic test fixtures share,
+#: `.../synthetic_test_runs/{worktree slug}/`; each entry under it is a directory or file
+#: some test created there.
+#: A name list is a derivation with a horizon -- a staging dir added later would fall
+#: through it and be reported as an analysis-tree race, which is the same over-report
+#: this classifier exists to end, one size smaller. The discriminator is the toolkit's
+#: OWN layout stamp: every analysis and system tree carries `_version.json`; the shared
+#: compiled tier and the config staging dir do not. Measured on the slug cache
+#: 2026-08-23: 13/13 trees carry it, 0/2 shared-by-design dirs do.
+#:
+#: The coupling is real and is made VISIBLE rather than assumed -- every classification
+#: is reported WITH the evidence that produced it, so a stamp-convention change shows up
+#: as a wrong label a reader can see, not as a silent reclassification. `aggregate` also
+#: reports the all-shared-by-design case as an anomaly for the same reason.
+ENTRY_ANALYSIS_TREE = "ANALYSIS_TREE"
+ENTRY_SHARED_BY_DESIGN = "SHARED_BY_DESIGN"
+ENTRY_TRANSIENT = "TRANSIENT"
+ENTRY_UNKNOWN = "UNKNOWN"
+
+
+def _is_coordination_path(rel: str) -> bool:
+    """True when a write sample is a lock/marker rather than a build product.
+
+    NAME-BASED, and that is a real limitation rather than an oversight -- it is the same
+    fragile-string-coupling class this module already documents for
+    STRUCTURAL_SKIP_REASONS. It is tolerable here because it fails in the SAFE direction:
+    an unrecognised name is treated as PAYLOAD, so a new lock spelled without a leading
+    dot produces a false BLOCKING (loud, investigable) rather than a false advisory
+    (silent, and the direction that would defeat the verdict).
+
+    Measured against the live corpus on 20260904T074157Z_cd4d8f6d9a91: the two lock paths
+    actually written under `_software` are `.triton.provision.lock` and
+    `triton/.build_tritonswmm_cpu.compile.lock`, and both match on either clause.
+    """
+    base = os.path.basename(rel)
+    return base.startswith(".") or base.endswith(".lock")
+
+
+def classify_slug_entry(rec: dict) -> str:
+    """ANALYSIS_TREE | SHARED_BY_DESIGN | TRANSIENT | UNKNOWN, from recorded evidence."""
+    is_dir = rec.get("is_dir")
+    if is_dir is None:
+        return ENTRY_UNKNOWN
+    if not is_dir:
+        # A plain file at the slug root: a `*.lock`, a stray config. Never a race surface.
+        # `_version.json.lock` written by every chunk is the LOCK WORKING.
+        return ENTRY_TRANSIENT
+    stamp = rec.get("has_version_stamp")
+    if stamp is None:
+        return ENTRY_UNKNOWN
+    return ENTRY_ANALYSIS_TREE if stamp else ENTRY_SHARED_BY_DESIGN
+
+
+def _parse_instant(value) -> datetime | None:
+    """A recorded ISO-8601 instant as an aware datetime, or None when absent or unparseable."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _tail_ran_after(manifest: dict, statuses: dict, tail_cid: int) -> bool:
+    """True when the tail chunk's recorded `started_at` is not before the `ended_at` of EVERY array chunk.
+
+    The estate's single-chunk re-run submits with no dependency, so dispatch order is not a property of the run
+    directory; the only order evidence is each chunk's recorded wall-clock bounds. The comparison is
+    `tail.started_at >= array.ended_at` over the CURRENT status of each array chunk, with NO clock-skew tolerance (a
+    skew that inverts the order keeps the tail in the joins, the loud direction), so equal instants exempt the tail.
+    An array chunk re-run after the tail has overwritten its status with a later `ended_at`, which reads as an
+    overlap: conservative and loud, and the operator re-runs the tail afterwards. A chunk with no status, or a status
+    lacking either time, gives the tail no exemption.
+    """
+    tail_status = statuses.get(tail_cid) or {}
+    tail_start = _parse_instant(tail_status.get("started_at"))
+    if tail_start is None or _parse_instant(tail_status.get("ended_at")) is None:
+        return False
+    for c in manifest["chunks"]:
+        if c["chunk_id"] == tail_cid:
+            continue
+        st = statuses.get(c["chunk_id"]) or {}
+        ended = _parse_instant(st.get("ended_at"))
+        if ended is None or _parse_instant(st.get("started_at")) is None or tail_start < ended:
+            return False
+    return True
+
+
+def skipped_non_xfail_nodes(junit: Path) -> set[str]:
+    """Node ids whose junit testcase is SKIPPED by a skip that is not an xfail.
+
+    pytest writes `<skipped type="pytest.skip">` for a skip and `<skipped type="pytest.xfail">` for an xfail-marked
+    test, and it reports an xfail-marked test whose FIXTURE failed setup the same way as any xfail. So the `type`
+    attribute, not the presence of `<skipped>`, separates "pytest declined to run this test" from "this test's
+    fixture failed and the marker hid it". A testcase that also carries an error or a failure is not counted."""
+    nodes: set[str] = set()
+    for tc in ET.parse(junit).getroot().iter("testcase"):
+        kinds = {c.tag for c in tc}
+        sk = tc.find("skipped")
+        if sk is None or kinds & {"error", "failure"}:
+            continue
+        if sk.get("type") != "pytest.xfail":
+            nodes.add(_node_id(tc)[0])
+    return nodes
+
+
+def classify_chunk(
+    status: dict | None,
+    junit: Path | None,
+    pinned_sha: str,
+    expected_fixtures: list[str] | None = None,
+    expected_fixture_holders: dict[str, list[str]] | None = None,
+    advisories: list[str] | None = None,
+) -> tuple[str, list[str]]:
+    if status is None:
+        return "MISSING", ["no status sidecar for a chunk the manifest declares"]
+
+    reasons: list[str] = []
+
+    # A session fixture the manifest expected but that never completed setup is a
+    # lost PRECONDITION, so the chunk is VOID and the response is to re-run it. A
+    # test whose own function-scoped fixture raised is a defect, so the chunk stays
+    # FAIL and the run is NOT-GREEN through the UNEVALUATED set instead.
+    #
+    # ONE EXCEPTION, because a skipped holder never asks for the fixture: a dead fixture EVERY one of whose
+    # recorded holders the junit reports skipped by a skip that is not an xfail lost no precondition (pytest skipped
+    # the test before fixture setup), so it is reported through `advisories` and not as a VOID reason. Any holder not
+    # so skipped, no recorded holders, or a manifest without `expected_fixture_holders` (a run planned before the
+    # field existed) keeps the VOID exactly.
+    ok = set(status.get("session_fixtures_ok") or [])
+    dead = sorted(set(expected_fixtures or []) - ok)
+    if dead and expected_fixture_holders and junit is not None and junit.exists():
+        skipped = skipped_non_xfail_nodes(junit)
+        excused = [
+            fx for fx in dead if expected_fixture_holders.get(fx) and set(expected_fixture_holders[fx]) <= skipped
+        ]
+        for fx in excused:
+            if advisories is not None:
+                advisories.append(
+                    f"expected session fixture {fx} did not complete setup, and every holder was skipped "
+                    f"(not xfail): {sorted(expected_fixture_holders[fx])}"
+                )
+        dead = [fx for fx in dead if fx not in excused]
+    if dead:
+        reasons.append(f"expected session fixture(s) did not complete setup: {dead}")
+    if status.get("source_sha_start") != pinned_sha:
+        reasons.append(f"source_sha_start {status.get('source_sha_start')} != pinned {pinned_sha}")
+    if status.get("source_sha_end") != status.get("source_sha_start"):
+        reasons.append("source sha changed while the chunk was running")
+    if status.get("dirty_start") or status.get("dirty_end"):
+        reasons.append("source tree was dirty")
+
+    resolutions = {v for v in (status.get("resolved_hhemt") or {}).values() if v}
+    if len(resolutions) > 1:
+        reasons.append(f"processes disagreed on hhemt.__file__: {sorted(resolutions)}")
+    if not resolutions:
+        reasons.append("no process recorded a resolved hhemt.__file__")
+
+    rc = status.get("pytest_exit")
+    if rc == IMPORT_GUARD_EXIT:
+        reasons.append("import guard exited 99")
+    if rc in NON_VERDICT_EXITS:
+        reasons.append(f"pytest exit {rc} is INTERRUPTED/INTERNAL_ERROR/USAGE_ERROR")
+    if str(status.get("slurm_state", "")).upper() in KILLED_STATES:
+        reasons.append(f"SLURM state {status.get('slurm_state')}")
+    if junit is None or not junit.exists():
+        reasons.append("chunk produced no junit file")
+
+    if reasons:
+        return "VOID", reasons
+    if rc == 0:
+        return "PASS", []
+    return "FAIL", []
+
+
+#: The three outcomes meaning THE SITE ATTEMPTED THE TEST, as opposed to declining it.
+#: `UNEVALUATED` is deliberately included: it is non-skip and already verdict-bearing, so
+#: counting it as attempted can never manufacture a green.
+_EVALUATED_OUTCOMES = frozenset({"PASSED", "FAILED", "UNEVALUATED"})
+
+#: Severity for resolving a disagreement between two EVALUATED outcomes. Severity, never
+#: arrival order -- resolving by order is the defect `merge_outcomes` exists to remove, and
+#: it would be absurd to remove it with a rule that still depends on order.
+_OUTCOME_SEVERITY = {"PASSED": 0, "UNEVALUATED": 1, "FAILED": 2}
+
+#: Verdict-line field names, defined ONCE so the line and the `counts` dict cannot disagree
+#: and a rename is one mechanical edit.
+_FIELD_SIGNALLED = "solver_setup_signalled"
+_FIELD_UNSIGNALLED = "unsignalled"
+
+
+def _fmt_signal_count(n: int | None) -> str:
+    """Verdict-line rendering of a signal count. `None` means the plan step recorded no
+    signals at all, which is NOT zero: zero would report a bound as a measurement over
+    evidence never collected."""
+    return "unrecorded" if n is None else str(n)
+
+
+def merge_outcomes(existing: dict[str, str], incoming: dict[str, str], *, problems: list[str]) -> None:
+    """Fold one chunk's junit outcomes into the cross-chunk map BY RULE, not by order.
+
+    `parse_junit` emits FIVE outcomes -- PASSED, FAILED, UNEVALUATED, SKIPPED_STRUCTURAL,
+    SKIPPED_INCIDENTAL -- so the rule is stated over the whole partition and no ordered
+    pair is left undefined. An undefined pair is not academic: a test may be skipped for a
+    structural reason in one context and an INCIDENTAL one in another (an operator env
+    gate that shadows a scheduler gate is live in this corpus), so the evaluated-versus-
+    INCIDENTAL cell is the one a first real complement run hits.
+
+    Rule, over the two-class partition {evaluated} vs {SKIPPED_STRUCTURAL,
+    SKIPPED_INCIDENTAL}:
+
+    * unseen node id, or an identical repeat -> take the incoming value.
+    * evaluated vs EITHER skip class -> the EVALUATED value wins, in either arrival order.
+      For SKIPPED_STRUCTURAL the reason is that a site which ran the test outranks a site
+      that structurally could not. For SKIPPED_INCIDENTAL the reason is the same and the
+      need is stronger: an incidental skip records a local absence, which is precisely the
+      condition another context is expected to lack.
+    * the two skip classes disagreeing -> SKIPPED_STRUCTURAL wins, because a site that can
+      never evaluate the test is a stronger statement about coverage than a site that
+      merely did not this time, and the complement listing must not lose the member.
+    * two EVALUATED values disagreeing -> record a problem naming the node id and both
+      values, and keep the MORE SEVERE under _OUTCOME_SEVERITY.
+    """
+    for node_id, new in incoming.items():
+        old = existing.get(node_id)
+        if old is None or old == new:
+            existing[node_id] = new
+        elif old in _EVALUATED_OUTCOMES and new in _EVALUATED_OUTCOMES:
+            problems.append(
+                f"{node_id} reported two different evaluated outcomes across chunks: "
+                f"{old} and {new}. Keeping the more severe."
+            )
+            existing[node_id] = old if _OUTCOME_SEVERITY[old] >= _OUTCOME_SEVERITY[new] else new
+        elif new in _EVALUATED_OUTCOMES:
+            existing[node_id] = new
+        elif old in _EVALUATED_OUTCOMES:
+            existing[node_id] = old
+        else:
+            existing[node_id] = "SKIPPED_STRUCTURAL" if "SKIPPED_STRUCTURAL" in (old, new) else new
+
+
+def classify_solver_setup(node_ids: list[str], signals: dict[str, list[str]]) -> tuple[list[str], list[str]]:
+    """(signalled, unsignalled) over `node_ids`, from PLAN-TIME evidence only.
+
+    Signalled means the node's evidence list contains a `fixture:` token. A `mark:slow`
+    token alone does NOT signal: `slow` is a DURATION marker and does not answer whether a
+    test compiles or runs a solver -- tests carry it for being long. `mark:` tokens are
+    still carried into the rendered evidence, where they corroborate; they just do not
+    classify.
+
+    `NO` IS NEVER ASSERTED. These signals detect a DECLARATION, while the project's rule
+    for where a simulation-bearing test may run defines membership by BEHAVIOUR: a test that
+    compiles or executes a solver, "directly or through a fixture", runs on UVA Rivanna and
+    never on a developer laptop. The two extensions provably diverge: a test drawing a
+    compile fixture through `request.getfixturevalue()` is simulation-bearing by that rule
+    and emits no signal, because a run-time fixture request never enters the
+    collection-time closure. That is why the field is named for the EVIDENCE. A field
+    named "simulation-bearing" would carry the rule's authority without its extension, and
+    a reader meeting an unsignalled member would read it as cleared for a laptop run, which
+    the rule does not grant.
+
+    Both counts are BOUNDS. `signalled` is a floor and `unsignalled` bounds this
+    classifier's silence, not any property of the tests.
+    """
+    signalled, unsignalled = [], []
+    for n in node_ids:
+        (signalled if any(s.startswith("fixture:") for s in signals.get(n) or []) else unsignalled).append(n)
+    return signalled, unsignalled
+
+
+# --------------------------------------------------------------------------
+# The run's DISCLOSURE — what a green did not exercise
+# --------------------------------------------------------------------------
+# A cached run and a cleared run report the same GREEN, so the verdict alone cannot say
+# which of them ran. The disclosure block is that statement: nine keys, each naming one
+# thing a green run may have skipped. It is assembled from ARTIFACTS ONLY -- the manifest
+# for the run's address and compile conjuncts, each chunk's session inventory for what the
+# cache actually did, and the junit buckets for what was excluded -- because the operator's
+# account of a run is the one input a later reader cannot check.
+
+#: The nine keys, EXACT and CLOSED. The DoD counts them, so a tenth key added for
+#: convenience fails the count and a dropped key leaves its loss unstated; both directions
+#: are the same defect wearing different signs.
+DISCLOSURE_KEYS = (
+    "adopted_vs_built",
+    "build_dirs_reused",
+    "tier0_key",
+    "preprocessing_skipped",
+    "triton_clone_borrowed",
+    "excluded_nodes",
+    "scope",
+    "tier_address",
+    "compile_tier_outcome",
+)
+
+#: The vocabulary `adopted_vs_built` states may take. `undetermined` is FIRST-CLASS rather
+#: than an apology: it is what a session reports when it ran a fixture whose adoptable tree
+#: it could not locate, and collapsing it into `built` would report a build nothing
+#: evidences -- the failure mode this block exists to remove, not a harmless default.
+DISCLOSURE_FIXTURE_STATES = ("built", "adopted", "undetermined", "not-exercised")
+
+#: Carried inside the compile block's own text, where a reader meets the number it
+#: qualifies. A fresh worktree has no compiled tier to adopt -- T2 is per-worktree and
+#: deliberately non-relocatable -- so "built this session" is what a clean checkout ALWAYS
+#: says. A reader who takes that line for a signal reads the same value on every new
+#: worktree as evidence of a rebuild, and the loss is invisible in the reassuring direction.
+FRESH_WORKTREE_COMPILE_NOTE = (
+    'Every fresh worktree reports "built this session" for the compile tier. T2 is '
+    "per-worktree and deliberately non-relocatable, so a new worktree has nothing to "
+    "adopt. That is the design, not a signal about the run."
+)
+
+
+def _merge_cache_disclosures(sidecars: list[dict]) -> dict:
+    """Fold the per-chunk session inventories into one view of the run's cache behaviour.
+
+    WORST-FIRST, and the direction is the point rather than a preference. A fixture is
+    ADOPTED if ANY chunk adopted it, because the question is whether a cached tree stood in
+    for a build SOMEWHERE in this run; a majority vote would let one adopting chunk hide
+    behind the others, and `undetermined` outranks `built` for the same reason -- one chunk
+    that could not tell is a fact about the run.
+    """
+    state_rank = {state: i for i, state in enumerate(("adopted", "undetermined", "built", "not-exercised"))}
+    entries: dict[str, dict] = {}
+    observed: dict[str, list[str]] = defaultdict(list)
+    for sidecar in sidecars:
+        for name, entry in (sidecar.get("adopted_vs_built") or {}).items():
+            observed[name].append(entry.get("state"))
+            current = entries.get(name)
+            if current is None or state_rank.get(entry.get("state"), 99) < state_rank.get(current.get("state"), 99):
+                entries[name] = entry
+
+    # Build dirs: union by name. `reused` takes the FALSE where any chunk watched a build
+    # appear during its own session, because "this build predates the run" is a claim about
+    # the run and one chunk's observation refutes it for all of them.
+    builds: dict[str, dict] = {}
+    for sidecar in sidecars:
+        for row in (sidecar.get("build_dirs") or {}).get("dirs") or []:
+            name = row.get("build_dir")
+            if name is None:
+                continue
+            prior = builds.get(name)
+            if prior is None:
+                builds[name] = dict(row)
+            elif prior.get("reused") is not False and row.get("reused") is False:
+                prior["reused"] = False
+    build_rows = [builds[name] for name in sorted(builds)]
+
+    roots: dict[str, bool | None] = {"T0": None, "T1": None, "T2": None, "T3": None}
+    for sidecar in sidecars:
+        for root, value in (sidecar.get("roots_rebuilt") or {}).items():
+            if value is True:
+                roots[root] = True
+            elif value is False and roots.get(root) is None:
+                roots[root] = False
+
+    borrowed = None
+    for sidecar in sidecars:
+        value = (sidecar.get("triton_clone") or {}).get("borrowed")
+        if value is True:
+            borrowed = True
+        elif value is False and borrowed is None:
+            borrowed = False
+
+    expected = [((s.get("build_dirs") or {}).get("expected")) for s in sidecars]
+    expected = max([e for e in expected if isinstance(e, int)], default=None)
+    clone_tree = next(((s.get("triton_clone") or {}).get("tree") for s in sidecars if s.get("triton_clone")), None)
+    return {
+        "entries": entries,
+        "states_observed": {name: sorted(set(values)) for name, values in observed.items()},
+        "build_dirs": {
+            "expected": expected,
+            "present": len(build_rows),
+            "reused": (
+                None
+                if not sidecars or any(row.get("reused") is None for row in build_rows)
+                else sum(1 for row in build_rows if row.get("reused"))
+            ),
+            "dirs": build_rows,
+        },
+        "triton_clone": {"borrowed": borrowed, "tree": clone_tree},
+        "roots_rebuilt": roots,
+        "tier_address": next((s.get("tier_address") for s in sidecars if s.get("tier_address")), None),
+        "sessions": len(sidecars),
+    }
+
+
+def build_disclosure(
+    manifest: dict,
+    *,
+    scope: str,
+    passed: list[str],
+    uneval: list[str],
+    structural: list[str],
+    incidental: list[str],
+    absent_list: list[str],
+    declared_not_attempted: list[str],
+    merged: dict,
+) -> dict:
+    """The nine-key disclosure block for one run, every value read from an artifact.
+
+    A NULL MEANS "NOT RECORDED" AND IS NEVER ZERO. A run whose chunks wrote no session
+    inventory, or whose manifest predates the compile record, reports `None` where those
+    artifacts would have filled a value. Writing 0 there would state that the run adopted
+    nothing and reused nothing -- which is exactly what a CLEARED run states -- and the two
+    would then be indistinguishable in the one record a reader consults.
+    """
+    compile_ids = sorted((manifest.get("compile_precondition") or {}).get("compile_tier_nodes") or [])
+    compile_recorded = "compile_tier_nodes" in (manifest.get("compile_precondition") or {})
+    compile_set = set(compile_ids)
+    pre = manifest.get("compile_precondition") or {}
+
+    def _count(bucket: list[str]) -> int | None:
+        """Compile-tier members of one outcome bucket, or ``None`` when the plan recorded none."""
+        return None if not compile_recorded else len(compile_set & set(bucket))
+
+    skipped = _count(structural + incidental)
+    errored = _count(uneval)
+    never_ran = _count(absent_list)
+    accounted = set(passed) | set(uneval) | set(structural) | set(incidental) | set(absent_list)
+    unaccounted = None if not compile_recorded else len(compile_set - accounted)
+
+    build_rows = merged["build_dirs"]
+    presented = build_rows["present"]
+    reused = build_rows["reused"]
+    passing_compile = len(compile_set & set(passed))
+    if not compile_recorded or reused is None:
+        built = adopted = None
+        split_basis = "not recorded: the run's chunk sessions wrote no cache inventory"
+    elif presented and reused >= presented:
+        built, adopted = 0, passing_compile
+        split_basis = (
+            f"all {presented} compiled build(s) predate the session, so the compile tier was "
+            "adopted from cache rather than built"
+        )
+    elif presented and reused == 0:
+        built, adopted = passing_compile, 0
+        split_basis = f"none of the {presented} compiled build(s) predate the session, so the compile tier was built"
+    else:
+        # MIXED, and the split is DECLINED rather than apportioned. Attributing a passing
+        # compile-tier node to a particular build dir needs a node -> build-dir mapping the
+        # session inventory does not carry (it records `compilation.log` mtimes, which say
+        # WHEN a build happened and nothing about WHICH node consumed it), so any non-zero
+        # apportionment here would be invented. A definite zero is worse than `None`: the same
+        # record's `build_dirs_reused.dirs[].reused` would refute it two keys later, and R9's
+        # cleared-run predicate and the `owed` verb both read this field.
+        built = adopted = None
+        split_basis = (
+            f"DECLINED on a MIXED compile tier: {reused} of {presented} compiled build(s) "
+            "predate the session, so the run stood on cached builds for part of the tier and "
+            "built the rest; a per-node split needs a node -> build-dir mapping the session "
+            "inventory does not record"
+        )
+
+    excluded = sorted(set(structural) | set(incidental) | set(declared_not_attempted))
+    entries = merged["entries"]
+    adopted_trees = [
+        {
+            "fixture": name,
+            "analysis": entry.get("analysis"),
+            "tier0_key": entry.get("tier0_key"),
+            "integrity_verdict": entry.get("integrity_verdict"),
+        }
+        for name, entry in sorted(entries.items())
+        if entry.get("state") == "adopted"
+    ]
+    tier0_by_fixture = {
+        name: entry.get("tier0_key") for name, entry in sorted(entries.items()) if entry.get("tier0_key")
+    }
+    return {
+        # 1. Each heavy session workflow, adopted or built, per fixture. `recorded` says
+        #    whether any chunk session reported an inventory at all: a run whose sessions
+        #    predate the inventory (or a run dir assembled by hand) has no adopted-vs-built
+        #    population, and an empty mapping would otherwise read as "no fixture adopted"
+        #    -- which is a claim, not an absence.
+        "adopted_vs_built": {
+            "recorded": merged["sessions"] > 0,
+            "sessions": merged["sessions"],
+            "fixtures": len(entries),
+            "entries": {
+                name: {
+                    "state": entry.get("state"),
+                    "has_adoption_path": entry.get("has_adoption_path"),
+                    "analysis": entry.get("analysis"),
+                    "integrity_verdict": entry.get("integrity_verdict"),
+                    "states_observed": merged["states_observed"].get(name, []),
+                }
+                for name, entry in sorted(entries.items())
+            },
+        },
+        # 2. The compiled builds this run did not pay for.
+        "build_dirs_reused": build_rows,
+        # 3. The tier-0 key that was LIVE -- a value, never a boolean, because it is the field
+        #    a reader compares against the tier-1 key's composition term to confirm agreement.
+        "tier0_key": {
+            "by_fixture": tier0_by_fixture,
+            "distinct": sorted(set(tier0_by_fixture.values())),
+        },
+        # 4. The preprocessing pass each adopted tree skipped, with the verdict that decided it.
+        "preprocessing_skipped": {"trees": len(adopted_trees), "detail": adopted_trees},
+        # 5. Whether the TRITON checkout is a borrower rather than a standalone clone.
+        "triton_clone_borrowed": merged["triton_clone"],
+        # 6. Every node outside the selected tier. The three cells are NAMED because unioning
+        #    them silently would report one population under three different predicates.
+        "excluded_nodes": {
+            "count": len(excluded),
+            "population": "structurally_excluded + incidental_skips + declared_not_attempted",
+            "nodes": excluded,
+        },
+        # 7. The scope, without which a reader cannot tell which complement applied.
+        "scope": scope,
+        # 8. The address the run's caches live under, so a disclosure is never read as a claim
+        #    about a different machine.
+        "tier_address": manifest.get("tier_address") or merged.get("tier_address"),
+        # 9. The compile tier's outcome beside the resolved conjunct pair. `collected` is
+        #    derived from the manifest's marks and `declared_count` is the plan's own record of
+        #    it; they sit side by side so a plan whose precondition ran over a different
+        #    collection is visible rather than averaged away.
+        "compile_tier_outcome": {
+            "collected": None if not compile_recorded else len(compile_ids),
+            "declared_count": pre.get("compile_tier_node_count"),
+            "built": built,
+            "adopted_from_cache": adopted,
+            "skipped": skipped,
+            "errored": errored,
+            "never_ran": never_ran,
+            "unaccounted": unaccounted,
+            "compile_bearing": pre.get("compile_bearing"),
+            "declared_non_compile_bearing": pre.get("declared_non_compile_bearing"),
+            "compile_venue_permitted": pre.get("compile_venue_permitted"),
+            "compile_tier_required": pre.get("compile_tier_required"),
+            "split_basis": split_basis,
+            "fresh_worktree_note": FRESH_WORKTREE_COMPILE_NOTE,
+        },
+    }
+
+
+def assert_disclosure_schema(disclosure: dict, *, roots_rebuilt: dict | None = None) -> list[str]:
+    """Check a disclosure block against its own contract; return every violation found.
+
+    THE UNCONDITIONAL ARMS bind on every run: nine keys exactly, five adopted-vs-built
+    entries, and states drawn from the stated vocabulary. Everything else is conditional on
+    the run being a CLEARED one, because those predicates state what a clear guarantees and
+    a cached run guarantees none of them.
+
+    HOW "CLEARED" IS DECIDED, with the proxy named rather than hidden: `hhemt cache clear`
+    writes no durable record of what it removed, so the REMOVED set cannot be read after the
+    fact. What can be read is which roots the session had to WRITE, and a tier still holding
+    last week's builds is not a cleared tier. The identification is one-directional: a root
+    removed and rebuilt from a source that survived elsewhere reads like a root that was
+    never removed.
+
+    WHAT THIS DOES NOT DECIDE: the T3 member is conditioned on `--include-source-clone`,
+    which is an argument of the clear invocation and survives nowhere. This checks T0, T1
+    and T2 and reports the T3 conjunct as undecidable here rather than passing it silently.
+    """
+    violations: list[str] = []
+    missing = [key for key in DISCLOSURE_KEYS if key not in disclosure]
+    extra = sorted(set(disclosure) - set(DISCLOSURE_KEYS))
+    if missing:
+        violations.append(f"disclosure is missing key(s) {missing}")
+    if extra:
+        violations.append(f"disclosure carries key(s) outside the nine: {extra}")
+
+    entries = (disclosure.get("adopted_vs_built") or {}).get("entries") or {}
+    # NOT RECORDED IS NOT A VIOLATION, and the distinction is the same one the block's nulls
+    # carry: a run whose chunk sessions wrote no inventory states that fact in `recorded`, and
+    # reporting its empty population as a five-entry shortfall would report an OLD run as a
+    # broken one -- and would then redden every pre-existing run dir the aggregator is asked
+    # to read, which is how a true finding gets learned as noise.
+    if not (disclosure.get("adopted_vs_built") or {}).get("recorded"):
+        return violations
+    if len(entries) != 5:
+        violations.append(f"adopted_vs_built carries {len(entries)} entries, expected 5")
+    outside = {
+        name: entry.get("state")
+        for name, entry in entries.items()
+        if entry.get("state") not in DISCLOSURE_FIXTURE_STATES
+    }
+    if outside:
+        violations.append(f"adopted_vs_built state(s) outside the vocabulary: {outside}")
+
+    # THE IDENTIFICATION IS AN OPERAND, NOT A SILENT GATE. Reading "T0 and T1 both rebuilt" as
+    # the DEFINITION of a cleared run and then returning when it is false left R9's own T0/T1
+    # clause unexamined: a predicate whose operand is the test it performs cannot fail. The
+    # three states are distinguished here, and the middle one is REPORTED:
+    #   * either operand unresolved (None) -- nothing decided, so the R9 clauses were NOT
+    #     EVALUATED, and a record that silently passes them reads as a cleared run that passed;
+    #   * the two disagree -- also not evaluated, and the disagreement itself is the news,
+    #     though T0 is machine-shared, so a foreign checkout's regeneration can produce it
+    #     without this run having been cleared;
+    #   * both false -- the run rebuilt neither root and makes no cleared-run claim, so the
+    #     clauses do not apply and there is nothing to say.
+    roots = roots_rebuilt or {}
+    t0, t1 = roots.get("T0"), roots.get("T1")
+    if t0 is not True or t1 is not True:
+        if t0 is None or t1 is None:
+            violations.append(
+                "cleared-run predicates NOT EVALUATED: roots_rebuilt reports T0="
+                f"{t0!r} and T1={t1!r}, so whether this run was cleared is unresolved and the "
+                "adopted/compile clauses were not applied"
+            )
+        elif t0 is not t1:
+            violations.append(
+                "cleared-run predicates NOT EVALUATED: roots_rebuilt reports "
+                f"T0={t0!r} and T1={t1!r}, which disagree, so the run is neither a confirmed "
+                "cleared run nor a confirmed cached one (T0 is machine-shared: a foreign "
+                "checkout's regeneration produces this shape)"
+            )
+        return violations
+
+    adopted = sorted(name for name, entry in entries.items() if entry.get("state") == "adopted")
+    if adopted:
+        violations.append(f"cleared run reports ADOPTED for {adopted}; a cleared run has nothing to adopt")
+    outcome = disclosure.get("compile_tier_outcome") or {}
+    if outcome.get("skipped") not in (0, None):
+        violations.append(f"cleared run reports {outcome.get('skipped')} SKIPPED compile-tier node(s)")
+    if outcome.get("errored") not in (0, None):
+        violations.append(f"cleared run reports {outcome.get('errored')} ERRORED compile-tier node(s)")
+    if outcome.get("compile_venue_permitted") and roots.get("T2") is not True:
+        violations.append("the compile venue was permitted and T2 was not rebuilt on a cleared run")
+    return violations
+
+
+def aggregate(run_dir: Path, scope: str = "array") -> dict:
+    # Reads `manifest.json`, every `chunk-NN.status.json` and every `chunk-NN.junit.xml`
+    # under `run_dir`, and returns the run's result dict: the verdict, the problems and
+    # advisories behind it, per-chunk states, the per-test buckets, and `verdict_line` and
+    # `counts`, which are what `main()` prints. It writes nothing; `main()` persists it.
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    pinned = manifest["source_sha"]
+
+    # SCOPE IS BOUND BY THE MANIFEST, NEVER BY THE CALLER ALONE. The run that BUILT this
+    # directory recorded what it intended to cover; a downstream reader passing --scope
+    # cannot know better. A caller that passes no --scope at all, such as a scheduled
+    # verdict job, would otherwise mislabel a triage run: it would report `scope=array`
+    # and write `summary.json` rather than `summary.triage.json`, so both the scope label
+    # and the filename that keep a triage result from being read as a suite result would
+    # be wrong at once. Binding here makes that protection structural rather than
+    # dependent on remembering a flag: there is no invocation of this module that can
+    # produce a suite-shaped verdict from a triage manifest.
+    scope_problems: list[str] = []
+    declared = manifest.get("scope_intent")
+    if declared == "triage" and scope != "triage":
+        if scope == "union":
+            scope_problems.append(
+                "caller asked for scope=union on a manifest declaring scope_intent=triage; "
+                "a triage run covers only the prior run's failing set and can never support "
+                "a suite-level claim. Scope forced to triage."
+            )
+        scope = "triage"
+    # A TIER-RESTRICTED run is bound the same way: a plan that collected only the solver-bearing tier covers
+    # a subset of the suite, so no invocation can turn it into scope=union or a whole-suite ledger entry.
+    select_tier = manifest.get("select_tier") or "all"
+    if select_tier != "all" and scope != "tier":
+        if scope == "union":
+            scope_problems.append(
+                f"caller asked for scope=union on a manifest declaring select_tier={select_tier}; a run "
+                "restricted to that tier covers only part of the suite and can never support a suite-level "
+                "claim. Scope forced to tier."
+            )
+        scope = "tier"
+    collected = set(manifest["collected"])
+
+    chunk_rows = []
+    statuses: dict[int, dict] = {}
+    outcomes: dict[str, str] = {}
+    reasons_by_fixture: dict[str, list[str]] = {}
+    # Node id -> junit skip message, accumulated beside `outcomes` and NEVER folded into
+    # it (see `skip_reasons`). Informational, never verdict-bearing: no partition cell,
+    # count, or scope decision reads it, so first-seen-wins across chunks is acceptable
+    # here and does not reintroduce the arrival-order dependence `merge_outcomes` exists
+    # to remove -- that rule governs VERDICT values, and this mapping carries none.
+    skip_reasons_by_node: dict[str, str] = {}
+    merge_problems: list[str] = []
+
+    for c in manifest["chunks"]:
+        cid = c["chunk_id"]
+        sp = run_dir / f"chunk-{cid:02d}.status.json"
+        jp = run_dir / f"chunk-{cid:02d}.junit.xml"
+        status = json.loads(sp.read_text(encoding="utf-8")) if sp.exists() else None
+        statuses[cid] = status or {}
+        chunk_advisories: list[str] = []
+        state, why = classify_chunk(
+            status,
+            jp if jp.exists() else None,
+            pinned,
+            c.get("expected_fixtures"),
+            c.get("expected_fixture_holders"),
+            chunk_advisories,
+        )
+        if jp.exists():
+            merge_outcomes(outcomes, parse_junit(jp), problems=merge_problems)
+            for k, v in unevaluated_reasons(jp).items():
+                reasons_by_fixture.setdefault(k, []).extend(v)
+            for k, v in skip_reasons(jp).items():
+                skip_reasons_by_node.setdefault(k, v)
+        # `diagnostics` is carried into the chunk row so that `render_summary_md` can name
+        # the harvested directory in its "Failure diagnostics captured" section, which is
+        # where the root cause of a chunk failure normally lives. Before that section
+        # existed, the harvest wrote the directory and the summary did not name it, and a
+        # directory the summary does not name is one a reader walks past.
+        # `kind` is the chunk-PACKING axis: producers write "heavy" and "cheap"
+        # (`partition.py::build_manifest`) and "triage" (`_runner.py::triage`). The array-versus-complement
+        # distinction is a DIFFERENT axis and takes a separate per-chunk field,
+        # `covers: "array" | "complement"`, absent-meaning "array" -- NEVER a fourth `kind`
+        # value, whose vocabulary already spends the words "heavy" and "cheap" on cost.
+        # Its consumer is the union guard below, which needs to know whether any chunk
+        # reported complement evidence at all; its PRODUCER is the complement runner, which
+        # does not exist yet, so today every chunk reads through the default.
+        chunk_rows.append(
+            {
+                "chunk_id": cid,
+                "kind": c["kind"],
+                "state": state,
+                "reasons": why,
+                "advisories": chunk_advisories,
+                "diagnostics": (status or {}).get("diagnostics"),
+            }
+        )
+
+    # MECHANISM READABILITY. A chunk that did not report contributes no observations, so
+    # every cross-chunk number computed from the surviving chunks is a LOWER BOUND -- and
+    # a low `derivation under-connected` is exactly what a missing chunk produces. Measured
+    # 2026-08-23: a run whose 1013-test chunk timed out reported `under-connected: 1` over
+    # five of six chunks; had it reported 0 it would have read as a pass and meant nothing.
+    #
+    # No new chunk state is minted: MISSING and VOID already say precisely this, and a
+    # fifth token would duplicate them. What was missing is the DERIVED consequence and
+    # its surfacing, so `mechanism_readable` is a predicate over the existing vocabulary.
+    REPORTING_STATES = ("PASS", "FAIL")
+    non_reporting = [
+        {"chunk_id": r["chunk_id"], "state": r["state"]} for r in chunk_rows if r["state"] not in REPORTING_STATES
+    ]
+    mechanism_readable = not non_reporting
+
+    def _of(kind: str) -> list[str]:
+        return sorted(n for n, o in outcomes.items() if o == kind and n in collected)
+
+    passed = _of("PASSED")
+    failed = _of("FAILED")
+    uneval = _of("UNEVALUATED")
+    structural = _of("SKIPPED_STRUCTURAL")
+    incidental = _of("SKIPPED_INCIDENTAL")
+
+    # UNION REQUIRES EVIDENCE, AND `structural` IS NOT IT. Two independent reasons, and a
+    # predicate keyed on `structural` alone fails BOTH.
+    #
+    # (a) `structural` is what SURVIVED the skip-reason match at runtime, and a test can
+    # carry several skipif gates of which the first truthy one wins. Measured: the three
+    # tests in tests/test_doi_roundtrip_e2e.py declare an operator env gate AHEAD of their
+    # scheduler gate, so on a scheduler node they skip with the OPERATOR reason and land in
+    # SKIPPED_INCIDENTAL -- structurally excluded in fact, invisible to `structural`.
+    # The DECLARED complement (every node id whose declared skipif reasons include a
+    # STRUCTURAL_SKIP_REASONS member) is computed at plan time, where every gate is visible.
+    #
+    # (b) When STRUCTURAL_SKIP_REASONS matches nothing -- the state the comment above that
+    # tuple records for 2026-08-25 -- both `structural` and the declared complement are
+    # empty, and an emptiness-only predicate would ADMIT the union claim on no evidence.
+    # So a POSITIVE conjunct is required: some chunk must have declared `covers=complement`.
+    # HOISTED out of the union arm below, which was the only site that consulted these. Both
+    # are wanted at EVERY scope. `declared_complement` is the plan-time set of tests carrying
+    # a structural gate; `declared_not_attempted` intersects it with the tests THE SITE DID
+    # NOT ATTEMPT. That intersection is the one honest coverage statement available here:
+    # `declared_complement` alone OVER-approximates, because a gate that did not fire leaves
+    # a PASSING test in the declared set, and `structural` alone UNDER-approximates, because
+    # pytest's first truthy skipif can hide a structural gate behind an operator one.
+    # NAMED FOR `_EVALUATED_OUTCOMES`'s OWN DEFINITION at its declaration: "the three
+    # outcomes meaning THE SITE ATTEMPTED THE TEST, as opposed to declining it". The former
+    # name `unevaluated_complement` claimed EVALUATION while computing ATTEMPT, and the
+    # outcome literal `UNEVALUATED` sits INSIDE that set -- a test whose setup raised was
+    # attempted and is deliberately excluded here, because it is already a `problems` entry
+    # rather than a structural exclusion to re-run elsewhere.
+    declared_complement = set(manifest.get("declared_complement") or [])
+    declared_not_attempted = sorted(n for n in declared_complement if outcomes.get(n) not in _EVALUATED_OUTCOMES)
+    if scope == "union":
+        complement_reported = any((c.get("covers") or "array") == "complement" for c in manifest["chunks"])
+        if not complement_reported or declared_not_attempted:
+            scope_problems.append(
+                "scope=union requires complement evidence: "
+                f"complement_chunk_reported={complement_reported}, "
+                f"declared_complement={len(declared_complement)}, "
+                f"still_not_attempted={len(declared_not_attempted)}"
+                + (f" (first: {declared_not_attempted[:3]})" if declared_not_attempted else "")
+                + ". Scope forced to array."
+            )
+            scope = "array"
+
+    # SIGNAL EVIDENCE, recorded at PLAN time. A manifest that predates the recording carries
+    # no `signals` key, and the counts are then UNRECORDED -- never 0, which would report a
+    # bound as a measurement over evidence that was never collected.
+    _signals_recorded = "signals" in manifest
+    _sig, _unsig = classify_solver_setup(structural, manifest.get("signals") or {})
+    # TYPED, and `None` rather than a magic string. `counts` is serialized into
+    # summary.json for programs to read, and every other member of it is an int, so a
+    # string sentinel there would make `counts[...] > 0` a string comparison, `int(...)`
+    # raise, and `"10" < "9"` true. None serializes to JSON null,
+    # which a consumer can test for without knowing the token. The TOKEN belongs to the
+    # verdict LINE, where a reader needs a word; `_fmt_signal_count` is the one place it is
+    # produced, so both composers cannot disagree.
+    _sig_count = len(_sig) if _signals_recorded else None
+    _unsig_count = len(_unsig) if _signals_recorded else None
+    _completeness = "FLOOR" if _signals_recorded else "UNRECORDED"
+    absent = sorted(collected - set(outcomes))
+    # Junit entries naming tests the manifest does not contain. Previously discarded
+    # by the `n in collected` filter above, which is what made the id-shape defect
+    # invisible: the same tests were counted ABSENT on one side and dropped on the
+    # other, and neither number was reported next to its twin.
+    unmatched_junit = sorted(set(outcomes) - collected)
+
+    # Two-arm shared-tree check. Arm A is partition.py's manifest-time DERIVATION;
+    # arm B is each chunk's runtime OBSERVATION. A tree seen by two chunks is a real
+    # race -- concurrent sessions mutating one on-disk analysis tree. A tree OBSERVED
+    # across chunks that arm A did not predict means the derivation under-connected,
+    # which is the failure a deeper parse cannot remove: measured 2026-08-23, the reach
+    # ran file -> fixture -> fixture -> helper module. Arm B never invents a reach (it can
+    # miss one), so a finding here is always real.
+    #
+    # CLASSIFY BEFORE JOINING. Arm B records slug-root ENTRIES, and the slug root holds
+    # more than analysis trees. Joining before classifying is what produced the 5-for-1
+    # over-report on the 2026-08-23 run: two of the five `concurrent BUILD` findings were
+    # not directories at all, and one was the compiled tier that is shared BY DESIGN.
+    observed_by: dict[str, set[int]] = {}
+    written_by: dict[str, set[int]] = {}
+    entry_evidence: dict[str, dict] = {}
+    have_entries = False
+    legacy_chunks: list[int] = []
+    # THE TAIL IS LEFT OUT OF THE JOINS ONLY WHEN THE RECORDED TIMES SAY IT RAN AFTER THE ARRAY (see `_tail_ran_after`).
+    tail_cid = manifest.get("tail_chunk")
+    tail_exempt = tail_cid is not None and _tail_ran_after(manifest, statuses, tail_cid)
+    tail_written: set[str] = set()
+    for c in manifest["chunks"]:
+        st = statuses.get(c["chunk_id"], {})
+        in_joins = not (tail_exempt and c["chunk_id"] == tail_cid)
+        entries = st.get("reach_entries") or {}
+        if entries:
+            have_entries = True
+            # KEYED ON THE ABSOLUTE ENTITY PATH the producer resolved
+            # (`_runner.py::_finalize_reach_entries`): the entry's stamped root -- the
+            # candidate directory under which a `_version.json` layout stamp was found --
+            # and, when no stamp was found, the path two components below the
+            # `synthetic_test_runs` directory, which under the shared layout is
+            # `.../synthetic_test_runs/{slug}/{entry}`. NOT on the label: two chunks contend
+            # only when they touched the SAME directory, and a label is not unique across
+            # slugs or across per-session override roots. The fallback to that entry path is
+            # load-bearing rather than defensive: an entry with no stamp has no stamped root
+            # BY DEFINITION, so keying on the stamped root alone would collapse `_software`
+            # and `_sensitivity_configs` into one bucket and report contention on a
+            # directory that does not exist -- and it would do so in the quietest bucket.
+            for key, rec in entries.items():
+                ev = entry_evidence.setdefault(key, {})
+                ev.setdefault("write_samples_by_chunk", {})
+                ev.setdefault("replace_samples_by_chunk", {})
+                ev.setdefault("coordination_writes_by_chunk", {})
+                ev.setdefault("votes", {})
+                ev["label"] = rec.get("label") or os.path.basename(key)
+                ev["root_shape"] = rec.get("root_shape")
+                # Per-chunk votes are KEPT rather than merged away. A chunk that saw the
+                # root vanish and one that did not now disagree VISIBLY, instead of one
+                # False silently demoting the entry out of the contention check.
+                ev["votes"][str(c["chunk_id"])] = {
+                    k: rec.get(k) for k in ("is_dir", "has_version_stamp", "existed_at_first_open", "exists_at_end")
+                }
+                for k in ("is_dir", "has_version_stamp"):
+                    prior = ev.get(k)
+                    cur = rec.get(k)
+                    # TRUE WINS across chunks, because each vote is now about the SAME
+                    # absolute directory: a positive observation is evidence, a negative
+                    # one may only mean the root was gone when that chunk stat'd it.
+                    ev[k] = cur if prior is None else (bool(prior) or bool(cur) if cur is not None else prior)
+                if rec.get("write_samples"):
+                    ev["write_samples_by_chunk"][str(c["chunk_id"])] = rec["write_samples"]
+                # Additive reach schema: a record written before the observer saw renames has neither key and reads
+                # as an empty list and 0.
+                if rec.get("replace_samples"):
+                    ev["replace_samples_by_chunk"][str(c["chunk_id"])] = rec["replace_samples"]
+                if rec.get("replace_cap_bound"):
+                    ev["replace_cap_bound"] = True
+                if rec.get("coordination_writes"):
+                    ev["coordination_writes_by_chunk"][str(c["chunk_id"])] = rec["coordination_writes"]
+                if rec.get("read") and in_joins:
+                    observed_by.setdefault(key, set()).add(c["chunk_id"])
+                if rec.get("written"):
+                    if in_joins:
+                        written_by.setdefault(key, set()).add(c["chunk_id"])
+                    else:
+                        tail_written.add(key)
+        else:
+            if st.get("observed_trees"):
+                legacy_chunks.append(c["chunk_id"])
+            for tree in st.get("observed_trees") or []:
+                if in_joins:
+                    observed_by.setdefault(tree, set()).add(c["chunk_id"])
+            for tree in st.get("written_trees") or []:
+                if in_joins:
+                    written_by.setdefault(tree, set()).add(c["chunk_id"])
+                else:
+                    tail_written.add(tree)
+
+    entry_class = {
+        n: (classify_slug_entry(entry_evidence[n]) if n in entry_evidence else ENTRY_UNKNOWN)
+        for n in sorted(set(observed_by) | set(written_by))
+    }
+    observed_cross = {t: sorted(ids) for t, ids in sorted(observed_by.items()) if len(ids) > 1}
+    # What the tail wrote, recorded rather than joined: sequential by the recorded times, so not a race, but the
+    # compiled tier's rebuild is the tail's purpose and a reader should see it named.
+    tail_writes = {
+        k: {
+            "label": (entry_evidence.get(k) or {}).get("label") or os.path.basename(k),
+            "class": classify_slug_entry(entry_evidence[k]) if k in entry_evidence else ENTRY_UNKNOWN,
+            "write_samples": ((entry_evidence.get(k) or {}).get("write_samples_by_chunk") or {}).get(str(tail_cid), []),
+            "replace_samples": ((entry_evidence.get(k) or {}).get("replace_samples_by_chunk") or {}).get(
+                str(tail_cid), []
+            ),
+            "coordination_writes": ((entry_evidence.get(k) or {}).get("coordination_writes_by_chunk") or {}).get(
+                str(tail_cid), 0
+            ),
+        }
+        for k in sorted(tail_written)
+    }
+    tail_state = (
+        next((r["state"] for r in chunk_rows if r["chunk_id"] == tail_cid), "none") if tail_cid is not None else "none"
+    )
+
+    # THE JOIN. A cross-chunk reach alone does not say what KIND of race it is, and that
+    # distinction cost a full round to reconstruct by hand: two chunks READING one tree
+    # is benign, a chunk WRITING a tree another chunk reads is the race, and two chunks
+    # WRITING it is a concurrent build. Recorded by observation, so it cannot inherit
+    # arm A's horizon.
+    def _contention(names) -> dict:
+        return {
+            t: {
+                "readers": observed_cross[t],
+                "writers": sorted(written_by.get(t, set())),
+                "write_samples_by_chunk": (entry_evidence.get(t) or {}).get("write_samples_by_chunk", {}),
+                "replace_samples_by_chunk": (entry_evidence.get(t) or {}).get("replace_samples_by_chunk", {}),
+                "coordination_writes_by_chunk": (entry_evidence.get(t) or {}).get("coordination_writes_by_chunk", {}),
+                "replace_cap_bound": bool((entry_evidence.get(t) or {}).get("replace_cap_bound")),
+            }
+            for t in names
+            if t in observed_cross and written_by.get(t)
+        }
+
+    # The race class the harness exists to catch: two sessions mutating ONE analysis tree.
+    contended_writes = _contention([t for t in observed_cross if entry_class.get(t) == ENTRY_ANALYSIS_TREE])
+    # RECLASSIFIED, NOT EXCLUDED. The compiled tier is shared across every chunk by
+    # design, so it is not an analysis-tree race -- but it is built ONCE, by the warm step
+    # (`_runner.py::warm`) that runs before the chunk array and refuses to submit the array
+    # when it fails, so no chunk has a reason to write it. A chunk writing it is therefore
+    # still a finding, and excluding the entry would make "why did a chunk write the
+    # compiled tier?" permanently unanswerable. It gets its own label, its own section, and
+    # the write samples that say WHAT was written. The problem and advisory messages built
+    # below restate that fact as "the warm build step that runs before the chunk array",
+    # because a reader of the summary never sees this comment.
+    shared_by_design_writes = _contention([t for t in observed_cross if entry_class.get(t) == ENTRY_SHARED_BY_DESIGN])
+    ignored_transient = sorted(t for t in observed_cross if entry_class.get(t) == ENTRY_TRANSIENT)
+    unknown_entries = sorted(t for t in observed_cross if entry_class.get(t) == ENTRY_UNKNOWN)
+    # An unclassified record still carries a real observation. Dropping it would trade an
+    # over-report for an under-report, which is the worse direction: the reader would see a
+    # notice and no findings and could reasonably conclude there were none.
+    unclassified_writes = _contention(unknown_entries)
+
+    # Arm A predicts TREES, so the under-connection check must compare against trees only.
+    # Comparing the whole observed set against it made every shared-by-design entry and
+    # every lock file read as "the derivation missed an edge" -- the same over-report,
+    # a second consumer.
+    predicted = {e["tree"] for e in manifest.get("shared_tree_exposure") or []}
+    derivation_under_connected = sorted(
+        t for t in observed_cross if entry_class.get(t) == ENTRY_ANALYSIS_TREE and t not in predicted
+    )
+
+    # Display names disambiguate ONLY when they need to. The absolute path is the
+    # identity and is always in the write-surface table; repeating it in every problem
+    # line buries the finding in noise, while dropping it entirely would hide exactly the
+    # distinction this change bought -- two same-named directories are two entries.
+    _label_counts: dict[str, int] = {}
+    for _k, _e in entry_evidence.items():
+        _label_counts[_e.get("label") or os.path.basename(_k)] = (
+            _label_counts.get(_e.get("label") or os.path.basename(_k), 0) + 1
+        )
+
+    def _disp(key: str) -> str:
+        lab = (entry_evidence.get(key) or {}).get("label") or os.path.basename(key)
+        return lab if _label_counts.get(lab, 0) <= 1 else f"{lab} ({key})"
+
+    entry_problems: list[str] = []
+    # ADVISORY accumulator, sibling of entry_problems and NOT consulted by the verdict.
+    # It exists because some findings below fire on a HEALTHY run -- the four tagged kinds
+    # [classifier-self-check], [shared-by-design-write], [derivation-under-connected] and
+    # [complement-derivation] -- and each says so in its own comment. Measured 2026-09-04,
+    # before these findings were split out of `problems` into this accumulator, against a
+    # synthetic run directory with 4 passing tests, both chunks `pytest_exit: 0`, failed=0
+    # unevaluated=0 absent=0: `verdict=NOT-GREEN`. An alarm that fires on every healthy run is not an alarm, and
+    # the cost is not cosmetic -- a suite green is the gate on an ensemble launch, so a
+    # constant NOT-GREEN forces the reader to evaluate the counts and ignore the word,
+    # which is exactly the habit that makes a REAL NOT-GREEN invisible.
+    entry_advisories: list[str] = []
+    if legacy_chunks:
+        entry_problems.append(
+            f"reach records for chunk(s) {legacy_chunks} predate the write-surface "
+            "classification (no 'reach_entries'), so their slug-root entries cannot be told "
+            "apart from analysis trees. Their contention is listed under "
+            "`unclassified_writes` and is "
+            "known to over-report: locks, the shared compiled tier, and staging dirs all "
+            "appear as trees. Re-run those chunks to classify."
+        )
+    if unknown_entries:
+        entry_problems.append(
+            f"{len(unknown_entries)} slug-root entr(ies) could not be classified: "
+            f"{unknown_entries}. An unstattable entry is not a benign one; those with "
+            f"cross-chunk writes are listed under `unclassified_writes` "
+            f"({sorted(unclassified_writes)})."
+        )
+    disagreements = {
+        k: e["votes"]
+        for k, e in sorted(entry_evidence.items())
+        if len({(v["is_dir"], v["has_version_stamp"]) for v in (e.get("votes") or {}).values()}) > 1
+    }
+    for k, votes in disagreements.items():
+        entry_problems.append(
+            f"chunks disagreed on what {_disp(k)} IS: {votes}. Resolved TRUE-wins (each vote is "
+            "about the same absolute directory). A root seen as a stamped dir by one chunk "
+            "and as absent by another was created or deleted mid-run; a difference in "
+            "`existed_at_first_open` vs `exists_at_end` names which."
+        )
+    if non_reporting:
+        _ids = [f"{d['chunk_id']:02d} ({d['state']})" for d in non_reporting]
+        entry_problems.append(
+            f"MECHANISM UNREADABLE: chunk(s) {', '.join(_ids)} produced no usable record, so "
+            "every cross-chunk number below is a LOWER BOUND computed over the chunks that "
+            "did report. `derivation under-connected` and the contended-write sets in "
+            "particular CANNOT be read as a pass -- a missing chunk lowers both. Re-run the "
+            "non-reporting chunk(s) before reading the mechanism."
+        )
+    dirs = [n for n, e in entry_evidence.items() if e.get("is_dir")]
+    if have_entries and dirs and not any(e.get("has_version_stamp") for e in entry_evidence.values()):
+        # ADVISORY. This is a self-check on the CLASSIFIER, not a finding about the run --
+        # its own text says so ("this classifier is reporting zero analysis trees for the
+        # wrong reason"). It also fires on a SINGLE-chunk run and on a run where nothing was
+        # written at all, because it is gated on neither `observed_cross` nor `written_by`;
+        # measured 2026-09-04, it is the reason even the triage shape could not reach GREEN.
+        # What is given up: a genuine `_version.json` relocation no longer fails a run. It
+        # still PRINTS, and a stamp move would break the toolkit's own layout-version CI
+        # first, so demoting this costs less than demoting [derivation-under-connected],
+        # which gives up the run's only under-connection detector.
+        entry_advisories.append(
+            f"[classifier-self-check] no observed slug-root directory carries "
+            f"`{'_version.json'}` -- every one of {sorted(dirs)} classified "
+            "SHARED_BY_DESIGN. If the layout stamp moved, this classifier is reporting "
+            "zero analysis trees for the wrong reason. ADVISORY: this describes the "
+            "instrument, not the run."
+        )
+
+    problems: list[str] = list(scope_problems) + list(entry_problems) + list(merge_problems)
+    # Everything BELOW that is appended to `problems` is verdict-bearing. A finding goes to
+    # `advisories` instead only at the sites tagged [classifier-self-check],
+    # [shared-by-design-write], [derivation-under-connected] and [complement-derivation],
+    # and each states its own reason in the comment beside it. `scope_problems` is NOT
+    # demoted: a caller asking for a scope the manifest forbids is a misuse of the
+    # instrument, which is a different thing from the instrument reporting on itself.
+    advisories: list[str] = list(entry_advisories)
+    for r in chunk_rows:
+        advisories.extend(f"chunk {r['chunk_id']:02d}: {a}" for a in r["advisories"])
+    for r in chunk_rows:
+        if r["state"] != "PASS":
+            problems.append(f"chunk {r['chunk_id']:02d} is {r['state']}: {'; '.join(r['reasons']) or 'see junit'}")
+    if failed:
+        problems.append(f"{len(failed)} test(s) FAILED")
+    if uneval:
+        problems.append(f"{len(uneval)} test(s) UNEVALUATED (setup or teardown raised; the body never ran)")
+    if absent:
+        problems.append(f"{len(absent)} collected test(s) ABSENT from every junit file")
+    # A cross-chunk reach with NO observed writer is concurrent READING, which is
+    # benign, so it is recorded in the result and does NOT fail the run. Deliberately NOT
+    # failing on every cross-chunk reach, as an earlier version of this check did: that was
+    # correct only while the reach was undifferentiated, and once reads and writes are told
+    # apart, failing every concurrent read would make the verdict fire for a reason other
+    # than the one it names -- the defect this harness exists to close.
+    # CAVEAT kept in view: arm B (each chunk's runtime observation) never invents a write
+    # but can miss one, so "no writer observed" is not "no writer"; a write through a
+    # C-level open is invisible to it.
+    for t, d in contended_writes.items():
+        kind = (
+            "concurrent BUILD (two or more chunks wrote it)"
+            if len(d["writers"]) > 1
+            else "write/read race (one chunk wrote it while others read)"
+        )
+        problems.append(f"shared-tree {kind}: {_disp(t)} -- writers {d['writers']}, touched by {d['readers']}")
+    # Reported, never silently dropped, and NOT as an analysis-tree race. It is also not
+    # a run failure: the tier is shared by construction, and whether these writes are a
+    # concurrent build or mere lock acquisition is what the samples are for. Failing the
+    # run on an undiagnosed reading would block the green gate on instrument noise -- the
+    # thing this change exists to stop.
+    #
+    # THE COMMENT ABOVE AND THE CODE BELOW DISAGREED UNTIL 2026-09-04: the comment said
+    # "not a run failure", the code appended to `problems`, and a non-empty `problems` is
+    # NOT-GREEN. The split below makes the code say what the comment always said.
+    #
+    # THE DISCRIMINATOR IS WHAT WAS WRITTEN, NOT HOW MANY CHUNKS WROTE IT, and the writer
+    # count is disqualified by measurement rather than by taste. On BOTH the
+    # 20260904T074157Z_cd4d8f6d9a91 and 20260904T145255Z_2853a077a3ee runs, `_software`
+    # has FOUR writers and `_sensitivity_configs` has two -- so a `len(writers) > 1`
+    # threshold marks the steady state of every healthy multi-chunk run as BLOCKING and
+    # reproduces the constant NOT-GREEN this whole change removes.
+    #
+    # The samples say what the count cannot. Measured on the same runs: all four
+    # `_software` writers wrote ONLY `.triton.provision.lock` and
+    # `triton/.build_tritonswmm_cpu.compile.lock` -- pure lock acquisition, which is
+    # `system.py::_compile_backend` taking a lock and skipping at the completion marker
+    # inside it. `_sensitivity_configs`' two writers wrote DISJOINT `.csv` files.
+    #
+    # Hence BOTH halves, because each alone is refuted by that data. Same-path alone marks
+    # concurrent LOCK acquisition as a collision (all four wrote the identical lock path).
+    # Not-a-lock alone marks two chunks materializing DIFFERENT config files as a race.
+    # A real concurrent build -- two chunks both writing
+    # `triton/build_tritonswmm_cpu/compilation.log` -- collides on a payload path and is
+    # the case the build-once-in-the-warm-step design forbids, so it stops the run.
+    for t_, d in shared_by_design_writes.items():
+        _by_chunk = d["write_samples_by_chunk"] or {}
+        _payload = {cid: {s for s in ss if not _is_coordination_path(s)} for cid, ss in _by_chunk.items()}
+        _collided = sorted(
+            {
+                s
+                for cid, ss in _payload.items()
+                for s in ss
+                if any(s in other for oc, other in _payload.items() if oc != cid)
+            }
+        )
+        # FAIL CLOSED ON ABSENT EVIDENCE. A writer with no recorded witness of any kind cannot be exonerated: the
+        # whole predicate above reasons from WHAT was written, so a writer that contributed nothing to reason from
+        # is unclassified, not benign. Without this clause an empty `write_samples_by_chunk` makes `_collided` empty
+        # and the entry reads ADVISORY -- measured 2026-09-04, `[[]] * 4` returned GREEN.
+        #
+        # The witnesses are three: a payload write sample, a replace sample (an atomic write is a rename and the
+        # observer records its destination), and a coordination write (a dot-prefixed open, counted and not
+        # sampled). A writer holding none of the three is still BLOCKING.
+        #
+        # REACHABLE SINCE THE OBSERVER SAW RENAMES. Before then `_reach_hook` appended a sample on the FIRST write, so
+        # `written=True` implied a sample and this clause was a contract test on a cross-module invariant. Now a
+        # dot-prefixed write sets `written` while incrementing `coordination_writes` and appending nothing, and a
+        # rename sets `written` and appends to `replace_samples`; the invariant is "at least one of the three", which
+        # lives in `_runner.py::_reach_hook`, a different module from this consumer. The LEGACY reach shape keys
+        # `written_by` on the bare NAME while the modern shape keys on the ABSOLUTE PATH -- measured, they never join,
+        # so a legacy writer cannot attach to a SHARED_BY_DESIGN entity.
+        _replace_by_chunk = d.get("replace_samples_by_chunk") or {}
+        _coord_by_chunk = d.get("coordination_writes_by_chunk") or {}
+        _unwitnessed = sorted(
+            c
+            for c in d["writers"]
+            if not _by_chunk.get(str(c)) and not _replace_by_chunk.get(str(c)) and not _coord_by_chunk.get(str(c))
+        )
+        # A truncating open of a path another chunk replaces is what a reader of the replaced file can meet.
+        _opened_and_replaced = sorted(
+            {
+                s
+                for cid, ss in _payload.items()
+                for s in ss
+                if any(s in other for oc, other in _replace_by_chunk.items() if oc != cid)
+            }
+        )
+        # Replaced by two or more chunks and opened for write by none: atomic on both sides.
+        _opened_any = set().union(*_payload.values()) if _payload else set()
+        _replaced_by: dict[str, list[int]] = {}
+        for cid, ss in _replace_by_chunk.items():
+            for s in ss:
+                _replaced_by.setdefault(s, []).append(int(cid))
+        _atomic_only = {
+            s: sorted(ids) for s, ids in sorted(_replaced_by.items()) if len(ids) > 1 and s not in _opened_any
+        }
+        _sbd = (
+            f"shared-by-design entry written by chunk(s) {d['writers']} (touched by "
+            f"{d['readers']}): {_disp(t_)} -- shared across chunks by construction, so NOT an "
+            "analysis-tree race; a chunk writing it still wants explaining (for `_software`, "
+            "the compiled tier is written ONCE, by the warm build step that runs before the chunk array). "
+            f"Samples: {d['write_samples_by_chunk'] or '(none recorded)'}"
+        )
+        if _collided or _opened_and_replaced or _unwitnessed:
+            _why = (
+                f"two or more chunks wrote the SAME non-coordination path(s) {_collided}"
+                if _collided
+                else f"one chunk opened for write a path another chunk replaced: {_opened_and_replaced}"
+                if _opened_and_replaced
+                else f"chunk(s) {_unwitnessed} are recorded as writers with NO write, replace or coordination "
+                "evidence, so this entry cannot be shown to be lock acquisition"
+            )
+            problems.append(
+                f"[concurrent-build] {_sbd} BLOCKING: {_why} under a tier written once, by the warm build step "
+                "that runs before the chunk array."
+            )
+        else:
+            advisories.append(
+                f"[shared-by-design-write] {_sbd} ADVISORY: no two chunks wrote the same "
+                "non-coordination path, so these are lock acquisitions and/or disjoint "
+                "writes rather than a concurrent build. NOTE: `write_samples` is capped at "
+                "5 per chunk and records no flag when the cap binds, so a collision beyond "
+                "the cap is not visible here."
+            )
+        for _path, _ids in _atomic_only.items():
+            advisories.append(
+                f'[atomic-replace] "{_path}" replaced atomically by chunks {_ids}; identity of content not '
+                "checked. This is not a clearance: a reader never meets a partial file, but the last writer's "
+                "content wins. Before shape iteration 29 this observer could not see a rename, and a path written "
+                "this way by two chunks produced no entry at all; a truncating open of the same path by two chunks "
+                "is still BLOCKING." + (" (replace samples capped)" if d.get("replace_cap_bound") else "")
+            )
+    # DEMOTED VISIBLY, and the visibility is the point rather than a courtesy. Arm B is the
+    # run's ONLY detector of an under-connected partition, so demoting it removes a real
+    # capability and the emitted summary must say so where a reader will meet it -- not in
+    # this comment, which no operator reads. The reason for the demotion is a suspected
+    # instrument defect rather than a judgement that under-connection stopped mattering:
+    # arm A extracts tree names from SYMBOLS (`retrieve_synth_TRITON_SWMM_test_case` yields
+    # `synth_TRITON_SWMM`) while arm B observes `analysis_name=` LITERALS (`synth_multi_sim`),
+    # and on the 20260904T074157Z_cd4d8f6d9a91 baseline those two sets were DISJOINT -- so
+    # `t not in predicted` can be true for every observed tree for a reason that has nothing
+    # to do with the partition. Until that is settled this fires on healthy runs.
+    # RESTORE TO BLOCKING once arm A and arm B are shown to share a vocabulary; the text
+    # below names that condition so the restoration is not left to memory.
+    if derivation_under_connected:
+        advisories.append(
+            f"[derivation-under-connected] {len(derivation_under_connected)} tree(s) were "
+            f"OBSERVED across chunks that the manifest did not predict -- "
+            f"{[_disp(x) for x in derivation_under_connected]}. Arm A's static scan missed an edge; the "
+            "reach is real because arm B observes rather than derives. "
+            "ADVISORY, AND THIS IS A CAPABILITY GAP, NOT A CLEAN BILL: arm B is the only "
+            "under-connection detector this run has, and it is advisory only because arm A "
+            "and arm B may not share a tree vocabulary (arm A reads symbol names, arm B "
+            "reads `analysis_name=` literals; measured disjoint on the "
+            "20260904T074157Z_cd4d8f6d9a91 baseline). While this line is advisory, an "
+            "under-connected partition CANNOT fail a run."
+        )
+    # A test cannot be simultaneously MISSING from the junit and EXTRA in it. When both
+    # sets are non-empty the two sides are naming the same tests in different id shapes,
+    # which is a REPORTING defect, not a coverage one -- and it is self-concealing,
+    # because `absent` can never reach zero and the verdict stays NOT-GREEN forever with
+    # no failing test to chase.
+    if absent and unmatched_junit:
+        problems.append(
+            f"id-shape mismatch: {len(absent)} collected test(s) have no junit entry AND "
+            f"{len(unmatched_junit)} junit entr(ies) name tests absent from the manifest. "
+            "These are the same tests under different id shapes; the tests RAN. "
+            f"e.g. collected-only {absent[0]!r} vs junit-only {unmatched_junit[0]!r}"
+        )
+
+    # TWO PROVENANCES, and the subset relation between them is TOTAL: a junit skip message
+    # matches STRUCTURAL_SKIP_REASONS only if that reason was DECLARED, so every observed
+    # structural test is a declared one. The difference is reported for what it IS --
+    # declared but not observed-structural -- and never as "shadowed", which is an
+    # interpretation valid only where the gate actually fired.
+    # ADVISORY, NEVER BLOCKING. The buckets still partition the universe and the verdict is
+    # still computed from a coherent classification, so this does not meet the standard the
+    # partition check below sets for a NOT-GREEN. Routing it to `problems` would redden every
+    # default-configuration run for a condition that does not make the verdict untrustworthy.
+    _declared_not_observed = sorted(set(declared_complement) - set(structural))
+    if _declared_not_observed:
+        advisories.append(
+            f"[complement-derivation] {len(_declared_not_observed)} test(s) declared a structural "
+            f"gate that this run did not observe as a structural skip -- {_declared_not_observed}. "
+            "The manifest records EVERY declared skipif reason; junit carries only the reason "
+            "that won at runtime. A test whose operator gate precedes its structural gate "
+            "reports the operator reason, and a gate that did not fire leaves a test in the "
+            "declared set that ran normally. ADVISORY: the partition is intact either way."
+        )
+    # THE OTHER DIRECTION, which is the SUBSET ASSERTION rather than its witness. The
+    # relation structural <= declared_complement holds by construction, so a non-empty
+    # difference here is not a shadowing report -- it means the two provenances disagree
+    # about what was DECLARED, most likely a manifest that predates the junit it is read
+    # against. Advisory for the same reason: the partition is unaffected.
+    _observed_not_declared = sorted(set(structural) - set(declared_complement))
+    if _observed_not_declared:
+        advisories.append(
+            f"[complement-derivation] {len(_observed_not_declared)} test(s) were OBSERVED as a "
+            f"structural skip but are ABSENT from the manifest's declared set -- "
+            f"{_observed_not_declared}. structural <= declared_complement should hold by "
+            "construction, so this means the manifest and the junit disagree about what was "
+            "declared. Suspect a manifest that predates the run it is being read against."
+        )
+
+    # Every collected node id lands in exactly one bucket. A violation means the
+    # buckets no longer describe the universe, so no verdict computed from them is
+    # trustworthy -- it is itself a NOT-GREEN reason rather than an assertion error.
+    total = len(passed) + len(failed) + len(uneval) + len(structural) + len(incidental) + len(absent)
+    if total != len(collected):
+        problems.append(f"partition identity violated: buckets sum to {total} but {len(collected)} were collected")
+
+    # BLOCKING ONLY. `advisories` is deliberately absent from this expression: that absence
+    # IS the fix, and it is why `advisories=` is emitted on the verdict line below rather
+    # than left to the summary. The adjacency rule is the one this module already states
+    # for `scope` at the CLI print -- a reader cannot see the verdict word without seeing
+    # the advisory count, because ONE f-string produces both. A third verdict token
+    # (`GREEN-WITH-ADVISORIES`) was rejected: it would solve the same hazard by a different
+    # mechanism than the one this file already uses for it, and it would read as a failure
+    # to anyone who has only ever seen two tokens.
+    verdict = "GREEN" if not problems else "NOT-GREEN"
+    # THE DISCLOSURE AND ITS OWN ASSERTION. Built here rather than in `main()` because every
+    # input is a local of this function; asserted here rather than left to a reader because a
+    # schema claim nothing evaluates is prose. A violation is an ADVISORY and never a
+    # problem: an inadmissible disclosure record is a defect in the REPORT of a run, and
+    # reddening the run's verdict for it would make the reporting layer decide what it reports.
+    _sidecars = [
+        status["cache_disclosure"]
+        for status in statuses.values()
+        if isinstance(status, dict) and isinstance(status.get("cache_disclosure"), dict)
+    ]
+    _merged = _merge_cache_disclosures(_sidecars)
+    disclosure = build_disclosure(
+        manifest,
+        scope=scope,
+        passed=passed,
+        uneval=uneval,
+        structural=structural,
+        incidental=incidental,
+        absent_list=absent,
+        declared_not_attempted=declared_not_attempted,
+        merged=_merged,
+    )
+    for _violation in assert_disclosure_schema(disclosure, roots_rebuilt=_merged["roots_rebuilt"]):
+        advisories.append(f"[disclosure] {_violation}")
+    return {
+        "scope": scope,
+        "tier": select_tier,
+        "disclosure": disclosure,
+        "verdict_line": (
+            f"verdict={verdict} scope={scope} tier={select_tier} run_id={manifest['run_id']} "
+            f"covered={len(passed)} structurally_excluded={len(structural)} "
+            f"failed={len(failed)} unevaluated={len(uneval)} absent={len(absent)} "
+            f"collected={len(collected)} "
+            # ALWAYS emitted, including at zero, exactly as `mechanism=` is. A count that
+            # appears only when non-zero teaches a reader to skim for its absence, and an
+            # absent count is indistinguishable from a reporting layer too old to emit it
+            # -- the same reason a bare `GREEN` is never printed (see the comment above the
+            # print in main()).
+            f"incidental_skips={len(incidental)} "
+            f"{_FIELD_SIGNALLED}={_fmt_signal_count(_sig_count)} "
+            f"{_FIELD_UNSIGNALLED}={_fmt_signal_count(_unsig_count)} "
+            f"signal_completeness={_completeness} "
+            f"advisories={len(advisories)} "
+            f"mechanism={'readable' if mechanism_readable else 'UNREADABLE'} "
+            f"tail={tail_state}"
+        ),
+        "tail": tail_state,
+        "tail_writes": tail_writes,
+        "mechanism_readable": mechanism_readable,
+        "non_reporting_chunks": non_reporting,
+        "run_id": manifest["run_id"],
+        "source_sha": pinned,
+        "verdict": verdict,
+        "problems": problems,
+        # Persisted as its own key rather than merged into `problems`, so a later reader of
+        # summary.json can tell a demoted finding from a blocking one WITHOUT re-deriving
+        # the classification from the text. The `[kind]` prefixes each advisory carries are
+        # for humans; this key is for programs.
+        "advisories": advisories,
+        "chunks": chunk_rows,
+        "counts": {
+            "collected": len(collected),
+            "covered": len(passed),
+            "structurally_excluded": len(structural),
+            "incidental_skips": len(incidental),
+            _FIELD_SIGNALLED: _sig_count,
+            _FIELD_UNSIGNALLED: _unsig_count,
+            "signal_completeness": _completeness,
+            "failed": len(failed),
+            "unevaluated": len(uneval),
+            "absent": len(absent),
+            "unmatched_junit": len(unmatched_junit),
+        },
+        "unmatched_junit": unmatched_junit,
+        "observed_cross_chunk_trees": observed_cross,
+        "slug_entry_classification": entry_class,
+        "slug_entry_evidence": entry_evidence,
+        "contended_writes": contended_writes,
+        "shared_by_design_writes": shared_by_design_writes,
+        "ignored_transient_entries": ignored_transient,
+        "unclassified_entries": unknown_entries,
+        "unclassified_writes": unclassified_writes,
+        "entry_disagreements": disagreements,
+        "derivation_under_connected": derivation_under_connected,
+        "structurally_excluded": structural,
+        # BOTH derivations reach the result dict, each named for what it IS.
+        # `structurally_excluded` above is the junit-OBSERVED partition cell and keeps its
+        # meaning exactly -- it is one of the six buckets the partition identity check above
+        # sums (`total = len(passed) + ...`), and a change to it would invalidate that
+        # check. These two are the plan-time DECLARATION and its intersection with what
+        # THE SITE DID NOT ATTEMPT -- named for `_EVALUATED_OUTCOMES`'s own definition
+        # rather than for the outcome literal `UNEVALUATED`, which sits inside that set and
+        # means the opposite of what the word suggests here.
+        "declared_complement": sorted(declared_complement),
+        "declared_not_attempted": declared_not_attempted,
+        "incidental_skips": incidental,
+        # The reason beside each incidental node id. Keyed to the SAME list `_of` produced,
+        # so the count on the verdict line and the rows in summary.md are one population.
+        "incidental_skip_reasons": {n: skip_reasons_by_node.get(n, "") for n in incidental},
+        "failed": failed,
+        "unevaluated_now_passing": sorted(set(manifest.get("from_unevaluated") or []) & set(passed)),
+        "unevaluated": uneval,
+        "unevaluated_by_cause": {k: sorted(v) for k, v in sorted(reasons_by_fixture.items())},
+        "absent": absent,
+    }
+
+
+def render_verdict_line(result: dict) -> str:
+    """Re-render the verdict line from `result`, byte-identically to aggregate()'s own.
+
+    TWO COMPOSERS, DELIBERATELY, AND THE DUPLICATE IS PINNED RATHER THAN REMOVED.
+    aggregate() still builds this string inline, as the `verdict_line` entry of its return
+    dict literal, from LOCALS (`passed`, `structural`, ...) rather than from `counts`;
+    collapsing the two would mean restructuring that return literal, whose keys the tests
+    in tests/test_verdict_partition.py read one by one. The proportionate close is a
+    COMPARISON rather than a refactor:
+    test_the_verdict_line_composer_agrees_with_aggregates_own (in
+    tests/test_suite_version_declaration.py) reddens the moment an
+    interpolant is added to one and not the other. Byte-identity was verified by execution
+    across six shapes on 2026-09-05 -- healthy array, a real junit failure, a missing chunk
+    record at scope=union, a non-zero pytest exit, mechanism=UNREADABLE, and advisories=2 --
+    which covers every interpolant in the string including both values of `mechanism=`.
+    """
+    c = result["counts"]
+    return (
+        f"verdict={result['verdict']} scope={result['scope']} tier={result.get('tier', 'all')} "
+        f"run_id={result['run_id']} "
+        f"covered={c['covered']} structurally_excluded={c['structurally_excluded']} "
+        f"failed={c['failed']} unevaluated={c['unevaluated']} absent={c['absent']} "
+        f"collected={c['collected']} "
+        f"incidental_skips={c['incidental_skips']} "
+        f"{_FIELD_SIGNALLED}={_fmt_signal_count(c[_FIELD_SIGNALLED])} "
+        f"{_FIELD_UNSIGNALLED}={_fmt_signal_count(c[_FIELD_UNSIGNALLED])} "
+        f"signal_completeness={c['signal_completeness']} "
+        f"advisories={len(result.get('advisories') or [])} "
+        f"mechanism={'readable' if result.get('mechanism_readable', True) else 'UNREADABLE'} "
+        f"tail={result.get('tail', 'none')}"
+    )
+
+
+def render_summary_md(result: dict) -> str:
+    triage = result["scope"] == "triage"
+    lines = [
+        # The heading is part of the verdict surface. "suite run" over a 29-test triage
+        # is the same misreading the scope token exists to prevent, one line higher up.
+        f"# hhemt {'TRIAGE run (NOT a suite result)' if triage else 'suite run'} {result['run_id']}",
+        "",
+        "```text",
+        result["verdict_line"],
+        "```",
+        "",
+        f"- source sha: `{result['source_sha']}`",
+        f"- counts: {result['counts']}",
+        "",
+    ]
+    # The banner goes ABOVE the chunk table, because a reader who scrolls to the mechanism
+    # numbers has already passed this point. It states what the numbers ARE rather than
+    # only that something went wrong -- lower bounds, not results.
+    if not result.get("mechanism_readable", True):
+        _nr = ", ".join(f"{d['chunk_id']:02d} ({d['state']})" for d in result.get("non_reporting_chunks") or [])
+        lines += [
+            "",
+            "> ## MECHANISM UNREADABLE — do not read the cross-chunk numbers as a result",
+            ">",
+            f"> Chunk(s) **{_nr}** produced no usable record. Every cross-chunk number in this",
+            "> summary — `derivation under-connected`, the contended-write sets, the observed",
+            "> shared-cache surface — was computed over the chunks that DID report, and is",
+            "> therefore a **lower bound**, not a measurement.",
+            ">",
+            "> This matters most where it looks best: a missing chunk contributes no",
+            "> observations, so it can only LOWER an under-connection count. A `0` here would",
+            "> be indistinguishable from a clean run and would mean nothing. Re-run the",
+            "> non-reporting chunk(s) before reading the mechanism.",
+        ]
+    lines += [
+        "",
+        "## Chunks",
+        "",
+        "| chunk | kind | state | reasons |",
+        "|---|---|---|---|",
+    ]
+    for r in result["chunks"]:
+        lines.append(f"| {r['chunk_id']:02d} | {r['kind']} | {r['state']} | {'; '.join(r['reasons'])} |")
+    # WHERE THE REASONS ARE. Emitted before Problems, because a reader who has just seen a
+    # failure needs the path more than the restatement. Gated on presence: a run with no
+    # failing chunk harvests nothing and says nothing.
+    diag = [r for r in result["chunks"] if r.get("diagnostics")]
+    if diag:
+        lines += [
+            "",
+            "## Failure diagnostics captured",
+            "",
+            "Node-local logs copied out of each failing chunk's basetemp before the node",
+            "released it. **The root cause of a chunk failure normally lives here, not in",
+            "this summary** — a rule's own log is what a snakemake error points at.",
+            "",
+            "| chunk | dir | files | truncated | dropped | note |",
+            "|---|---|---|---|---|---|",
+        ]
+        for r in diag:
+            d = r["diagnostics"]
+            # NAME A DIRECTORY ONLY WHEN ONE EXISTS. `_harvest_diagnostics` returns EARLY on
+            # an absent basetemp -- before the `dest.mkdir` at its tail -- so a chunk that
+            # failed without any test having used tmp_path has a diagnostics RECORD and no
+            # diagnostics DIRECTORY. Printing the path unconditionally would send a reader to
+            # a path that does not exist, which is the same defect this section exists to fix,
+            # one level in. Caught by running it: chunk 00 of the verification run.
+            wrote = bool(d.get("harvested"))
+            where = f"`{d.get('dir', '?')}/`" if wrote else "— (nothing written)"
+            note = (
+                d.get("error")
+                or d.get("note")
+                or (f"**{d.get('dropped')} dropped to a cap**" if d.get("dropped") else "")
+            )
+            lines.append(
+                f"| {r['chunk_id']:02d} | {where} | {d.get('harvested', 0)} "
+                f"| {d.get('truncated', 0)} | {d.get('dropped', 0)} | {note} |"
+            )
+        lines += [
+            "",
+            "Filenames are path-flattened (`/` -> `__`) against the chunk basetemp; the",
+            "`manifest.json` beside them carries each file's ORIGINAL path, and records any",
+            "cap that bound rather than applying it silently.",
+        ]
+
+    if result["problems"]:
+        lines += ["", "## Problems", ""]
+        lines += [f"- {p}" for p in result["problems"]]
+    # RENDERED UNCONDITIONALLY when non-empty, with a standing preamble. The preamble is
+    # not decoration: an advisory section that lists findings without saying what is
+    # therefore NOT being detected reads as "nothing to look at", which is the same
+    # failure class as the constant NOT-GREEN this split removes.
+    if result.get("advisories"):
+        lines += [
+            "",
+            "## Advisories — reported, not verdict-bearing",
+            "",
+            "These did NOT affect the verdict. Each of the five kinds below states how to read it:",
+            "",
+            "- `[disclosure]` — the run's own disclosure block failed one of its schema "
+            "predicates: a run whose rebuilt roots identify it as CLEARED reports an adopted "
+            "tree, a skipped or errored compile-tier node, or a permitted compile venue whose "
+            "build tier was not rebuilt; or the block carries a key set or an adopted-vs-built "
+            "population outside its contract. The verdict is unaffected by construction — a "
+            "defect in the RECORD of a run is not a defect in the run — but the block it "
+            "printed cannot be read as a complete statement of what the run exercised.",
+            "- `[classifier-self-check]` — the slug-entry classifier reporting on itself.",
+            "- `[shared-by-design-write]` — chunks wrote an entry shared across chunks by "
+            "construction, and no two chunks' recorded writes name the same file except "
+            "coordination files (a file whose name starts with `.` or ends in `.lock`, which is "
+            "how a lock being taken shows up). It is BLOCKING instead, and appears under "
+            "Problems, when two or more chunks recorded a write to the same file that is not a "
+            "coordination file, or when a chunk is recorded as writing the entry but left no "
+            "record of what it wrote.",
+            "- `[derivation-under-connected]` — **arm B is this run's only detector of an "
+            "under-connected partition, and while it is advisory an under-connected "
+            "partition cannot fail a run.** It is advisory because arm A and arm B may not "
+            "share a tree vocabulary, not because under-connection stopped mattering.",
+            "- `[complement-derivation]` — the manifest's DECLARED structural gates and the "
+            "junit's OBSERVED structural skips disagree, in either direction. The partition is "
+            "intact either way: a declared gate can be pre-empted by an operator gate or simply "
+            "not fire, and a skip observed but never declared points at a manifest older than "
+            "the run it is being read against.",
+            "",
+        ]
+        lines += [f"- {a}" for a in result["advisories"]]
+    if result["unevaluated_by_cause"]:
+        lines += ["", "## Unevaluated, grouped by cause", ""]
+        for cause, nodes in result["unevaluated_by_cause"].items():
+            lines.append(f"- **{cause}** ({len(nodes)} test(s))")
+
+    if triage:
+        now_passing = result.get("unevaluated_now_passing") or []
+        if now_passing:
+            lines += [
+                "",
+                f"## Unevaluated in the source run, PASSING here — {len(now_passing)} test(s)",
+                "",
+                "```text",
+                "N test(s) were UNEVALUATED in the source run and PASS here. A session fixture that",
+                "does not fail in isolation is not evidence the fixture is fixed -- it failed in a",
+                "concurrent array, and triage runs one session. Confirm in a full run.",
+                "```",
+                "",
+                "```text",
+                *now_passing,
+                "```",
+            ]
+        lines += [
+            "",
+            "## What this triage result does NOT establish",
+            "",
+            "- Nothing about the tests it did not run, including whether the fix under test broke one.",
+            "- Nothing about concurrency: triage runs a SINGLE session, so it cannot reproduce a",
+            "  cross-chunk shared-tree race at all -- that entire class is invisible to it by construction.",
+            "- Nothing durable: it is a statement about these node ids, at this sha, in this configuration.",
+            "",
+            "The claim it DOES support is narrow and worth having: the tests that were failing are no",
+            "longer failing. Only `scope=union` supports a suite-level claim; this run is `scope=triage`.",
+        ]
+
+    # The write surface, with the EVIDENCE beside each label. Printing the reason is what
+    # keeps the classifier from becoming its own silent horizon: a stamp-convention change
+    # shows up here as a visibly wrong label rather than as a quietly reclassified entry.
+    if result.get("slug_entry_classification"):
+        lines += [
+            "",
+            "## Shared-cache write surface",
+            "",
+            "| entry | shape | class | evidence | readers | writers |",
+            "|---|---|---|---|---|---|",
+        ]
+        ev_all = result.get("slug_entry_evidence") or {}
+        cw = result.get("contended_writes") or {}
+        sbd = result.get("shared_by_design_writes") or {}
+        for name, klass in sorted(result["slug_entry_classification"].items()):
+            ev = ev_all.get(name) or {}
+            why = f"is_dir={ev.get('is_dir')}, _version.json={ev.get('has_version_stamp')}"
+            row = cw.get(name) or sbd.get(name) or {}
+            # Label AND path. The label is what a reader recognizes; the path is what the
+            # join actually keyed on, and printing only the label would hide exactly the
+            # distinction that made two same-named directories one bucket.
+            label = ev.get("label") or os.path.basename(name)
+            lines.append(
+                f"| `{label}`<br/>`{name}` | {ev.get('root_shape', '-')} | {klass} | {why} "
+                f"| {row.get('readers', '')} | {row.get('writers', '')} |"
+            )
+        # THE CAVEAT IS GENERATED WITH THE FINDING IT QUALIFIES, not documented elsewhere.
+        # A rule in a README is a rule someone has to remember to apply, which is the same
+        # shape as a guard nobody reads; this one is rendered where the reader is already
+        # standing and cannot be skipped.
+        #
+        # GATED ON THE CLASS, not on `root_shape == "indeterminate"`. Those are not the
+        # same set: `indeterminate` means neither candidate carried the stamp, which is
+        # ALSO true of every TRANSIENT entry (a plain file has no `_version.json` under
+        # it) -- measured, a `_version.json.lock` classifies TRANSIENT with
+        # root_shape=indeterminate. Gating on the shape would print this caveat on a run
+        # whose only indeterminate rows are lock files, qualifying nothing.
+        #
+        # The named examples below are PROSE, telling the reader which rows have
+        # independent backing. They are NOT a classifier input and must never become one:
+        # a name list is the derivation-with-a-horizon this classifier was built to avoid,
+        # and wiring these two names into the classification would reintroduce it.
+        if any(k == ENTRY_SHARED_BY_DESIGN for k in result["slug_entry_classification"].values()):
+            lines += [
+                "",
+                "> **`SHARED_BY_DESIGN` is an ABSENCE of evidence, not evidence of design.**",
+                "> A row carries that label because no `_version.json` was found under it — which is",
+                "> also what a mis-resolved or mis-stat'd entry looks like. Two rows are corroborated",
+                "> INDEPENDENTLY of this classifier: `_software` (`test_case_builder.py` pins",
+                "> `_software_root` to the slug root outside the branch that chooses the runs-root, so the",
+                "> compiled tier is shared on purpose) and `_sensitivity_configs` (a config staging dir",
+                "> written by `test_case_catalog.py`'s `_write_synth_sensitivity_csv`). **Any OTHER entry",
+                "> above with this label is UNCLASSIFIED, not benign** — treat it as a finding awaiting",
+                "> explanation.",
+                ">",
+                "> There is no structural marker for *shared by design* the way `_version.json` is one",
+                "> for *analysis tree*, because the class is defined by the absence of a marker. This",
+                "> caveat is the honest ceiling, not a placeholder for a stronger control.",
+            ]
+
+        if result.get("ignored_transient_entries"):
+            lines += [
+                "",
+                "Ignored as transient (a plain file at the slug root, not a race surface): "
+                + ", ".join(f"`{n}`" for n in result["ignored_transient_entries"])
+                + ". A `*.lock` written by every chunk is the lock WORKING.",
+            ]
+        for name, d in (result.get("shared_by_design_writes") or {}).items():
+            lines += [
+                "",
+                f"### `{(result.get('slug_entry_evidence') or {}).get(name, {}).get('label') or name}`"
+                f" — shared by design, written by chunk(s) {d['writers']}",
+                "",
+                "```text",
+                *[f"chunk {cid}: {paths}" for cid, paths in sorted(d.get("write_samples_by_chunk", {}).items())],
+                "```",
+                "",
+                "Samples are capped, so this says WHAT was written, not everything that was.",
+            ]
+
+    # The complement, BY NODE ID. When scope != union this list is the only record of
+    # what the gate did not cover, so it is written in full and never summarized to a
+    # count: a count cannot be re-run, and a marker expression is not the same set.
+    # NAMED FOR WHAT IT IS. "test(s) this scope cannot evaluate" was FALSE on the hand
+    # re-invocation of run_chunk that _runner.py calls a legitimate operator action: off a
+    # scheduler node the gate does not fire, the test RUNS AND PASSES, and the declared set
+    # still contains it. "carrying a structural gate" is true on every input, because
+    # carrying a gate is declared at plan time and does not depend on where the run happened.
+    _declared = sorted(result.get("declared_complement") or [])
+    _not_attempted = sorted(result.get("declared_not_attempted") or [])
+    lines += ["", f"## Complement — {len(_declared)} test(s) carrying a structural gate", ""]
+    if _declared:
+        lines += [
+            f"NOT ATTEMPTED by this run: {len(_not_attempted)} of {len(_declared)}. That "
+            "intersection is the coverage statement this section supports and the only one it "
+            "can make: carrying a gate is DECLARED at plan time, and whether the site "
+            "ATTEMPTED the test is OBSERVED, so the pair holds whether or not the gate fired. "
+            "A declared test the site DID attempt and which then errored is deliberately not "
+            "here -- it is already a Problems entry, not a structural exclusion to re-run.",
+            "",
+        ]
+    if _not_attempted:
+        lines += [
+            "Run these where the structural exclusion does not apply. Copy the block verbatim:",
+            "",
+            "```text",
+            *_not_attempted,
+            "```",
+        ]
+    else:
+        lines.append("Every test carrying a structural gate was attempted by this run.")
+
+    # PER-MEMBER EVIDENCE, NEVER A VERDICT. SPECIFIED BUT NOT YET EMITTED: the per-member
+    # table this rule governs is not rendered here today, and the paragraphs below state
+    # what it MUST carry when it lands, not what the code emits now. Its members are the
+    # `structural` node ids that `classify_solver_setup` counts in aggregate(); those counts
+    # reach the verdict line and `counts`, and the per-node rows do not.
+    #
+    # Each row will carry the signal tokens observed for that node id and nothing derived
+    # from them: a `classification` cell would be `len(signals) > 0`, which is one question
+    # with two answers.
+    #
+    # READING RULE, to be emitted beside the rows it qualifies rather than in a header, as
+    # the SHARED_BY_DESIGN caveat in the write-surface section above already is: signals
+    # PRESENT means the member almost certainly compiles or runs a solver; NO SIGNALS
+    # ESTABLISHES NOTHING. Where such a test may run is decided by what it does, not by
+    # these signals: a test that compiles or executes a solver, directly or through a
+    # fixture, runs on UVA Rivanna and never on a developer laptop. An unsignalled member is
+    # therefore not cleared for a laptop run, and no signal-derived field may read as if it
+    # were.
+    #
+    # Every member is a test carrying a structural gate that this run did not attempt, so
+    # its label uses the words the Complement section above already prints for that group:
+    # "carrying a structural gate" and "not attempted". Never the outcome word
+    # `UNEVALUATED`, which this module reserves for a test whose setup or teardown raised
+    # (see `parse_junit`), so using it here would merge two populations the verdict line
+    # counts separately. And never "deferred", which reads as leave to skip the test: any
+    # red such a member produces, whenever and wherever it is run, must be fixed.
+
+    if result["incidental_skips"]:
+        # `.get` is DEFENSIVE: no production path renders a read-back summary.json today
+        # (main() aggregates and renders in one process; the only read-back, _runner.py's
+        # triage source selection, never renders). It guards the case anyway so a record
+        # written without the reasons key renders `node — ` rather than raising -- the
+        # honest rendering of a record that never captured one.
+        reasons = result.get("incidental_skip_reasons") or {}
+        lines += [
+            "",
+            f"## Incidental skips — {len(result['incidental_skips'])} test(s)",
+            "",
+            # READING RULE beside the rows it qualifies, never a claim in the header --
+            # the SHARED_BY_DESIGN precedent, for the same reason: SKIPPED_INCIDENTAL is
+            # "not on the structural allowlist", an ABSENCE of evidence.
+            "> **READING RULE.** `SKIPPED_INCIDENTAL` means only *not on the structural "
+            "allowlist* — an absence of evidence, not evidence of benignity. Read the reason "
+            "beside each node id. A reason naming a HOST or VENUE fact (a missing binary or "
+            "credential, a core count, symlink support) is a capability gate and benign. A "
+            "reason naming a property of the FIXTURE the test itself selected (`not present in "
+            "fixture`, `not enabled for this fixture`, `requires ... not set on synth fixture`) "
+            "forfeits coverage that WAS available and is NOT benign; those are findings. A reason "
+            "that names neither, or a fixture property that is itself downstream of a host "
+            "capability (a compile that did not succeed), is UNCLASSIFIED — neither a finding nor "
+            "benign by default; read the guard.",
+            "",
+            "```text",
+            *(f"{n} — {reasons.get(n, '')}" for n in result["incidental_skips"]),
+            "```",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Aggregate one hhemt suite run into a verdict.")
+    ap.add_argument("--run-dir", required=True)
+    ap.add_argument(
+        "--scope",
+        default="array",
+        choices=("array", "complement", "union", "triage"),
+        help="what this run covered; only 'union' supports a suite-level claim",
+    )
+    ap.add_argument(
+        "--allow-not-green",
+        action="store_true",
+        help="exit 0 even when the verdict is NOT-GREEN (reporting only)",
+    )
+    args = ap.parse_args(argv)
+
+    run_dir = Path(args.run_dir).resolve()
+
+    # REPORT, do not raise. A run dir predating this mechanism carries no declaration and
+    # must stay aggregatable; a MISMATCH is a finding about the run, not a reason to
+    # produce no summary at all. The verdict job is the one site that cannot be verified by
+    # peer agreement -- it is a participant, and a mis-resolved one agrees with itself --
+    # so its record is written against the DECLARATION and surfaced in `problems`.
+    from hhemt.suite import missing_conformance_sites, verify_version_conformance
+
+    _vstatus, _vrec = verify_version_conformance(run_dir, site="verdict")
+    result = aggregate(run_dir, scope=args.scope)
+
+    def _blocking(msg: str) -> None:
+        """Append a blocking problem AFTER aggregate() returned, AND re-render the verdict line.
+
+        MEASURED DEFECT, not a precaution. `verdict_line` is a PRE-RENDERED f-string built
+        inside aggregate()'s return dict from the `problems` list as it stood THERE; mutating
+        result["verdict"] afterwards does not update it. Under the previous form of this
+        block a run whose only problem was a silent conformance site PRINTED
+        `verdict=GREEN ...` through main()'s `print(result["verdict_line"])` and wrote a
+        summary.md carrying that same GREEN line (render_summary_md copies
+        result["verdict_line"] into its fenced verdict block) while summary.json said
+        NOT-GREEN -- the two operator surfaces disagreeing, with the one an operator reads
+        saying GREEN. Executed 2026-09-05 against a copy of this module with the roster
+        applied: scenario "chunk-01 silent" printed verdict=GREEN and wrote NOT-GREEN.
+        The exit code was already right (main() reads result["verdict"]), and the harness
+        passes --allow-not-green, so the printed line is the ONLY operator-facing signal
+        the verdict job produces.
+
+        EVERY post-aggregate append goes through here. The rule "mutate, then re-render"
+        expressed as a comment is one a future editor forgets silently; expressed as the
+        only function that appends, a bypass is a visible `result["problems"].append(` in
+        main() that greps in one command.
+        """
+        result["problems"].append(msg)
+        result["verdict"] = "NOT-GREEN"
+        result["verdict_line"] = render_verdict_line(result)
+
+    # ROSTER, because a declaration fixes the REFERENCE POINT and not PARTICIPATION. A site
+    # running a version that predates this mechanism does not import verify_version_conformance,
+    # writes no record, and -- with nothing reading _conformance/ -- is INDISTINGUISHABLE from a
+    # conforming one. That converts "a mis-resolved participant agrees with itself" into "a
+    # mis-resolved participant is silent", which is the same empty-population shape applied to
+    # the very case the version declaration exists to catch. The denominator is machine-derived:
+    # manifest.json already carries chunk_count, so no new artifact is needed. Gated on
+    # NO_EXPECTATION so a run dir that predates the version declaration stays aggregatable.
+    if _vstatus != "NO_EXPECTATION":
+        _n = None
+        try:
+            _n = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))["chunk_count"]
+        except (OSError, KeyError, ValueError) as _exc:
+            # A swallowed failure here shrinks the denominator to two sites and reports
+            # NOTHING about chunks -- the same empty-population shape at a third scale.
+            _blocking(
+                f"cannot read chunk_count from manifest.json ({type(_exc).__name__}); the "
+                "conformance roster cannot be sized and reports nothing about chunk sites."
+            )
+        if _n is not None:
+            _silent = missing_conformance_sites(run_dir, chunk_count=_n)
+            if _silent:
+                _blocking(
+                    f"{len(_silent)} site(s) left no version-conformance record: {_silent}. A site "
+                    "that did not participate is not evidence that it conformed."
+                )
+
+    # BOTH NON-MATCH STATES, at the one site that cannot be checked by peer agreement.
+    # An UNRESOLVABLE verdict job writes its record, SATISFIES the roster (which checks
+    # PRESENCE, and the record is present), appended nothing under the MISMATCH-only form,
+    # and the summary stayed GREEN. UNRESOLVABLE is reachable here because this module is
+    # part of the package it is checking: the tree it reports is wherever the invoking
+    # interpreter found `hhemt`, and neither this module nor `verify_version_conformance`
+    # chooses that. A source checkout puts `hhemt/__init__.py` under a `src` directory and
+    # names its tree; a wheel install, or any layout without that `src` directory, does
+    # not, so `resolved_tree()` returns None and this branch fires. The other conformance
+    # sites -- the drive, triage and each chunk -- RAISE on MISMATCH and on UNRESOLVABLE,
+    # because their declaration was written moments earlier in the same run. This site
+    # treats the same two states with ONE CHANGE OF VERB: it REPORTS them rather than
+    # raising, because refusing would make a run dir that predates the version declaration
+    # unaggregatable. NO_EXPECTATION is a property of the RUN and stays silent at every site;
+    # UNRESOLVABLE is a property of THIS PROCESS and must be surfaced.
+    #
+    # IT FLIPS NOT-GREEN, and the decisive reason is local rather than general: the roster
+    # block above (`if _vstatus != "NO_EXPECTATION":`) ALREADY flips NOT-GREEN for a purely
+    # provenance defect (a site that left no record). Leaving this branch un-flipped makes
+    # one block treat a silent PEER as disqualifying and an unidentifiable SELF as
+    # tolerable. NOT-GREEN here does not claim a test failed; in this module it claims the
+    # run does not support a suite-level green, and a verdict that cannot name its own
+    # source tree does not.
+    if _vstatus == "UNRESOLVABLE":
+        _blocking(
+            "verdict job cannot determine which source tree it resolved hhemt from (no `src` "
+            "component -- a wheel or non-src layout), so this verdict cannot certify which "
+            "version it describes."
+        )
+    elif _vstatus == "MISMATCH":
+        _blocking(
+            f"verdict job resolved hhemt from {_vrec['resolved_tree']!r} but this run is "
+            f"declared against {_vrec['expected_tree']!r}; the verdict describes a different "
+            "version than the run measured."
+        )
+    # THE FILENAME SPLIT, keyed on the BOUND scope rather than on args.scope, because the
+    # manifest can override the caller. Without it a triage run in a fresh dir writes a
+    # file that any later reader -- including `_runner.py`'s own --from-run default
+    # selection (`_select_source_run`) -- picks up as a suite summary. The split makes that
+    # impossible rather than unlikely, and it is the second of the two independent arms
+    # guarding that path (the first is the `.triage` run-dir suffix).
+    stem = "summary.triage" if result["scope"] == "triage" else "summary"
+    (run_dir / f"{stem}.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (run_dir / f"{stem}.md").write_text(render_summary_md(result), encoding="utf-8")
+
+    # THE LEDGER LINE, written after the summary files rather than beside the verdict, because
+    # `_blocking` above can still flip a GREEN to NOT-GREEN: a record written before those flips
+    # would carry the verdict the run had before its provenance was checked, which is exactly
+    # the record `owed` would then discharge on. Nothing below this block changes the verdict.
+    #
+    # SKIPPED FOR A NON-SUITE SCOPE. `triage` and `complement` runs make no suite-level claim,
+    # and a `scope=array|union` domain is what keeps the ledger's population homogeneous; a
+    # triage line in it would be a record `owed` reads as a failed suite run.
+    #
+    # AN UNWRITTEN LEDGER IS PRINTED AND IS NEVER VERDICT-BEARING, on the same ground the
+    # disclosure assertion above states: a defect in the REPORT of a run must not redden the
+    # run. The line names the failure so it is visible rather than indistinguishable from a
+    # ledger appended by a writer that silently did nothing.
+    from hhemt.suite import policy as _policy
+
+    if result["scope"] in _policy.LEDGERED_SCOPES:
+        try:
+            _policy.append_ledger_entry(run_dir.parent, _policy.ledger_entry(run_dir, result))
+            ledger_line = f"ledger={_policy.ledger_path(run_dir.parent)}"
+        except OSError as _exc:
+            ledger_line = f"ledger=UNWRITTEN ({type(_exc).__name__}: {_exc})"
+    else:
+        ledger_line = f"ledger=skipped (scope={result['scope']} makes no suite-level claim)"
+
+    # The scope token is emitted on the SAME line as the verdict, always. A bare
+    # GREEN is unprintable by construction: there is no format string that produces
+    # one, because verdict_line is built with scope= adjacent to verdict=.
+    print(result["verdict_line"])
+    print(f"counts={result['counts']}")
+    for p in result["problems"]:
+        print(f"  problem: {p}")
+    # Printed on the SAME surface as the problems, under a label that cannot be mistaken
+    # for one. An advisory the operator never sees is a suppression wearing a different
+    # name, and the whole argument for demoting rather than deleting these findings is
+    # that they stay visible.
+    for a in result.get("advisories") or []:
+        print(f"  advisory: {a}")
+    print(f"summary={run_dir / (stem + '.md')}")
+    print(ledger_line)
+    if result["verdict"] == "GREEN" or args.allow_not_green:
+        return 0
+    return 1
+
+
+if __name__ == "__main__":  # pragma: no cover - module-execution path
+    # `main()` returns 0 (GREEN, or --allow-not-green) / 1 (NOT-GREEN). Its Typer wrapper,
+    # `src/hhemt/suite/_cli.py::_aggregate`, converts with `raise typer.Exit(code=main(...))`;
+    # a bare `return` there would exit 0 whatever the verdict.
+    raise SystemExit(main())

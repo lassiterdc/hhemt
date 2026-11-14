@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import typing
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 
-class PathPolicy(str, Enum):
+class PathPolicy(StrEnum):
     """Policy applied to a Pydantic ``Path``-typed cfg field at emit time."""
 
     BUNDLE_RELATIVE = "bundle_relative"
@@ -25,7 +25,7 @@ class PathPolicy(str, Enum):
     If the source file is outside ``analysis_dir`` (e.g., DEM, weather
     timeseries, SWMM templates that live elsewhere on HPC), the value
     is set to ``external/{filename}`` mirroring the
-    ``_harvest_and_copy_sources`` fallback. No fail-fast — input files
+    ``_harvest_sources`` fallback. No fail-fast — input files
     routinely live outside ``analysis_dir``.
     """
 
@@ -64,9 +64,9 @@ class PathPolicy(str, Enum):
 
 
 # Per-field policy table. Keys must mirror the Pydantic field names on
-# system_config (12 entries) and analysis_config (10 entries) verbatim.
+# system_config (13 entries) and analysis_config (10 entries) verbatim.
 _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
-    # ---- system_config (12 Path fields) -------------------------------
+    # ---- system_config (13 Path fields) -------------------------------
     "system_directory": PathPolicy.FORCED_DOT,
     "watershed_gis_polygon": PathPolicy.BUNDLE_RELATIVE,
     "DEM_fullres": PathPolicy.BUNDLE_RELATIVE,
@@ -74,6 +74,7 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "SWMM_hydraulics": PathPolicy.BUNDLE_RELATIVE,
     "SWMM_hydrology": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "SWMM_full": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "swmm_coupling_nodes_file": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "landuse_raster": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "SWMM_software_directory": PathPolicy.IS_NONE_ACCEPTABLE,
     "TRITONSWMM_software_directory": PathPolicy.IS_NONE_ACCEPTABLE,
@@ -85,11 +86,172 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "storm_tide_boundary_line_gis": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "weather_event_summary_csv": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "sensitivity_analysis": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "weather_event_windows_csv": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "weather_events_to_simulate": PathPolicy.BUNDLE_RELATIVE,
     "analysis_dir": PathPolicy.FORCED_DOT,
-    "master_analysis_cfg_yaml": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "experiment_cfg_yaml": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "brand_theme": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "dataset_license_file": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "static_plot_configs": PathPolicy.BUNDLE_RELATIVE_LIST,
+}
+
+
+#: Path policies whose fields name a bundle-carried input file (self-contained emit).
+#: FORCED_DOT (analysis_dir / system_directory) are directory markers, IS_NONE_ACCEPTABLE
+#: (software dirs) are nulled and never bundled, HELPER_RESOLVED is runtime-derived — none
+#: names a file to carry. Lives HERE rather than in ``_emit.py`` so
+#: ``config/bundle_exclude.py`` can import it without importing ``hhemt.bundle._emit``:
+#: ``config/reprex_taxonomy.py`` documents the invariant that no module reachable from
+#: ``hhemt.bundle.__init__`` may import ``hhemt.config.*``, and this module is the leaf.
+_SELF_CONTAINED_POLICIES = frozenset(
+    {
+        PathPolicy.BUNDLE_RELATIVE,
+        PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+        PathPolicy.BUNDLE_RELATIVE_LIST,
+    }
+)
+
+
+@dataclass(frozen=True)
+class ExcludableInput:
+    """One row of the ADR-20 excludable-input catalog.
+
+    ``excludable=False`` means the field is carried self-contained and MAY NOT be opted
+    out — it is still catalogued (the bidirectional guard test demands total coverage of
+    ``_SELF_CONTAINED_POLICIES``) but ``BundleExcludeConfig`` rejects it.
+    """
+
+    description: str
+    reproducibility_cost: str
+    excludable: bool = True
+
+
+#: ADR-20 (as amended 2026-07-14): the documented menu an operator authors an exclude-config
+#: against (``hhemt bundle --list-excludable``). TOTAL over every cfg field whose
+#: ``_PATH_FIELD_POLICY`` is in ``_SELF_CONTAINED_POLICIES`` — enforced bidirectionally by
+#: ``test_all_self_contained_fields_have_catalog_entry``, mirroring
+#: ``test_all_path_fields_have_policy``. A new self-contained Path field therefore CANNOT be
+#: added without a catalog entry.
+_EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
+    # ---- system_config ----
+    "DEM_fullres": ExcludableInput(
+        description="Full-resolution DEM raster the TRITON grid is derived from.",
+        reproducibility_cost=(
+            "Usually the single largest input. Excluding it makes the bundle unrunnable "
+            "without a successful input_deposit fetch — the terrain IS the experiment."
+        ),
+    ),
+    "watershed_gis_polygon": ExcludableInput(
+        description="Watershed boundary polygon used to clip the DEM/landuse rasters.",
+        reproducibility_cost="Small; excluding it buys almost no space and adds a fetch dependency.",
+    ),
+    "landuse_raster": ExcludableInput(
+        description="Landuse raster the spatially-varying Manning's n grid is built from.",
+        reproducibility_cost=(
+            "Large. Excluding it blocks Manning's preprocessing when toggle_use_constant_mannings=False."
+        ),
+    ),
+    "landuse_lookup_file": ExcludableInput(
+        description="Landuse-code -> Manning's n lookup table.",
+        reproducibility_cost="Tiny; excluding it buys no space. Almost never worth a fetch dependency.",
+    ),
+    "SWMM_hydraulics": ExcludableInput(
+        description="SWMM hydraulics .inp model (the drainage network).",
+        reproducibility_cost=(
+            "Modest in size but load-bearing: the coupled run cannot execute without it. "
+            "This is the field to exclude for a LICENSED or proprietary municipal network — "
+            "omit contentUrl and supply a citation naming how to obtain it."
+        ),
+    ),
+    "SWMM_hydrology": ExcludableInput(
+        description="SWMM hydrology .inp model (subcatchment runoff).",
+        reproducibility_cost="Modest; excluding it blocks the hydrology leg of the coupling.",
+    ),
+    "SWMM_full": ExcludableInput(
+        description="Combined SWMM .inp model (hydrology + hydraulics in one file).",
+        reproducibility_cost="Modest; excluding it blocks the coupled run.",
+    ),
+    "swmm_coupling_nodes_file": ExcludableInput(
+        description=(
+            "Coupling-node list (swmm_coupling_mode: list): the SWMM junctions the coupled model exchanges water at."
+        ),
+        reproducibility_cost=(
+            "Tiny, and it DEFINES the coupled set; excluding it blocks the coupled run. Exclude "
+            "it only together with the SWMM_hydraulics network it names (for example a licensed network)."
+        ),
+    ),
+    "subcatchment_raingage_mapping": ExcludableInput(
+        description="Subcatchment -> raingage mapping table.",
+        reproducibility_cost="Tiny; excluding it buys no space.",
+    ),
+    "triton_swmm_configuration_template": ExcludableInput(
+        description="TRITON-SWMM run-configuration template the per-sim configs are filled from.",
+        reproducibility_cost=(
+            "Tiny, and it is the reprex template the reconstituted run fills. Excluding it is "
+            "almost always wrong — the bundle carries it as part of the runnable template set."
+        ),
+    ),
+    # ---- analysis_config ----
+    "weather_timeseries": ExcludableInput(
+        description="Gridded precipitation / weather forcing the simulations are driven by.",
+        reproducibility_cost=(
+            "Typically the second-largest input after the DEM, and often the best exclusion "
+            "candidate for an oversized bundle. The run cannot start without it."
+        ),
+    ),
+    "weather_events_to_simulate": ExcludableInput(
+        description="The event list (which storms/windows to simulate).",
+        reproducibility_cost="Tiny, and it defines the ensemble. Excluding it buys no space.",
+    ),
+    "weather_event_summary_csv": ExcludableInput(
+        description="Per-event summary table used by reporting.",
+        reproducibility_cost="Small; excluding it degrades reporting rather than the run.",
+    ),
+    "storm_tide_boundary_line_gis": ExcludableInput(
+        description="Coastal boundary line the storm-tide forcing is applied along.",
+        reproducibility_cost="Small; excluding it blocks the coastal boundary condition.",
+    ),
+    "sensitivity_analysis": ExcludableInput(
+        description="Sensitivity-analysis specification (the SA design).",
+        reproducibility_cost="Small; excluding it blocks a sensitivity re-run.",
+    ),
+    "weather_event_windows_csv": ExcludableInput(
+        description="Per-event simulation windows. Tiny; the run cannot start without it.",
+        reproducibility_cost=(
+            "Never a sensible exclusion. Without it a regenerated bundle has no declared "
+            "window, so every per-sim hydrology panel loses its clip."
+        ),
+    ),
+    "experiment_cfg_yaml": ExcludableInput(
+        description="Primary analysis config the per-analysis configs derive from.",
+        reproducibility_cost="Tiny; excluding it buys no space.",
+    ),
+    "static_plot_configs": ExcludableInput(
+        description="Static-plot configuration files (a LIST — one input_deposit block per element).",
+        reproducibility_cost="Tiny; excluding them degrades reporting only.",
+    ),
+    "brand_theme": ExcludableInput(
+        description="Brand/theme YAML for report styling.",
+        reproducibility_cost=(
+            "NOT EXCLUDABLE. _emit_resolved_brand_theme rewrites the bundled cfg to point at "
+            "the emitted brand_theme.resolved.yaml sidecar, so an exclusion here would emit an "
+            "input_deposit block that no consumer ever fetches — a dangling by-reference record."
+        ),
+        excludable=False,
+    ),
+    "dataset_license_file": ExcludableInput(
+        description=(
+            "License-details YAML naming the dataset's license ('name', optional 'link') when it "
+            "is not one of the seven SPDX ids the config field accepts."
+        ),
+        reproducibility_cost=(
+            "Tiny in bytes, and NOT EXCLUDABLE. The file IS the dataset's terms of use: a "
+            "deposit or a re-rendered report that recovered its license from somewhere it has "
+            "to fetch would state terms the bundle itself cannot show, so it travels "
+            "self-contained like every other tiny load-bearing input."
+        ),
+        excludable=False,
+    ),
 }
 
 
@@ -127,3 +289,74 @@ def enumerate_path_fields(cfg_model: type) -> list[str]:
         if args and Path in args:
             names.append(name)
     return names
+
+
+def rebase_bundle_relative_paths(cfg_dict: dict, cfg_model: type, bundle_root: Path) -> dict:
+    """Return a copy of `cfg_dict` with every non-absolute Path-field value resolved
+    against `bundle_root`.
+
+    THE SINGLE REBASE IMPLEMENTATION. A bundle's stored `cfg_system.yaml` /
+    `cfg_analysis.yaml` are ARCHIVE records whose Path fields were rewritten to
+    `external/{filename}` (BUNDLE_RELATIVE) or `"."` (FORCED_DOT) at emit time, and those
+    resolve only against the bundle root, which a config loader is not given. Every
+    consumer that validates one of those files through a runnable-config model rebases
+    here rather than inline.
+
+    This module imports nothing from `hhemt`, so it is importable from `config/`,
+    `bundle/` and `eda/` without a cycle; `cfg_model` is a parameter for that reason.
+    """
+    out = dict(cfg_dict)
+    for name in set(enumerate_path_fields(cfg_model)):
+        value = out.get(name)
+        if value is None:
+            continue
+        if isinstance(value, list):
+            out[name] = [str((bundle_root / v).resolve()) if not Path(v).is_absolute() else v for v in value]
+            continue
+        if isinstance(value, str) and not Path(value).is_absolute():
+            out[name] = str((bundle_root / value).resolve())
+    return out
+
+
+def load_bundle_config(cfg_path: Path, cfg_model: type, bundle_root: Path):
+    """Read a bundle's archived config YAML, rebase its Path fields, and validate.
+
+    The one-line substitution for `yaml_to_model(cfg_path, cfg_model)` at every site that
+    reads a BUNDLE archive rather than a runnable config. Keeps the MODEL, because the
+    render path consumes real submodels (`report`, `eda`, `brand_theme`).
+    """
+    import pydantic
+    import yaml
+
+    from hhemt.exceptions import ConfigurationError
+
+    raw = rebase_bundle_relative_paths(
+        yaml.safe_load(Path(cfg_path).read_text()), cfg_model, Path(bundle_root).resolve()
+    )
+    # Only the validate call is wrapped, as in loaders._load_config: pydantic's error names
+    # the model and the field but never the file, so the bundle's config path is attached here.
+    try:
+        return cfg_model.model_validate(
+            raw,
+            # A bundle's archived cfg is an ARCHIVE RECORD. This function validates the
+            # record's SHAPE; whether the bundle carries the files the record declares is a
+            # separate question with a separate, per-caller answer, and it is deliberately not
+            # asked here:
+            #   - load_eda_context and _combine.py read scalars only and require nothing on
+            #     disk (_combine's own note at :666 records zero Path fields in its read set);
+            #   - Bundle.from_directory is a construction step, and the one field its
+            #     regenerate_report path OPENS -- brand_theme -- is checked explicitly there,
+            #     by _assert_render_inputs_present, where the requirement actually lives;
+            #   - the DOI/run path's answer is experiments.py::_assert_declared_inputs_exist,
+            #     which fetches via contentUrl, sha256-verifies, and reports citation +
+            #     place-it-at on failure.
+            # Do not add an earlier, weaker refusal here: it preempts that last one and says
+            # less than any of the three.
+            context={"existence": "metadata"},
+        )
+    except pydantic.ValidationError as exc:
+        raise ConfigurationError(
+            field=Path(cfg_path).name,
+            message=f"schema violation: {exc}",
+            config_path=Path(cfg_path),
+        ) from exc

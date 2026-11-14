@@ -1,0 +1,8 @@
+# A published page has a person as its reader. Text for an AI assistant, or the name of its instruction file, has none.
+extends: existence
+message: "Write for the person who reads the page; '%s' names an AI tool or its instruction file."
+level: warning
+ignorecase: false
+nonword: true
+raw:
+  - '\bAI\b|(?i:\bagents?\b|\bassistants?\b|\bAGENTS\.md\b|\bCLAUDE\.md\b|\bcopilot\b|\bchatgpt\b|\bsystem prompt\b)'

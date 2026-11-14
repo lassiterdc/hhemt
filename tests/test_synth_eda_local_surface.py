@@ -15,6 +15,7 @@ def test_emit_eda_local_surface_writes_import_clean_package(tmp_path):
     assert "import hhemt" in bootstrap_src
     assert "from eda_local" not in bootstrap_src and "import eda_local" not in bootstrap_src
 
+
 def test_emit_eda_local_surface_is_idempotent(tmp_path):
     from hhemt.eda._local_surface import emit_eda_local_surface
 

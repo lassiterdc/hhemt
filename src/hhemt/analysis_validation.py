@@ -8,19 +8,33 @@ share the same validation logic.
 
 Each per-check function returns one `CheckResult` describing pass/fail plus
 optional per-scenario detail rows. The aggregator `validate_analysis()` runs
-all 7 checks and returns a `ValidationReport`. For sensitivity analyses, the
-aggregate per-scenario checks iterate sub-analyses and prefix each detail
-row with the sub-analysis id.
+every check in its list, then appends any persisted EDA verdicts, and returns a
+`ValidationReport`. For sensitivity analyses, the
+aggregate per-scenario checks iterate members and prefix each detail
+row with the member id.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from hhemt.member_identity import resolve_member_id_column
+from hhemt.scenario_records import all_members_for_reading_of
+from hhemt.utils import open_store
+
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
+
+
+def _count(n: int, noun: str) -> str:
+    """`1 stage`, `3 stages`: the numeral beside its unit, in the number's own form."""
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+logger = logging.getLogger(__name__)
 
 
 CheckLevel = Literal["system", "aggregate", "scenario", "resource"]
@@ -28,13 +42,58 @@ CheckLevel = Literal["system", "aggregate", "scenario", "resource"]
 
 @dataclass
 class CheckResult:
-    """One pass/fail check result, with optional per-scenario detail rows."""
+    """One check result, with optional per-scenario detail rows.
+
+    THREE-VALUED ON APPLICABILITY, and SELF-DESCRIBING ON INSTRUMENT. Two separate
+    overloads of ``passed`` are removed here, and they are independent axes:
+
+    1. ``passed`` alone cannot distinguish "verified good" from "did not apply": a
+       check returning ``passed=True`` with an ``N/A`` summary rendered as a green
+       PASS, so a PASS carried no information. ``applicable=False`` is that third
+       state; the renderer greys it and shows ``N/A``.
+    2. ``passed`` alone cannot distinguish a verdict computed from RAW double
+       rasters from one computed from the derived summary tier. Those have
+       different detection floors, so an identical-looking PASS means different
+       things. Measured on the compute-sensitivity campaign: the summary tier
+       stores ``max_flood_depth`` (the TRITON depth field, the one variable carrying
+       the coupled-resume perturbation) as FLOAT32 while every SWMM-side variable
+       is float64. float32 eps is 1.1920928955078125e-07, so a true 2.4e-08
+       difference quantizes UP to ~1.19e-07 and a true 1.68e-13 difference rounds
+       to EXACTLY 0.0 -- manufacturing a false "bit-identical" control. A pass at
+       that floor may not render like a pass on raws (a pass should mean
+       something).
+
+    ``instrument`` vocabulary: ``"raw_rasters"`` (raw per-timestep binary output,
+    the full-precision instrument), ``"summary_tier"`` (the FLAT per-scenario
+    summaries -- NOT the consolidated DataTree, whose CF-stamping, dual-indexing
+    and recompression perturb the bytes these members compare), or None when the check
+    reads neither. It is SELF-REPORTED by the check from the path it actually
+    took, and MUST NOT be derived from ``cfg_analysis.clear_raw``: that records
+    configured intent, so a run configured to preserve raws whose outputs were
+    nonetheless purged would stamp a false provenance claim on the very field
+    that exists to make the verdict honest.
+
+    ``detection_floor`` is the smallest absolute difference the instrument can
+    resolve at unit magnitude -- the COARSEST floor across the variables actually
+    compared, since that is the bound below which the verdict cannot see anything.
+    A summary-tier verdict touching ``max_flood_depth`` therefore reports float32
+    eps, not float64 eps, even though its SWMM-side variables are float64.
+
+    All three fields are DEFAULTED so a ``validation_report.json`` written before
+    they existed deserialises unchanged. The dataclass crosses the bundle boundary
+    via ``dataclasses.asdict`` and is read back by
+    ``report_renderers/cross_experiment_errors_and_warnings.py``; a required field
+    would break every shipped bundle.
+    """
 
     name: str
     level: CheckLevel
     passed: bool
     summary: str
     details: list[dict] = field(default_factory=list)
+    applicable: bool = True
+    instrument: str | None = None
+    detection_floor: float | None = None
 
 
 @dataclass
@@ -58,7 +117,7 @@ class ValidationReport:
     def granular_failures(self) -> list[dict]:
         """Flat list of per-scenario failure rows across all checks.
 
-        Each row carries `{stage, sa_id (optional), scenario, detail}` so the
+        Each row carries `{stage, sa_id (optional; the member tag), scenario, detail}` so the
         renderer can emit a uniform "scenario × stage × detail" table.
         """
         rows: list[dict] = []
@@ -78,17 +137,38 @@ class ValidationReport:
 
 
 def check_system_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
-    """System-level: compilation success for enabled models + DEM/Mannings present."""
+    """System-level: compilation success for enabled models + DEM/Mannings present.
+
+    The three HOST-compilation assertions run only in native mode, gated on
+    ``analysis.cfg_analysis.execution_environment != "container"``. In container mode
+    no on-cluster compile occurs by design
+    (``setup_workflow.py`` skips it -- the SIF carries the binary), so asserting host
+    compilation would be asserting a property that is definitionally false. What the
+    triad certified in native mode ("a runnable binary exists") is certified MORE
+    strongly downstream in container mode: the sim rung actually executes the binary
+    out of the SIF, and ``check_scenarios_run`` / ``check_timeseries_processed`` /
+    ``check_analysis_summaries_created`` all fail if it did not. The DEM/Mannings half
+    below stays UNCONDITIONAL -- those artifacts are produced on the host in BOTH modes
+    (``process_system_level_inputs`` runs in container mode too) and nothing downstream
+    re-certifies them, so gating them would genuinely weaken this check.
+    """
     cfg_sys = analysis._system.cfg_system
     issues: list[dict] = []
     sys = analysis._system
 
-    if cfg_sys.toggle_tritonswmm_model and not sys.compilation_successful:
-        issues.append({"detail": "TRITON-SWMM compilation failed"})
-    if cfg_sys.toggle_triton_model and not sys.compilation_triton_only_successful:
-        issues.append({"detail": "TRITON-only compilation failed"})
-    if cfg_sys.toggle_swmm_model and not sys.compilation_swmm_successful:
-        issues.append({"detail": "SWMM compilation failed"})
+    # Compilation checks apply to NATIVE mode only. In container mode setup skips
+    # the on-cluster compile (setup_workflow.py _native_compile) — the SIF carries
+    # the binary — so compilation_*_successful is legitimately False and the sim runs
+    # `apptainer exec {sif} {exe_in_sif}` (run_simulation.py). Appending a compilation
+    # issue here would force validation_report.json overall_passed:false on a valid
+    # container run. The DEM/Mannings checks below still run in both modes.
+    if analysis.cfg_analysis.execution_environment != "container":
+        if cfg_sys.toggle_tritonswmm_model and not sys.compilation_successful:
+            issues.append({"detail": "TRITON-SWMM compilation failed"})
+        if cfg_sys.toggle_triton_model and not sys.compilation_triton_only_successful:
+            issues.append({"detail": "TRITON-only compilation failed"})
+        if cfg_sys.toggle_swmm_model and not sys.compilation_swmm_successful:
+            issues.append({"detail": "SWMM compilation failed"})
 
     dem = sys.processed_dem_rds
     manning = sys.mannings_rds
@@ -97,27 +177,125 @@ def check_system_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
     if manning is None:
         issues.append({"detail": "Mannings not created"})
     if dem is not None and manning is not None and dem.shape != manning.shape:
-        issues.append({"detail": f"DEM shape {dem.shape} != Mannings shape {manning.shape}"})
+        issues.append({"detail": f"DEM dimensions {dem.shape} != Mannings dimensions {manning.shape}"})
     if dem is not None and (len(dem.shape) != 3 or dem.shape[0] != 1):
-        issues.append({"detail": f"Expected DEM shape (1, rows, cols), got {dem.shape}"})
+        issues.append({"detail": f"Expected DEM dimensions (1, rows, cols), got {dem.shape}"})
 
     passed = not issues
-    summary = "System setup OK" if passed else f"System setup FAILED ({len(issues)} issue(s))"
+    summary = "System setup OK" if passed else f"System setup failed ({_count(len(issues), 'issue')})"
+    # Disclosed denominator: `passed` derives from len(issues)==0 and
+    # therefore cannot distinguish "evaluated and found nothing" from "did not
+    # evaluate". A system that declares a GPU backend but resolves NO GPU build dir
+    # (the sensitivity-master template, whose GPU hardware varies per member)
+    # ABSTAINS on the GPU compile term; name that in the artifact itself.
+    if analysis.cfg_analysis.execution_environment != "container" and sys.gpu_compilation_backend:
+        _abstained = [
+            _label
+            for _label, _toggled, _gpu_path in (
+                ("TRITON-SWMM", cfg_sys.toggle_tritonswmm_model, sys.sys_paths.compilation_logfile_gpu),
+                ("TRITON-only", cfg_sys.toggle_triton_model, sys.sys_paths.TRITON_build_dir_gpu),
+            )
+            if _toggled and _gpu_path is None
+        ]
+        if _abstained:
+            summary += (
+                f" [GPU compile term not evaluated for {', '.join(_abstained)}: this system "
+                "declares a GPU backend but resolves no GPU build dir (a sweep-level template; "
+                "GPU hardware varies per member). CPU term evaluated; per-hardware GPU "
+                "compile status is certified downstream by each member's own system.]"
+            )
     return CheckResult(name="System setup", level="system", passed=passed, summary=summary, details=issues)
 
 
-def _iter_subanalyses_or_self(analysis: TRITONSWMM_analysis):
-    """Yield (sa_id, sub_analysis) for sensitivity master, else (None, analysis)."""
+def _iter_members_or_self(analysis: TRITONSWMM_analysis):
+    """Yield (member_id, member) for sensitivity master, else (None, analysis)."""
     sensitivity_on = getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
     sens = getattr(analysis, "sensitivity", None)
     if sensitivity_on and sens is not None:
-        yield from sens.sub_analyses.items()
+        # Every member, removed ones included (read-only views): a removed member's scenarios are listed from its
+        # moved records instead of silently dropping out of the check.
+        yield from all_members_for_reading_of(sens).items()
     else:
         yield None, analysis
 
 
+def _sims_dir_of(analysis: TRITONSWMM_analysis, sub) -> Path:
+    """The ``sims`` directory of a member or of the analysis itself; for a recorded (removed) member, its absent path.
+
+    A recorded member's view provides no ``analysis_paths`` on purpose, so the path is computed from the master's
+    ``members/{analysis_id}/sims`` naming. Every per-scenario reader below then finds the files absent and takes its
+    existing "not determinable" arm instead of raising ``MemberRemovedError``.
+    """
+    if getattr(sub, "is_recorded_member", False):
+        analysis_dir = Path(analysis.analysis_paths.analysis_dir)
+        sims_name = Path(analysis.analysis_paths.simulation_directory).relative_to(analysis_dir)
+        return analysis_dir / "members" / sub.analysis_id / sims_name
+    return Path(sub.analysis_paths.simulation_directory)
+
+
+def _model_log_payload(analysis: TRITONSWMM_analysis, member_id, sub, event_id: str, model: str) -> dict | None:
+    """The ``log_{model}.json`` payload of one scenario, read through the record resolver (path-only).
+
+    Active member or plain analysis: the live log, or its analysis-level record once the directory was removed.
+    Recorded member: the model log inside the master's moved scenario record.
+    """
+    import json
+
+    if getattr(sub, "is_recorded_member", False):
+        from hhemt.scenario_records import member_records_dir
+
+        rec = (
+            member_records_dir(analysis.analysis_paths.analysis_dir, member_id)
+            / "scenario_records"
+            / f"{event_id}.json"
+        )
+        try:
+            payload = json.loads(rec.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        logs = payload.get("model_logs") or {} if isinstance(payload, dict) else {}
+        return logs.get(model) if isinstance(logs.get(model), dict) else None
+    from hhemt.scenario_records import record_for
+
+    return record_for(sub, event_id, model)
+
+
+def surviving_directories_with_reasons(analysis: TRITONSWMM_analysis) -> dict[str, str]:
+    """Every scenario directory still on disk, keyed ``[member_{id}/]event_id``, with the reason it survives.
+
+    Reasons: ``not completed`` (a failed or incomplete scenario keeps its directory for diagnosis and resume),
+    ``removal switches off`` (completed, no record, the three-switch conjunction is not met), ``removal pending``
+    (record ``pending``: the next consolidate finishes it). Recorded members survive nowhere and are not listed.
+    """
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.scenario_records import read_scenario_record, removal_switches_on
+
+    out: dict[str, str] = {}
+    for member_id, sub in _iter_members_or_self(analysis):
+        if getattr(sub, "is_recorded_member", False):
+            continue
+        sims = _sims_dir_of(analysis, sub)
+        enabled = sub._get_enabled_model_types()
+        on = removal_switches_on(sub.cfg_analysis, enabled)
+        for event_iloc in sub.df_sims.index:
+            evt = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(event_iloc))
+            if not (sims / evt).is_dir():
+                continue
+            rec = read_scenario_record(sub.analysis_paths.analysis_dir, evt)
+            if rec is not None and rec["state"] == "pending":
+                reason = "removal pending"
+            else:
+                done = all(
+                    bool((_model_log_payload(analysis, member_id, sub, evt, m) or {}).get("simulation_completed"))
+                    for m in enabled
+                )
+                reason = "not completed" if not done else ("removal switches off" if not on else "removal not yet run")
+            out[evt if member_id is None else f"member_{member_id}/{evt}"] = reason
+    return out
+
+
 def _detail_rows_for_failed_scenarios(analysis: TRITONSWMM_analysis, failed_paths: list[str]) -> list[dict]:
-    """Convert a list of scenario_dir strings to detail-row dicts (no sa_id)."""
+    """Convert a list of scenario_dir strings to detail-row dicts (no member_id)."""
     return [{"scenario": str(Path(p).name), "scenario_dir": str(p), "detail": "did not complete"} for p in failed_paths]
 
 
@@ -126,16 +304,21 @@ def check_scenarios_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
     details: list[dict] = []
     total = 0
     failed_count = 0
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for member_id, sub in _iter_members_or_self(analysis):
         n = int(sub.n_scenarios)
         total += n
         if not sub._all_scenarios_created:
             failed = list(sub._scenarios_not_created)
             failed_count += len(failed)
             for p in failed:
+                # DO NOT RENAME the "sa_id" key written below, here or at any other
+                # `row["sa_id"] = f"member_{member_id}"` write in this module. These are
+                # CheckResult.details rows, not df_status: the consumer is
+                # report_renderers/errors_and_warnings.py's `d.get("sa_id", "")`, and producer
+                # and consumer AGREE, so renaming it breaks a working path.
                 row = {"scenario": Path(p).name, "scenario_dir": str(p), "detail": "scenario not created"}
-                if sa_id is not None:
-                    row["sa_id"] = f"sa_{sa_id}"
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
                 details.append(row)
     passed = failed_count == 0
     summary = (
@@ -149,7 +332,7 @@ def check_scenarios_run(analysis: TRITONSWMM_analysis) -> CheckResult:
     details: list[dict] = []
     total = 0
     failed_count = 0
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for member_id, sub in _iter_members_or_self(analysis):
         try:
             n = len(sub.df_sims)
         except Exception:
@@ -160,8 +343,8 @@ def check_scenarios_run(analysis: TRITONSWMM_analysis) -> CheckResult:
             failed_count += len(failed)
             for p in failed:
                 row = {"scenario": Path(p).name, "scenario_dir": str(p), "detail": "simulation did not complete"}
-                if sa_id is not None:
-                    row["sa_id"] = f"sa_{sa_id}"
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
                 details.append(row)
     passed = failed_count == 0
     summary = f"All {total} scenarios ran" if passed else f"Simulation failed for {failed_count} of {total} scenarios"
@@ -180,7 +363,7 @@ def check_timeseries_processed(
     attribute name (``all_TRITON_timeseries_processed`` — the class actually
     defines ``_all_TRITON_timeseries_processed``) and swallowed the resulting
     ``AttributeError`` under a blanket ``except (AttributeError, Exception)``, so
-    it recorded zero failures unconditionally (the R4 bug). On-disk truth fixes
+    it recorded zero failures unconditionally. On-disk truth fixes
     both halves: the predicate cannot be wrong-named, and any genuine error now
     surfaces instead of being swallowed.
 
@@ -191,34 +374,44 @@ def check_timeseries_processed(
     - ``"TRITON"``: TRITONSWMM + TRITON-only
     - ``"SWMM"``: TRITONSWMM + SWMM-only
 
-    Iterates ``_iter_subanalyses_or_self(analysis)`` so the sensitivity
-    sub-analysis fan-out is preserved — iterating the master's own ``df_sims``
-    would silently pass on a sensitivity analysis (also part of the R4 bug).
+    Iterates ``_iter_members_or_self(analysis)`` so the sensitivity
+    member fan-out is preserved — iterating the master's own ``df_sims``
+    would silently pass on a sensitivity analysis.
     """
     from hhemt.scenario import compute_event_id_slug
     from hhemt.summary_paths import scenario_summaries_present
 
     details: list[dict] = []
     total = 0
-    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+    for member_id, sub in _iter_members_or_self(analysis):
         enabled = sub._get_enabled_model_types()
         if which == "TRITON":
             enabled = [m for m in enabled if m in ("tritonswmm", "triton")]
         elif which == "SWMM":
             enabled = [m for m in enabled if m in ("tritonswmm", "swmm")]
-        sim_dir = sub.analysis_paths.simulation_directory
+        recorded_member = getattr(sub, "is_recorded_member", False)
+        if recorded_member:
+            from hhemt.scenario_records import recorded_member_event_done
+
+            sim_dir = _sims_dir_of(analysis, sub)
+        else:
+            sim_dir = sub.analysis_paths.simulation_directory
         for event_iloc in sub.df_sims.index:
             total += 1
             ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
             event_id = compute_event_id_slug(ev)
-            if not scenario_summaries_present(sub, event_id, enabled):
+            if recorded_member:
+                present = recorded_member_event_done(analysis.analysis_paths.analysis_dir, member_id, event_id)
+            else:
+                present = scenario_summaries_present(sub, event_id, enabled)
+            if not present:
                 row = {
                     "scenario": event_id,
                     "scenario_dir": str(sim_dir / event_id),
                     "detail": "timeseries not processed",
                 }
-                if sa_id is not None:
-                    row["sa_id"] = f"sa_{sa_id}"
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
                 details.append(row)
     passed = not details
     summary = (
@@ -230,7 +423,7 @@ def check_timeseries_processed(
 
 
 def check_analysis_summaries_created(analysis: TRITONSWMM_analysis) -> CheckResult:
-    """System-level: master DataTree exists on disk (Option B canonical artifact)."""
+    """System-level: master DataTree exists on disk (the canonical analysis-level artifact)."""
     missing: list[dict] = []
 
     def _check_one(a, label_prefix: str = "") -> None:
@@ -240,16 +433,23 @@ def check_analysis_summaries_created(analysis: TRITONSWMM_analysis) -> CheckResu
 
     sensitivity_on = getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
     if sensitivity_on and getattr(analysis, "sensitivity", None) is not None:
-        sens_zarr = analysis.analysis_paths.sensitivity_datatree_zarr
+        sens_zarr = analysis.analysis_paths.experiment_datatree_zarr
         if sens_zarr is None or not sens_zarr.exists():
             missing.append({"detail": f"Sensitivity DataTree zarr missing at {sens_zarr}"})
-        for sa_id, sub in analysis.sensitivity.sub_analyses.items():
-            _check_one(sub, label_prefix=f"sa_{sa_id}: ")
+        for member_id, sub in all_members_for_reading_of(analysis.sensitivity).items():
+            if getattr(sub, "is_recorded_member", False):
+                # A removed member's tree is in the master by design: test its group there. The view provides no
+                # `analysis_paths` on purpose, so a site reading it unadapted fails loudly instead of reporting a
+                # false miss.
+                if sens_zarr is None or not (Path(sens_zarr) / f"member_{member_id}").exists():
+                    missing.append({"detail": f"member_{member_id}: group missing in the experiment tree"})
+                continue
+            _check_one(sub, label_prefix=f"member_{member_id}: ")
     else:
         _check_one(analysis)
 
     passed = not missing
-    summary = "Analysis summaries OK" if passed else f"Analysis summaries missing ({len(missing)} item(s))"
+    summary = "Analysis summaries OK" if passed else f"Analysis summaries missing ({_count(len(missing), 'item')})"
     return CheckResult(
         name="Analysis summaries created",
         level="system",
@@ -290,6 +490,8 @@ def check_scenario_status_csv(analysis: TRITONSWMM_analysis) -> CheckResult:
         "actual_omp_threads",
         "actual_gpus",
         "actual_total_gpus",
+        "actual_distinct_gpus",
+        "gpu_binding_verdict",
         "actual_gpu_backend",
         "actual_build_type",
         "perf_Total",
@@ -312,12 +514,12 @@ def check_scenario_status_csv(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
-def check_resource_usage(analysis: TRITONSWMM_analysis) -> CheckResult:
+def check_resource_usage(analysis: TRITONSWMM_analysis, *, df_status=None) -> CheckResult:
     """Resource: actual MPI/OMP/GPU/backend match intended config per scenario."""
     from hhemt.consolidate_workflow import validate_resource_usage
 
     try:
-        passed, issues = validate_resource_usage(analysis, logger=None)
+        passed, issues = validate_resource_usage(analysis, logger=None, df_status=df_status)
     except Exception as e:
         return CheckResult(
             name="Resource usage matches config",
@@ -327,10 +529,39 @@ def check_resource_usage(analysis: TRITONSWMM_analysis) -> CheckResult:
             details=[],
         )
 
+    # Disclosed denominator: separate FAIL rows from the two info classes the
+    # GPU-binding arm emits (not measured / classified by negative signature), so a pass on
+    # an unmeasured campaign is legible as such in the report, not read as a measured pass.
+    n_fail = len([i for i in issues if i.get("severity") != "info"])
+    n_unmeasured = len(
+        [i for i in issues if i.get("severity") == "info" and str(i.get("actual", "")).startswith("not")]
+    )
+    n_signature = len(
+        [
+            i
+            for i in issues
+            if i.get("severity") == "info" and str(i.get("actual", "")).startswith("pass_by_negative_signature")
+        ]
+    )
+    # An empty issue list does not mean "no GPU": a GPU run that passes adds no row. The
+    # validator's own examined-GPU-row count does mean it. Unknown (None) keeps the tally.
+    try:
+        from hhemt.consolidate_workflow import count_examined_gpu_rows
+
+        n_gpu_rows = count_examined_gpu_rows(analysis, df_status=df_status)
+    except Exception:  # noqa: BLE001 -- an unknown count falls back to the tally wording
+        n_gpu_rows = None
+    if n_gpu_rows == 0 and not any(i.get("resource", "").startswith("GPU") for i in issues):
+        _disclosure = " (no GPU model runs in this analysis)"
+    else:
+        _disclosure = (
+            f" (GPU binding: {_count(n_unmeasured, 'row')} not measured, "
+            f"{n_signature} classified by negative signature)"
+        )
     summary = (
-        "All scenarios used expected compute resources"
+        "All scenarios used expected compute resources" + _disclosure
         if passed
-        else f"Resource mismatches in {len(issues)} scenario(s)"
+        else f"Resource mismatches in {_count(n_fail, 'scenario')}" + _disclosure
     )
     return CheckResult(
         name="Resource usage matches config",
@@ -344,7 +575,7 @@ def check_resource_usage(analysis: TRITONSWMM_analysis) -> CheckResult:
 def _read_persisted_eda_verdicts(analysis: TRITONSWMM_analysis) -> list[CheckResult]:
     """Read EDA verdict JSONs from ``{analysis_dir}/eda/*.verdict.json`` (graceful-absent).
 
-    The ADR-9 EDA layer (``eda.check_cross_sim_identity`` et al.) persists each
+    The EDA layer (``eda.check_cross_sim_identity`` et al.) persists each
     verdict as a ``dataclasses.asdict(CheckResult)`` JSON. This reads them back so
     the report's Errors-and-Warnings section surfaces EDA pass/fail families. Absent
     ``eda/`` dir or unreadable files → empty list (the report is unchanged from a
@@ -374,19 +605,19 @@ def _read_persisted_eda_verdicts(analysis: TRITONSWMM_analysis) -> list[CheckRes
 
 
 def check_invalidating_fixes(analysis: TRITONSWMM_analysis) -> CheckResult:
-    """ADR-17 load-time invalidating-fix registry match, surfaced in the report read-model.
+    """Load-time invalidating-fix registry match, surfaced in the report read-model.
 
     Non-blocking by construction: a matched invalidating fix produces ``passed=False``
     (only when at least one match is ``severity="error"``) + a summary naming the
     count, but ``validate_analysis`` NEVER raises. ``warning``-only matches keep
     ``passed=True``. An absent registry / unstamped tree → no matches → ``passed=True``
-    (graceful-absent; D6). ``level="aggregate"`` so the Errors-and-Warnings renderer
-    routes it with no renderer edit. Runs at consolidation-time
-    ``persist_validation_report``, NOT render time (Gotcha 53 audit-safety) — the
-    ADR-15 stamps it reads live in the consolidated datatree the renderer declares,
+    (graceful-absent). ``level="aggregate"`` so the Errors-and-Warnings renderer
+    routes it with no renderer edit. Runs inside ``persist_validation_report``, NOT
+    at render time, so the render path reads only the persisted artifact — the
+    version stamps it reads live in the consolidated datatree the renderer declares,
     and the registry is package-data.
     """
-    from hhemt.recompute import match_registry_against_stamps  # ADR-16/17 resolver
+    from hhemt.recompute import match_registry_against_stamps
 
     matches = match_registry_against_stamps(analysis)  # [] when registry absent / no hit
     if not matches:
@@ -420,62 +651,1394 @@ def check_invalidating_fixes(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
-# --- REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED (interim report surface) ---
-def check_coupled_hotstart_resume(analysis: TRITONSWMM_analysis) -> CheckResult:
-    """Count coupled sims blocked by the interim hotstart-resume guard (run_simulation.py).
+#: The positive marker TRITON prints to its stderr log on every SUCCESSFUL exchange-
+#: history replay (``swmm_triton.h:672-673`` @ 3a832f7d). Its ABSENCE from a resumed
+#: coupled sim's log means the replay never engaged (rank-0-local engage guard, or a
+#: purged side-file) and SWMM re-initialized from t=0 — the pre-fix truncation,
+#: recurring silently at the fixed commit.
+_TRITON_REPLAY_MARKER = "SWMM exchange history replayed to t="
 
-    A coupled (``tritonswmm``) sim that got walltime-killed and re-dispatched hits the
-    guard, which increments ``n_resumes`` and raises ``SimulationError`` before launch, so
-    the sim never completes. Counting coupled ``df_status`` rows with ``n_resumes >= 1`` and
-    ``run_completed`` False surfaces the population in the report with a COUNT (no renderer
-    edit — the errors_and_warnings renderer prints each check's ``summary``). Reads
-    ``analysis.df_status`` (order-independent of the export_scenario_status rule).
+#: The completion marker TRITON prints at the end of a sim that ran to t=end
+#: (completion is detected from log markers, never return codes). PRODUCER-SIDE SIBLINGS:
+#: this literal has THREE binding sites -- this constant and two bare literals in
+#: ``run_simulation.py``, one in ``TRITONSWMM_run.model_run_completed``'s raw-marker fallback
+#: and one in its coupled-report gate -- so a rename must change all three. The marker-parity
+#: test in ``tests/test_resume_event_ledger.py`` reads this constant against the solver source
+#: at ``TRITON_PIN``. Used here as the replay arm's COMPLETION GATE: because the model log is
+#: opened ``"w"`` on every exec (``run_simulation_runner.py``) it holds ONLY the last exec,
+#: so a last exec that was walltime-killed BEFORE its replay legitimately carries neither
+#: marker. Gating on this literal -- read from the SAME log, in the SAME read, as the
+#: replay marker -- keeps both predicates derived from one artifact, so they cannot skew.
+#: (``df_status.run_completed`` was rejected for this gate: it resolves from the model-log
+#: JSON or the coupled rpt -- DIFFERENT artifacts with DIFFERENT exec granularity than the
+#: last-exec-only log -- and it couples this detector to model_run_completed's
+#: sticky-False-latch semantics.)
+_TRITON_COMPLETION_MARKER = "Simulation ends"
+
+#: The PER-EXEC RESUME DISCRIMINATOR. TRITON prints ``[..] Reading checkpoint files`` then
+#: ``[OK] Checkpoint files read`` BEFORE the replay marker, on every exec that resumed from
+#: a hotstart cfg. This is what makes the replay arm's claim exact rather than approximate:
+#: the log is last-exec-only (opened ``"w"`` per exec) while ``n_resumes`` is CUMULATIVE and
+#: is NEVER reset (``run_simulation.py``'s increment is its only writer), so
+#: ``n_resumes >= 1`` proves only that the sim resumed at SOME point. Without an in-log
+#: per-exec signal, a sim that resumed, lost its checkpoints (clear_raw / delete /
+#: force-rerun), and then ran FRESH to completion would retain ``n_resumes >= 1``, carry no
+#: replay marker, and be WARNED ON despite being VALID. Reading the discriminator from the
+#: SAME log in the SAME read makes all THREE predicates (resumed-this-exec /
+#: completed-this-exec / replayed-this-exec) statements about one artifact, so none can skew
+#: against the others; ``n_resumes`` degrades to a cheap pre-filter bounding which logs are
+#: opened (sound because TRITON reads checkpoints IFF the runner passed a hotstart cfg IFF
+#: n_resumes was incremented -- the same ``if`` branch, the hotstart path of
+#: ``run_simulation.py``'s ``prepare_simulation_command`` -- so
+#: n_resumes >= 1 is a NECESSARY condition for a checkpoint-reading exec).
+#:
+#: THE ANCHOR IS THE ``[OK]`` COMPLETION FORM, NOT THE ``[..]`` ATTEMPT FORM. The replay
+#: reads the exchange history FROM the checkpoint set, so "the replay should have engaged"
+#: is warranted only if the checkpoint read SUCCEEDED. A read that starts and fails, after
+#: which the run proceeds fresh and reaches "Simulation ends", would be a FALSE WARN under
+#: the attempt form (in scope, complete, no replay marker) and is correctly out of scope
+#: under the completion form. The attempt form is retained to separate that case out as
+#: INDETERMINATE rather than silently calling it fresh.
+#:
+#: Empirical basis (read-only against existing artifacts, 2026-07-16, synth_cc_resume at the
+#: pin): a clean-vs-resume control over 56 model_tritonswmm_*.log files gave PERFECT
+#: separation -- clean arm (n=28, never resumed): 0 checkpoint-reads, 0 replay markers;
+#: resume arm (n=28, all resumed): 28/28 both. Exactly ONE replay marker per exec. Both the
+#: attempt form and the completion form are corpus-confirmed at 28/28 on the resume arm and
+#: 0/28 on the clean arm. The INDETERMINATE branch below is retained as a fail-safe for a
+#: partially-read checkpoint set, which the corpus contains no instance of.
+_TRITON_CHECKPOINT_READ_MARKER = "Checkpoint files read"
+_TRITON_CHECKPOINT_ATTEMPT_MARKER = "Reading checkpoint files"
+
+#: The SECOND resume mechanism. TRITON now restores the coupled SWMM state from a
+#: full-precision per-checkpoint snapshot and SKIPS the replay entirely; the replay is
+#: retained only as the fallback for a checkpoint written before snapshots existed
+#: (``triton.h``: ``if (!try_restore_state_snapshot(...)) replay_exchange_history(...)``).
+#: Emitted at ``swmm_triton.h:963`` @ ``658a7a37``, DELIBERATELY in the same ``...to t=``
+#: shape as the replay marker above so ONE matcher discriminates both and the existing
+#: numeric parse (``_parse_replay_t`` / ``eda/raw_byte_identity.parse_resume_timestep``)
+#: works on either unchanged.
+#:
+#: THE TWO MARKERS ARE MUTUALLY EXCLUSIVE WITHIN ONE EXEC, by construction rather than by
+#: convention: the restore marker is printed only on ``try_restore_state_snapshot``'s
+#: success path (the statement immediately precedes its ``return true``), and the replay
+#: runs only when that call returned false. The refusal path prints a DIFFERENT line
+#: (``SWMM state snapshot not used (...)``) that is not this literal. Because the model log
+#: is opened ``"w"`` per exec it holds exactly one resume attempt, so at most one of the two
+#: can appear.
+_TRITON_SNAPSHOT_RESTORE_MARKER = "SWMM state restored from snapshot to t="
+
+#: How a resumed coupled sim restored its SWMM state. FOUR values, and the fourth is the
+#: point of the type: ``"none"`` is the DEFECT (a resumed, completed exec restored by
+#: NEITHER mechanism -> SWMM re-initialized from t=0), while ``"indeterminate"`` is the
+#: ABSENCE OF AN ANSWER and is never a defect claim. A bare boolean cannot hold both, which
+#: is exactly how ``if not _ev.get("replayed"):`` turned "I do not know" into "this run is
+#: invalid" once a second mechanism existed.
+ResumeMechanism = Literal["snapshot", "replay", "none", "indeterminate"]
+
+
+def resume_mechanism_from_log(text: str) -> ResumeMechanism:
+    """Which mechanism restored the coupled SWMM state, read from ONE TRITON log's text.
+
+    Returns ``"snapshot"``, ``"replay"``, or ``"none"``. Never ``"indeterminate"``: the
+    caller has the log text in hand, so the question is answerable by construction -- the
+    scope and completion gates that decide whether the question APPLIES are the caller's,
+    not this function's.
+
+    The snapshot is tested first. The two literals cannot co-occur in one exec (see
+    ``_TRITON_SNAPSHOT_RESTORE_MARKER``), so the order is documentation rather than
+    precedence; it mirrors the solver's own try-snapshot-then-replay ordering so a reader
+    comparing the two files sees the same sequence.
+    """
+    if _TRITON_SNAPSHOT_RESTORE_MARKER in text:
+        return "snapshot"
+    if _TRITON_REPLAY_MARKER in text:
+        return "replay"
+    return "none"
+
+
+def resume_mechanism_from_stamp(record) -> ResumeMechanism:
+    """Which mechanism restored the coupled SWMM state, read from ONE durable stamp record.
+
+    THIS FUNCTION EXISTS TO MAKE THE UNSAFE READ UNWRITABLE, not merely unwritten. Every
+    consumer of ``coupled_resume_replay_evidence`` routes through it, and it returns a
+    non-empty STRING on every path -- so there is no falsy value for a caller to write
+    ``if not ...`` against, and a caller must state WHICH mechanism it means by equality.
+    The hazard is the same class this file already repaired for the depth-scatter arm (``is
+    False``, not ``not``, because ``not None`` is ``True``): an absent key reads ``None``,
+    and a bare-truthiness test converts that unknown into a positive invalidity claim.
+
+    SCHEMA HANDLING (v1 -> v2). A v1 stamp -- one written before the stamp schema
+    gained the ``resume_mechanism`` key -- carries no such key, because the toolkit that
+    wrote it looked for the replay marker and NOTHING ELSE. So on a v1 record:
+
+      * ``replayed is True``  -> ``"replay"``. A positive marker observation, and the
+        marker means the same thing it always did.
+      * ``replayed is False`` -> ``"indeterminate"``, NOT ``"none"``. The v1 stamp never
+        looked for a snapshot marker, so an absent replay marker cannot distinguish "no
+        restore happened" (the defect) from "the snapshot restored it" (correct and fast).
+        Reporting ``"none"`` here would be precisely the fails-open move this function
+        exists to close, applied to the historical corpus instead of the live one.
+
+    Demoting those rows to INDETERMINATE costs a true positive on a pre-snapshot tree whose
+    live log has ALSO been purged -- the stamp is only ever read as the log's fallback in
+    ``check_coupled_resume_validity``, so a tree with its logs intact is unaffected. The
+    signal is recoverable at zero cost by re-consolidating, which re-stamps at v2 with the
+    full answer, and the INDETERMINATE detail says so.
+    """
+    if not isinstance(record, dict):
+        return "indeterminate"
+    mech = record.get("resume_mechanism")
+    if mech in ("snapshot", "replay", "none"):
+        return mech  # v2 stamp: the producer answered the question directly.
+    # v1 stamp (or a corrupt/unknown value): fall back to the replay boolean, conservatively.
+    replayed = record.get("replayed")
+    if replayed is True:
+        return "replay"
+    return "indeterminate"
+
+
+def _read_triton_provenance(analysis: TRITONSWMM_analysis) -> str | None:
+    """Graceful-absent read of the consolidated tree's ``triton_producing_sha`` root attr.
+
+    Returns the producing sha, or None when the attr / tree is absent or unreadable (a
+    pre-provenance tree, or an off-checkout install) -> the caller treats None as
+    INDETERMINATE, never a false pre-fix warn. NEVER raises.
+
+    Returns the SHA ONLY. The two per-defect booleans this used to return are retired;
+    applicability is derived from the sha by ``model_defects.resolve``, so a defect added to
+    the registry later classifies trees already on disk.
+    """
+
+    paths = analysis.analysis_paths
+    if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
+        zarr_path = getattr(paths, "experiment_datatree_zarr", None)
+    else:
+        zarr_path = getattr(paths, "analysis_datatree_zarr", None)
+    if zarr_path is None or not zarr_path.exists():
+        return None
+    # NO chunking: this reader consumes ONLY root attrs, and `chunks="auto"` raises
+    # NotImplementedError ("Can not use auto rechunking with object dtype") on any
+    # tree carrying an object-dtype variable — which the bare except below then
+    # converted into a silent INDETERMINATE, permanently disabling this check's
+    # pre-fix warning on every experiment. Empirically confirmed on the
+    # synth_cc_resume sensitivity master (2026-07-15): chunks="auto" ->
+    # NotImplementedError; no-chunks -> reads triton_producing_sha=3a832f7d...,
+    # triton_has_coupled_resume_fix=True.
+    try:
+        tree = open_store(zarr_path)
+    except (FileNotFoundError, OSError, KeyError, ValueError):
+        # Genuinely absent / unreadable tree (pre-provenance or off-checkout) —
+        # the documented graceful-absent path. Quiet by design.
+        return None
+    except Exception as e:
+        # NEVER raise (validation must not abort a run over a diagnostic), but do
+        # NOT swallow silently: an unexpected exception here means this check is
+        # INERT, which is exactly how the chunks="auto" defect stayed hidden.
+        logger.warning(
+            f"TRITON provenance read failed unexpectedly for {zarr_path} "
+            f"({type(e).__name__}: {e}); coupled-resume validity is INDETERMINATE."
+        )
+        return None
+    sha = tree.attrs.get("triton_producing_sha")
+    return str(sha) if sha is not None else None
+
+
+def _legacy_consolidate_stamp(analysis) -> dict | None:
+    """The pre-carrier consolidation stamp, read from the analysis log. Graceful-absent.
+
+    Returns a stamp dict carrying `hhemt_sha` ALONE, or None when the field is unset.
+    This is the scalar `consolidation_build_stamp` the build gate already owns, READ
+    here and never widened or retyped -- retyping an existing on-disk key is a breaking
+    read of every existing log and a real migration, not an allowlist row.
+
+    A sha-only return is a PARTIAL capture of the right stage, which the non-inference
+    contract permits, and is categorically different from a complete record of a
+    NEIGHBOURING stage, which it forbids. The caller labels it; this function does not
+    decide how it renders.
+    """
+    try:
+        analysis._refresh_log()
+    except Exception:
+        pass
+    try:
+        sha = str(analysis.log.consolidation_build_stamp.get() or "").strip()
+    except Exception:
+        return None
+    return {"hhemt_sha": sha} if sha else None
+
+
+#: The stage denominator, and the ONLY place it is defined. MEMBERSHIP TEST, applied to any
+#: stage proposed for this tuple: a stage belongs iff the analysis's own delivered set is the
+#: only place that stage's RECORD can live. It is a test about where the RECORD lives, not
+#: about where the WORK ran -- `setup` runs against a shared system directory and is IN,
+#: because its record has no other delivered home. `bundle` and `combine` FAIL it: each
+#: produces an independently distributable artifact carrying its own complete manifest, and a
+#: reader holding that artifact reads the stamp from the artifact. REVISION TRIGGER: if a
+#: bundle-side or combined-bundle-side compute phase ever produces its own validation report,
+#: those rows become applicable at that subject and this narrowing must be revisited.
+#: Any caller stating a COUNT must derive it from len() of this tuple -- a literal count in
+#: prose goes stale silently.
+_PROVENANCE_STAGES = (
+    "setup",
+    "sim",
+    "processing",
+    "consolidate",
+    "plots",
+    "report",
+)
+
+#: WHY a stage is unstamped, one row per member of `_VALIDATED_STAGES` (a CLOSED domain:
+#: the test `tests/test_provenance_completeness_absence_categories.py` pins that the keys
+#: equal that tuple, so a counted stage added to it without a row reds there). The plots and
+#: report stages have no row because the check does not count them: they are stamped after
+#: the validation report is written, so their absence is never a finding of this check.
+#: Each value is
+#: ``(category, sentence)``. The category names are the grouping keys of
+#: `_absence_clause`; the sentence is the text a summary arm states for that category and
+#: is NEVER a verdict: the build comparison in `check_provenance_completeness` is untouched
+#: by this table, and an absent stage still contributes no stamp to it.
+#:
+#: Regenerating the two "no site" rows (they hold only while no capture site exists):
+#:   grep -n "producing_stamp\|append_stage_provenance" \
+#:       src/hhemt/run_simulation_runner.py src/hhemt/setup_workflow.py   # returns nothing
+#:   grep -n 'append_stage_provenance(.*"report")' src/hhemt/provenance.py  # the report site,
+#:                                                      # the matcher's must-fire control
+#: The test reds if a capture site appears for `setup` or `sim`, so this table cannot go
+#: stale silently.
+_CATEGORY_NO_SITE = "no site in this toolkit"
+_CATEGORY_UNDECIDABLE = "not decidable from the tree"
+
+_SENTENCE_NO_SITE = "no capture site exists for this stage in this toolkit build"
+_SENTENCE_UNDECIDABLE = (
+    "either this analysis predates the stage's capture site, or the site existed and did not "
+    "fire; the tree cannot tell these apart, and no value is inferred"
+)
+
+_PROVENANCE_ABSENCE_TABLE: dict[str, tuple[str, str]] = {
+    "setup": (_CATEGORY_NO_SITE, _SENTENCE_NO_SITE),
+    "sim": (_CATEGORY_NO_SITE, _SENTENCE_NO_SITE),
+    "processing": (_CATEGORY_UNDECIDABLE, _SENTENCE_UNDECIDABLE),
+    "consolidate": (_CATEGORY_UNDECIDABLE, _SENTENCE_UNDECIDABLE),
+}
+
+
+def _absence_clause(missing: list[str]) -> str:
+    """Group the unstamped stages under the absence categories present, one clause each.
+
+    Used by EVERY summary arm that lists missing stages (dirty, build disagreement,
+    missing), so the three arms cannot drift apart on what an absence means. Categories
+    appear in the table's own order, stages within a category in the order given. A stage
+    with no table row is stated as uncategorised rather than dropped or guessed: the
+    domain is closed and the test pins it, but a summary that silently omits a stage it
+    was handed would understate the absence.
+    """
+    grouped: dict[str, tuple[str, list[str]]] = {}
+    for stage in _PROVENANCE_ABSENCE_TABLE:
+        if stage in missing:
+            category, sentence = _PROVENANCE_ABSENCE_TABLE[stage]
+            grouped.setdefault(category, (sentence, []))[1].append(stage)
+    parts = [f"{category} ({', '.join(stages)}): {sentence}" for category, (sentence, stages) in grouped.items()]
+    unlisted = [s for s in missing if s not in _PROVENANCE_ABSENCE_TABLE]
+    if unlisted:
+        parts.append(f"no absence category recorded ({', '.join(unlisted)})")
+    return "; ".join(parts) if parts else "none"
+
+
+#: The stages `check_provenance_completeness` counts: those that have produced their stamp
+#: by the time the validation report is written, at consolidation. The plots and report
+#: stages run after that write, so they cannot be stamped when the count is taken and are
+#: left to the Metadata page's "Rendered by" row. Any caller stating a COUNT must derive it
+#: from len() of this tuple.
+_VALIDATED_STAGES = ("setup", "sim", "processing", "consolidate")
+
+_PROVENANCE_NOT_COUNTED_NOTE = (
+    " The plots and report stages are not counted: they run after this check, and the "
+    'Metadata page row "Rendered by" names the build that rendered them.'
+)
+
+
+def _collect_stage_stamps(analysis) -> dict[str, dict | None]:
+    """Per-stage producing stamps for this analysis; ``None`` where none was captured.
+
+    One entry per named stage, ALWAYS all keys present, so the caller's coverage
+    arithmetic has a fixed denominator and a stage that gained a capture site later
+    does not silently change the ratio's meaning.
+
+    Never infers one stage's stamp from another's. The temptation is real -- the
+    bundle manifest's sha is right there and it is almost certainly the sha the plots
+    ran at -- and it is exactly the fabrication this subsystem exists to prevent: a
+    back-filled value is indistinguishable from a captured one at read time, which is
+    what makes it worse than the absence it replaces. Every read is independently
+    graceful-absent; nothing raises.
+    """
+    import json
+
+    out: dict[str, dict | None] = dict.fromkeys(_PROVENANCE_STAGES)
+    try:
+        adir = Path(analysis.analysis_paths.analysis_dir)
+    except Exception:
+        return out
+
+    def _from_json(path: Path) -> dict | None:
+        try:
+            payload = json.loads(path.read_text())
+        except Exception:
+            return None
+        got = {k: payload[k] for k in ("hhemt_sha", "hhemt_version", "hhemt_dirty") if k in payload}
+        return got or None
+
+    def _from_tree_attrs(store: Path) -> dict | None:
+        if not store.exists():
+            return None
+        try:
+            attrs = open_store(str(store)).attrs
+        except Exception:
+            return None
+        sha = attrs.get("hhemt_producing_sha")
+        if not sha:
+            return None
+        return {
+            "hhemt_sha": str(sha),
+            "hhemt_version": str(attrs.get("hhemt_producing_version") or ""),
+            "hhemt_dirty": str(attrs.get("hhemt_producing_dirty") or "unknown"),
+        }
+
+    # consolidate / processing: the consolidated tree root carries the version-stamp scalar
+    # fast-path, and the per-event coordinate underneath it is the processing stage's
+    # own capture. Resolved by existence through the canonical root-store resolver rather than
+    # by branching on toggle_sensitivity_analysis -- a sensitivity master ships its own root
+    # store and no regular one, and keying on the config would misreport a partially-built
+    # tree as uncaptured. Only the one pick is read: on a root carrying two stores the resolver
+    # names the live one, and reading the other would report a stale build's stamp.
+    from hhemt.utils import resolve_experiment_tree
+
+    got = _from_tree_attrs(resolve_experiment_tree(adir))
+    if got:
+        out["processing"] = got
+
+    # `consolidate` reads its OWN carrier, never `processing`'s. Order: the full-triple
+    # carrier `consolidate_manifest.json` (hhemt_sha / hhemt_version / hhemt_dirty), then
+    # the pre-existing scalar for trees written before that carrier existed.
+    _consolidate = _from_json(adir / "consolidate_manifest.json")
+    if _consolidate is None:
+        _legacy = _legacy_consolidate_stamp(analysis)
+        if _legacy:
+            # PARTIAL CAPTURE, never an absence. A record carrying the scalar sha and not
+            # its siblings is a weaker MEASUREMENT of the right stage, which the contract
+            # permits; a complete record of a NEIGHBOURING stage is a fabrication, which it
+            # forbids. Reading this as absent would make the delivered dataset's correction
+            # an 88-minute re-consolidation instead of a render-only reprocess.
+            _legacy["provenance_source"] = "legacy_scalar"
+            _consolidate = _legacy
+    out["consolidate"] = _consolidate
+
+    # plots: any figure sidecar WHOSE FIGURE IS STILL THERE. The stamp is per-figure and
+    # uniform within a render, so the first readable LIVE sidecar is representative; a
+    # genuinely mixed render is a different finding and belongs to the caller's
+    # build-disagreement branch. An ORPHAN sidecar is readable too, so without the guard
+    # a dead figure's stamp could stand for the whole stage. If none survives the guard
+    # the key is left unset, which this function already treats as uncaptured -- the same
+    # disposition it takes for `sim` below, and a true answer rather than a suppressed one.
+    plots = adir / "plots"
+    if plots.exists():
+        from hhemt.utils import figure_exists_for
+
+        for sidecar in sorted(plots.rglob("*.manifest.json")):
+            if not figure_exists_for(sidecar):
+                continue
+            got = _from_json(sidecar)
+            if got:
+                out["plots"] = got
+                break
+
+    out["report"] = _from_json(adir / "report_manifest.json")
+
+    # `sim` and `setup` have no capture site yet -- both left as None deliberately, and
+    # both are WIREABLE rather than absent by design: `sim` mints at the per-(model, event)
+    # run-finalization site and rides the per-scenario processing writer up as a second
+    # coordinate; `setup` mints at the compile rung. Whichever is wired must take its stamp
+    # from `provenance.producing_stamp()` at write time, never from a constant or a value
+    # carried over from another stage: the carrier is durable, so a stamp resolved any
+    # other way cannot be corrected afterwards. `report` is read above. `bundle` and `combine` were REMOVED from the
+    # denominator: neither had a reachable subject, because nothing runs this collector
+    # against a bundle root -- `persist_validation_report` has two call sites and both are
+    # analysis-side.
+    return out
+
+
+def check_provenance_completeness(analysis) -> CheckResult:
+    """How many of the `_VALIDATED_STAGES` left a version stamp on this analysis.
+
+    Reports COVERAGE, never a back-filled value. A stage with no stamp is reported as
+    "not captured", which is the honest state for any analysis produced before that
+    stage gained a capture site -- inferring its version from a sibling stage's stamp
+    would launder an assumption into an apparent measurement, which is the failure
+    shape this subsystem exists to avoid.
+
+    Lives here rather than only in pytest because the audience is the READER of a
+    delivered report, not CI: a green build is invisible inside a bundle, whereas an
+    Errors-and-Warnings row saying "3 of 6 stages captured" travels with the artifact.
+    Graceful-absent throughout -- an unreadable carrier degrades that stage to "not
+    captured" and never raises, because a provenance check that can abort
+    validate_analysis takes the whole sidebar down with it.
+    """
+    # {stage: stamp-dict-or-None}, restricted to the stages that can be stamped when this
+    # check runs; plots and report are stamped after the validation report is written.
+    stages = {s: v for s, v in _collect_stage_stamps(analysis).items() if s in _VALIDATED_STAGES}
+    captured = sorted(s for s, v in stages.items() if v)
+    missing = sorted(s for s, v in stages.items() if not v)
+    dirty = sorted(s for s, v in stages.items() if v and v.get("hhemt_dirty") == "true")
+    # `hhemt_dirty` is not two-valued at this boundary even though the minter emits only
+    # "true"/"false": `_from_tree_attrs` above coalesces a MISSING attr to "unknown", and
+    # cf_conventions.apply_producing_stamp (tree, sha_values, semver_values) takes no dirty
+    # argument, so every consolidate/processing stamp harvested from tree attrs arrives
+    # "unknown". A legacy `_from_json` stamp predating the field yields None here for the
+    # same reason. An == "true" test silently files both with the clean stages, so the
+    # partition is stated explicitly here and disclosed in every arm that makes a claim.
+    undetermined = sorted(s for s, v in stages.items() if v and v.get("hhemt_dirty") not in ("true", "false"))
+    # Key on the sha, CONFORMING to `store_build_mismatch` -- this subsystem's existing
+    # build comparison, which keys on `hhemt_sha` with its sentinel arms preceding the
+    # equality test. `_SENTINEL_SHAS` is CONSUMED, not restated: it already carries the
+    # rule ("absences wearing a value, and absent is never equal") and already has one
+    # owner and one consumer.
+    #
+    # A NOTE for a reader who reaches `store_build_mismatch`'s docstring and reads it as
+    # an argument that this function should count an absent stamp as a mismatch. That
+    # docstring says this function's
+    # graceful-absent posture "is correct for a REPORT and wrong for a GATE", and the
+    # property it contrasts is FAIL-CLOSED. This function ADOPTS `_SENTINEL_SHAS` and the
+    # absences-wearing-a-value comparison rule; it does NOT adopt absent-is-a-mismatch.
+    # Excluding a sentinel while accounting it as not-captured IS the graceful-absent
+    # posture applied correctly, not a departure from it.
+    from hhemt.provenance import _SENTINEL_SHAS
+
+    _comparable = [
+        str(v.get("hhemt_sha") or "").strip()
+        for v in stages.values()
+        if v and str(v.get("hhemt_sha") or "").strip() not in _SENTINEL_SHAS
+    ]
+    builds = set(_comparable)
+    n_contributing = len(_comparable)
+    n_excluded = len(captured) - n_contributing
+    n_legacy = sum(1 for v in stages.values() if v and v.get("provenance_source") == "legacy_scalar")
+
+    # `details`, not `detail`, and an explicit `level`. Both were wrong on all four
+    # returns, so EVERY path raised TypeError and the function could not execute -- which
+    # is why it was never registered, and why the test asserting it "is registered and
+    # graceful" could only reach for hasattr. `level="aggregate"` routes it to the
+    # per-scenario Stage table and, because tests/test_iter7_check_vocabulary.py scopes
+    # its exact-equality guard to {system, resource, aggregate}, obliges a matching
+    # `provenance_completeness` entry in report_renderers/errors_and_warnings.py's
+    # _CHECK_VOCABULARY.
+    # `revisions` counts how many DISTINCT builds have produced this stage over the
+    # analysis's life. The stamp columns beside it show the LATEST build; this column is
+    # what says an earlier one existed and was not silently replaced. Graceful-absent -- an
+    # analysis predating the history capture reports 0, which is honest rather than 1,
+    # because no revision was ever RECORDED even though one certainly occurred.
+    from hhemt.provenance import read_stage_provenance_history
+
+    try:
+        _history = read_stage_provenance_history(Path(analysis.analysis_paths.analysis_dir))
+    except Exception:
+        _history = {}
+    details = [
+        {
+            "stage": s,
+            "captured": bool(stages[s]),
+            "revisions": len(_history.get(s, [])),
+            **(stages[s] or {}),
+        }
+        for s in sorted(stages)
+    ]
+    if dirty:
+        return CheckResult(
+            name="provenance_completeness",
+            level="aggregate",
+            passed=False,
+            summary=(
+                f"{len(dirty)} of the {len(captured)} stamped stages were produced from a "
+                f"toolkit checkout carrying uncommitted tracked changes "
+                f"({', '.join(dirty)}). Dirty-state undetermined: {len(undetermined)} "
+                f"({', '.join(undetermined) or 'none'}); not captured: {len(missing)} "
+                f"({_absence_clause(missing)}); no value is inferred for either group. "
+                f"The recorded sha does not identify the code that ran for the dirty stages. "
+                f"Whether this product would be reproduced is not established here: this "
+                f"check reads toolkit source only, and does not observe the environment, "
+                f"inputs, or nondeterminism that also determine the product."
+                f"{_PROVENANCE_NOT_COUNTED_NOTE}"
+            ),
+            details=details,
+        )
+    if len(builds) > 1:
+        return CheckResult(
+            name="provenance_completeness",
+            level="aggregate",
+            passed=False,
+            summary=(
+                f"{len(captured)}/{len(stages)} stages stamped, and they disagree on the hhemt "
+                f"build. Compared on hhemt_sha over {_count(n_contributing, 'contributing stage')} "
+                f"({n_excluded} excluded as unresolved, {n_legacy} read from a legacy "
+                f"scalar carrier and therefore a partial capture): "
+                f"{', '.join(sorted(builds))}. Not captured: {len(missing)} "
+                f"({_absence_clause(missing)}); dirty-state undetermined: "
+                f"{len(undetermined)} ({', '.join(undetermined) or 'none'}); no value is "
+                f"inferred for either group. At least one stage was produced by different "
+                f"toolkit code than the others, so no single sha identifies the code that "
+                f"produced this analysis."
+                f"{_PROVENANCE_NOT_COUNTED_NOTE}"
+            ),
+            details=details,
+        )
+    if missing:
+        return CheckResult(
+            name="provenance_completeness",
+            level="aggregate",
+            passed=True,
+            summary=(
+                f"{len(captured)}/{len(stages)} stages stamped; not captured: {_absence_clause(missing)}. "
+                "Informational, not a failure; no value is inferred for any absent stage."
+                f"{_PROVENANCE_NOT_COUNTED_NOTE}"
+            ),
+            details=details,
+        )
+    return CheckResult(
+        name="provenance_completeness",
+        level="aggregate",
+        passed=True,
+        summary=(
+            f"all {len(stages)} stages stamped at one hhemt build, compared on hhemt_sha "
+            f"over {_count(n_contributing, 'contributing stage')} ({n_excluded} excluded as "
+            f"unresolved, {n_legacy} a legacy partial capture). A single contributing "
+            f"stage establishes no agreement; with no uncommitted "
+            f"tracked changes recorded; dirty-state undetermined for {len(undetermined)} "
+            f"({', '.join(undetermined) or 'none'}), and no value is inferred for those. "
+            f"This reports what the toolkit-source stamps show. It does not establish that "
+            f"a re-run reproduces this product: reproduction also depends on the environment, "
+            f"inputs, and nondeterminism this check does not observe."
+            f"{_PROVENANCE_NOT_COUNTED_NOTE}"
+        ),
+        details=details,
+    )
+
+
+def check_known_resume_defects(analysis: TRITONSWMM_analysis, *, df_status=None) -> CheckResult:
+    """Registry-verdict counterpart to ``check_coupled_resume_validity``.
+
+    SEPARATE from that check deliberately, and the separation is measured rather than
+    stylistic. That check answers an EVIDENCE question -- did the coupled replay engage
+    for these sims -- by reading per-sim logs. This one answers a BUILD question -- does
+    the pinned TRITON carry a known resume defect -- from the registry alone. They are
+    two questions, not two verdicts on one, and a build can legitimately be clean on one
+    and not the other.
+
+    Folding this into that check was tried and reverted: any in-check branch that turns a
+    present registry verdict into a non-pass flips fourteen coupled-path tests, because
+    TRITON-RESUME-EXTBC-GHOST-RING is PRESENT at all three pins they use
+    (15eb18a5 / b3820a44 / 9db367dd) and only 5d2ad1e8 clears it. An early return
+    suppressed the refined verdict outright; a merge would have flipped
+    test_postfix_with_replay_marker_passes; and firing only when no refined defect is
+    present still fires at 9db367dd, which is that very test's pin.
+
+    Trigger scoping mirrors the selection half of the version x selection cross: a
+    `resumed_coupled` defect is out of scope for a pure-TRITON analysis, while `resumed_any`
+    and `always` apply to both. Nothing resumed, no record, or an unresolvable
+    sha all render N/A rather than a disclosed-denominator PASS.
     """
     import pandas as pd
 
-    try:
-        df = analysis.df_status
-    except Exception:
+    from hhemt.model_defects import REGISTRY, resolve
+
+    _name = "Known resume defects"
+    if df_status is not None:
+        df = df_status
+    else:
+        try:
+            df = analysis.df_status
+        except Exception:
+            df = None
+    if df is None or not {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
         return CheckResult(
-            name="Coupled hotstart resume",
+            name=_name,
             level="aggregate",
             passed=True,
-            summary="No coupled hotstart-resume failures detected.",
+            applicable=False,
+            summary="No resume record available: known-resume-defect status N/A.",
             details=[],
         )
-    needed = {"model_type", "n_resumes", "run_completed"}
-    if not needed.issubset(df.columns):
+    n_resumed = int((pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0) >= 1).sum())
+    if n_resumed == 0:
         return CheckResult(
-            name="Coupled hotstart resume",
+            name=_name,
             level="aggregate",
             passed=True,
-            summary="No coupled hotstart-resume failures detected.",
+            applicable=False,
+            summary="No model run was resumed: known-resume-defect status N/A (0 resumed model runs).",
             details=[],
         )
-    n_resumes = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
-    completed = df["run_completed"].astype("boolean").fillna(False)
-    mask = (df["model_type"] == "tritonswmm") & (n_resumes >= 1) & (~completed)
-    blocked = df[mask]
-    details = [
-        {
-            "scenario": str(row.get("scenario_directory", "")),
-            "detail": (
-                "coupled hotstart resume unsupported — known TRITON-SWMM bug "
-                "(coupled SWMM re-inits from t=0 on resume; max-flow/depth summaries "
-                "systematically low). Sim halted before launch by the interim guard."
-            ),
-        }
-        for _, row in blocked.iterrows()
+    # Module-global call, NEVER a local import: every test in this module monkeypatches
+    # `av._read_triton_provenance`, and a locally-bound name would silently bypass the
+    # patch and exercise the real zarr reader.
+    sha = _read_triton_provenance(analysis)
+    if not sha:
+        return CheckResult(
+            name=_name,
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary="Producing-TRITON sha unknown: known-resume-defect status N/A.",
+            details=[],
+        )
+    coupled = bool(getattr(analysis._system.cfg_system, "toggle_tritonswmm_model", False))
+    # `== "present"` COLLAPSES `"absent"` AND `"indeterminate"`, AND THE COLLAPSE IS A
+    # RULING, NOT AN OVERSIGHT. `resolve` is three-valued (`model_defects.resolve` returns
+    # `present` / `absent` / `indeterminate`), and the sibling check directly below --
+    # `check_coupled_resume_validity` -- routes its own `"indeterminate"` to a distinct
+    # INDETERMINATE early return. The two adjacent checks therefore treat the SAME
+    # three-valued input differently ON PURPOSE.
+    #
+    # The ground is the developer's, 2026-09-26, verbatim: "reporting no known defects is
+    # fine, because that phrase already implies what it needs to apply, we dont need a
+    # third category." This check's passing summary says "a build carrying no KNOWN resume
+    # defect" -- the word `known` already carries the hedge that a separate INDETERMINATE
+    # arm would spell out, so the third category would restate in a verdict what the
+    # sentence already says. `check_coupled_resume_validity` has no such hedge available
+    # (its arms make positive claims about a specific member's data), which is why the
+    # divergence is correct rather than an inconsistency to repair.
+    #
+    # So: do NOT "fix" this by adding an indeterminate arm, and do NOT widen the predicate
+    # to `!= "absent"` -- that would convert an unresolvable registry lookup into a
+    # reported defect, which is the opposite error.
+    #
+    # WHAT THE 2026-10-03 RULING DID CHANGE: the ruling above is scoped to VERDICT
+    # CATEGORIES, and the developer said so in as many words ("agreed on both fronts",
+    # against a finding that separated the category question from the WORDING question).
+    # The measured defect is NOT that `indeterminate` lacks a verdict -- it is that the
+    # PASSING SUMMARY did not say which of the two states produced it. At a REGISTERED pin
+    # (three `absent`/`known_absent_set` verdicts) and at an UNREGISTERED one (three
+    # `indeterminate`/`ancestry_unresolvable` verdicts) the emitted row was BYTE-IDENTICAL
+    # once the pin substring was masked, so "a build carrying no known resume defect" read
+    # the same whether the registry had ASSESSED this build and cleared it or had never
+    # heard of it. That is a disclosed-denominator defect, and the repair is the one the
+    # SIBLING check one function below already applies: name the examined and
+    # indeterminate counts in `summary` (free text; no `CheckResult` schema change, so the
+    # persisted validation_report.json shape is untouched).
+    #
+    # `applicable_defects` is extracted from the former inline comprehension so the
+    # denominator and the numerator are computed from ONE resolution pass. `resolve` is
+    # pure, so this is behaviour-identical to resolving twice -- but a second pass would be
+    # a second chance for the numerator and the denominator to disagree, which is exactly
+    # the class of defect being closed here.
+    # `coupled`-trigger entries are every-coupled-run BUILD defects, not resume defects; they
+    # have their own check (`check_known_solver_defects`), so they are excluded here.
+    applicable_defects = [
+        d for d in REGISTRY if d.trigger != "coupled" and not (d.trigger == "resumed_coupled" and not coupled)
     ]
+    verdicts = [(d, resolve(d, sha)) for d in applicable_defects]
+    present = [d for d, v in verdicts if v.status == "present"]
+    n_absent = sum(1 for _, v in verdicts if v.status == "absent")
+    indeterminate = [d for d, v in verdicts if v.status == "indeterminate"]
+    # The denominator sentence, shared by BOTH arms. It is on the failing arm too, and
+    # deliberately: a FAIL naming one PRESENT defect out of three applicable ones is
+    # already distinguishable by its id list, but it does NOT say whether the other two
+    # were cleared or never assessed -- the same undisclosed-denominator shape, one arm
+    # over.
+    # The three counts SUM to the denominator in every arm, so a reader can check the
+    # arithmetic on the page rather than trusting the sentence.
+    _parts = [_count(len(applicable_defects), "applicable registry defect")]
+    if present:
+        _parts.append(f"{len(present)} present")
+    if n_absent:
+        _parts.append(f"{n_absent} assessed absent")
+    if indeterminate:
+        _parts.append(
+            f"{len(indeterminate)} indeterminate and therefore not assessed at this pin "
+            f"({', '.join(d.defect_id for d in indeterminate)}): the pin is in no "
+            "known-absent/known-present set and the read path has no clone for ancestry, "
+            "so register it in model_defects.py"
+        )
+    _denom = "; ".join(_parts)
+    if present:
+        return CheckResult(
+            name=_name,
+            level="aggregate",
+            passed=False,
+            summary=(
+                f"{_count(n_resumed, 'resumed model run')} at a TRITON build carrying "
+                f"{_count(len(present), 'known resume defect')}: "
+                f"{', '.join(d.defect_id for d in present)} (pin {sha[:12]}; {_denom})."
+            ),
+            details=[{"scenario": "(analysis-level)", "detail": f"{d.defect_id}: {d.remedy}"} for d in present],
+        )
+    return CheckResult(
+        name=_name,
+        level="aggregate",
+        passed=True,
+        summary=(
+            f"{_count(n_resumed, 'resumed model run')} at a build carrying no known resume defect "
+            f"(pin {sha[:12]}; {_denom})."
+        ),
+        details=[],
+    )
+
+
+#: The registry entry whose verdict is scoped per scenario by the model's flow unit.
+_US_UNIT_RIM_DEFECT_ID = "TRITON-COUPLED-US-UNIT-RIM"
+
+
+def check_known_solver_defects(analysis: TRITONSWMM_analysis, *, df_status=None) -> CheckResult:
+    """Report the registry's every-coupled-run defects carried by the build that produced the analysis.
+
+    The resume check answers "does a RESUMED sim's build carry a resume defect"; this one answers
+    "does the build that produced ANY coupled run carry a defect that affects every coupled run",
+    so it has no resume gate. It reads the analysis-level producing TRITON sha
+    (``_read_triton_provenance``, the source the resume check uses) and resolves each
+    ``coupled``-trigger registry entry against it. It is not applicable when no sha is readable,
+    or when the coupled model is not selected (a TRITON-only or SWMM-only analysis).
+
+    The US-unit rim entry is scoped per scenario, and only where the sha resolves it PRESENT: each
+    scenario's prepared ``swmm/hydraulics.inp`` is read by ``inp_flow_units``; a US unit (CFS, GPM,
+    MGD) makes it present for that scenario, CMS/LPS/MLD makes it not applicable, and a missing
+    file makes it not determinable, never present. Where the sha resolves it absent or
+    indeterminate no file is read, so a CMS model is never told it carries a US-unit defect.
+    """
+    from hhemt.model_defects import REGISTRY, resolve
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.swmm_runoff_modeling import _US_FLOW_UNITS, inp_flow_units
+
+    _name = "Known solver defects"
+    if not bool(getattr(analysis._system.cfg_system, "toggle_tritonswmm_model", False)):
+        return CheckResult(
+            name=_name,
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary="The coupled model is not selected: known-solver-defect status N/A.",
+            details=[],
+        )
+    # Module-global call, as in the resume check: tests monkeypatch `_read_triton_provenance`.
+    sha = _read_triton_provenance(analysis)
+    if not sha:
+        return CheckResult(
+            name=_name,
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary="No producing TRITON sha recorded: known-solver-defect status N/A.",
+            details=[],
+        )
+    entries = [d for d in REGISTRY if d.trigger == "coupled"]
+    verdicts = {d.defect_id: resolve(d, sha) for d in entries}
+    scenarios = []
+    for member_id, sub in _iter_members_or_self(analysis):
+        sim_dir = _sims_dir_of(analysis, sub)
+        for event_iloc in sub.df_sims.index:
+            event_id = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(event_iloc))
+            scenarios.append((member_id, event_id, sim_dir / event_id / "swmm" / "hydraulics.inp"))
+    present = [
+        d for d in entries if verdicts[d.defect_id].status == "present" and d.defect_id != _US_UNIT_RIM_DEFECT_ID
+    ]
+    details = [{"scenario": "(analysis-level)", "detail": f"{d.defect_id}: {d.remedy}"} for d in present]
+    us_counts = None
+    us = next((d for d in entries if d.defect_id == _US_UNIT_RIM_DEFECT_ID), None)
+    if us is not None and verdicts[us.defect_id].status == "present":
+        us_counts = {"US": 0, "not applicable": 0, "not determinable": 0}
+        for member_id, event_id, inp in scenarios:
+            if not inp.exists():
+                us_counts["not determinable"] += 1
+                continue
+            if inp_flow_units(inp) in _US_FLOW_UNITS:
+                us_counts["US"] += 1
+                row = {"scenario": event_id, "detail": f"{us.defect_id}: {us.remedy}"}
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
+                details.append(row)
+            else:
+                us_counts["not applicable"] += 1
+        if us_counts["US"]:
+            present.append(us)
+    # The basis of the verdict, disclosed the way the resume check discloses its own: every entry
+    # lands in exactly one count, so the counts sum to the entry total and a pass at a pin the
+    # registry has never heard of (all INDETERMINATE) cannot read like a pass at a cleared one
+    # (all assessed ABSENT). A build-present US-unit entry that no scenario carries is "not
+    # applicable to any scenario" only when every scenario's file was read; with a file absent it
+    # is "not determinable", because the absent scenario might have been US. These are summary
+    # wording, not verdicts: `passed` still turns only on PRESENT.
+    absent = [d for d in entries if verdicts[d.defect_id].status == "absent"]
+    indeterminate = [d for d in entries if verdicts[d.defect_id].status == "indeterminate"]
+    us_not_carried = us_counts is not None and not us_counts["US"]
+    _parts = [
+        _count(len(entries), "every-coupled-run registry defect"),
+        f"{_count(len(scenarios), 'scenario')} examined",
+    ]
+    if present:
+        _parts.append(f"{len(present)} present")
+    if absent:
+        _parts.append(f"{len(absent)} assessed absent")
+    if indeterminate:
+        _parts.append(
+            f"{len(indeterminate)} indeterminate and therefore not assessed at this pin "
+            f"({', '.join(d.defect_id for d in indeterminate)}): the pin is in no "
+            "known-absent/known-present set and the read path has no clone for ancestry, "
+            "so register it in model_defects.py"
+        )
+    if us_not_carried and us_counts["not determinable"]:
+        _parts.append(
+            f"1 not determinable ({us.defect_id}: {_count(us_counts['not determinable'], 'scenario')} "
+            "without a prepared hydraulics.inp, and no scenario read as US)"
+        )
+    elif us_not_carried:
+        _parts.append(f"1 not applicable to any scenario ({us.defect_id})")
+    if us_counts is not None:
+        _parts.append(
+            f"{us.defect_id}: {us_counts['US']} US, {us_counts['not applicable']} not applicable, "
+            f"{us_counts['not determinable']} not determinable"
+        )
+    _denom = "; ".join(_parts)
+    if present:
+        return CheckResult(
+            name=_name,
+            level="aggregate",
+            passed=False,
+            summary=(
+                f"The TRITON build {sha[:12]} carries {_count(len(present), 'known every-coupled-run defect')}: "
+                f"{', '.join(d.defect_id for d in present)} ({_denom})."
+            ),
+            details=details,
+        )
+    return CheckResult(
+        name=_name,
+        level="aggregate",
+        passed=True,
+        summary=f"The TRITON build {sha[:12]} carries no known every-coupled-run defect ({_denom}).",
+        details=[],
+    )
+
+
+def check_coupled_resume_validity(analysis: TRITONSWMM_analysis, *, df_status=None) -> CheckResult:
+    """Warn when a COMPLETED coupled analysis's resumed data is invalid.
+
+    Three invalidity arms, each over the resumed sims that a registry defect's trigger
+    selects (``_trigger_applies`` below; a defect whose pin verdict is ``absent`` selects
+    none). Arms A and B are mutually exclusive on the replay defect's verdict; Arm C runs
+    alongside Arm B:
+
+    (A) PRE-FIX TRITON. When ``triton_has_coupled_resume_fix`` is False the producing
+        TRITON predates 3a832f7d, so any ``tritonswmm`` sim with ``n_resumes >= 1``
+        re-inited SWMM from t=0 and its max-flow/depth summaries are systematically low.
+
+    (B) POST-FIX but the REPLAY NEVER ENGAGED. Even at the pinned fix, TRITON's exchange-
+        replay engage guard is rank-0-LOCAL (``triton.h:435`` @ ``3a832f7d``), so a rank-0
+        row-strip owning no manhole skips the replay and the pre-fix truncation recurs
+        SILENTLY. Later pins (the committed ``TRITON_PIN`` among them) guard on the GLOBAL
+        node count instead, so this failure belongs to trees produced from ``3a832f7d``
+        up to that change. A
+        sha-only check would launder that as "data valid" — worse than emitting no check.
+        The sound detector is the positive replay marker TRITON prints on every successful
+        replay; its ABSENCE from a log whose exec RESUMED and RAN TO t=end is the failure.
+        The log is resolved through ``run_simulation.model_logfile_for`` — the producer's own
+        convention — never hand-built: this arm originally hand-built
+        ``{scenario_directory}/logs/run_tritonswmm.log`` (the vestigial
+        ``ScenarioPaths.log_run_*`` path nothing writes), so every read raised, every row was
+        skipped, and the arm passed VACUOUSLY on every experiment.
+
+        THREE PREDICATES, ONE READ, ONE FILE. The log is opened ``"w"`` per exec and holds
+        ONLY the last one, so every predicate must describe THAT exec or they skew:
+        resumed-this-exec (``"Checkpoint files read"``), completed-this-exec
+        (``"Simulation ends"``), replayed-this-exec (the replay marker) — all from a single
+        ``read_text()``. This is why ``df_status.run_completed`` is NOT the completion gate
+        (it resolves from the model-log JSON or the coupled rpt — different artifacts, different
+        exec granularity — and couples this check to ``model_run_completed``'s sticky-False-latch
+        semantics), and why ``n_resumes >= 1`` is only a PRE-FILTER bounding which logs are
+        opened (it is cumulative and never reset, so it cannot answer a per-exec question; it is
+        sound as a necessary condition because TRITON reads checkpoints iff the runner passed a
+        hotstart cfg iff n_resumes was incremented — the same branch). Predicates are ordered by
+        logical precedence — does the question APPLY, can I ANSWER it, what is the ANSWER — so a
+        fresh last exec is OUT OF SCOPE rather than a warn or an INDETERMINATE.
+
+        Reads per-sim LOGS (not the tree) so it runs inside ``persist_validation_report``,
+        NOT at render time, keeping the render path on the persisted artifact — the same logs
+        ``check_scenarios_run`` already opens via ``model_run_completed``, so this adds no
+        read-surface class.
+
+    (C) POST-FIX, but the pinned TRITON lacks the SWMM node-depth SCATTER on the resume
+        path (registry defect ``TRITON-RESUME-DEPTH-SCATTER``): the replay runs, but the
+        replayed node depths never reach the per-rank ``new_depth[]``, so TRITON's depth
+        field is perturbed while every SWMM-side artifact looks normal. Because no log or
+        summary this check reads can show it, the arm is PIN-CONDITIONED: it fires from the
+        registry verdict alone, for every resume candidate, and only when Arm A has not
+        already fired (see the ``ARM C`` block in the body).
+
+    Distinct from the removed interim ``check_coupled_hotstart_resume`` (which counted
+    sims BLOCKED by the interim guard, ``run_completed`` False); this warns about
+    COMPLETED-but-invalid data after the fix ships. Non-blocking (``validate_analysis``
+    never raises). Graceful-absent throughout: an unstamped tree / unreadable log ->
+    INDETERMINATE INFO (``passed=True``), NEVER a false warn. The pre/post-fix predicate
+    reads the stamped BOOLEAN, NOT sha-equality — a DESCENDANT of 3a832f7d (a routine pin
+    bump) must not be misclassified pre-fix.
+    """
+    import pandas as pd
+
+    # WIDENED: applicability is decided by each registry defect's TRIGGER, not by
+    # the coupled toggle. `TriggerKind` is documented as a POPULATION SELECTOR whose selected
+    # rows ARE the `examined` population, so an empty selection flows into the existing
+    # examined-zero gate and renders N/A rather than a warning. The old toggle gate returned
+    # N/A for EVERY pure-TRITON analysis, which silently excluded the one registered defect
+    # that applies to both model selections (TRITON-RESUME-EXTBC-GHOST-RING, trigger=
+    # "resumed_any") -- an entry no code path read at all: `resolve_all` and
+    # `resolve_for_tree_attrs` have zero consumers outside model_defects.py.
+    _coupled = bool(getattr(analysis._system.cfg_system, "toggle_tritonswmm_model", False))
+    # MOVED from its former position below the registry resolution.
+    # `_any_resumed` is the SELECTION half of the version x selection cross, so the record
+    # has to be loaded before the predicate rather than after it. Moved, never duplicated:
+    # a second `analysis.df_status` read would be a second chance to disagree with the first.
+    # The same reasoning now reaches ACROSS checks: `validate_analysis` resolves ONE
+    # snapshot and hands it to every check that needs it, so the checks that used to
+    # read the property independently cannot disagree with each other either.
+    if df_status is not None:
+        df = df_status
+    else:
+        try:
+            df = analysis.df_status
+        except Exception:
+            df = None
+    if df is None or not {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
+        # This branch previously returned passed=True with no
+        # applicable flag -- a PASS asserting "no invalidity found" from a record it could
+        # not read, i.e. a disclosed-denominator PASS over an UNKNOWN denominator. It now
+        # renders N/A, matching the examined-zero gate below. The two not-verified states
+        # share a VERDICT and are distinguished by their SUMMARY, the same way `_denom`
+        # already distinguishes the three zero-examined causes.
+        return CheckResult(
+            name="resume validity",
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary="No resume record available: resume validity N/A (scenario_status.csv absent or missing "
+            "model_type/n_resumes).",
+            details=[],
+        )
+    _n_resumes_col = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
+    _any_resumed = bool((_n_resumes_col >= 1).any())
+    triton_sha = _read_triton_provenance(analysis)
+    # Behavior-preserving mapping of the three retired flag states onto registry verdicts:
+    #   has_fix is None  -> replay.status == "indeterminate"   (INDETERMINATE early return)
+    #   not has_fix      -> replay.status == "present"         (Arm A, pre-fix TRITON)
+    #   has_fix          -> replay.status == "absent"          (Arm B, post-fix)
+    #   scatter is False -> scatter.status == "present"        (Arm C, missing node-depth scatter)
+    # No live ancestry is attempted here: the read path has no guaranteed clone, and the
+    # registry's cached sets are authored for exactly that reason.
+    from hhemt.model_defects import (  # noqa: F401  (TriggerKind documents the axis)
+        REGISTRY,
+        REGISTRY_BY_ID,
+        TriggerKind,
+        resolve,
+    )
+
+    def _trigger_applies(trigger: str, *, any_resumed: bool, coupled: bool) -> bool:
+        """The selection half of the version x selection cross.
+
+        `always` is unconditional; `resumed_any` needs a resume on either model selection;
+        `resumed_coupled` needs a resume AND the coupled model. Returning False makes the
+        defect contribute no rows, which is what routes an unaffected run to the
+        examined-zero N/A gate instead of a vacuous PASS.
+        """
+        if trigger == "always":
+            return True
+        if trigger == "resumed_any":
+            return any_resumed
+        if trigger == "resumed_coupled":
+            return any_resumed and coupled
+        return False
+
+    # Resolved over EVERY registry entry rather than two by name, so a defect added to the
+    # registry later is evaluated without editing this check. `replay` / `scatter` are kept
+    # as named locals because the arm-specific summaries below still distinguish them.
+    replay = resolve(REGISTRY_BY_ID["TRITON-COUPLED-RESUME-REPLAY"], triton_sha)
+    scatter = resolve(REGISTRY_BY_ID["TRITON-RESUME-DEPTH-SCATTER"], triton_sha)
+    # TWO gates, not one. TRIGGER decides whether a defect COULD have been exercised by this
+    # run's shape (did anything resume; is the coupled model selected). STATUS decides
+    # whether the pinned build actually CARRIES it. A defect that resolves `absent` must admit
+    # no rows at all -- it is certified not-present, and selecting rows for it converts a clean
+    # registry verdict into an examined population that the in-loop evidence test then fails.
+    #
+    # Measured on generation e389264af7b9: synth_cc_resume_triton is stamped 5d2ad1e8, at which
+    # every registry defect resolves ABSENT, yet the shipped read-model reported
+    # "28 resumed coupled sim(s) ... lack the exchange-replay marker" -- a FAIL produced by
+    # TRITON-RESUME-EXTBC-GHOST-RING (trigger="resumed_any", status="absent") admitting
+    # "triton" into _candidate_models on a run the registry had just cleared.
+    #
+    # The former name `_applicable` meant trigger-applicable and was read as actually-affected.
+    _affected = [
+        (d, resolve(d, triton_sha))
+        for d in REGISTRY
+        if _trigger_applies(d.trigger, any_resumed=_any_resumed, coupled=_coupled)
+        and resolve(d, triton_sha).status != "absent"
+    ]
+    if replay.status == "indeterminate":
+        return CheckResult(
+            name="resume validity",
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary=(f"Producing-TRITON resume status unknown ({replay.detail}); resume validity not verified."),
+            details=[],
+        )
+
+    # `n_resumes >= 1` is a PRE-FILTER, not a verdict: it bounds which logs we open, and
+    # it is SOUND for that because TRITON reads checkpoints IFF the runner passed a hotstart
+    # cfg IFF n_resumes was incremented (the same `if` branch, the hotstart path of
+    # run_simulation.py's prepare_simulation_command), so
+    # n_resumes >= 1 is a NECESSARY condition for any checkpoint-reading exec. It is NOT
+    # sufficient: n_resumes is CUMULATIVE across execs and is never reset, while the log is
+    # last-exec-only. Whether a row's LAST exec actually resumed is decided in-loop below by
+    # _TRITON_CHECKPOINT_READ_MARKER. Named `resume_candidates`, not `resumed`, so the
+    # distinction cannot be re-collapsed by a future reader.
+    # WIDENED with the predicate. A hardcoded "tritonswmm" selects ZERO rows on a pure-TRITON
+    # run, so leaving it would route resume_triton to the examined-zero N/A gate no matter
+    # what the trigger logic upstream decided -- a vacuous widening by a second route.
+    # `resumed_coupled` defects contribute the coupled model only; `resumed_any` contributes
+    # both. The name stays `resume_candidates` (not `resumed`): n_resumes is CUMULATIVE across
+    # execs while the log is last-exec-only, so this remains a PRE-FILTER and the in-loop
+    # _TRITON_CHECKPOINT_READ_MARKER still decides whether a row's LAST exec resumed.
+    #
+    # `_n_resumes_col` is the column computed in the moved block above; the former local
+    # `n_resumes` was read at exactly this one site and is deleted rather than duplicated.
+    # POSITIVE PASS (PASS iff no sim resumed OR the version x selection pair
+    # is not affected by a known issue). With _affected empty and sims that DID resume, the
+    # registry has positively certified this build clean for this model selection -- that is a
+    # verdict with a denominator, not an examined-zero. Falling through to the examined-zero
+    # gate would render N/A and understate what was actually established.
+    if _any_resumed and not _affected:
+        _n_resumed = int((_n_resumes_col >= 1).sum())
+        return CheckResult(
+            name="resume validity",
+            level="aggregate",
+            passed=True,
+            summary=(
+                f"{_count(_n_resumed, 'resumed model run')} at a TRITON build carrying no known resume defect "
+                f"for this model selection ({triton_sha[:12]}); resume validity verified from the "
+                "defect registry."
+            ),
+            details=[],
+        )
+
+    _candidate_models: set[str] = set()
+    for _d, _v in _affected:
+        if _d.trigger == "resumed_coupled":
+            _candidate_models.add("tritonswmm")
+        elif _d.trigger in ("resumed_any", "always"):
+            _candidate_models.update(("tritonswmm", "triton"))
+    resume_candidates = df[df["model_type"].isin(_candidate_models) & (_n_resumes_col >= 1)]
+
+    details: list[dict] = []
+    # DISCLOSED DENOMINATOR. `passed = len(details) == 0` cannot, on its
+    # own, distinguish "examined N, found nothing" from "examined 0" — and THAT is the
+    # defect this repair closes: Arm B read a path nothing writes, so `except: continue`
+    # fired on all 28 rows and the check reported "No coupled-resume invalidity detected"
+    # while detecting NOTHING. A verdict is only as good as its denominator, so all three
+    # counters are surfaced in `summary` (free-text; no CheckResult schema change, so the
+    # persisted validation_report.json / eda verdict shape is untouched). A future reader —
+    # or an acceptance gate — can now see a vacuous pass in the artifact itself.
+    #
+    # The three outcomes are DISTINCT and must not be merged:
+    #   examined              — the replay question applied and was answered.
+    #   indeterminate         — the question applied (or might have) and could NOT be
+    #                           answered (unresolvable sub / unreadable log / resume did not
+    #                           take / last exec killed before t=end).
+    #   not_resumed_last_exec — the question did NOT apply: the last exec ran fresh, so
+    #                           n_resumes is a stale record of superseded execs. This is
+    #                           OUT OF SCOPE, not an error and not indeterminate. Folding it
+    #                           into `indeterminate` would report a non-problem as a
+    #                           partial failure; folding it into `examined` would report a
+    #                           row we never tested as tested.
+    examined = 0
+    indeterminate = 0
+    not_resumed_last_exec = 0
+    if replay.status == "present":
+        # Arm A — PRE-FIX TRITON: every resumed coupled sim is invalid. The stamped
+        # boolean alone decides, so every candidate row is examined by construction.
+        #
+        # NOTE (bounded, deliberate): Arm A carries the SAME n_resumes-staleness channel
+        # Arm B closes below — a sim that resumed pre-fix, lost its checkpoints, and re-ran
+        # FRESH to completion is valid data that this arm warns on. The same in-log
+        # discriminator would close it, but there is ZERO evidence of what a PRE-FIX binary
+        # prints (the entire observed corpus is at the pin, which `_verify_tritonswmm_pin`
+        # enforces), and this arm is dormant for the same reason: no new pre-fix tree can be
+        # produced. Fixing it on inference rather than evidence is the exact move that
+        # produced the original defect. Left as-is until pre-fix data is in hand.
+        examined = len(resume_candidates)
+        for _, row in resume_candidates.iterrows():
+            details.append(
+                {
+                    "scenario": str(row.get("scenario_directory", "")),
+                    "detail": (
+                        f"produced by pre-fix TRITON ({triton_sha}) with a coupled hotstart "
+                        f"resume (n_resumes={int(row.get('n_resumes') or 0)}); coupled SWMM "
+                        "re-inits from t=0 on resume so max-flow/depth summaries are "
+                        "systematically low. Re-run these model runs with the pinned "
+                        "coupled-resume-fix TRITON."
+                    ),
+                }
+            )
+    else:
+        # Arm B — POST-FIX: a coupled sim whose LAST exec resumed, ran to t=end, and yet
+        # lacks the replay marker had its replay silently skipped (rank-0-local engage
+        # guard, or a purged side-file) -> truncated exactly as pre-fix.
+        #
+        # THREE PREDICATES, ONE READ, ONE FILE. resumed-this-exec / completed-this-exec /
+        # replayed-this-exec all come from a single read_text() of a single log, so none can
+        # skew against the others. That atomicity is the whole design: the log is opened "w"
+        # on every runner exec (run_simulation_runner.py) and therefore describes ONLY the
+        # last exec, so any predicate sourced from a DIFFERENT artifact (df_status.
+        # run_completed resolves from the model-log JSON or the coupled rpt; n_resumes is
+        # cumulative) is a statement about a different exec granularity and can disagree.
+        #
+        # Order is logical precedence: does the question APPLY -> can I ANSWER it -> what is
+        # the ANSWER. Scope precedes completion deliberately: a FRESH exec that was killed is
+        # both "not a resume" and "incomplete", and "not a resume" is the truthful label —
+        # the replay question never applied to it, and its incompleteness is
+        # check_scenarios_run's business, not this arm's.
+        from hhemt.run_simulation import model_logfile_for
+
+        # Resolve the log through the PRODUCER's own convention — never hand-build it.
+        # `_iter_members_or_self` yields (member_id, sub) for a sensitivity master and
+        # (None, analysis) otherwise, which is ALREADY keyed the way `row.get("sa_id")`
+        # reads: a non-sensitivity df_status carries no member_id column (only
+        # sensitivity_analysis.df_status adds it), so `.get` returns None and hits the
+        # None key. str-normalized because member_id values are cast to string, mirroring
+        # per_analysis_summary.py's `astype(str) == str(member_id)` precedent.
+        subs = {(str(k) if k is not None else None): v for k, v in _iter_members_or_self(analysis)}
+        # DURABLE FALLBACK: the model log is opened "w" per exec and can be purged/cleared,
+        # so when read_text() below raises we consult the per-sub replay evidence stamped onto the
+        # consolidated tree ROOT at consolidation time (_stamp_coupled_resume_evidence). Read once,
+        # best-effort; keyed identically to the log-path branch (str(member_id) else scenario_directory).
+        import json
+
+        _tree_ev: dict = {}
+        try:
+            _p = (
+                analysis.analysis_paths.experiment_datatree_zarr
+                if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
+                else analysis.analysis_paths.analysis_datatree_zarr
+            )
+            if _p is not None and _p.exists():
+                _tree_ev = json.loads(open_store(_p).attrs.get("coupled_resume_replay_evidence", "{}"))
+        except Exception:  # noqa: BLE001 — durable-evidence fallback is best-effort; absence -> log-only Arm B
+            _tree_ev = {}
+        _id_col = resolve_member_id_column(getattr(resume_candidates, "columns", []))
+        for _, row in resume_candidates.iterrows():
+            scen_dir = str(row.get("scenario_directory", ""))
+            _sa = row.get(_id_col) if _id_col else None
+            sub = subs.get(str(_sa) if _sa is not None else None)
+            if sub is None:
+                indeterminate += 1
+                continue  # INDETERMINATE — cannot resolve the owning (sub-)analysis
+            try:
+                # Deliberately NOT a literal "tritonswmm" model here. `_candidate_models`
+                # selects pure-TRITON rows too, and a literal "tritonswmm" builds a log path
+                # that does not exist for them -- the read raises, the row falls to the stamp
+                # fallback, finds nothing, and is counted INDETERMINATE, so the pure-TRITON
+                # run is selected and then silently dropped. Measured with a row-model x
+                # log-path probe on the literal form: a row declaring model_type="triton"
+                # became EXAMINED only when a model_tritonswmm_*.log was present, proving the
+                # read ignored the row. Key the path on the row's own model_type.
+                _row_model = str(row.get("model_type") or "tritonswmm")
+                text = model_logfile_for(sub, int(row["event_iloc"]), _row_model).read_text(errors="replace")
+            except Exception:
+                # Log gone (purged / cache-cleared): fall back to the durable consolidation-time
+                # stamp before conceding INDETERMINATE. A stamped resumed+completed sub is EXAMINED
+                # (positive if replayed, a real warn if not); only a sub with no log AND no stamp
+                # stays INDETERMINATE.
+                _ev = _tree_ev.get(str(_sa) if _sa is not None else scen_dir)
+                # `resumed` / `completed` keep bare truthiness DELIBERATELY: they are SCOPE
+                # gates, so an absent key falls THROUGH to the indeterminate counter below --
+                # the safe direction. The fails-OPEN direction was only ever on the mechanism
+                # read, which now goes through `resume_mechanism_from_stamp`.
+                if _ev and _ev.get("resumed") and _ev.get("completed"):
+                    _mech = resume_mechanism_from_stamp(_ev)
+                    if _mech == "indeterminate":
+                        # A v1 stamp whose `replayed` is False. The stamping toolkit never
+                        # looked for a snapshot marker, so this is unknown, not defective.
+                        indeterminate += 1
+                        continue
+                    examined += 1
+                    if _mech == "none":
+                        details.append(
+                            {
+                                "scenario": scen_dir,
+                                "detail": (
+                                    "resumed coupled model run; the durable resume-evidence stamp shows "
+                                    "the coupled state was restored by neither mechanism: no "
+                                    "snapshot restore and no exchange replay (log purged; "
+                                    "tree-stamped at consolidation). SWMM re-initialized from t=0, "
+                                    "so summaries are truncated."
+                                ),
+                            }
+                        )
+                    continue
+                indeterminate += 1
+                continue  # INDETERMINATE — log gone and no durable stamp
+            # (1) SCOPE GATE — did THIS exec resume, and did the resume TAKE?
+            # The [OK] completion form is the anchor, not the [..] attempt form: the replay
+            # reads the exchange history FROM the checkpoint set, so "the replay should have
+            # engaged" is warranted only once the read SUCCEEDED. A read that starts and
+            # fails, after which the run proceeds fresh to t=end, would be a FALSE WARN under
+            # the attempt form and is correctly excluded here.
+            if _TRITON_CHECKPOINT_READ_MARKER not in text:
+                if _TRITON_CHECKPOINT_ATTEMPT_MARKER in text:
+                    indeterminate += 1
+                    continue  # INDETERMINATE — resume attempted; checkpoint read did not take
+                not_resumed_last_exec += 1
+                continue  # OUT OF SCOPE — last exec ran FRESH; n_resumes records superseded execs
+            # (2) COMPLETION GATE — did THIS exec reach t=end? A last exec killed at
+            # walltime BEFORE its replay legitimately carries no replay marker; warning on it
+            # would conflate a benign kill with the rank-0 silent-skip this arm exists to find.
+            if _TRITON_COMPLETION_MARKER not in text:
+                indeterminate += 1
+                continue  # INDETERMINATE — last exec did not run to t=end
+            # (3) MECHANISM TEST — the question applies and is answerable; answer it.
+            # KEYED ON THE MECHANISM, NOT ON A REPLAY BOOLEAN. TRITON now has TWO ways to
+            # restore the coupled state, and a snapshot restore is the CORRECT, fast path.
+            # The bare `_TRITON_REPLAY_MARKER not in text` this replaced would have reported
+            # every snapshot-restored sim as the pre-fix truncation defect.
+            examined += 1
+            if resume_mechanism_from_log(text) == "none":
+                details.append(
+                    {
+                        "scenario": scen_dir,
+                        "detail": (
+                            f"resumed (n_resumes={int(row.get('n_resumes') or 0)}) at the "
+                            "pinned coupled-resume-fix TRITON: this model run's last execution read "
+                            "its hotstart checkpoints and ran to t=end, but neither resume "
+                            "marker is present in its TRITON log: no snapshot restore and no "
+                            "exchange replay, so the coupled state was never restored, SWMM "
+                            "re-initialized from t=0, and this model run's max-flow/depth summaries "
+                            "are truncated as under pre-fix TRITON. Cause: rank 0's "
+                            "row-strip owned no SWMM node (TRITON's engage guard is rank-0-local, "
+                            "triton.h:435), or both the snapshot and the exchange-replay "
+                            "side-file were purged. Re-run from a clean start, or re-run at a "
+                            "rank count whose rank-0 strip contains at least one manhole."
+                        ),
+                    }
+                )
+
+    # ---- ARM C: SWMM node-depth scatter absent on the resume path. -------------
+    # The defect: replay_exchange_history rebuilds SWMM node depths into rank 0's
+    # global_new_depth[], but the global_to_local + MPI_Scatterv that distributes them
+    # into the per-rank new_depth[] is ABSENT on the resume path. The first post-resume
+    # step evaluates every manhole at new_depth = 0, forces the Case-1 exchange branch,
+    # flips the sign of the surface/sewer flux at every junction, and writes a permanent
+    # perturbation into TRITON's depth field.
+    #
+    # Why this arm cannot be folded into A or B: Arm A fires on PRE-3a832f7d code; Arm B
+    # fires when the replay marker is ABSENT. This defect occurs at a POST-fix pin WITH the
+    # replay marker present — the replay ran, and its result was then discarded by the
+    # missing scatter. Arms A and B are both silent on it by construction.
+    #
+    # Why it is INVISIBLE to the artifacts the existing arms read: measured on this
+    # campaign, max_flow is identical on 14/14 coupled configs while max_flood_depth
+    # differs on 14/14, and SWMM's own hydraulics.rpt link/node maxima are unchanged at
+    # reported precision because the interface error collapses from 1.45e+02 cfs to
+    # 2.1e-03 within ~1000 steps. Only TRITON's own H/MH rasters carry it. No amount of
+    # rpt/summary reading can detect it, which is why this arm is PIN-CONDITIONED rather
+    # than evidence-conditioned.
+    #
+    # SUPPRESSION (reconciliation with Arm A, required so a doubly-affected sim does not
+    # receive contradictory guidance): when the replay defect is PRESENT (pre-fix TRITON),
+    # Arm A has already fired and its remedy — re-run at a pin carrying BOTH fixes —
+    # subsumes this one. Arm C therefore runs only when ``replay.status == "absent"``.
+    #
+    # The guard tests ``scatter.status == "present"`` exactly, so an ``indeterminate``
+    # scatter verdict (the producing sha could not be resolved) admits NO Arm C row:
+    # "unknown" is never turned into a positive invalidity claim. The unresolved-replay
+    # case never reaches here at all -- the ``replay.status == "indeterminate"`` early
+    # return above handles it.
+    if replay.status == "absent" and scatter.status == "present":
+        for _, row in resume_candidates.iterrows():
+            details.append(
+                {
+                    "scenario": str(row.get("scenario_directory", "")),
+                    "detail": (
+                        f"coupled hotstart resume (n_resumes={int(row.get('n_resumes') or 0)}) at a "
+                        f"TRITON pin ({triton_sha}) that lacks the SWMM node-depth scatter on the "
+                        "resume path: replay_exchange_history rebuilds node depths into rank 0's "
+                        "global_new_depth[] but never scatters them into the per-rank new_depth[], "
+                        "so the first post-resume step evaluates every manhole at new_depth=0 and "
+                        "writes a permanent perturbation into TRITON's depth field. TRITON-side "
+                        "max_flood_depth / H / MH from this model run are invalid; SWMM-side max_flow "
+                        "and hydraulics.rpt maxima are unaffected at reported precision and are "
+                        "not evidence of validity. Re-run once the upstream scatter fix lands "
+                        "(_PINNED_TRITON_SWMM_DEPTH_SCATTER_FIX_SHA)."
+                    ),
+                }
+            )
+
     n = len(details)
     passed = n == 0
-    summary = (
-        "No coupled hotstart-resume failures detected."
-        if passed
-        else f"{n} sim(s) failed: coupled hotstart resume unsupported — known TRITON-SWMM bug"
-    )
+    _parts = [f"{_count(examined, 'resumed coupled model run')} examined"]
+    if indeterminate:
+        _parts.append(
+            f"{indeterminate} indeterminate (unresolvable, unreadable, resume did not take, "
+            "or last execution incomplete)"
+        )
+    if not_resumed_last_exec:
+        _parts.append(
+            f"{not_resumed_last_exec} out of scope (last execution ran fresh; n_resumes is a "
+            "cumulative record of superseded executions)"
+        )
+    _denom = "; ".join(_parts)
+    # A check that EXAMINED NOTHING has not applied.
+    # `passed = n == 0` cannot distinguish "examined 28, found nothing" from "examined 0",
+    # and the second is a green cell asserting a verification that never ran — measured on
+    # the Iteration-5 combined report as clean_tritonswmm rendering PASS with
+    # "(0 resumed coupled sim(s) examined)". The disclosed denominator is NOT
+    # a substitute: it lives behind a hover title while the grid shows green.
+    #
+    # `not details` is LOAD-BEARING, not defensive. Arm C (above) appends a detail row for
+    # EVERY resume candidate WITHOUT incrementing `examined` — the counter is touched only in
+    # the Arm A and Arm B branches above. So a scatter-pin analysis whose logs were purged
+    # yields examined == 0 WITH findings, and a bare `examined == 0` test would convert that
+    # real FAIL into a grey N/A. Gate on BOTH conjuncts, and see
+    # test_armc_zero_examined_finding_is_not_silenced.
+    #
+    # `_denom` is REUSED rather than replaced so the three zero-examined causes stay
+    # distinguishable on hover (nothing in scope / all INDETERMINATE / all out of scope), and
+    # so the four existing INDETERMINATE + out-of-scope tests keep passing unchanged.
+    if examined == 0 and not details:
+        return CheckResult(
+            name="resume validity",
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary=f"No resumed coupled model run was examined: coupled-resume validity N/A ({_denom}).",
+            details=[],
+        )
+    if passed:
+        summary = f"No coupled-resume invalidity detected ({_denom})."
+    elif replay.status == "present":
+        summary = (
+            f"{_count(n, 'coupled model run')} produced by pre-fix TRITON with a hotstart resume: "
+            f"summaries are systematically low ({_denom})."
+        )
+    elif scatter.status == "present":
+        # Arm C: post-fix pin, replay marker PRESENT, but the replayed depths never reach
+        # the per-rank new_depth[]. Distinguished from Arm B because the remedy differs —
+        # Arm B's sims can be re-run at the SAME pin (from a clean start, or at a rank count
+        # whose rank-0 strip owns a manhole), while Arm C's cannot: no run at the affected pin
+        # avoids it, so they must be re-run at a pin carrying the scatter fix (the registry
+        # entry's `fixed_in`, model_defects.SHA_DEPTH_SCATTER_FIX).
+        summary = (
+            f"{_count(n, 'resumed coupled model run')} ran at a pin lacking the SWMM node-depth scatter: "
+            f"TRITON depth fields are invalid ({_denom})."
+        )
+    else:
+        summary = (
+            f"{_count(n, 'resumed coupled model run')} at the pinned TRITON had no exchange-replay "
+            f"marker: replay did not engage; summaries are truncated ({_denom})."
+        )
     return CheckResult(
-        name="Coupled hotstart resume",
+        name="resume validity",
         level="aggregate",
         passed=passed,
         summary=summary,
@@ -483,16 +2046,1184 @@ def check_coupled_hotstart_resume(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
-# --- END REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED ---
-def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
+def check_resume_event_evidence(analysis: TRITONSWMM_analysis, *, df_status=None) -> CheckResult:
+    """Every sim that attempted a resume left durable evidence of how it went.
+
+    THE PROBLEM. ``n_resumes`` counts resume ATTEMPTS: it is incremented when the solver is
+    handed a hotstart cfg, before launch, so a resume the solver aborts is still counted.
+    The durable resume-event ledger (``resume_events``) holds one row per resume the solver
+    actually completed or explicitly declared unusable. Until this check existed the
+    comparison of the two ran only in the runner's log, at WARNING level, and nothing in the
+    report surfaced a sim whose every resume aborted, which leaves many attempts and zero
+    rows. This check runs that comparison over every sim and FAILS on
+    the three conditions an operator must act on: a sim with no evidence for any of its
+    attempts, a sim with partial evidence, and any alarm row (see
+    ``resume_events.audit_resume_evidence``).
+
+    THE DENOMINATOR IS DISCLOSED in every summary: how many resumed sims were examined and
+    how many could not be assessed. ``passed`` alone cannot tell "examined 28, found
+    nothing" from "examined 0", and an examined-zero result renders as N/A rather than PASS
+    for that reason.
+
+    Reads per-sim ledgers under ``logs/sims/_resume_events/``, located through
+    ``run_simulation.model_logfile_for`` -- the producer's own path convention, never
+    hand-built -- so it runs at consolidation-time ``persist_validation_report`` like the
+    other per-sim-log checks, not at render time.
+    """
+    from hhemt import resume_events
+    from hhemt.run_simulation import model_logfile_for
+
+    if df_status is not None:
+        df = df_status
+    else:
+        try:
+            df = analysis.df_status
+        except Exception:
+            df = None
+    if df is None or not {"model_type", "n_resumes", "event_iloc"}.issubset(getattr(df, "columns", [])):
+        return CheckResult(
+            name="resume event evidence",
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary="No resume record available: resume event evidence N/A (0 resumed model runs examined; "
+            "scenario_status absent or missing model_type/n_resumes/event_iloc).",
+            details=[],
+        )
+
+    import pandas as pd
+
+    _n = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
+    candidates = df[(_n >= 1) & df["model_type"].astype(str).isin(["triton", "tritonswmm"])]
+    subs = {(str(k) if k is not None else None): v for k, v in _iter_members_or_self(analysis)}
+    _id_col = resolve_member_id_column(getattr(candidates, "columns", []))
+
+    examined = 0
+    indeterminate = 0
+    counts = {"evidence-absent": 0, "evidence-shortfall": 0}
+    n_alarm_sims = 0
+    details: list[dict] = []
+    for _, row in candidates.iterrows():
+        scen = str(row.get("scenario_directory", ""))
+        _member = row.get(_id_col) if _id_col else None
+        sub = subs.get(str(_member) if _member is not None else None)
+        if sub is None:
+            indeterminate += 1
+            continue
+        try:
+            ledger = resume_events.ledger_path_for(
+                model_logfile_for(sub, int(row["event_iloc"]), str(row["model_type"]))
+            )
+            audit = resume_events.audit_resume_evidence(
+                resume_events.read_resume_events(ledger), n_resumes=int(_n.loc[row.name])
+            )
+        except Exception:
+            indeterminate += 1
+            continue
+        examined += 1
+        if audit["verdict"] in counts:
+            counts[audit["verdict"]] += 1
+        if audit["alarms"]:
+            n_alarm_sims += 1
+        if audit["verdict"] in counts or audit["alarms"]:
+            detail = {"scenario": scen, "detail": f"{row['model_type']}: {audit['summary']}"}
+            if _member is not None:
+                detail["sa_id"] = f"member_{_member}"
+            details.append(detail)
+
+    _denom = f"{_count(examined, 'resumed model run')} examined"
+    if indeterminate:
+        _denom += f"; {indeterminate} could not be assessed (owning analysis unresolvable or ledger unreadable)"
+    if examined == 0:
+        return CheckResult(
+            name="resume event evidence",
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary=f"No resumed model run was examined: resume event evidence N/A ({_denom}).",
+            details=[],
+        )
+    passed = not details
+    if passed:
+        summary = f"Every resume attempt left durable evidence, and no alarm row ({_denom})."
+    else:
+        summary = (
+            f"{_count(counts['evidence-absent'], 'model run')} with no evidence for any resume attempt, "
+            f"{counts['evidence-shortfall']} with partial evidence, "
+            f"{n_alarm_sims} carrying an alarm row ({_denom})."
+        )
+    return CheckResult(
+        name="resume event evidence",
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+    )
+
+
+def check_resume_schedule_honored(analysis: TRITONSWMM_analysis, *, df_status=None) -> CheckResult:
+    """Warn when a resumed sim's REALIZED resume did not honor the CONFIGURED schedule.
+
+    DISJOINT from ``check_coupled_resume_validity`` (which tests whether the coupled
+    replay ENGAGED — the PRESENCE of the replay marker): this check tests whether the
+    realized resume reached the LAST CONFIGURED boundary. The two never count the same
+    row: Arm A here fires only when a resume marker is PRESENT (``resume_matches_schedule``,
+    or ``replay_matches_schedule`` on a v1 stamp, is a real bool) but mis-positioned,
+    whereas ``check_coupled_resume_validity`` fires only when NEITHER resume marker is
+    present. Two arms, disclosed as an asymmetry:
+
+    (A) COUPLED (tritonswmm): reads the durable ``coupled_resume_replay_evidence`` stamp
+        (``processing_analysis._stamp_coupled_resume_evidence``), which carries
+        ``resume_matches_schedule`` = ``resume_t >= schedule[-1] * reporting_interval``
+        (coupled-only, unit-matched), where ``resume_t`` comes from WHICHEVER resume
+        marker fired — snapshot restore or exchange replay. ``False`` -> the resume
+        engaged but landed BEFORE the last scheduled boundary (schedule truncated / not
+        honored); ``None`` (no positioned resume time or no configured schedule) ->
+        INDETERMINATE, never a warn. A v1 stamp carries only ``replay_matches_schedule``
+        and is read through that key as a fallback.
+    (B) PURE-TRITON (triton): emits NO replay marker, so ``replay_t`` is structurally
+        unavailable; its schedule is instead verified by ``n_resumes == len(schedule)``
+        from ``df_status``. A mismatch -> warn. This arm ASYMMETRY is disclosed in every
+        pure-TRITON detail row and in the summary.
+
+    ``level="aggregate"``. Non-blocking (``validate_analysis`` never raises). Graceful-
+    absent throughout: no stamp / no configured schedule -> INDETERMINATE INFO
+    (``passed=True``). Disclosed denominator: examined + INDETERMINATE
+    counts are named in the summary.
+    """
+    import json
+
+    import pandas as pd
+
+    cfg_sys = analysis._system.cfg_system
+    coupled_on = bool(getattr(cfg_sys, "toggle_tritonswmm_model", False))
+    triton_on = bool(getattr(cfg_sys, "toggle_triton_model", False))
+    if not (coupled_on or triton_on):
+        return CheckResult(
+            name="Resume schedule honored",
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary="Neither coupled nor pure-TRITON model enabled: resume-schedule verification N/A.",
+            details=[],
+        )
+
+    details: list[dict] = []
+    examined = 0
+    indeterminate = 0
+
+    # --- Arm A: COUPLED — replay_t vs schedule[-1]*interval, from the durable stamp ---
+    if coupled_on:
+        _ev: dict = {}
+        try:
+            _p = (
+                analysis.analysis_paths.experiment_datatree_zarr
+                if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
+                else analysis.analysis_paths.analysis_datatree_zarr
+            )
+            if _p is not None and _p.exists():
+                _ev = json.loads(open_store(_p).attrs.get("coupled_resume_replay_evidence", "{}"))
+        except Exception:  # noqa: BLE001 — durable-stamp read is best-effort; absence -> Arm A N/A
+            _ev = {}
+        for key, rec in sorted(_ev.items()):
+            # MECHANISM-KEYED, v1-COMPATIBLE. A v2 stamp carries `resume_matches_schedule`,
+            # computed off whichever marker fired, so a SNAPSHOT-restored sim is verified
+            # against its schedule instead of going silently indeterminate. A v1 stamp's only
+            # positioned value is `replay_t`, which a snapshot restore never produces, so
+            # reading v1 keys alone would send every snapshot resume to the `is None` arm. A
+            # v1 stamp carries only `replay_matches_schedule`; falling back to it keeps every
+            # historical tree readable and reports exactly what that tree measured.
+            matches = rec.get("resume_matches_schedule")
+            if matches is None:
+                matches = rec.get("replay_matches_schedule")
+            if matches is None:
+                indeterminate += 1
+                continue  # no positioned resume time or no configured schedule -> cannot verify
+            examined += 1
+            if matches is False:
+                _mech = resume_mechanism_from_stamp(rec)
+                _t = rec.get("resume_t")
+                if _t is None:
+                    _t = rec.get("replay_t")
+                details.append(
+                    {
+                        "scenario": key,
+                        "detail": (
+                            f"coupled resume ({_mech}) restored the coupled state to t={_t}s but "
+                            f"the last configured boundary is t={rec.get('expected_replay_t')}s "
+                            "(schedule[-1] * TRITON_reporting_timestep_s); the realized resume did "
+                            "not reach the last scheduled interruption, so the coupled state was "
+                            "restored short, so later summaries are truncated."
+                        ),
+                    }
+                )
+
+    # --- Arm B: PURE-TRITON — n_resumes == len(schedule) (arm asymmetry: no replay_t) ---
+    if triton_on:
+        if df_status is not None:
+            df = df_status
+        else:
+            try:
+                df = analysis.df_status
+            except Exception:
+                df = None
+        if df is not None and {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
+            n_res = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
+            triton_resumed = df[(df["model_type"] == "triton") & (n_res >= 1)]
+            subs = {(str(k) if k is not None else None): v for k, v in _iter_members_or_self(analysis)}
+            _id_col = resolve_member_id_column(getattr(triton_resumed, "columns", []))
+            for _, row in triton_resumed.iterrows():
+                _sa = row.get(_id_col) if _id_col else None
+                sub = subs.get(str(_sa) if _sa is not None else None)
+                sched = getattr(getattr(sub, "cfg_analysis", None), "resume_interruption_schedule", None)
+                if not sched:
+                    indeterminate += 1
+                    continue  # no configured schedule -> cannot verify the resume count
+                examined += 1
+                n_r = int(row.get("n_resumes") or 0)
+                if n_r != len(sched):
+                    details.append(
+                        {
+                            "scenario": str(row.get("scenario_directory", "")),
+                            "detail": (
+                                f"pure-TRITON resume count n_resumes={n_r} != "
+                                f"{_count(len(sched), 'configured interruption')} (resume_interruption_schedule). "
+                                "The pure-TRITON arm "
+                                "emits no replay marker, so its schedule is verified by the resume "
+                                "count (arm asymmetry): a mismatch means the schedule was not honored."
+                            ),
+                        }
+                    )
+                else:
+                    # The COUNT alone cannot distinguish "resumed 3 times at
+                    # 36/72/108" from "resumed 3 times at 41/79/113" — the per-config
+                    # boundary variance the deterministic prune exists to eliminate. The
+                    # model log persists the REALIZED boundary per resume
+                    # (resume_reporting_tsteps), so compare it directly.
+                    _realized = row.get("resume_reporting_tsteps") or []
+                    if not _realized:
+                        # ABSENCE OF EVIDENCE IS NOT EVIDENCE OF CORRECTNESS. A resumed sub
+                        # with a configured schedule but no realized-boundary list cannot be
+                        # verified, and silently passing here is the exact shape of a re-sim
+                        # that never re-simulated: re-running the resume arm WITHOUT
+                        # start_from_scratch leaves the prior campaign's n_resumes in place,
+                        # so no kill arms (the gate is _n_done < len(schedule)), the count
+                        # check above passes, and a tree written before realized boundaries were
+                        # recorded carries no list to compare
+                        # — every detector green over data the deterministic prune never
+                        # touched. Surface it as INDETERMINATE (cannot verify) rather than
+                        # as a failure: a genuinely legacy tree with no recorded boundaries is unverifiable-but-
+                        # fine, and the honest report of that is "unverifiable", not "ok".
+                        indeterminate += 1
+                        details.append(
+                            {
+                                "scenario": str(row.get("scenario_directory", "")),
+                                "detail": (
+                                    f"pure-TRITON resume count n_resumes={n_r} matches the "
+                                    f"{_count(len(sched), 'configured interruption')}, but no realized resume "
+                                    "boundaries were "
+                                    "recorded (resume_reporting_tsteps absent/empty), so the "
+                                    "same-timestep claim cannot be verified. Either this tree predates "
+                                    "realized-boundary persistence, or the resume arm was re-run over an "
+                                    "existing analysis dir without start_from_scratch, and then no "
+                                    "interruption fired and the data is clean-arm data carrying the "
+                                    "resume arm's label."
+                                ),
+                            }
+                        )
+                    elif [int(t) for t in _realized] != [int(s) for s in sched]:
+                        details.append(
+                            {
+                                "scenario": str(row.get("scenario_directory", "")),
+                                "detail": (
+                                    f"pure-TRITON realized resume boundaries {list(_realized)} != "
+                                    f"configured schedule {list(sched)}. The resume count is correct, "
+                                    "so the harness fired the right number of interruptions, but at "
+                                    "least one config resumed from a different reporting step than "
+                                    "requested: the b4b same-timestep comparison across configs is "
+                                    "not valid for this model run."
+                                ),
+                            }
+                        )
+
+    n = len(details)
+    passed = n == 0
+    _parts = [f"{_count(examined, 'resumed model run')} schedule-verified"]
+    if indeterminate:
+        _parts.append(f"{indeterminate} indeterminate (no replay_t / no configured schedule)")
+    _denom = "; ".join(_parts)
+    # See the twin gate in check_coupled_resume_validity. Both clean runs rendered a
+    # green PASS here carrying "(0 resumed sim(s) schedule-verified)" — this check touches
+    # BOTH models, so the vacuous cell appeared on clean_triton as well as clean_tritonswmm.
+    # `not details` is kept for symmetry AND because the unverifiable-boundaries branch
+    # above increments `indeterminate` while ALSO appending a detail row, so details can be
+    # non-empty with examined == 0 here too; that row is a real surfaced finding and must not
+    # be greyed out.
+    if examined == 0 and not details:
+        return CheckResult(
+            name="Resume schedule honored",
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary=f"No resumed model run was examined: resume-schedule verification N/A ({_denom}).",
+            details=[],
+        )
+    summary = (
+        f"All resumed model runs honored their configured resume schedule ({_denom})."
+        if passed
+        else f"{_count(n, 'resumed model run')} did not honor the configured resume schedule ({_denom})."
+    )
+    return CheckResult(
+        name="Resume schedule honored",
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+    )
+
+
+def _enumerated_eda_templates(analysis: TRITONSWMM_analysis) -> tuple:
+    """The EDA rule_spec_templates this analysis ENUMERATES as report targets, or ().
+
+    Mirrors the Snakemake rule-all enumeration gate in workflow.py's
+    ``generate_master_snakefile_content`` and its reprocess-master twin
+    ``generate_reprocess_master_snakefile_content`` TERM FOR TERM. All four terms matter:
+
+    1. Only the sensitivity-master generators carry an EDA enumeration site at all.
+       ``generate_snakefile_content`` (multisim) and ``reprocess_snakefile_generator``
+       contain none, and the multisim plot dispatcher passes no ``predicate_inputs``,
+       so a multisim neither emits nor enumerates EDA rules whatever set it names.
+    2. The active set must carry an ``eda_compute_sensitivity`` selection. ``default``
+       and ``benchmarking`` do not; ``compute_sensitivity``/``dem_resolution``/``compute_config_byte_identity``
+       do. This is the discriminating term.
+    3. ``eda.enabled_plots`` must be non-empty — TRUE by default (non-empty
+       default_factory), which is why it cannot carry the predicate alone.
+    4. The builder key must not be in ``report_config.disabled_renderers``.
+
+    Set resolution goes through ``resolve_active_reporting_set``, which carries BOTH
+    the sentinel rule and the registry membership check and then composes the named
+    sets — never an inline re-derivation of the sentinel branch. That shortcut drops
+    the membership check, turning a typo'd reporting_set into a bare ``KeyError`` at
+    the registry lookup instead of a field-named ``ConfigurationError``; the
+    bundle-side harvest took it once and it had to be repaired.
+    The ``_active_reporting_set`` / ``_cfg_report`` fallback chain mirrors
+    ``workflow.py::_resolve_active_reporting_set`` so validate-time and generate-time
+    resolve the same set on a generate-without-run() tree.
+    """
+    from hhemt.config.report import resolve_active_reporting_set
+    from hhemt.report_renderers._reporting_sets import (
+        eda_rule_spec_templates,
+        renderer_active,
+    )
+
+    if not getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
+        return ()
+    if not list(getattr(getattr(analysis.cfg_analysis, "eda", None), "enabled_plots", []) or []):
+        return ()
+    cfg_report = getattr(analysis, "_cfg_report", None) or analysis.cfg_analysis.report
+    if not renderer_active("eda_compute_sensitivity", list(cfg_report.disabled_renderers)):
+        return ()
+    active = getattr(analysis, "_active_reporting_set", None)
+    if active is None:
+        try:
+            active = resolve_active_reporting_set(cfg_report, is_sensitivity=True)
+        except Exception:  # unresolvable/typo'd set -> run-entry validation owns the error
+            return ()
+    return tuple(eda_rule_spec_templates(active))
+
+
+def check_eda_calc_ran(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Fail when EDA figures are ENUMERATED as report targets but the EDA calc never ran.
+
+    The gap this closes: a master can complete, render a report that post-dates its own
+    scenario_status.csv, and pass every currency check while ``{master}/eda/`` does not
+    exist — because ``analysis.eda()`` was never invoked. Every DoD line naming
+    ``eda/*.verdict.json`` as its evidence source is then unevidenceable and the EDA figures
+    render as honest-degradation panels.
+
+    Those degradation panels are the enumerate-implies-emit fix working as designed: they
+    replaced a workflow-killing MissingOutputException with a survivable panel. That trade is
+    correct. Its side effect is that the LOUD failure is gone and no positive signal replaced
+    it. This check is the positive signal.
+
+    The predicate mirrors the Snakemake rule-all ENUMERATION GATE term for term, via
+    ``_enumerated_eda_templates``: if the workflow enumerated EDA figures, the EDA calc
+    owed verdicts. An analysis that enumerates none — a multisim, a ``benchmarking``
+    master, a master with ``enabled_plots`` empty, or one that disabled the renderer —
+    renders no degradation panels and passes trivially. Keying on ``enabled_plots``
+    alone would NOT do: it carries a non-empty default_factory and is therefore true on
+    essentially every analysis.
+    """
+    name = "EDA calc ran"
+    templates = _enumerated_eda_templates(analysis)
+    if not templates:
+        return CheckResult(
+            name=name,
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary="This analysis enumerates no EDA report targets: EDA completeness N/A.",
+            details=[],
+        )
+    n_targets = len(templates)
+    eda_dir = Path(analysis.analysis_paths.analysis_dir) / "eda"
+    verdicts = sorted(eda_dir.glob("*.verdict.json")) if eda_dir.is_dir() else []
+    if verdicts:
+        return CheckResult(
+            name=name,
+            level="aggregate",
+            passed=True,
+            summary=(
+                f"{_count(n_targets, 'EDA report target')} enumerated; "
+                f"{_count(len(verdicts), 'verdict artifact')} present "
+                f"under {eda_dir.name}/."
+            ),
+            details=[],
+        )
+    return CheckResult(
+        name=name,
+        level="aggregate",
+        passed=False,
+        summary=(
+            f"{_count(n_targets, 'EDA plot')} enumerated as report targets, but {eda_dir} carries no "
+            "<code>*.verdict.json</code>: analysis.eda() never ran for this analysis. Every EDA figure in the "
+            "report is a degraded panel, and any claim sourced from <code>eda/*.verdict.json</code> "
+            "is unevidenceable. Run `hhemt eda` (or analysis.eda()) before render_report() and "
+            "before bundle_report_data()."
+        ),
+        details=[
+            {
+                "scenario": "(analysis-level)",
+                "detail": (
+                    f"enumerated_targets={[t.rule_name for t in templates]}; "
+                    f"eda_dir_exists={eda_dir.is_dir()}; verdict_count=0"
+                ),
+            }
+        ],
+    )
+
+
+_RECLAIM_LOG_FIELDS: dict[str, str] = {
+    "full_TRITON_timeseries_cleared": "TRITON timeseries",
+    "full_SWMM_timeseries_cleared": "SWMM node/link timeseries",
+    "consolidated_node_timeseries_cleared": (
+        "SWMM node timeseries (cleared; copy in the tritonswmm/swmm_node/timeseries or "
+        "swmm_only/swmm_node/timeseries branch of analysis_datatree.zarr)"
+    ),
+    "consolidated_link_timeseries_cleared": (
+        "SWMM link timeseries (cleared; copy in the tritonswmm/swmm_link/timeseries or "
+        "swmm_only/swmm_link/timeseries branch of analysis_datatree.zarr)"
+    ),
+    "consolidated_triton_timeseries_cleared": (
+        "TRITON gridded timeseries (cleared; copy in the tritonswmm/triton/timeseries or "
+        "triton_only/triton/timeseries branch of analysis_datatree.zarr)"
+    ),
+    "consolidated_system_timeseries_cleared": (
+        "SWMM-only system timeseries (cleared; copy in the swmm_only/system/timeseries "
+        "branch of analysis_datatree.zarr)"
+    ),
+    "consolidated_performance_timeseries_cleared": (
+        "performance timeseries (cleared; copy in the tritonswmm/performance/timeseries or "
+        "triton_only/performance/timeseries branch of analysis_datatree.zarr)"
+    ),
+    "raw_SWMM_binaries_reclaimed": "coupled raw SWMM .out binaries",
+    "coupled_rpt_truncated": "coupled SWMM report body (truncated in place)",
+    "hydro_out_reclaimed": "SWMM hydrology output (hydro.out)",
+    "prep_inputs_reclaimed": "scenario-prep inputs (dats/, extbc/, sim_weather.nc)",
+    "hydrographs_reclaimed": "TRITON inflow hydrographs (strmflow/), captured to zarr first",
+    "standalone_rpt_reclaimed": "standalone SWMM reports (full.rpt truncated; hydro.rpt captured then removed)",
+    "raw_TRITON_outputs_cleared": "raw TRITON outputs cleared",
+    "raw_SWMM_outputs_cleared": "raw SWMM outputs cleared",
+}
+
+
+#: The disclosure label of a scenario whose model log records its per-scenario summary stores as cleared. It is not a
+#: key of `_RECLAIM_LOG_FIELDS`: that table maps boolean fields, and the record is a mapping with a state.
+_SUMMARY_CLEARING_LABEL = (
+    "per-scenario summary stores (cleared; copy in the summary branches of analysis_datatree.zarr)"
+)
+
+
+#: Minutes of slack allowed before a per-cell time-of-maximum counts as post-forcing.
+#: The terminal TRITON snapshot lands ON the forced end by construction -- post-trim the
+#: simulation duration IS the forcing extent -- so the comparison is an equality case in
+#: the normal state and the strict ``>`` is what keeps a healthy run green. That leaves a
+#: one-ULP hazard: ``time_of_max_flood_depth`` is an accumulation of reporting-step
+#: multiples and visibly carries float error (measured on the synth fixture: 24.666666666666664
+#: for an exact 24.666666666666668), so a terminal snapshot drifting one ULP the other way
+#: would fire on EVERY healthy analysis. This tolerance is bounded on both sides rather than
+#: picked: ~1e-6 min is eight orders ABOVE the float64 ULP at these magnitudes
+#: (2.8e-14 min at 180 min) and eight orders BELOW the smallest reporting step anyone
+#: configures (seconds). It cannot mask the regression this check exists to find, which is
+#: a whole-simulation-scale overrun, not a microsecond.
+_FORCING_TAIL_TOLERANCE_MIN = 1e-6
+
+
+def _forced_extent_minutes(weather_nc, time_dim: str) -> float | None:
+    """Minutes spanned by a per-scenario sim_weather.nc time coordinate, or None.
+
+    THE INTERVAL COMES FROM THE COORDINATE, NEVER FROM A CONFIG FIELD. An earlier
+    form of this took the step COUNT from the weather axis and the step INTERVAL
+    from ``TRITON_reporting_timestep_s`` -- two different clocks. They coincide on
+    the Norfolk campaigns (weather step 120 s, reporting timestep 120 s), which is
+    exactly why the error was invisible where it was authored; on the synth fixture
+    (weather step 60 s, reporting timestep 10 s) it understated the extent 6x, so a
+    healthy 180-minute run reported a forced end of 30 minutes and classified nearly
+    the whole simulation as post-forcing. The consumer is the regression detector for
+    the window trim, whose whole value is being independent of the config under
+    suspicion, so a config-derived interval defeated the instrument rather than
+    merely mis-scaling it.
+
+    ``time_dim`` is a schema LABEL, not a clock -- it names which coordinate to read
+    and contributes no quantity to the arithmetic.
+
+    Returns None when the extent cannot be derived (missing coordinate, non-datetime
+    coordinate, fewer than two steps). The caller counts that as INDETERMINATE rather
+    than assuming a value, because a guessed extent in this check manufactures the
+    exact false positive it exists to detect.
+    """
+    import numpy as np
+    import xarray as xr
+
+    try:
+        with xr.open_dataset(weather_nc, engine="h5netcdf") as ds:
+            if time_dim not in ds.coords and time_dim not in ds.variables:
+                return None
+            values = ds[time_dim].values
+    except Exception:
+        return None
+    if values.ndim != 1 or values.size < 2:
+        return None
+    if not np.issubdtype(values.dtype, np.datetime64):
+        return None
+    return float((values[-1] - values[0]) / np.timedelta64(1, "m"))
+
+
+def check_forcing_tail_influence(analysis) -> CheckResult:
+    """Aggregate: did any per-cell maximum occur AFTER that event's forcing ended?
+
+    Post-trim this is unreachable through the normal path, which is the point --
+    it is a REGRESSION detector on the window trim, not an ongoing science check.
+    Its live reachability case is a hotstart resume against a stale checkpoint cfg
+    carrying the pre-fix sim_duration, which prep-time assertions have already
+    passed by. The instrument is deliberately independent of the cfg under
+    suspicion: the forced extent is re-derived from the per-scenario sim_weather.nc
+    time COORDINATE -- both the span and the interval, never a config field.
+
+    Honest limit, restated so it is not lost: a max occurring after the forcing
+    ended proves the tail SET that maximum. It does not prove the tail was
+    artefactual -- real inland routing continues after real forcing stops.
+
+    DISCLOSED DENOMINATOR: the summary names examined and indeterminate counts, so
+    a vacuous pass is legible in the artifact rather than reading as a verified good.
+    """
+    import numpy as np
+
+    from hhemt.scenario import compute_event_id_slug
+
+    details: list[dict] = []
+    examined = 0
+    indeterminate = 0
+
+    # Iterate `_iter_members_or_self` like every other sensitivity-aware check in this
+    # module. A sensitivity MASTER carries `n_scenarios == n_events * n_subs` while its own
+    # `df_sims` holds only the events, so the previous master-scoped `range(n_scenarios)` +
+    # `analysis._retrieve_weather_indexer_using_integer_index(i)` raised `KeyError` on the
+    # first index past the event count (measured on the synth fixture: n_scenarios=4,
+    # df_sims index=[0] -> KeyError: 1). That raise propagated out of `validate_analysis`,
+    # so `persist_validation_report` -- whose call sites all swallow such a raise as
+    # non-fatal (today there are two: export_scenario_status.main's post-CSV re-persist
+    # and TRITONSWMM_analysis.eda) -- silently wrote NO master-level
+    # validation_report.json at all, while every sub wrote its own. The master scope was also the wrong sims root: a
+    # master's `sims/` is empty (scenarios live under `members/member_N/sims/`), so even
+    # without the raise this check examined zero scenarios on every sensitivity run.
+    for member_id, sub in _iter_members_or_self(analysis):
+        sims_dir = _sims_dir_of(analysis, sub)
+        if getattr(sub, "is_recorded_member", False):
+            # A removed member's weather files and stores are gone: every scenario is indeterminate here, and the
+            # branch below reads `sub.process`, which the view does not provide.
+            indeterminate += int(sub.n_scenarios)
+            continue
+        for i in range(int(sub.n_scenarios)):
+            evt = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(i))
+            scen = sims_dir / evt
+            wx = scen / "sim_weather.nc"
+            summaries = sorted((scen / "processed").glob("*TRITON_summary.zarr"))
+            # A scenario whose TRITON summary store was cleared has it in the consolidated tree: it is read through
+            # the same reader the consolidation uses, one scenario at a time.
+            cleared_mode = None
+            if not summaries:
+                from hhemt.summary_paths import summary_clearing_record
+
+                for _model, _mode, _stem in (
+                    ("tritonswmm", "tritonswmm_triton", "TRITONSWMM_TRITON_summary"),
+                    ("triton", "triton_only", "TRITON_only_summary"),
+                ):
+                    _record = summary_clearing_record(scen, _model)
+                    if _record is not None and _stem in _record["stems"]:
+                        cleared_mode = _mode
+                        break
+            if not wx.exists() or (not summaries and cleared_mode is None):
+                indeterminate += 1
+                continue
+            try:
+                forced_end_min = _forced_extent_minutes(
+                    wx, sub.cfg_analysis.weather_time_series_timestep_dimension_name
+                )
+                if forced_end_min is None:
+                    indeterminate += 1
+                    continue
+                if cleared_mode is None:
+                    zarr = open_store(summaries[0], kind="zarr")
+                else:
+                    zarr = sub.process._retrieve_combined_output(cleared_mode, event_ilocs=[i])
+                tmx = zarr["time_of_max_flood_depth"].isel(event_iloc=0).values.astype(float)
+                mx = zarr["max_flood_depth"].isel(event_iloc=0).values.astype(float)
+            except Exception:
+                indeterminate += 1
+                continue
+            examined += 1
+            wet = np.isfinite(tmx) & (mx > 0.01)
+            if not wet.any():
+                continue
+            after = int((tmx[wet] > forced_end_min + _FORCING_TAIL_TOLERANCE_MIN).sum())
+            if after:
+                row = {
+                    "event_id": evt,
+                    "cells_max_after_forcing": after,
+                    "wet_cells": int(wet.sum()),
+                    "forced_end_min": forced_end_min,
+                }
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
+                details.append(row)
+
+    return CheckResult(
+        name="forcing tail influence",
+        level="aggregate",
+        passed=not details,
+        applicable=examined > 0,
+        instrument="summary_tier",
+        summary=(
+            f"examined {_count(examined, 'scenario')}, {indeterminate} indeterminate; "
+            f"{len(details)} with a per-cell maximum attained after their forcing ended"
+        ),
+        details=details,
+    )
+
+
+def check_data_availability(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Aggregate: which per-scenario artifact classes were DELIBERATELY reclaimed.
+
+    A deliberate reclaim is a fact about data availability, not an error -- so this check
+    passes with a descriptive summary in the normal case and fails only in the one state
+    that is genuinely wrong: a scenario whose log records a reclaim while its per-model
+    summary set is ABSENT. That is the state in which the reclaim stopped being a reclaim
+    and became damage.
+
+    Three properties are load-bearing and none is stylistic.
+
+    1. PATH-ONLY. The per-model log is read straight off disk at
+       ``sims/{event_id}/log_{model}.json``; ``TRITONSWMM_scenario`` is never instantiated,
+       because its constructor mkdir's ``processed/``/``swmm/``/``out_swmm/`` as a side
+       effect (the discipline ``summary_paths.py`` codifies). It matters more here than
+       there: this runs over 11,394 model-sims on the synthetic ensemble.
+
+    2. IT READS THE LOG, NEVER THE CONFIG. ``CheckResult``'s own docstring forbids deriving
+       ``instrument`` from ``cfg_analysis.clear_raw`` because "that records configured
+       intent". The symmetric error here would be labelling a scenario reclaimed from
+       ``cfg_analysis.remove_after_processing`` -- a scenario that failed before the
+       reclaim fired, or one processed by a pre-feature toolkit, would be mislabelled.
+
+    3. DISCLOSED DENOMINATOR. Every ``check_*`` derives ``passed`` from ``len(details) == 0``,
+       which cannot distinguish "examined N, found nothing" from "examined 0". The summary
+       names the examined and indeterminate counts so a vacuous pass is legible in the
+       artifact itself.
+    """
+
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.summary_paths import SUMMARY_CLEARING_FIELD, parse_summary_clearing_record, scenario_summaries_present
+
+    details: list[dict] = []
+    examined = 0
+    indeterminate = 0
+    reclaimed_counts: dict[str, int] = {label: 0 for label in _RECLAIM_LOG_FIELDS.values()}
+    reclaimed_counts[_SUMMARY_CLEARING_LABEL] = 0
+
+    for member_id, sub in _iter_members_or_self(analysis):
+        try:
+            enabled = sub._get_enabled_model_types()
+            sim_dir = _sims_dir_of(analysis, sub)
+        except Exception:  # noqa: BLE001 -- a sub we cannot address is indeterminate, not failed
+            continue
+        for event_iloc in sub.df_sims.index:
+            ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
+            event_id = compute_event_id_slug(ev)
+            for model in enabled:
+                examined += 1
+                payload = _model_log_payload(analysis, member_id, sub, event_id, model)
+                if payload is None:
+                    indeterminate += 1
+                    continue
+                classes = [label for field, label in _RECLAIM_LOG_FIELDS.items() if payload.get(field) is True]
+                if parse_summary_clearing_record(payload.get(SUMMARY_CLEARING_FIELD)) is not None:
+                    classes.append(_SUMMARY_CLEARING_LABEL)
+                if not classes:
+                    continue
+                for label in classes:
+                    reclaimed_counts[label] += 1
+                if not scenario_summaries_present(sub, event_id, [model]):
+                    row = {
+                        "scenario": event_id,
+                        "scenario_dir": str(sim_dir / event_id),
+                        "detail": (
+                            f"{model}: reclaim recorded ({', '.join(classes)}) but the "
+                            "per-model summary set is absent: the reclaim is damage, not "
+                            "a disclosed reclaim"
+                        ),
+                    }
+                    if member_id is not None:
+                        row["sa_id"] = f"member_{member_id}"
+                    details.append(row)
+
+    passed = not details
+    reclaimed_bits = [f"{label}: {n}" for label, n in reclaimed_counts.items() if n]
+    if not reclaimed_bits:
+        headline = "No per-scenario artifacts were reclaimed"
+    else:
+        headline = "Reclaimed after processing: " + "; ".join(reclaimed_bits)
+    _surviving = surviving_directories_with_reasons(analysis)
+    _by_reason: dict[str, int] = {}
+    for _reason in _surviving.values():
+        _by_reason[_reason] = _by_reason.get(_reason, 0) + 1
+    _surviving_text = "; ".join(f"{n} {r}" for r, n in sorted(_by_reason.items())) if _by_reason else "none"
+    summary = (
+        f"{headline}. Examined {_count(examined, '(model, scenario) pair')}; "
+        f"{indeterminate} indeterminate (no readable model log). Surviving scenario directories: {_surviving_text}."
+    )
+    if not passed:
+        summary = (
+            f"{len(details)} of {_count(examined, '(model, scenario) pair')} record a reclaim with "
+            f"their summaries absent. {summary}"
+        )
+    return CheckResult(
+        name="Data availability",
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+        instrument="summary_tier",
+    )
+
+
+def check_log_recoveries(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Surface every quarantine-and-reconstruct that a log write() performed.
+
+    A reconstruct means a log document did not parse, was MOVED to a `.unreadable`
+    sibling, and was rebuilt from the writing process's state -- so every field that
+    process did not set is now a default. That is repaired damage, and the developer's
+    standing rule is that it is never left silent: the check FAILS naming each document
+    and its quarantine path so the operator inspects the preserved bytes.
+
+    PATH-ONLY and DISCLOSED-DENOMINATOR, like check_data_availability: the model logs are
+    read straight off disk at `sims/{event_id}/log_{model}.json` (TRITONSWMM_scenario is
+    never instantiated), the analysis and system log documents are read the same way, and
+    the summary names examined / indeterminate counts so a vacuous pass is legible.
+    """
+    import json
+
+    from hhemt.scenario import compute_event_id_slug
+
+    details: list[dict] = []
+    examined = 0
+    indeterminate = 0
+    # A document is examined once however many members point at it: members of a sweep
+    # share one system log, and counting it per member inflated both the denominator and any
+    # recovery row it carried.
+    seen: set[Path] = set()
+
+    def _rows_for(doc_path: Path, label: str, member_id) -> None:
+        nonlocal examined, indeterminate
+        key = doc_path.resolve()
+        if key in seen:
+            return
+        seen.add(key)
+        examined += 1
+        if not doc_path.exists():
+            indeterminate += 1
+            return
+        try:
+            payload = json.loads(doc_path.read_text())
+        except (OSError, ValueError):
+            indeterminate += 1
+            return
+        records = payload.get("recovered_from_unparseable") or []
+        for rec in records:
+            row = {
+                "scenario": label,
+                "scenario_dir": str(doc_path.parent),
+                "detail": (
+                    f"{doc_path.name}: did not parse ({rec.get('error')}); preserved at "
+                    f"{rec.get('quarantine')} and reconstructed at {rec.get('at')} by "
+                    f"{rec.get('writer')}"
+                ),
+            }
+            if member_id is not None:
+                row["sa_id"] = f"member_{member_id}"
+            details.append(row)
+
+    # The analysis's own log: for a sweep this is the master's log, which no member shares;
+    # for a plain analysis it is the same document the loop below reaches, and `seen`
+    # keeps it from being counted twice.
+    try:
+        _rows_for(Path(analysis.analysis_paths.f_log), "analysis log", None)
+    except Exception:  # noqa: BLE001 -- an analysis we cannot address is indeterminate, not failed
+        pass
+
+    for member_id, sub in _iter_members_or_self(analysis):
+        try:
+            enabled = sub._get_enabled_model_types()
+            if getattr(sub, "is_recorded_member", False):
+                continue  # a removed member has no analysis log or system log of its own: the master's carry them
+            sim_dir = _sims_dir_of(analysis, sub)
+            analysis_log = Path(sub.analysis_paths.f_log)
+            system_log = Path(sub._system.log.logfile)
+        except Exception:  # noqa: BLE001 -- a sub we cannot address is indeterminate, not failed
+            continue
+        _rows_for(analysis_log, "analysis log", member_id)
+        # The system log belongs to the system, not to a member.
+        _rows_for(system_log, "system log", None)
+        for event_iloc in sub.df_sims.index:
+            ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
+            event_id = compute_event_id_slug(ev)
+            for model in enabled:
+                _rows_for(sim_dir / event_id / f"log_{model}.json", event_id, member_id)
+
+    passed = not details
+
+    def _docs(n: int) -> str:
+        return f"{n} log document" if n == 1 else f"{n} log documents"
+
+    if passed:
+        lead = "No log documents were reconstructed after failing to parse."
+    else:
+        lead = f"{_docs(len(details))} {'was' if len(details) == 1 else 'were'} reconstructed after failing to parse."
+    summary = f"{lead} Examined {_docs(examined)}; {indeterminate} could not be read (absent or unreadable)."
+    # `level="aggregate"` routes this row to a Check table, so the exact-cover guard in
+    # tests/test_iter7_check_vocabulary.py OBLIGES the matching _CHECK_VOCABULARY entry in
+    # report_renderers/errors_and_warnings.py in the SAME change -- the obligation the
+    # provenance check states at its own site.
+    return CheckResult(
+        name="Log recoveries",
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+    )
+
+
+#: Name of the inflow-node reduction disclosure; the renderer lists this one check's details
+#: when it passes, keyed on this string.
+INFLOW_NODE_REDUCTION_CHECK = "inflow node reduction"
+
+
+def check_inflow_node_reduction(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Disclose each DEM cell whose coupling candidates the one-node-per-cell option reduced to one.
+
+    A DISCLOSURE, not a failure: ``passed`` is always True, so it never flips
+    ``overall_passed``. One detail row per reduced cell, naming the kept node and each dropped
+    node with its reason, where "dropped" means not written to the coupling-node list
+    (``coupling_nodes.txt``) that scenario preparation writes for TRITON-SWMM; the node's
+    ``[INFLOWS]`` lines are left in the model. Every candidate is either written, or dropped
+    with its reason: a node of a type TRITON-SWMM cannot couple is named in the ineligible-node
+    warning, and, when ``one_coupled_inflow_node_per_dem_cell`` is on, every dropped node
+    (ineligible or ranked out of its cell) is also recorded in the selection record.
+
+    The per-scenario record ``_status/inflow_node_selection.json`` is written for every
+    scenario of a coupled system prepared with the option on, empty when no cell was reduced,
+    so a scenario WITHOUT the file is counted as NOT MEASURED, never as one with no reduced
+    cell: it was prepared without the option, for a system whose coupled model is off (whose
+    preparation selects no coupling nodes and writes no record), or before this build (a
+    pre-change analysis re-consolidated through ``reprocess(start_with="consolidate")``
+    carries none). The summary names the scenarios examined, measured and not measured, and
+    with none measured the check is not applicable.
+    """
+    import json
+
+    from hhemt.scenario import compute_event_id_slug
+
+    details: list[dict] = []
+    examined = measured = n_cells = n_dropped = 0
+    for member_id, sub in _iter_members_or_self(analysis):
+        try:
+            sim_dir = _sims_dir_of(analysis, sub)
+            event_ilocs = list(sub.df_sims.index)
+        except Exception:  # noqa: BLE001 -- a sub we cannot address is not measured, not failed
+            continue
+        for event_iloc in event_ilocs:
+            examined += 1
+            event_id = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(event_iloc))
+            record = sim_dir / event_id / "_status" / "inflow_node_selection.json"
+            try:
+                cells = json.loads(record.read_text()).get("cells", [])
+            except (OSError, ValueError, AttributeError):
+                continue
+            measured += 1
+            for cell in cells:
+                dropped = cell.get("dropped", [])
+                n_cells += 1
+                n_dropped += len(dropped)
+                dropped_text = ", ".join(f"{d.get('node')} ({d.get('reason')})" for d in dropped)
+                row = {
+                    "scenario": event_id,
+                    "scenario_dir": str(sim_dir / event_id),
+                    "detail": (
+                        f"DEM cell ({cell.get('dem_x_coord')}, {cell.get('dem_y_coord')}): kept "
+                        f"{cell.get('kept')}; dropped {dropped_text}"
+                    ),
+                }
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
+                details.append(row)
+    denominator = (
+        f"{_count(examined, 'scenario')} examined, {measured} measured, {examined - measured} not measured "
+        "(no selection record: prepared without the one-node-per-cell option, with the coupled model "
+        "off, or before it existed)"
+    )
+    if measured == 0:
+        return CheckResult(
+            name=INFLOW_NODE_REDUCTION_CHECK,
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary=f"No scenario carries an inflow-node selection record: inflow node reduction N/A ({denominator}).",
+            details=[],
+        )
+    return CheckResult(
+        name=INFLOW_NODE_REDUCTION_CHECK,
+        level="aggregate",
+        passed=True,
+        summary=(
+            f"{_count(n_cells, 'DEM cell')} reduced to one coupled inflow node, "
+            f"{_count(n_dropped, 'node')} not written "
+            f"to the coupling-node list ({denominator})."
+        ),
+        details=details,
+    )
+
+
+#: Name of the consolidated-metadata staleness check (a ``system``-level row of the Check table).
+CONSOLIDATED_METADATA_CHECK = "consolidated metadata current"
+
+
+def _consolidation_migration_layout() -> int:
+    """The layout version from which stores must carry a consolidated-metadata index.
+
+    That is the version of the migration module ``V{NNNN}__consolidate_zarr_metadata.py`` once chunk 3a.3
+    lands it (the number in its file name), and the layout AFTER the current one until then, so the
+    threshold follows the migration instead of being a literal that can drift from it.
+    """
+    import re
+
+    import hhemt.version_migration as _vm
+    from hhemt.version_migration.constants import LAYOUT_VERSION
+
+    versions_dir = Path(_vm.__file__).resolve().parent / "versions"
+    found = sorted(versions_dir.glob("V*__consolidate_zarr_metadata.py"))
+    if not found:
+        return LAYOUT_VERSION + 1
+    return int(re.match(r"V(\d+)__", found[-1].name).group(1))
+
+
+#: First layout version whose stores must carry a consolidated-metadata index (see the function above).
+#: An analysis stamped below it has legacy stores, for which an ABSENT index is expected and not an error.
+CONSOLIDATED_INDEX_REQUIRED_FROM_LAYOUT = _consolidation_migration_layout()
+
+_V3_DERIVED_KEY = "consolidated_metadata"
+
+
+def _index_and_disk_documents(store: Path) -> tuple[dict | None, dict]:
+    """(stored index entries or None, the metadata documents found on disk), both keyed by node.
+
+    A format 3 store keys nodes by their slash-joined path and stores each node's whole ``zarr.json``
+    document; a format 2 store keys documents by their file path (``a/.zarray``) under the root
+    ``.zmetadata``. The disk side is rebuilt from the same documents ``zarr.consolidate_metadata``
+    reads, WITHOUT writing. For format 3 a group's own ``consolidated_metadata`` key is dropped from
+    both sides: zarr stores an empty one in the index entry and none in the node's document.
+    """
+    import json
+
+    v3_root = store / "zarr.json"
+    if v3_root.is_file():
+        stored = json.loads(v3_root.read_text(encoding="utf-8")).get(_V3_DERIVED_KEY)
+        index = None if stored is None else {k: dict(v) for k, v in stored.get("metadata", {}).items()}
+        if index is not None:
+            for entry in index.values():
+                entry.pop(_V3_DERIVED_KEY, None)
+        disk: dict = {}
+        for doc in sorted(store.rglob("zarr.json")):
+            if doc.parent == store:
+                continue
+            node = json.loads(doc.read_text(encoding="utf-8"))
+            node.pop(_V3_DERIVED_KEY, None)
+            disk[doc.parent.relative_to(store).as_posix()] = node
+        return index, disk
+    zmetadata = store / ".zmetadata"
+    index = None
+    if zmetadata.is_file():
+        index = json.loads(zmetadata.read_text(encoding="utf-8")).get("metadata", {})
+    disk = {}
+    for name in (".zgroup", ".zarray", ".zattrs"):
+        for doc in sorted(store.rglob(name)):
+            disk[doc.relative_to(store).as_posix()] = json.loads(doc.read_text(encoding="utf-8"))
+    return index, disk
+
+
+def check_consolidated_metadata_current(store: Path, *, index_required: bool = True) -> CheckResult:
+    """Compare one store's consolidated-metadata index with its metadata documents on disk.
+
+    The index is rebuilt in memory from the documents on disk (the ones ``zarr.consolidate_metadata``
+    reads) and compared with the stored one NODE BY NODE, including each node's attributes and each
+    array's shape, dtype and chunk grid, so an attribute updated in place or an array extended behind
+    the index is reported even though the node list is unchanged. Any difference is a failure naming
+    the first differing node and field. An ABSENT index is also a failure when ``index_required``
+    (the store is at or after the layout version that requires one): an append killed between its
+    first and last write, or an interrupted ``deferred_consolidation`` block, leaves exactly that,
+    and ``open_store`` would then read the store unindexed with no error. Not applicable (and not a
+    failure) when the store does not exist, or has no index and ``index_required`` is False.
+    """
+    store = Path(store)
+    if not store.is_dir():
+        return CheckResult(
+            name=CONSOLIDATED_METADATA_CHECK,
+            level="system",
+            passed=True,
+            applicable=False,
+            summary=f"Store {store.name} not present: consolidated metadata N/A.",
+        )
+    index, disk = _index_and_disk_documents(store)
+    if index is None:
+        if not index_required:
+            return CheckResult(
+                name=CONSOLIDATED_METADATA_CHECK,
+                level="system",
+                passed=True,
+                applicable=False,
+                summary=f"Store {store.name} carries no index and predates the layout that requires one: N/A.",
+            )
+        message = (
+            f"Store {store.name} carries no consolidated-metadata index although this layout requires one "
+            "(an interrupted append or deferred block, or a write outside the toolkit's helpers); it is read "
+            "unindexed until the index is rebuilt."
+        )
+        return CheckResult(
+            name=CONSOLIDATED_METADATA_CHECK,
+            level="system",
+            passed=False,
+            summary=message,
+            details=[{"store": str(store), "node": "/", "field": "consolidated_metadata", "detail": message}],
+        )
+    for node in sorted(set(index) | set(disk)):
+        if node not in disk:
+            field_name, why = "node", "the index lists a node that is not on disk"
+        elif node not in index:
+            field_name, why = "node", "a node on disk is missing from the index"
+        elif index[node] != disk[node]:
+            field_name = next(
+                k for k in sorted(set(index[node]) | set(disk[node])) if index[node].get(k) != disk[node].get(k)
+            )
+            why = f"the index and the document on disk differ in {field_name!r}"
+        else:
+            continue
+        message = f"Store {store.name} index is stale at node {node!r}, field {field_name!r}: {why}."
+        return CheckResult(
+            name=CONSOLIDATED_METADATA_CHECK,
+            level="system",
+            passed=False,
+            summary=message,
+            details=[{"store": str(store), "node": node, "field": field_name, "detail": message}],
+        )
+    return CheckResult(
+        name=CONSOLIDATED_METADATA_CHECK,
+        level="system",
+        passed=True,
+        summary=f"Store {store.name}: index matches its {_count(len(disk), 'metadata document')} node by node.",
+    )
+
+
+def check_consolidated_metadata(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """System-level: every zarr store the analysis owns carries a current consolidated-metadata index.
+
+    Stores examined, when present: each analysis's consolidated DataTree (a sensitivity master's own
+    tree and every member's) and the format 2 ``slurm_jobs.zarr`` beside them, whose root ``.zmetadata``
+    is its index. An absent index is a failure only for an analysis stamped at or after
+    ``CONSOLIDATED_INDEX_REQUIRED_FROM_LAYOUT``; a stale one always is. Reports the first failing store.
+    """
+    from hhemt.slurm_store import store_path
+    from hhemt.version_migration.state import read_version_file
+
+    try:
+        state = read_version_file(Path(analysis.analysis_paths.analysis_dir))
+    except Exception:  # noqa: BLE001 -- an unreadable stamp means the layout is unknown: treat as legacy
+        state = None
+    required = state is not None and state.layout_version >= CONSOLIDATED_INDEX_REQUIRED_FROM_LAYOUT
+    stores: list[Path] = []
+    for _member_id, sub in [(None, analysis), *list(_iter_members_or_self(analysis))]:
+        for attr in ("analysis_datatree_zarr", "experiment_datatree_zarr"):
+            candidate = getattr(sub.analysis_paths, attr, None)
+            if candidate is not None and Path(candidate).is_dir() and Path(candidate) not in stores:
+                stores.append(Path(candidate))
+    jobs = store_path(Path(analysis.analysis_paths.analysis_dir))
+    if jobs.is_dir():
+        stores.append(jobs)
+    results = [check_consolidated_metadata_current(s, index_required=required) for s in stores]
+    failed = [r for r in results if not r.passed]
+    if failed:
+        return CheckResult(
+            name=CONSOLIDATED_METADATA_CHECK,
+            level="system",
+            passed=False,
+            summary=failed[0].summary,
+            details=[d for r in failed for d in r.details],
+        )
+    if not any(r.applicable for r in results):
+        return CheckResult(
+            name=CONSOLIDATED_METADATA_CHECK,
+            level="system",
+            passed=True,
+            applicable=False,
+            summary="No zarr store with a consolidated-metadata index to compare: N/A.",
+        )
+    return CheckResult(
+        name=CONSOLIDATED_METADATA_CHECK,
+        level="system",
+        passed=True,
+        summary=f"{_count(sum(r.applicable for r in results), 'store')}: every index matches its metadata documents.",
+    )
+
+
+def validate_analysis(analysis: TRITONSWMM_analysis, *, df_status=None) -> ValidationReport:
     """Run all core checks; return aggregated ValidationReport.
 
     Order matches the existing `assert_analysis_workflow_completed_successfully`
     chain so the report's check ordering matches what pytest displays.
 
-    Persisted EDA verdicts (``{analysis_dir}/eda/*.verdict.json``, ADR-9) are
+    Persisted EDA verdicts (``{analysis_dir}/eda/*.verdict.json``) are
     appended after the core checks so the renderer surfaces them by ``level``.
+
+    ``df_status`` is an OPTIONAL pre-built status table. It is not a cache: it is
+    resolved once here and handed to every check below that takes ``df_status=`` --
+    each of which used to rebuild it -- so one invocation performs one build. Omitting it reproduces
+    the previous behaviour exactly for every caller, because the resolve below is
+    the same property read those checks performed individually. A single snapshot
+    is also the CONSISTENT reading -- independent reads of one unchanging tree
+    can only ever agree or disagree, and agreement is what the checks assume.
     """
+    if df_status is None:
+        try:
+            df_status = analysis.df_status
+        except Exception:
+            df_status = None
     return ValidationReport(
         checks=[
             check_system_setup(analysis),
@@ -501,16 +3232,53 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_timeseries_processed(analysis),
             check_analysis_summaries_created(analysis),
             check_scenario_status_csv(analysis),
-            check_resource_usage(analysis),
-            check_invalidating_fixes(analysis),  # ADR-17 registry surface
-            check_coupled_hotstart_resume(analysis),  # REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED
+            check_resource_usage(analysis, df_status=df_status),
+            check_invalidating_fixes(analysis),  # invalidating-fix registry surface
+            check_coupled_resume_validity(
+                analysis, df_status=df_status
+            ),  # post-fix retroactive coupled-resume invalidity warning
+            check_known_resume_defects(
+                analysis, df_status=df_status
+            ),  # registry-verdict counterpart (build-level, no log evidence)
+            check_known_solver_defects(
+                analysis, df_status=df_status
+            ),  # every-coupled-run registry defects of the producing build (no resume gate)
+            check_resume_schedule_honored(
+                analysis, df_status=df_status
+            ),  # replay_t / n_resumes vs the configured resume_interruption_schedule
+            check_resume_event_evidence(
+                analysis, df_status=df_status
+            ),  # resume attempts vs the durable ledger, with alarms and a disclosed denominator
+            check_eda_calc_ran(analysis),  # enumerated EDA figures vs present eda/*.verdict.json
+            check_data_availability(analysis),  # reclaim disclosure: which artifact classes were reclaimed
+            check_forcing_tail_influence(analysis),  # regression detector: maxima set after the forcing ended
+            # Registered ONLY together with the kwarg repair above, never before it: every
+            # CheckResult `check_provenance_completeness` returns is built with valid keywords
+            # (`details=`, `level=`), so it cannot raise TypeError here. This
+            # list is built eagerly and both persist_validation_report call sites --
+            # export_scenario_status.main and TRITONSWMM_analysis.eda -- swallow
+            # exceptions non-fatally, so a wired-but-raising check leaves the read-model
+            # unwritten -- and what that produces FORKS on prior state. On a FRESH tree
+            # validation_report.json is missing, workflow.py declares it as an output: of
+            # rule export_scenario_status, and Snakemake fails that rule loudly. On a RE-RUN
+            # the previous generation's file satisfies the declaration, the rule succeeds,
+            # its mtime never advances so the E&W plot rule is classified up to date and
+            # skipped, and the report ships the PREVIOUS generation's validation figure.
+            # Nothing deletes that file and the one staleness guard
+            # (bundle/_emit.py::_assert_report_not_older_than_read_model) tests the opposite
+            # mtime direction, so the re-run case is the silent one. That is what this
+            # ordering protects against; the fresh case would report itself.
+            check_provenance_completeness(analysis),  # per-stage version coverage
+            check_log_recoveries(analysis),  # quarantine-and-reconstruct events on any log tier
+            check_inflow_node_reduction(analysis),  # one-node-per-cell option: cells reduced
+            check_consolidated_metadata(analysis),  # every zarr store's index matches its documents on disk
         ]
         + _read_persisted_eda_verdicts(analysis)
     )
 
 
 # ---------------------------------------------------------------------------
-# Persist-then-render read-model (Class-Y resolution, Option D, 2026-06-14)
+# Persist-then-render read-model
 # ---------------------------------------------------------------------------
 #
 # validate_analysis() reads a whole-tree surface (compilation logs, DEM/Manning
@@ -518,36 +3286,42 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
 # system_dir. Running it inside errors_and_warnings.render() put that whole-tree
 # read surface in the render path, which (a) the renderer-IO provenance audit could
 # not faithfully declare and (b) made the portable render bundle non-re-renderable
-# (the bundle ships none of that surface). The fix: run the inspection ONCE at
-# consolidation (the compute phase that owns the full tree) and persist its result
+# (the bundle ships none of that surface). The fix: run the inspection in the
+# compute phase (the export_scenario_status rule, and analysis.eda()) and persist its result
 # as a single JSON read-model; the renderer reads only that artifact. JSON shape =
-# dataclasses.asdict(CheckResult), identical to the ADR-9 eda/*.verdict.json schema.
+# dataclasses.asdict(CheckResult), identical to the eda/*.verdict.json schema.
 
 _VALIDATION_REPORT_FILENAME = "validation_report.json"
 
 
-def persist_validation_report(analysis: TRITONSWMM_analysis) -> Path:
+def persist_validation_report(analysis: TRITONSWMM_analysis, *, df_status=None) -> Path:
     """Run validate_analysis and persist it to {analysis_dir}/validation_report.json.
 
-    Called once at consolidation. Overwrites on each consolidate (idempotent, like
-    analysis_datatree.zarr). The persisted artifact also carries the eda verdicts
-    (validate_analysis already folds them in via _read_persisted_eda_verdicts), so
-    the renderer no longer reads eda/ either. Re-stamps the parent DU sentinel per
-    the du-sentinels-written-at-every-mutation-site stipulation (Gotcha 38).
+    Called by the export_scenario_status rule (after scenario_status.csv is written)
+    and again by analysis.eda(); each call overwrites the file. The persisted artifact
+    also carries the eda verdicts (validate_analysis already folds them in via
+    _read_persisted_eda_verdicts), so the renderer does not read eda/ either. It does
+    NOT re-stamp DU sentinels: the file is an analysis-scope own file, counted by the
+    next aggregation's own-files walk.
     """
     import json
     from dataclasses import asdict
 
-    from hhemt import du_sentinels
+    from hhemt.provenance import producing_stamp
 
     analysis_dir = Path(analysis.analysis_paths.analysis_dir)
-    report = validate_analysis(analysis)
+    report = validate_analysis(analysis, df_status=df_status)
     out = analysis_dir / _VALIDATION_REPORT_FILENAME
-    payload = {"checks": [asdict(c) for c in report.checks]}
+    # `producing_stamp` records the toolkit build that WROTE this read-model, minted here at
+    # write time from the running process (the single minter, never a constant or a value
+    # carried from another stage). A read-model written before this key existed carries
+    # none and stays unverifiable; `load_validation_report` ignores unknown keys.
+    payload = {"checks": [asdict(c) for c in report.checks], "producing_stamp": producing_stamp()}
     tmp = out.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, indent=2))
     tmp.replace(out)  # atomic
-    du_sentinels.restamp_parent_sentinels(out, analysis_dir=analysis_dir)
+    # validation_report.json is an analysis-scope OWN file; the next aggregation's
+    # own-files walk counts it. No per-write accounting.
     return out
 
 
@@ -579,6 +3353,18 @@ def load_validation_report(analysis: TRITONSWMM_analysis) -> ValidationReport:
                 passed=c["passed"],
                 summary=c["summary"],
                 details=c.get("details", []),
+                # The writer is `dataclasses.asdict` (total over the dataclass); this
+                # reader was a hand-listed five-field subset, so `applicable`,
+                # `instrument` and `detection_floor` deserialized to their defaults
+                # (True / None / None). That made `_status_of`'s N/A branch and both
+                # pass-qualified branches unreachable through the persisted path --
+                # measured on the delivered generation, where three `applicable=False`
+                # checks on each clean arm rendered as unqualified PASS and the whole
+                # figure's status-class set was `['pass']`. `.get` with the dataclass
+                # default keeps a pre-field validation_report.json loading unchanged.
+                applicable=c.get("applicable", True),
+                instrument=c.get("instrument"),
+                detection_floor=c.get("detection_floor"),
             )
             for c in payload.get("checks", [])
         ]

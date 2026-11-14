@@ -1,0 +1,400 @@
+"""The column-set verdict reaches `df_status`, and a homogeneous analysis does not render it.
+
+WHAT THIS PINS AND WHY IT IS NOT OBVIOUS. The stored
+`perf_column_set_across_allocations` coordinate is a SENTENCE, and its uniform form embeds
+`len(df_labels)` -- one entry per PARSED `performance{N}.txt` CHECKPOINT file, not one per
+allocation. So two members that agree perfectly on their column set carry DIFFERENT stored
+strings whenever they ran different numbers of reporting steps, or whenever one lost a
+checkpoint to a kill or a malformed-parse skip. Surfacing the raw string in `df_status`
+would therefore leave each uniform member carrying a DIFFERENT string on an analysis with
+no heterogeneity anywhere, and the appendix would render the column there.
+
+WHICH MECHANISM STOPS THAT IS NOT WHAT IT WAS. Before `bcbc097f` the hide pass was a single
+`nunique(dropna=False) > 1` test, and the collapse was the only thing standing between the
+raw strings and the rendered column. It is now a three-branch dispatcher,
+`scenario_status_appendix._keep_column`, whose SEMANTIC branch reads this column's VALUES --
+a cardinality test is provably unable to decide it, because a lone uniform member (must
+hide) and a lone heterogeneous member (must show) both hold exactly one distinct value. The
+collapse is still load-bearing and must not be removed as newly redundant: without it each
+uniform member carries one distinct string PER CHECKPOINT COUNT and the branch's
+set-membership test recognizes none of them, so the column renders. Measured at `bcbc097f`
+by driving `describe_allocation_column_sets` into the real `_build_tabulator_html` across
+the real `to_csv`/`read_csv` boundary -- renders True with the collapse removed, False with
+it in place.
+
+`column_set_verdict` is the collapse that fixes it, and the test that matters here is
+`test_the_appendix_hides_the_column_when_members_differ_only_in_checkpoint_count`: it is
+the exact case that would be reintroduced by a later edit routing the raw coordinate
+through instead.
+
+MEASURED TWO-ARM DIFFERENTIAL, pasted rather than predicted -- AND RE-MEASURED AT
+`bcbc097f`, because this file grew by ten node ids in that commit and a pasted count over a
+test file is invalidated by any change to its node set, INCLUDING an append-only one. The
+invariant is "the column renders exactly when members disagree about their COLUMN SET, never
+when they merely disagree about their checkpoint count". Arm (a), violating input --
+`column_set_verdict` edited to return the RAW stored string: `9 failed, 15 passed` at
+`bcbc097f` (the retired figure `6 failed, 8 passed` was measured over the pre-`bcbc097f`
+14-node file), and the failure that matters is
+
+    AssertionError: A homogeneous analysis rendered the column-set column. Either the
+    mapping stopped collapsing the uniform findings, or hide_constant_columns stopped
+    defaulting True.
+
+`test_the_appendix_shows_the_column_when_a_member_is_genuinely_heterogeneous` is among the
+fifteen that still PASS under that arm, which is the point: the suite discriminates on the
+collapse rather than on the column merely existing, so a mapping that hid the column
+outright would not satisfy it. Arm (b), a differently-positioned SATISFYING input -- three
+members at checkpoint counts 1, 2 and 5 rather than the two the hide test uses, and an
+all-historical analysis carrying no coordinate at all: no finding in either, the column
+stays hidden.
+
+A SECOND DIFFERENTIAL, added at `bcbc097f`, and it is the one that pins the REPAIR rather
+than the collapse. With `_keep_column` reverted to the pre-repair `nunique(dropna=False) > 1`
+(resume-health exemption retained), this file reports `5 failed, 19 passed` -- and all 14
+pre-`bcbc097f` node ids pass, so the old pin set was fully satisfiable by the predicate that
+was wrong. The five discriminating failures split THREE show-direction and TWO hide-
+direction, which is what makes the set two-sided rather than merely larger.
+
+THE ZARR IS OUT OF SCOPE HERE. Nothing in this file asserts on the stored coordinate; the
+stamp, its string form and its carriage into the consolidated tree are accepted work and
+are pinned by `tests/test_perf_column_set_guard.py`.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import pytest
+import xarray as xr
+
+from hhemt.analysis import PERF_VARS, _column_set_cell, _perf_row_from_dataset
+from hhemt.config.report import DEFAULT_REPORT_CONFIG
+from hhemt.process_simulation import (
+    NAME_SET_UNKNOWN,
+    PERF_COLUMN_SET_COORD,
+    UNIFORM_COLUMN_SET_VERDICT,
+    column_set_verdict,
+    describe_allocation_column_sets,
+)
+from hhemt.report_renderers.scenario_status_appendix import _build_tabulator_html
+
+_COLS = ("Total", "Compute", "MPI")
+
+
+def _uniform_finding(n_checkpoints: int) -> str:
+    """A real no-heterogeneity finding over `n_checkpoints` files with ONE column set.
+
+    Generated by the production function rather than hand-written, deliberately: the whole
+    defect this file exists for was invisible to a hand-written input string, because an
+    author writing the input also writes in the count they expect.
+    """
+    labels = [f"performance{i}.txt" for i in range(n_checkpoints)]
+    return describe_allocation_column_sets(labels, [_COLS] * n_checkpoints)
+
+
+def _heterogeneous_finding() -> str:
+    return describe_allocation_column_sets(
+        ["performance0.txt", "performance1.txt"],
+        [_COLS, _COLS[:2]],
+    )
+
+
+def _summary_ds(finding: str | None) -> xr.Dataset:
+    """A per-member performance SUMMARY in the shape `_perf_row_from_dataset` receives."""
+    ds = xr.Dataset(
+        {v: ("event_iloc", np.array([1.0])) for v in PERF_VARS},
+        coords={"event_iloc": [0]},
+    )
+    if finding is not None:
+        ds = ds.assign_coords({PERF_COLUMN_SET_COORD: ("event_iloc", [finding])})
+    return ds
+
+
+def _appendix_html(findings: list[str | None]) -> str:
+    """Render the real appendix over a minimal frame carrying one row per finding."""
+    df = pd.DataFrame(
+        {
+            "event_iloc": list(range(len(findings))),
+            "model_type": ["tritonswmm"] * len(findings),
+            "perf_Total": [float(i + 1) for i in range(len(findings))],
+            PERF_COLUMN_SET_COORD: [column_set_verdict(f) for f in findings],
+        }
+    )
+    return _build_tabulator_html(
+        df,
+        DEFAULT_REPORT_CONFIG,
+        csv_present=True,
+        analysis_id="test-analysis",
+        weather_event_indices=[],
+    )
+
+
+def test_the_production_finding_really_does_vary_with_the_checkpoint_count():
+    """The premise. Without this the collapse tests below would be vacuous."""
+    one, two, five = _uniform_finding(1), _uniform_finding(2), _uniform_finding(5)
+    assert one != two != five and one != five, (
+        "The uniform finding is expected to embed the checkpoint count. If these are equal, "
+        "the producer changed and column_set_verdict's whole reason for existing needs "
+        "re-deriving rather than the test relaxing."
+    )
+    assert pd.Series([one, two, five]).nunique(dropna=False) == 3
+
+
+@pytest.mark.parametrize("counts", [(1, 2), (1, 2, 5), (3, 144)])
+def test_uniform_findings_collapse_to_one_verdict_whatever_the_checkpoint_counts(counts):
+    verdicts = [column_set_verdict(_uniform_finding(n)) for n in counts]
+    assert set(verdicts) == {UNIFORM_COLUMN_SET_VERDICT}
+    assert pd.Series(verdicts).nunique(dropna=False) == 1, (
+        "nunique must reach 1, because that -- not string equality -- is the property the "
+        "appendix's hide predicate actually reads."
+    )
+
+
+def test_a_heterogeneous_finding_passes_through_verbatim():
+    finding = _heterogeneous_finding()
+    assert finding.startswith("HETEROGENEOUS")
+    assert column_set_verdict(finding) == finding, (
+        "The heterogeneous sentence names which files are short and what it costs the "
+        "reader; flattening it would strand an appendix reader with no route to the "
+        "statement."
+    )
+
+
+def test_an_absent_finding_maps_to_none_and_not_to_a_sentinel():
+    assert column_set_verdict(None) is None
+
+
+def test_the_unknown_sentinel_passes_through_and_is_not_laundered_into_uniform():
+    assert column_set_verdict(NAME_SET_UNKNOWN) == NAME_SET_UNKNOWN
+    assert column_set_verdict(NAME_SET_UNKNOWN) != UNIFORM_COLUMN_SET_VERDICT
+
+
+def test_the_cell_carries_the_verdict_when_the_member_has_the_coordinate():
+    assert _column_set_cell(_summary_ds(_uniform_finding(4))) == {PERF_COLUMN_SET_COORD: UNIFORM_COLUMN_SET_VERDICT}
+
+
+def test_the_cell_does_not_raise_on_a_member_that_predates_the_coordinate():
+    """A tree consolidated before the coordinate shipped must still build a status row.
+
+    The guarded read is the same shape PERF_VARS membership already uses; an unguarded
+    subscript here would raise KeyError inside the df_status row loop and fail the whole
+    status frame for the analysis rather than blanking one cell.
+    """
+    assert _column_set_cell(_summary_ds(None)) == {PERF_COLUMN_SET_COORD: None}
+
+
+def test_the_perf_row_helper_keeps_its_pinned_float_only_contract():
+    """The cell is a SIBLING of _perf_row_from_dataset, never a widening of it.
+
+    tests/test_perf_column_split.py pins that helper's rows as exactly the PERF_VARS key
+    set with float-or-None values. Folding a string verdict in would have reddened three
+    correct assertions; this asserts the separation directly so a later refactor that
+    merges the two is caught here as well as there.
+    """
+    row = _perf_row_from_dataset(_summary_ds(_uniform_finding(4)))
+    assert set(row) == {f"perf_{v}" for v in PERF_VARS}
+    assert PERF_COLUMN_SET_COORD not in row
+
+
+def test_the_appendix_hides_the_column_when_members_differ_only_in_checkpoint_count():
+    """THE CASE THIS FILE EXISTS FOR.
+
+    Two members, identical column sets, DIFFERENT checkpoint counts -- an analysis with no
+    heterogeneity anywhere. The rendered appendix must not carry the column. Against a
+    mapping that routes the RAW stored string through, this is the assertion that goes red.
+    """
+    html = _appendix_html([_uniform_finding(2), _uniform_finding(3)])
+    assert PERF_COLUMN_SET_COORD not in html, (
+        "A homogeneous analysis rendered the column-set column. Either the mapping stopped "
+        "collapsing the uniform findings, or hide_constant_columns stopped defaulting True."
+    )
+
+
+def test_the_appendix_hides_the_column_across_three_differently_spaced_members():
+    """Arm (b) of the differential: a DIFFERENT satisfying position, still hidden."""
+    html = _appendix_html([_uniform_finding(1), _uniform_finding(2), _uniform_finding(5)])
+    assert PERF_COLUMN_SET_COORD not in html
+
+
+def test_the_appendix_shows_the_column_when_a_member_is_genuinely_heterogeneous():
+    html = _appendix_html([_uniform_finding(2), _heterogeneous_finding()])
+    assert PERF_COLUMN_SET_COORD in html, (
+        "Real heterogeneity must reach the reader; a mapping that hid this too would "
+        "satisfy the hide test above by deleting the signal rather than by collapsing it."
+    )
+
+
+def test_the_appendix_hides_the_column_on_an_all_historical_analysis():
+    html = _appendix_html([None, None])
+    assert PERF_COLUMN_SET_COORD not in html
+
+
+# ---------------------------------------------------------------------------
+# The column-aware hide predicate (`_keep_column` branch 2).
+#
+# The four appendix pins above were all satisfiable by a CARDINALITY test, which is why
+# they did not catch either direction below. The suppression predicate reads only how
+# many distinct values a column holds, and the two shapes in the next two tests BOTH
+# hold exactly one while requiring opposite outcomes -- so no cardinality-only predicate
+# can pass both, and the renderer's rule for this column is value-reading by necessity.
+# See `scenario_status_appendix._keep_column` for the full statement.
+# ---------------------------------------------------------------------------
+
+
+def _second_heterogeneous_finding() -> str:
+    """A DIFFERENT real heterogeneous sentence (two columns short, not one)."""
+    return describe_allocation_column_sets(
+        ["performance0.txt", "performance1.txt"],
+        [_COLS, _COLS[:1]],
+    )
+
+
+def test_a_lone_uniform_member_and_a_lone_heterogeneous_member_are_both_cardinality_one():
+    """THE IMPOSSIBILITY PREMISE. Without this the next two tests look like two nits.
+
+    These are the two shapes that force the predicate to be column-aware. If this ever
+    goes red the collision has gone away and the whole value-reading branch can be
+    re-examined -- but relaxing this assertion is never the repair.
+    """
+    lone_uniform = [column_set_verdict(_uniform_finding(2))]
+    lone_heterogeneous = [column_set_verdict(_heterogeneous_finding())]
+    assert pd.Series(lone_uniform, dtype=object).nunique(dropna=False) == 1
+    assert pd.Series(lone_heterogeneous, dtype=object).nunique(dropna=False) == 1
+
+
+def test_the_appendix_hides_the_column_for_a_lone_uniform_member():
+    """Arm one of the impossibility pair: cardinality 1, must HIDE."""
+    assert PERF_COLUMN_SET_COORD not in _appendix_html([_uniform_finding(2)])
+
+
+def test_the_appendix_shows_the_column_for_a_lone_heterogeneous_member():
+    """Arm two of the impossibility pair: cardinality 1, must SHOW.
+
+    Same cardinality as the test above and the opposite required outcome.
+    """
+    assert PERF_COLUMN_SET_COORD in _appendix_html([_heterogeneous_finding()])
+
+
+@pytest.mark.parametrize("n_members", [2, 3])
+def test_the_appendix_shows_the_column_when_every_member_reports_the_same_heterogeneity(n_members):
+    """FAILS CLOSED, and no test covered this before.
+
+    A campaign that resumes across ONE solver rebuild gives every member the SAME
+    heterogeneity sentence, so the cell multiset has cardinality 1 and the old predicate
+    hid the column -- deleting exactly the signal the column exists to carry, on exactly
+    the shape it was built for. A future regression here is silent: the appendix simply
+    renders without the column and nothing warns.
+    """
+    html = _appendix_html([_heterogeneous_finding()] * n_members)
+    assert PERF_COLUMN_SET_COORD in html, (
+        "Every member reported the SAME heterogeneity and the column was hidden. The "
+        "predicate has regressed to counting distinct values; it must read them."
+    )
+
+
+def test_the_appendix_shows_the_column_when_members_report_differing_heterogeneity():
+    html = _appendix_html([_heterogeneous_finding(), _second_heterogeneous_finding()])
+    assert PERF_COLUMN_SET_COORD in html
+
+
+def test_the_appendix_hides_the_column_on_a_single_solver_analysis_with_legacy_members():
+    """FAILS OPEN, and this is the developer's stated exclusion.
+
+    A uniform member beside a member predating the coordinate: no heterogeneity exists
+    anywhere, so the column must not render. The old predicate counted the null as a
+    second distinct value and showed it.
+    """
+    html = _appendix_html([_uniform_finding(2), None])
+    assert PERF_COLUMN_SET_COORD not in html, (
+        "A single-solver analysis with a legacy member rendered the column. The null is "
+        "being counted as a value again rather than skipped."
+    )
+
+
+def test_the_appendix_hides_the_column_when_no_member_carries_a_heterogeneity_sentence():
+    """The not-measured sentinel is quiet, like `uniform`, and unlike a real finding.
+
+    REACHABILITY, because this is a robustness clause rather than a live shape and that
+    should be said rather than implied. `NAME_SET_UNKNOWN` cannot reach this cell on the
+    production path today: `stamp_perf_column_set` is called at exactly one site
+    (`process_simulation.py`, right after `_aggregate_perf_tseries` returns), and that
+    aggregator has a SINGLE return which sets the transported finding attribute on the
+    line immediately above it -- so the sentinel default in its `.pop(..., default)` is
+    never taken. The consolidation-side substitution in `processing_analysis.py` writes
+    the sentinel into the in-memory concatenated tree only, never back to the flat
+    per-scenario summary that `_column_set_cell` reads; a member predating the guard
+    therefore yields None here, not the sentinel. The branch is pinned anyway because
+    the verdict is a public constant that `column_set_verdict` deliberately passes
+    through, and a later producer change could route it here.
+    """
+    assert PERF_COLUMN_SET_COORD not in _appendix_html([_uniform_finding(2), NAME_SET_UNKNOWN])
+    assert PERF_COLUMN_SET_COORD not in _appendix_html([NAME_SET_UNKNOWN, None])
+    assert PERF_COLUMN_SET_COORD in _appendix_html([NAME_SET_UNKNOWN, _heterogeneous_finding()])
+
+
+def test_the_hide_pass_still_counts_distinct_values_for_every_other_column():
+    """Branch 2 is scoped to ONE column; branch 3 must be unchanged for the rest.
+
+    Asserted on a real frame through the real renderer rather than on the helper, so a
+    future edit that widened the semantic branch to all string columns is caught.
+    """
+    df = pd.DataFrame(
+        {
+            "event_iloc": [0, 1],
+            "model_type": ["tritonswmm"] * 2,
+            "perf_Total": [1.0, 2.0],
+            "a_constant_column": ["same", "same"],
+            "a_varying_column": ["left", "right"],
+            PERF_COLUMN_SET_COORD: [column_set_verdict(_uniform_finding(2))] * 2,
+        }
+    )
+    html = _build_tabulator_html(
+        df,
+        DEFAULT_REPORT_CONFIG,
+        csv_present=True,
+        analysis_id="test-analysis",
+        weather_event_indices=[],
+    )
+    assert "a_constant_column" not in html, "a constant non-exempt column must still be hidden"
+    assert "a_varying_column" in html, "a varying column must still be shown"
+
+
+def test_the_merge_site_unpacks_exactly_the_two_known_row_helpers():
+    """Close the coverage gap: nothing asserted on the MERGED status row.
+
+    Every pin above covers the two row-building helpers SEPARATELY. The site that MERGES
+    them -- `TRITONSWMM_analysis._get_performance_summary_row` -- was unasserted, so a
+    future third cell unpacked there would pass this whole file while silently widening
+    the row past `null_row`, the fallback that method returns on its swmm and
+    not-yet-processed branches. When the two disagree, pandas synthesizes the extra
+    column only from the members that happen to be processed, which is exactly the
+    presence-depends-on-which-members-ran failure `null_row`'s own comment exists to
+    prevent. Static rather than behavioural because exercising the method needs a real
+    analysis tree; this catches the named regression at no fixture cost.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from hhemt.analysis import TRITONSWMM_analysis
+
+    src = textwrap.dedent(inspect.getsource(TRITONSWMM_analysis._get_performance_summary_row))
+    unpack_returns = [
+        node
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict) and None in node.value.keys
+    ]
+    assert len(unpack_returns) == 1, (
+        f"expected exactly one dict-unpacking return (the merge site); found {len(unpack_returns)}"
+    )
+    unpacked = {
+        value.func.id
+        for key, value in zip(unpack_returns[0].value.keys, unpack_returns[0].value.values, strict=True)
+        if key is None and isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+    }
+    assert unpacked == {"_perf_row_from_dataset", "_column_set_cell"}, (
+        f"The merge site now unpacks {sorted(unpacked)}. Any new cell added here must also "
+        "join `null_row` in the same method, or the column's presence in the status frame "
+        "depends on which members happen to be processed. Add the key to null_row, then "
+        "update this assertion."
+    )

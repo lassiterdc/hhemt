@@ -20,7 +20,9 @@ from pathlib import Path
 
 import yaml
 
+from hhemt.config.report import _apply_reporting_set_renames
 from hhemt.config.static_plots import StaticPlotBaseConfig
+from hhemt.exceptions import ConfigurationError
 from hhemt.report_renderers._reporting_sets import REPORTING_SETS
 
 
@@ -28,9 +30,9 @@ from hhemt.report_renderers._reporting_sets import REPORTING_SETS
 class EdaReportingSetRegistration:
     """Typed record of an EDA plot-ID's promotion intent against a named ReportingSet.
 
-    The cross-plan handoff artifact the future ``reporting-system_eda-skill``
-    report()-routing adapter consumes. ``routing`` encodes the deferred-routing
-    owner as ``"deferred:<plan-slug>"``.
+    The handoff artifact that a future ``report()``-routing adapter for EDA plots
+    consumes. ``routing`` names the component that owns the deferred routing, as
+    ``"deferred:{owner}"``.
     """
 
     plot_id: str
@@ -49,9 +51,8 @@ _PLOTLY_PORTABLE_FORMATS = frozenset({"pdf", "svg", "png", "eps"})
 
 _PROMOTED_HEADER = (
     "# Promoted EDA plot (source render backend: plotly).\n"
-    "# The matplotlib-specific colorbar/colormap fields below are INERT for this\n"
-    "# plot-ID until the static_plots() consumer defines EDA-plot-ID render dispatch\n"
-    "# (reporting-system_static-plots-entrypoint-and-distribution).\n"
+    "# The matplotlib-specific colorbar/colormap fields below have no effect for this\n"
+    "# plot ID until the static plots consumer defines render dispatch for EDA plot IDs.\n"
 )
 
 
@@ -61,14 +62,14 @@ def promote_eda_plot_to_static_config(
     output_path: Path | None = None,
     caption: str | None = None,
 ) -> Path:
-    """Emit a base ``StaticPlotBaseConfig`` YAML for an EDA plot (D-2/D-3 option a).
+    """Emit a base ``StaticPlotBaseConfig`` YAML for an EDA plot, per D-2/D-3 option a.
 
-    Populates ONLY backend-neutral base fields; matplotlib-specific colorbar/colormap
-    fields stay at schema defaults (inert-but-harmless for a Plotly figure). NEVER a
-    per-function subclass. ``output_format`` stays at the base default ``"pdf"``
-    (portable across matplotlib AND Plotly-Kaleido). Writes a REAL file
-    (``config/analysis.py::_check_static_plot_configs_exist`` raises on a missing
-    path). ``output_path=None`` defaults to a cwd-relative
+    Populates ONLY backend-neutral base fields. The matplotlib-specific colorbar and colormap
+    fields stay at schema defaults that are inert and harmless for a Plotly figure. NEVER a
+    per-function subclass. ``output_format`` stays at the base default ``"pdf"``, a format
+    that is portable across matplotlib AND Plotly-Kaleido. Writes a REAL file, because
+    ``config/analysis.py::_check_static_plot_configs_exist`` raises on a missing
+    path. ``output_path=None`` defaults to a cwd-relative
     ``promoted_static_configs/{plot_id}.yaml`` -- NEVER under ``analysis_dir/``.
     """
     if not _PLOT_ID_CHARSET.match(plot_id):
@@ -104,41 +105,46 @@ def promote_eda_plot_to_static_config(
 
 
 def register_eda_plot_in_reporting_set(plot_id: str, set_name: str) -> EdaReportingSetRegistration:
-    """Record an EDA plot-ID's promotion intent against an ADR-5 ``ReportingSet`` (D-1 option c).
+    """Record an EDA plot-ID's promotion intent against a named ``ReportingSet``.
 
-    Register-ONLY: validates ``plot_id`` (ADR-2 charset) and ``set_name`` (must be a
-    key in ``REPORTING_SETS``), and returns a registration record the future
-    ``report()``-routing adapter (``reporting-system_eda-skill``) consumes. It does
-    NOT mutate a live ``renderer_selection`` tuple (a live append KeyErrors the
-    dispatcher pre-adapter) and does NOT author a ``report_renderers/`` adapter, a
-    ``workflow.py`` builder, or a dispatcher-map edit.
+    Register-ONLY. Validates ``plot_id`` against the canonical plot-ID charset and ``set_name`` against
+    the keys of ``REPORTING_SETS``, and returns a registration record that a future
+    ``report()``-routing adapter consumes. The function leaves a live ``renderer_selection`` tuple
+    unmutated, because a live append raises KeyError in the pre-adapter dispatcher, and authors no
+    ``report_renderers/`` adapter, ``workflow.py`` builder, or dispatcher-map edit. A set whose selection renders no
+    EDA figure raises ``ConfigurationError`` naming the sets that do.
     """
     if not _PLOT_ID_CHARSET.match(plot_id):
         raise ValueError(f"plot_id {plot_id!r} is not charset-safe; must match ^[A-Za-z0-9_.]+$ (ADR-2).")
+    # Rename before the membership check: applied at the registry lookup below it, an old key would
+    # already have been refused here as unregistered.
+    (set_name,) = _apply_reporting_set_renames([set_name])
     if set_name not in REPORTING_SETS:
         raise ValueError(
             f"set_name {set_name!r} is not a registered ReportingSet; valid sets: {sorted(REPORTING_SETS)}."
         )
-    # lean (d): diagnose whether the target set already renders this plot. R11
-    # wired the compute-sensitivity set's eda_compute_sensitivity adapter, so a
-    # registration against a set whose selection already carries that renderer IS
-    # routed (config-selectable via report_config.reporting_set); other sets are
-    # register-only (report()-routing deferred to reporting-system_eda-skill).
-    _wired = any(sel.builder_key == "eda_compute_sensitivity" for sel in REPORTING_SETS[set_name].renderer_selection)
-    if _wired:
-        print(
-            f"[eda-promote] {plot_id!r} registered against reporting set {set_name!r} — "
-            f"this set already renders the EDA adapter; select it with "
-            f"report_config.reporting_set={set_name!r}.",
-            flush=True,
+    # A set whose selection carries the eda_compute_sensitivity adapter renders EDA figures, so
+    # a registration against it is routed (config-selectable via report.reporting_set). A set
+    # without the adapter renders none, so a registration against it would route nothing: it is
+    # refused, naming the sets that do render EDA figures.
+    rendering_sets = sorted(
+        name
+        for name, reporting_set in REPORTING_SETS.items()
+        if any(sel.builder_key == "eda_compute_sensitivity" for sel in reporting_set.renderer_selection)
+    )
+    if set_name not in rendering_sets:
+        raise ConfigurationError(
+            "reporting_set",
+            f"reporting set {set_name!r} renders no EDA figure, so registering {plot_id!r} against it "
+            f"would route nothing. Sets that render EDA figures: {', '.join(rendering_sets)}.",
+            fix_hint=f"Use one of: {', '.join(rendering_sets)}.",
         )
-    else:
-        print(
-            f"[eda-promote] {plot_id!r} registered against reporting set {set_name!r} — "
-            f"NOT yet routed (this set has no EDA render adapter; report()-routing is "
-            f"deferred to reporting-system_eda-skill).",
-            flush=True,
-        )
+    print(
+        f"[eda-promote] {plot_id!r} registered against reporting set {set_name!r}: "
+        f"this set already renders the EDA adapter; select it with "
+        f"report.reporting_set={set_name!r} in your analysis config.",
+        flush=True,
+    )
     return EdaReportingSetRegistration(
         plot_id=plot_id,
         set_name=set_name,

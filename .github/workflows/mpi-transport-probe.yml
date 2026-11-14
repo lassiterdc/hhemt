@@ -1,0 +1,113 @@
+name: MPI transport probe
+
+# Diagnostic, dispatch-only. Fans out 20 runners and runs a two-rank MPI_Isend at three
+# sizes under eight MCA settings, so one dispatch yields twenty host fingerprints (OI-1) and
+# names which setting makes the compile gate's mpirun -np 2 abort. Never a required check.
+# Result of the first dispatch (run 43559333054, 10 runners): only the one runner exposing a
+# MANA device (/sys/class/infiniband holds mana_0) failed, and only `pml ob1` + `btl self,sm`
+# (c2) passed there. c6 and c7 re-test that fix as environment variables, the form the
+# compile gate now carries at job level; 20 runners make a MANA host likely to be drawn.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    # 90, not 45: the provisioning step took 22.5 to 36.8 minutes (median 32.3) over the first
+    # dispatch's ten runners (conda-remove-defaults below removes the slow `defaults` channel).
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision toolchain-bearing conda env
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: hhemt
+          environment-file: environment.yaml
+          auto-activate-base: false
+          # Same input and reason as type-gate.yml: conda appends its implicit `defaults`
+          # channel below the two channels environment.yaml names, and the solve then
+          # searches it; the whole provisioning step took 22.5 to 36.8 minutes (median 32.3)
+          # over the first dispatch's ten runners. environment.yaml names conda-forge and
+          # bioconda only, so this makes CI honour the file as written.
+          conda-remove-defaults: "true"
+
+      - name: Host and MPI stack fingerprint
+        run: |
+          set +e
+          {
+            echo "### Fingerprint run ${{ matrix.run }}"
+            echo '~~~text'
+            echo "nproc=$(nproc)"; uname -r
+            lscpu | grep -E "Model name|Socket|Core|Thread|Hypervisor|Flags" | cut -c1-120
+            echo "--- ptrace_scope=$(cat /proc/sys/kernel/yama/ptrace_scope 2>&1)"
+            df -h /dev/shm /tmp
+            echo "--- infiniband"; ls -l /sys/class/infiniband 2>&1
+            echo "--- netdevs"; ip -br addr 2>&1
+            echo "--- versions"; conda list 2>/dev/null | grep -E "^(openmpi|ucx|pmix|prrte|libfabric|rdma-core|libhwloc) "
+            ompi_info --version 2>&1 | head -n 2
+            echo '~~~'
+          } 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Build the message-sending probe
+        run: |
+          cat > mpi_probe.c <<'EOF'
+          #include <mpi.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          int main(int argc, char **argv) {
+            MPI_Init(&argc, &argv);
+            int r; MPI_Comm_rank(MPI_COMM_WORLD, &r);
+            size_t sizes[3] = {64, 65536, 8u << 20};
+            for (int i = 0; i < 3; i++) {
+              size_t s = sizes[i]; char *b = malloc(s); memset(b, r, s); MPI_Request q;
+              if (r == 0) MPI_Isend(b, (int)s, MPI_CHAR, 1, i, MPI_COMM_WORLD, &q);
+              else MPI_Irecv(b, (int)s, MPI_CHAR, 0, i, MPI_COMM_WORLD, &q);
+              MPI_Wait(&q, MPI_STATUS_IGNORE);
+              printf("rank %d size %zu ok\n", r, s); fflush(stdout); free(b);
+            }
+            MPI_Finalize(); return 0;
+          }
+          EOF
+          OMPI_CC="${CC:-gcc}" mpicc mpi_probe.c -o mpi_probe
+
+      - name: Probe matrix (never fails the job; the CASE lines are the finding)
+        run: |
+          set +e
+          # case label | env assignments | mpirun extra args | per-run timeout seconds (default 90)
+          probe () {
+            label="$1"; envs="$2"; margs="$3"; tmo="${4:-90}"
+            for rep in 1 2 3; do
+              out="$(env $envs timeout "$tmo" mpirun -np 2 $margs ./mpi_probe 2>&1)"; rc=$?
+              oks="$(echo "$out" | grep -c ' ok$')"
+              echo "CASE ${label} rep=${rep} rc=${rc} sizes_ok=${oks}/6" | tee -a "$GITHUB_STEP_SUMMARY"
+              [ "$rc" -ne 0 ] && echo "$out" | head -n 40 | sed 's/^/    | /' | tee -a "$GITHUB_STEP_SUMMARY"
+            done
+          }
+          probe c0_default        "X=1"                       ""
+          probe c1_pml_not_ucx    "X=1"                       "--mca pml ^ucx"
+          probe c2_ob1_self_sm    "X=1"                       "--mca pml ob1 --mca btl self,sm"
+          probe c3_smsc_not_cma   "X=1"                       "--mca smsc ^cma"
+          probe c4_pmix_gds_hash  "PMIX_MCA_gds=hash"         ""
+          # c5 hung to its full 90 s timeout on EVERY runner of the first dispatch, passing ones
+          # included (a property of the runners' extra network devices, so it carries no
+          # information); 20 s keeps 20 runners from wasting minutes on it.
+          probe c5_ob1_self_tcp   "X=1"                       "--mca pml ob1 --mca btl self,tcp" 20
+          # c6 is the fix as environment variables (the form compile-tests.yml carries at job
+          # level, no --mca arguments); c7 asks whether the narrower pml-only setting suffices.
+          probe c6_env_fix        "OMPI_MCA_pml=ob1 OMPI_MCA_btl=self,sm" ""
+          probe c7_env_pml_ob1    "OMPI_MCA_pml=ob1"          ""
+          echo "--- verbose default (selection lines)" | tee -a "$GITHUB_STEP_SUMMARY"
+          timeout 90 mpirun -np 2 --mca pml_base_verbose 10 --mca btl_base_verbose 100 --mca smsc_base_verbose 100 ./mpi_probe 2>&1 \
+            | grep -E "select|selected|smsc|cma|sm:|segment|ok$|ERR|rror" | head -n 120 | tee -a "$GITHUB_STEP_SUMMARY"

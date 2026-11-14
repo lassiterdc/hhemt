@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 from typing import Literal
 
@@ -13,58 +14,88 @@ from hhemt.exceptions import ConfigurationError
 
 _WILDCARD_SAFE = re.compile(r"^[A-Za-z0-9_.]+$")
 
+#: Total size of the report's figure files below which ``report_html_mode="auto"`` renders a
+#: single HTML file. 15 MB is read as 15 million bytes. Snakemake's report page embeds every
+#: figure, and a single HTML file past this size is slow to open.
+AUTO_HTML_MAX_BYTES: int = 15_000_000
+
+#: File the ``auto`` workflow declares as the render rule's output and the ``rule all`` target. The
+#: render writes it beside the report and records the format it chose (``html`` or ``zip``), so
+#: the Snakefile can name one output before the figure sizes that decide the format exist.
+REPORT_FORMAT_MARKER: str = "analysis_report.format"
+
+
+def report_figure_bytes(root: Path) -> int:
+    """Total bytes of the figure files under ``{root}/plots``.
+
+    The figure files are every regular file in that tree except the ``*.manifest.json``
+    sidecars the renderers write beside each figure. ``root`` is an analysis directory or a
+    bundle directory; both keep their figures under ``plots/``. A missing ``plots`` directory
+    counts zero bytes.
+
+    Not established: the Snakemake report can embed a file from outside ``plots/``; this sum
+    covers the figures the plot rules write.
+    """
+    plots = Path(root) / "plots"
+    if not plots.is_dir():
+        return 0
+    return sum(p.stat().st_size for p in plots.rglob("*") if p.is_file() and not p.name.endswith(".manifest.json"))
+
+
+def resolve_report_format(mode: str, figure_bytes: int) -> Literal["html", "zip"]:
+    """The report format for ``report_html_mode`` ``mode`` and a figure set of ``figure_bytes``.
+
+    ``html`` and ``zip`` return themselves. ``auto`` returns ``html`` when ``figure_bytes`` is
+    below ``AUTO_HTML_MAX_BYTES`` and ``zip`` at or above it.
+    """
+    if mode in ("html", "zip"):
+        return mode  # type: ignore[return-value]
+    if mode == "auto":
+        return "html" if figure_bytes < AUTO_HTML_MAX_BYTES else "zip"
+    raise ConfigurationError(field="report_html_mode", message=f"unknown report_html_mode {mode!r}")
+
 
 class FigureDefaults(cfgBaseModel):
     font_family: str = Field("DejaVu Sans", description="matplotlib font.family rcParam")
     font_size: int = Field(10, description="matplotlib font.size rcParam")
-    dpi: int = Field(100, description="matplotlib figure.dpi rcParam (interactive)")
-    savefig_dpi: int = Field(150, description="matplotlib savefig.dpi rcParam (file output)")
+    dpi: int = Field(100, description="matplotlib figure.dpi rcParam for interactive output.")
+    savefig_dpi: int = Field(150, description="matplotlib savefig.dpi rcParam for file output.")
 
 
 class HydrologyPanelConfig(cfgBaseModel):
     """Event-hydrology side-panel formatting (per_sim_peak_flood_depth +
     per_sim_conduit_flow share this via `_hydrology_panel`).
-    Defaults match the prior `_RAIN_COLOR` / `_BC_LINE_COLOR` constants in
-    `_hydrology_panel.py` lines 23-24.
     """
 
     rain_color: str = Field(
         "#03152e",
         description=(
-            "Rainfall bar color (hex). Near-black navy for maximum legibility "
-            "against Plotly's white panel background; iter3 darkened past "
-            "ColorBrewer Blues 9/9 (#08306b) because the thinner Plotly bars "
-            "still read as pale at scale. Mid-tone alternatives like #3182bd "
-            "and the deeper #08306b were both flagged as too light."
+            "Rainfall bar color, as hex. Near-black navy for maximum legibility against the white panel "
+            "background of Plotly, darkened past ColorBrewer Blues 9/9, #08306b, because the thinner "
+            "Plotly bars still read as pale at scale. Mid-tone alternatives like #3182bd and the deeper "
+            "#08306b were both flagged as too light."
         ),
     )
     bc_line_color: str = Field("black", description="BC water-level line color.")
-    bc_line_width: float = Field(1.5, description="BC line width (pt).")
+    bc_line_width: float = Field(1.5, description="BC line width in pt.")
     rain_ylim_min_cap: float = Field(
         1.0,
         description=(
-            "Lower cap applied to the rainfall y-axis upper bound: "
-            "`max(nanmax(rainfall) * 1.1, rain_ylim_min_cap)`. "
-            "Verbatim hardcoded `1.0` in _hydrology_panel.py line 108."
+            "Lower cap applied to the upper bound of the rainfall y-axis, as `max(nanmax(rainfall) * 1.1, "
+            "rain_ylim_min_cap)`."
         ),
     )
     bc_flat_threshold: float = Field(
         0.05,
         description=(
-            "BC range below this is treated as 'flat' and the y-axis is "
-            "expanded to ±1 around the centered integer. Verbatim hardcoded "
-            "`0.05` in _hydrology_panel.py line 142."
+            "BC range below this is treated as 'flat' and the y-axis is expanded to ±1 around the centered integer."
         ),
     )
     panel_title: str = Field(
         "Event hydrology",
-        description=(
-            "Title for the rainfall sub-panel (also acts as the panel-stack "
-            "title). Verbatim default matches `panel_title` keyword default "
-            "on `draw_event_hydrology_panel`."
-        ),
+        description=("Title for the rainfall sub-panel, also the title of the panel stack."),
     )
-    tick_labelsize: int = Field(7, description="Tick label fontsize (pt).")
+    tick_labelsize: int = Field(7, description="Tick label fontsize in pt.")
 
 
 class PerSimMapConfig(cfgBaseModel):
@@ -74,7 +105,7 @@ class PerSimMapConfig(cfgBaseModel):
     depth_under_color: str = Field("white")
     depth_vmin: float = Field(
         0.01,
-        description="Lower bound for depth colorbar (cells below render as `under_color`).",
+        description="Lower bound for the depth colorbar. Cells below render as `under_color`.",
     )
     depth_vmax_fallback: float = Field(
         1.0,
@@ -82,28 +113,24 @@ class PerSimMapConfig(cfgBaseModel):
     )
     depth_boundaries_m: tuple[float, ...] = Field(
         (0.01, 0.05, 0.10, 0.50, 1.00),
-        description="Discrete legend boundaries cited in the manifest (m).",
+        description="Discrete legend boundaries cited in the manifest, in m.",
     )
     wse_cmap: str = Field(
         "plasma",
         description=(
-            "WSE colormap. Perceptually uniform, CVD-safe. Default plasma per "
-            "user preference (iter4 of Phase 3 design-figure); the Plotly "
-            "branch's earlier hardcoded `cividis` is also CVD-safe and was "
-            "the iter1-3 transient default, but user prefers plasma's warmer "
-            "range for the WSE-on-real-terrain colorbar after iter3's "
-            "building-cell exclusion (which produces WSE [1.81, 6.05] m on "
-            "the norfolk fixture — well within plasma's high-contrast band)."
+            "WSE colormap. Perceptually uniform and CVD-safe. Default plasma, and `cividis` is also "
+            "CVD-safe and a sound alternative. The warmer range of plasma suits the WSE-on-real-terrain "
+            "colorbar given building-cell exclusion. On the norfolk fixture the exclusion yields WSE of "
+            "[1.81, 6.05] m, well within the high-contrast band of plasma."
         ),
     )
     wse_fallback_range: tuple[float, float] = Field((0.0, 1.0))
     dry_threshold_m: float = Field(
         0.0025,
         description=(
-            "Within-watershed depth-mask threshold in meters. Cells with "
-            "max_wlevel_m < this value render as `dry_fill_color` (neutral "
-            "grey) rather than as wet-color or transparent. Default 0.0025 m "
-            "= 2.5 mm (a standard puddle-vs-sheen threshold)."
+            "Within-watershed depth-mask threshold in meters. Cells with max_flood_depth < this value "
+            "render as `dry_fill_color`, neutral grey, and never as wet-color or transparent. Default "
+            "0.0025 m. The value equals 2.5 mm, a standard puddle-vs-sheen threshold."
         ),
     )
     dry_fill_color: str = Field(
@@ -117,38 +144,32 @@ class PerSimMapConfig(cfgBaseModel):
     wse_clip_quantile_upper: float = Field(
         0.99,
         description=(
-            "Upper-quantile clip on WSE colorbar (computed across wetted "
-            "cells). Suppresses building-on-top dry-cell artifacts that would "
-            "otherwise dominate the colorbar scale and collapse usable range "
-            "below 5%."
+            "Upper-quantile clip on the WSE colorbar, computed across wetted cells. Suppresses "
+            "building-on-top dry-cell artifacts that would otherwise dominate the colorbar scale and "
+            "collapse the usable range below 5%."
         ),
     )
     wse_clip_quantile_lower: float = Field(
         0.01,
-        description=("Lower-quantile clip on WSE colorbar (computed across wetted " "cells)."),
+        description=("Lower-quantile clip on the WSE colorbar, computed across wetted cells."),
     )
     depth_clip_quantile_upper: float | None = Field(
         0.98,
         description=(
-            "Upper-quantile clip on the DEPTH colorbar vmax (computed across "
-            "wetted cells in _shared_depth_max), mirroring wse_clip_quantile_upper. "
-            "Default 0.98 (clip ON by default — D-USER-1) so a single deep cell "
-            "no longer compresses the sub-meter range where most flooding lives; "
-            "set to None to disable and use the raw cross-event max. The exact "
-            "value is reviewed/locked by the Phase 3 /design-figure pass (R12). "
-            "RECONCILIATION: this is the depth-map counterpart of "
-            "wse_clip_quantile_upper (WSE map, itself default-ON at 0.99) and is "
-            "DISTINCT from PerSimFigureSpec.vmax_quantile (per-figure-spec scope); "
-            "do not add a fourth quantile-clip surface — extend these three, do "
-            "not duplicate."
+            "Upper-quantile clip on the DEPTH colorbar vmax, computed across wetted cells in "
+            "_shared_depth_max, mirroring wse_clip_quantile_upper. Default 0.98, clip ON by default, so a "
+            "single deep cell no longer compresses the sub-meter range where most flooding lives. Set to "
+            "None to disable and use the raw cross-event max. RECONCILIATION. The field is the depth-map "
+            "counterpart of wse_clip_quantile_upper, the WSE map clip that is itself default-ON at 0.99, "
+            "and is DISTINCT from PerSimFigureSpec.vmax_quantile, a per-figure-spec scope. Do not add a "
+            "fourth quantile-clip surface. Extend the existing surfaces and avoid duplicating them."
         ),
     )
     depth_clip_quantile_lower: float | None = Field(
         None,
         description=(
-            "Optional lower-quantile clip on the depth colorbar vmin (companion "
-            "to depth_clip_quantile_upper). None keeps the user-locked "
-            "depth_vmin=0.01 'under' threshold."
+            "Optional lower-quantile clip on the depth colorbar vmin, companion to "
+            "depth_clip_quantile_upper. None keeps the locked depth_vmin=0.01 'under' threshold."
         ),
     )
     utilization_cmap: str = Field("Blues")
@@ -162,23 +183,15 @@ class PerSimMapConfig(cfgBaseModel):
     outer_width_ratios: tuple[float, float, float] = Field((1.0, 1.0, 0.95))
     outer_wspace: float = Field(0.10)
     cbar_inner_width_ratios: tuple[float, float, float] = Field((1.0, 5.0, 1.0))
-    map_tick_step: float = Field(50.0)
     axis_label_fontsize: int = Field(8)
     tick_labelsize: int = Field(7)
     fig_width_panel_pad: float = Field(
         1.02,
-        description=(
-            "Per_sim figure width formula: `h * (2 * map_aspect * pad + 1.0)`. "
-            "Verbatim hardcoded `1.02` in per_sim_peak_flood_depth.py line 284 "
-            "and per_sim_conduit_flow.py line 133."
-        ),
+        description=("Per_sim figure width formula, `h * (2 * map_aspect * pad + 1.0)`."),
     )
     fallback_h_inches: float = Field(
         6.0,
-        description=(
-            "Fallback figure height when `cfg.figsize_inches` is absent. "
-            "Verbatim per_sim_peak_flood_depth.py line 279."
-        ),
+        description=("Fallback figure height when `cfg.figsize_inches` is absent."),
     )
 
 
@@ -219,40 +232,35 @@ class ElevationPanelStyle(cfgBaseModel):
     cmap: str = Field(
         "cividis",
         description=(
-            "Perceptually-uniform CVD-safe sequential colormap for DEM "
-            "elevation. Previous default 'terrain' is a cartographic-mimic "
-            "palette with green-brown luminance non-monotonicity and fails "
-            "deuteranope/protanope CVD simulation (per Moreland 2016 / "
-            "Wilke 2019 Ch. 19). 'cividis' is the CVD-optimized viridis-"
-            "family variant. Overridable per-deployment via report_config.yaml."
+            "Perceptually-uniform CVD-safe sequential colormap for DEM elevation. Avoid 'terrain'. The "
+            "'terrain' palette is a cartographic-mimic palette with green-brown luminance non-monotonicity "
+            "and fails deuteranope/protanope CVD simulation as shown by Moreland 2016 and Wilke 2019 Ch. "
+            "19. 'cividis' is the CVD-optimized viridis-family variant. Override the default in the "
+            "`report:` block of the analysis config."
         ),
     )
     over_color: str = Field(
         "white",
         description=(
-            "Color applied to DEM cells exceeding `wall_threshold_fraction` (buildings) "
-            "AND used implicitly via `plot_bgcolor` for out-of-watershed cells (which are "
-            "NaN-masked). White unifies the two non-modeled-area cell classes visually."
+            "Color applied to DEM cells exceeding `wall_threshold_fraction`, the buildings, AND used "
+            "implicitly via `plot_bgcolor` for the NaN-masked out-of-watershed cells. White unifies the "
+            "non-modeled-area cell classes visually."
         ),
     )
     wall_threshold_buffer_m: float = Field(
         40.0,
         description=(
-            "Subtractive buffer in meters applied to the cfg-derived wall threshold "
-            "(`min(dem_building_height, dem_outside_watershed_height) - buffer`). "
-            "Catches DEM cells whose coarsened elevation falls below the building "
-            "sentinel but is still building-dominated due to resampling. With Norfolk's "
-            "default `dem_building_height=80.0` and a 40 m buffer, threshold = 40 m, "
-            "which empirically catches coarsened-but-still-building cells (Round 4 "
-            "feedback: 50 m still left yellow-rendered building cells; 40 m clears them)."
+            "Subtractive buffer in meters applied to the cfg-derived wall threshold, "
+            "`min(dem_building_height, dem_outside_watershed_height) - buffer`. Catches DEM cells whose "
+            "coarsened elevation falls below the building sentinel but is still building-dominated due to "
+            "resampling. With the Norfolk default `dem_building_height=80.0` and a 40 m buffer, the "
+            "threshold is 40 m, a value that empirically catches coarsened-but-still-building cells. Round "
+            "4 feedback showed that 50 m still left yellow-rendered building cells and 40 m clears them."
         ),
     )
     wall_threshold_fraction: float = Field(
         0.9,
-        description=(
-            "Cells within this fraction of the DEM max are walls (recolored "
-            "via `cmap.set_over`). Verbatim `0.9` system_overview.py line 506."
-        ),
+        description=("Cells within this fraction of the DEM max are walls, recolored via `cmap.set_over`."),
     )
     bc_line_width: float = Field(2.5)
     cbar_shrink: float = Field(0.7)
@@ -263,40 +271,30 @@ class SystemMapConfig(cfgBaseModel):
     target_epsg: int | None = Field(
         None,
         description=(
-            "Target CRS for the system map and downstream per-sim renderers. "
-            "Resolved via `resolve_target_crs()` precedence: this field -> "
-            "system_config.crs.horizontal_epsg -> DEM .rio.crs. When None, falls through to "
-            "the next precedence level."
+            "Target CRS for the system map and downstream per-sim renderers. Resolved via "
+            "`resolve_target_crs()` precedence. The precedence runs this field -> "
+            "system_config.crs.horizontal_epsg -> DEM .rio.crs. When None, falls through to the next "
+            "precedence level."
         ),
     )
     figsize_inches: tuple[float, float] = Field((10.0, 8.0))
     fig_width_panel_pad: float = Field(
         1.1,
-        description=(
-            "Three-panel width formula: `max(3 * h * panel_aspect * pad, h * 1.6)`. "
-            "Verbatim `1.1` system_overview.py line 73."
-        ),
+        description=("Width formula of the system overview figure, `max(3 * h * panel_aspect * pad, h * 1.6)`."),
     )
     fig_width_min_factor: float = Field(
         1.6,
-        description=("Minimum figure-width multiplier on `h`. Verbatim `1.6` " "system_overview.py line 73."),
+        description="Minimum figure-width multiplier on `h`.",
     )
     subplots_adjust: dict = Field(
         default_factory=lambda: {"left": 0.04, "right": 0.97, "top": 0.92, "bottom": 0.20, "wspace": 0.04},
-        description="`fig.subplots_adjust` kwargs — verbatim system_overview.py lines 77-78.",
+        description="`fig.subplots_adjust` kwargs.",
     )
     legend_loc: str = Field("upper center")
     legend_bbox_to_anchor: tuple[float, float] = Field((0.5, -0.10))
     legend_fontsize: int = Field(8)
     legend_framealpha: float = Field(0.9)
-    watershed_color: str = Field("red")
-    dem_extent_color: str = Field("blue")
-    bc_marker: str = Field("o")
     bc_color: str = Field("orange")
-    swmm_node_color: str = Field("black")
-    swmm_node_size: float = Field(8.0)
-    swmm_link_color: str = Field("gray")
-    swmm_link_width: float = Field(0.6)
     hydrology_panel: HydrologyMapPanelStyle = Field(default_factory=HydrologyMapPanelStyle)
     hydraulics_panel: HydraulicsPanelStyle = Field(default_factory=HydraulicsPanelStyle)
     elevation_panel: ElevationPanelStyle = Field(default_factory=ElevationPanelStyle)
@@ -312,13 +310,11 @@ class PerSimFigureSpec(cfgBaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Optional quantile (in [0, 1]) used to derive the colorbar upper bound "
-            "when `vmax` is None. When set, the renderer computes "
-            "`np.nanquantile(values, vmax_quantile)` as the colorbar max. This "
-            "clips out top-end outliers so the bulk of the value distribution is "
-            "visible with better contrast. When both `vmax` and `vmax_quantile` "
-            "are None, the renderer falls back to the absolute max. Not all "
-            "renderers consume this field; check the renderer's docstring."
+            "Optional quantile in [0, 1] used to derive the colorbar upper bound when `vmax` is None. When "
+            "set, the renderer computes `np.nanquantile(values, vmax_quantile)` as the colorbar max. The "
+            "quantile clips out top-end outliers so the bulk of the value distribution is visible with "
+            "better contrast. When both `vmax` and `vmax_quantile` are None, the renderer falls back to "
+            "the absolute max. Not all renderers consume this field, so check the renderer docstring."
         ),
     )
 
@@ -330,60 +326,45 @@ class InteractiveBackendConfig(cfgBaseModel):
     enabled: bool = Field(
         True,
         description=(
-            "Master switch. When False, renderers emit static PNG via the "
-            "matplotlib branch of emit_plot_with_sources (legacy behavior). "
-            "When True (default), renderers with an HTML emit-path emit HTML "
-            "via the str branch of emit_plot_with_sources. Flipped from "
-            "False to True at Phase 9 of the interactive_report_renderers PWI "
-            "after Phase 8.5's cleanup_stale_metadata mechanism landed, so "
-            "the first post-flip invocation against an existing analysis_dir "
-            "handles the one-shot rule-rename cleanup cascade silently."
+            "Primary switch. When False, renderers emit static PNG via the matplotlib branch of "
+            "emit_plot_with_sources, the static-PNG behavior. When True, the default, renderers with an "
+            "HTML emit-path emit HTML via the str branch of emit_plot_with_sources. Set False to fall back "
+            "to the static-PNG path."
         ),
     )
     static_backend: Literal["matplotlib", "plotly"] = Field(
         "plotly",
         description=(
-            "Static-figure rendering backend for renderers that have "
-            "BOTH a matplotlib branch and a Plotly branch. When "
-            "'plotly', renderers emit SVG via "
-            "fig.write_image(engine='kaleido') as their static artifact "
-            "and the matplotlib branch is bypassed. When 'matplotlib', "
-            "current behavior. Renderers without a Plotly branch fall "
-            "back to matplotlib regardless of this flag (with a "
-            "one-time warning per renderer per process — see "
-            "report_renderers/_static_backend_warning.py, introduced "
-            "in Plan Phase 5). Default 'plotly' per Plan Phase 2 D3 + "
-            "Decision 4: the bundle workflow's headline use case is "
-            "interactive Plotly reports, so the default matches the "
-            "headline experience. kaleido is a core dependency "
-            "(Plan Phase 1), so the Plotly static-export path is "
-            "available by default; set this field to 'matplotlib' in "
+            "Static-figure rendering backend for renderers that have BOTH a matplotlib branch and a Plotly "
+            "branch. When 'plotly', renderers emit SVG via `fig.write_image(engine='kaleido')` as the "
+            "static artifact and the matplotlib branch is bypassed. When 'matplotlib', the current "
+            "behavior applies. Renderers without a Plotly branch fall back to matplotlib regardless of "
+            "this flag and emit a one-time warning per renderer per process. See "
+            "report_renderers/_static_backend_warning.py. Default 'plotly' because the headline use case "
+            "of the bundle workflow is interactive Plotly reports. kaleido is a core dependency, so the "
+            "Plotly static-export path is available by default. Set this field to 'matplotlib' in "
             "cfg_analysis.yaml to force the matplotlib branch."
         ),
     )
     html_preview_rasterization: bool = Field(
         False,
         description=(
-            "When True, the HTML emit branch (_emit_html_with_sources) also "
-            "writes a <stem>.preview.png raster of the pre-composition Plotly "
-            "figure via kaleido, and sets the manifest preview_path to it. This "
-            "lets /design-figure's subagent visual-review operate on interactive "
-            "Plotly figures. Default False: preview_path stays None (no behavior "
-            "change). No-op when kaleido is unavailable (the rasterize helper "
-            "returns None)."
+            "When True, the HTML emit branch, `_emit_html_with_sources`, also writes a "
+            "`<stem>.preview.png` raster of the pre-composition Plotly figure via kaleido and sets the "
+            "manifest preview_path to that raster. The raster serves as a stand-in for visual review of "
+            "interactive Plotly figures. Default False, so preview_path stays None. The setting is inert "
+            "when kaleido is unavailable, because the rasterize helper returns None."
         ),
     )
     plotly_js_mode: Literal["cdn", "inline"] = Field(
         "cdn",
         description=(
-            "Plotly JS bundling. 'cdn' writes a plain <script src=\"https://"
-            'cdn.plot.ly/plotly-<version>.min.js"> tag (no SRI integrity '
-            "attribute — plotly.py 6.x does NOT emit SRI by default, and the "
-            "per-version SHA-256 maintenance is out of scope for this "
-            "renderer; see follow-up idea in scratch). Tiny HTML files, "
-            "requires online viewer at view time. 'inline' embeds the full "
-            "~3 MB bundle into every HTML file — works offline, large files, "
-            "archival-safe."
+            "Plotly JS bundling. 'cdn' writes a plain `<script "
+            'src="https://cdn.plot.ly/plotly-<version>.min.js">` tag with no SRI integrity attribute, '
+            "because plotly.py 6.x emits no SRI by default and the per-version SHA-256 maintenance is out "
+            "of scope for this renderer. 'cdn' yields tiny HTML files and requires an online viewer at "
+            "view time. 'inline' embeds the full ~3 MB bundle into every HTML file. The output works "
+            "offline and is archival-safe, with large files."
         ),
     )
     tabulator_js_mode: Literal["cdn", "inline"] = Field(
@@ -397,10 +378,15 @@ class InteractiveBackendConfig(cfgBaseModel):
     report_html_mode: Literal["html", "zip", "auto"] = Field(
         "auto",
         description=(
-            "Pass-through for analysis.render_report(format=...). 'auto' picks "
-            "'html' when total report-flagged size < 15 MB else 'zip'. "
-            "Snakemake's stated ceiling is ~10-20 MB total report-flagged "
-            "size; base64 encoding inflates by ~33%."
+            "Report format for every render that is given no explicit format, namely the render rule of "
+            "the workflow, the reprocess render rule, render_report_runner, `analysis.render_report()` and "
+            "the sensitivity equivalent, `Bundle.regenerate_report()`, and `hhemt report-from-bundle` "
+            "without --format. 'html' writes a single self-contained analysis_report.html, and 'zip' "
+            "writes analysis_report.zip. 'auto' adds up the bytes of the figure files under plots/ when "
+            "the render runs and writes 'html' when the total is below 15 MB, 15,000,000 bytes, and 'zip' "
+            "otherwise. The workflow then declares analysis_report.format as the target, and the render "
+            "records the chosen format there. An explicit format argument, `--format` or `format=`, "
+            "overrides this field. Base64 encoding inflates the figures by about 33% inside the HTML file."
         ),
     )
 
@@ -448,64 +434,23 @@ class InteractiveBackendConfig(cfgBaseModel):
 class PerSimMapInteractiveConfig(cfgBaseModel):
     """Interactive overrides for per_sim_peak_flood_depth + per_sim_conduit_flow."""
 
-    time_animation: bool = Field(
-        True,
-        description=(
-            "Render flood-depth raster as a Plotly animation with frames over "
-            "the time dim of max_wlevel_m + slider/play. False preserves the "
-            "legacy 'max-over-time' single-frame static map."
-        ),
-    )
     datashader_threshold_cells: int = Field(
         25_000,
         description=(
-            "Pre-rasterize via Datashader Canvas.raster() when per-frame cell "
-            "count exceeds this. Below the threshold, frames go directly to "
-            "go.Heatmap. Tuned during Phase 3 design-figure closeout "
-            "(2026-05-17): the prior 1_000_000 default skipped Datashader on "
-            "the norfolk fixture (29,542 valid cells), pushing per-figure "
-            "HTML to 6.76 MB > 5 MB DoD budget; lowering to 25,000 fires the "
-            "branch on any norfolk-scale and larger fixture, trims the per-"
-            "figure HTML by replacing the 29,542-cell raster JSON with a "
-            "512×512 datashader aggregate."
-        ),
-    )
-    visible_layers_default: list[
-        Literal[
-            "depth_raster",
-            "watershed_boundary",
-            "swmm_conduits",
-            "swmm_nodes",
-            "rainfall_inset",
-        ]
-    ] = Field(
-        default_factory=lambda: [
-            "depth_raster",
-            "watershed_boundary",
-            "swmm_conduits",
-            "swmm_nodes",
-        ],
-        description=(
-            "Trace layers visible on initial render. User toggles via Plotly "
-            "legend (click hides, double-click isolates)."
-        ),
-    )
-    colorbar_range_lock: bool = Field(
-        False,
-        description=(
-            "When True, colorbar range is fixed at [depth_vmin, depth_vmax_fallback] "
-            "(existing PerSimMapConfig fields). When False, a Plotly RangeSlider "
-            "widget under the colorbar lets the user adjust [vmin, vmax] live "
-            "via Plotly.restyle."
+            "Pre-rasterize via Datashader `Canvas.raster()` when the per-frame cell count exceeds this "
+            "value. Below the threshold, frames go directly to go.Heatmap. The default is set low on "
+            "purpose, because a 1,000,000-cell threshold would skip Datashader on the norfolk fixture, "
+            "with 29,542 valid cells, and push per-figure HTML to 6.76 MB against a 5 MB target. A "
+            "threshold of 25,000 fires the branch on any norfolk-scale and larger fixture and trims the "
+            "per-figure HTML by replacing the 29,542-cell raster JSON with a 512×512 datashader aggregate."
         ),
     )
     datashader_canvas_size: tuple[int, int] = Field(
         (512, 512),
         description=(
-            "Datashader Canvas (plot_width, plot_height) for raster "
-            "pre-aggregation in per_sim_peak_flood_depth. Replaces the "
-            "previously-hardcoded 512x512. Increase for higher-resolution "
-            "interactive zoom; decrease to shrink HTML payload."
+            "Datashader Canvas plot_width by plot_height for raster pre-aggregation in "
+            "per_sim_peak_flood_depth. Replaces a hardcoded 512x512. Increase for higher-resolution "
+            "interactive zoom and decrease to shrink the HTML payload."
         ),
     )
 
@@ -516,15 +461,15 @@ class TableInteractiveConfig(cfgBaseModel):
     pagination_size: int = Field(
         50,
         description=(
-            "Rows per page (Tabulator option `paginationSize`). Set to 0 to "
-            "disable pagination and use virtual-scroll over full dataset "
-            "(requires height/minHeight/maxHeight to engage virtual DOM)."
+            "Rows per page, the Tabulator option `paginationSize`. Set to 0 to disable pagination and use "
+            "virtual-scroll over the full dataset. Virtual-scroll requires height, minHeight, or maxHeight "
+            "to engage the virtual DOM."
         ),
     )
     visible_columns_default: list[str] | None = Field(
         None,
         description=(
-            "Column slugs to mark visible:true initially. None means all " "visible. User toggles via headerMenu."
+            "Column slugs to mark visible:true initially. None means all visible. The reader toggles via headerMenu."
         ),
     )
     header_filter: bool = Field(
@@ -537,20 +482,18 @@ class TableInteractiveConfig(cfgBaseModel):
     table_height: str = Field(
         "70vh",
         description=(
-            "Tabulator `height` option (CSS length string). Required for the "
-            "virtual DOM to engage — per tabulator-architecture: 'tables MUST "
-            "have height set or virtual DOM disengages and rendering becomes "
-            "slow at scale'. RowManager.initializeRenderer reads "
-            "options.height once at construction; iframe-external CSS height "
-            "is not seen by Tabulator. Use a CSS viewport-height ('70vh') so "
-            "the iframe scales naturally."
+            "Tabulator `height` option as a CSS length string. Required for the virtual DOM to engage, "
+            "because tables MUST have height set or the virtual DOM disengages and rendering becomes slow "
+            "at scale, as tabulator-architecture states. RowManager.initializeRenderer reads "
+            "options.height once at construction, and iframe-external CSS height is not seen by Tabulator. "
+            "Use a CSS viewport-height such as '70vh' so the iframe scales naturally."
         ),
     )
     persistence_id: str | None = Field(
         None,
         description=(
-            "Tabulator localStorage key. When set, user's filter/sort/"
-            "column-visibility state persists across browser reloads."
+            "Tabulator localStorage key. When set, the reader's filter/sort/column-visibility "
+            "state persists across browser reloads."
         ),
     )
 
@@ -560,9 +503,7 @@ class TableInteractiveConfig(cfgBaseModel):
         if v is None:
             return v
         if not re.fullmatch(r"[A-Za-z0-9_.\-]+", v):
-            raise ValueError(
-                f"persistence_id={v!r} must match ^[A-Za-z0-9_.\\-]+$ " f"(Tabulator localStorage-key safe)."
-            )
+            raise ValueError(f"persistence_id={v!r} must match ^[A-Za-z0-9_.\\-]+$ (Tabulator localStorage-key safe).")
         return v
 
     @field_validator("visible_columns_default")
@@ -629,21 +570,6 @@ class PerAnalysisSummaryConfig(cfgBaseModel):
             "sensitivity_mode",
         ]
     )
-    table_scale: tuple[float, float] = Field(
-        (1.0, 1.5),
-        description=(
-            "matplotlib `Table.scale(x, y)` arguments — verbatim "
-            "`table.scale(1, 1.5)` per_analysis_summary.py line 208."
-        ),
-    )
-    figure_height_per_row_inches: float = Field(
-        0.4,
-        description="Per-row height contribution. Verbatim `0.4` line 150.",
-    )
-    figure_height_padding_inches: float = Field(
-        0.7,
-        description="Constant additional figure height. Verbatim `0.7` line 150.",
-    )
     figure_width_inches: float = Field(8.0)
     interactive: TableInteractiveConfig = Field(default_factory=TableInteractiveConfig)
 
@@ -652,44 +578,19 @@ class SensitivityReportConfig(cfgBaseModel):
     independent_vars: list[str] = Field(
         ...,
         description=(
-            "Column names from the sensitivity CSV. Validated at analysis.run() "
-            "entry against the actual CSV columns; unknown names raise "
-            "ConfigurationError. Each name must match the Snakemake-safe charset "
-            "`^[A-Za-z0-9_.]+$` because it becomes a wildcard in generated rule "
-            "output paths."
+            "Column names from the sensitivity CSV. Validated at `analysis.run()` entry against the actual "
+            "CSV columns, and unknown names raise ConfigurationError. Each name must match the "
+            "Snakemake-safe charset `^[A-Za-z0-9_.]+$` because the name becomes a wildcard in generated "
+            "rule output paths."
         ),
     )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _rewrite_legacy_mode_key(cls, data):
-        """One-cycle config-format compat: the ADR-5 ReportingSet registry
-        retired SensitivityReportConfig.mode; set selection now lives on
-        report_config.reporting_set. A pre-conversion report_config.yaml may
-        still carry sensitivity: {mode: benchmarking, ...}. Strip the legacy key
-        with an actionable DeprecationWarning rather than letting extra="forbid"
-        raise an opaque extra_forbidden error. Remove next cycle."""
-        if isinstance(data, dict) and "mode" in data:
-            import warnings
-
-            data = {k: v for k, v in data.items() if k != "mode"}
-            warnings.warn(
-                "report_config.sensitivity.mode is retired (ADR-5 ReportingSet "
-                "registry). Reporting-set selection now lives on "
-                "report_config.reporting_set (default 'benchmarking' for "
-                "sensitivity analyses). The legacy `mode:` key is ignored this "
-                "cycle and will be rejected in a future release.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        return data
 
     dependent_var: str = Field(
         "performance.Total",
         description=(
             "Path into the per-scenario performance summary. Default "
             "'performance.Total' uses the Total column of the restart-safe "
-            "per-scenario summary. For SWMM-only sub-analyses, the renderer "
+            "per-scenario summary. For SWMM-only members, the renderer "
             "routes to the .rpt 'Total elapsed time' value."
         ),
     )
@@ -697,11 +598,11 @@ class SensitivityReportConfig(cfgBaseModel):
     group_by_var: str | None = Field(
         None,
         description=(
-            "Optional secondary CSV column whose values become a categorical "
-            "grouping (color) on the benchmarking plot — one line/marker series "
-            "per group, x=independent_var, y=dependent_var. Typical value: "
-            "'run_mode'. None → single ungrouped series. Validated at run-entry "
-            "against the actual CSV columns alongside independent_vars."
+            "Optional secondary CSV column whose values become a categorical grouping, shown as color, on "
+            "the benchmarking plot, with one line/marker series per group, x=independent_var, "
+            "y=dependent_var. The typical value is 'analysis.run_mode', the column name in the sensitivity "
+            "table, and a bare 'run_mode' is rejected when the report renders. None gives a single "
+            "ungrouped series."
         ),
     )
     show_gridlines: bool = Field(
@@ -711,10 +612,9 @@ class SensitivityReportConfig(cfgBaseModel):
             "and y. Useful for reading absolute values off the panels."
         ),
     )
-    # ---- Style knobs (verbatim defaults from sensitivity_benchmarking.py) --
-    cpu_marker: str = Field("o", description="Verbatim `_CPU_MARKER` line 47.")
-    gpu_marker: str = Field("^", description="Verbatim `_GPU_MARKER` line 48.")
-    point_size: float = Field(110.0, description="Verbatim `_POINT_SIZE` line 49.")
+    # ---- Style knobs --
+    cpu_marker: str = Field("o", description="Marker symbol of the benchmarking series.")
+    point_size: float = Field(110.0, description="Scatter marker area in points squared.")
     line_style: str = Field("--")
     line_width: float = Field(1.0)
     palette: tuple[str, ...] = Field(
@@ -728,26 +628,39 @@ class SensitivityReportConfig(cfgBaseModel):
             "#F0E442",
             "#000000",
         ),
-        description="Okabe-Ito CVD-safe palette — verbatim `_OKABE_ITO` lines 54-63.",
+        description="Okabe-Ito CVD-safe palette.",
     )
     independent_var_labels: dict[str, str] = Field(
-        default_factory=lambda: {"n_devices": "Number of Devices (CPUs or GPUs)"},
-        description="Verbatim `_INDEP_VAR_LABELS` line 65.",
+        default_factory=lambda: {
+            "n_devices": "Number of Devices (CPUs or GPUs)",
+            # Device-class-qualified labels. `AxisGroup.for_var` looks up
+            # `{source_var}.{qualifier}` first and falls back to the bare key, so a
+            # faceted figure names the unit its count actually denotes per column
+            # while any unqualified caller keeps the shared label above. The
+            # qualifier is the DEVICE CLASS, not the hardware token: the axis counts
+            # GPUs on every GPU column, so per-hardware keys would be obliged to
+            # carry the same string.
+            "n_devices.cpu": "cores",
+            "n_devices.gpu": "GPUs",
+        },
+        description=(
+            "Axis labels keyed by independent variable, plus the device-class-qualified keys "
+            "`n_devices.cpu` and `n_devices.gpu` that the faceted benchmarking figure reads per column."
+        ),
     )
     figsize_inches: tuple[float, float] = Field(
         (7.0, 14.0),
-        description="Verbatim `figsize=(7, 14)` line 125.",
+        description="Figure width and height in inches.",
     )
     title: str = Field(
         "Wall-clock, compute-cost, speedup, and efficiency\nvs. number of devices, by run mode",
-        description="Verbatim title text line 171.",
+        description="Figure title text.",
     )
     title_fontsize: int = Field(11)
     title_pad: float = Field(4.0)
-    annotation_fontsize: int = Field(8)
     footnote_text: str = Field(
         "* number next to hybrid scenarios indicates number of MPI processes",
-        description="Verbatim footnote line 182.",
+        description="Footnote text of the figure.",
     )
     footnote_fontsize: int = Field(7)
     ideal_line_color: str = Field("red")
@@ -765,6 +678,16 @@ th, td {{ padding: {cell_padding_v_px}px {cell_padding_h_px}px; border: 1px soli
 th {{ background-color: {primary_color}; color: {th_text_color}; font-weight: {th_font_weight}; }}
 tr:nth-child(even) td {{ background-color: {row_alt_bg_color}; }}
 tr:hover td {{ background-color: {row_hover_bg_color}; }}
+/* Item {{32}}: the table-in-page scroll fix, defined ONCE here so every renderer that emits
+   an HTML table inherits it rather than restating it. A table wrapped in div.table-scroll is
+   height-bounded and scrolls WITHIN the page instead of extending it, and its header row stays
+   put while the body moves -- which is what makes a long table readable without the nested
+   page-scroll jank. `metadata.py` proved this rule on its own page; this is the same rule
+   promoted to the shared surface, NOT a second copy of it. Adding these declarations to a
+   renderer's own stylesheet is therefore prohibited: item {{19}} bars restating one definition
+   in two places, and a divergent copy is exactly how the two pages start scrolling differently. */
+div.table-scroll {{ overflow: auto; max-height: 70vh; }}
+div.table-scroll thead th {{ position: sticky; top: 0; z-index: 2; }}
 """
 
 
@@ -790,15 +713,38 @@ class _HtmlTableStyleBase(cfgBaseModel):
     table_font_size_px: int = Field(13)
     row_alt_bg_color: str = Field("#F1F1EF")
     row_hover_bg_color: str = Field("#FFE4C4")
+    # Tooltip-affordance colour. Brand-derived like the four keys above and set from
+    # brand_theme.affordance_color by the D-5 overlay; the literal here is the
+    # no-theme-context fallback. NOT accent_color: raw #E57200 is 3.12:1 on white.
+    affordance_color: str = Field("#A85000")
 
 
 _ERRORS_AND_WARNINGS_EXTRA_CSS = """\
-h2 {{ color: {primary_color}; border-bottom: {h2_border_width_px}px solid {primary_color}; padding-bottom: {h2_padding_bottom_px}px; margin-top: 0; }}
+h2 {{ color: {primary_color};
+    border-bottom: {h2_border_width_px}px solid {primary_color};
+    padding-bottom: {h2_padding_bottom_px}px;
+    margin-top: 0; }}
 h3 {{ color: {primary_color}; margin-top: {h3_margin_top_px}px; margin-bottom: {h3_margin_bottom_px}px; }}
 table {{ margin-bottom: {table_margin_bottom_px}px; }}
-td.pass {{ color: {pass_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
-td.fail {{ color: {fail_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
-.banner {{ padding: {banner_padding_v_px}px {banner_padding_h_px}px; border-radius: {banner_border_radius_px}px; margin: 10px 0 18px;
+td.pass {{ color: {pass_text_color};
+    font-weight: {th_font_weight};
+    text-align: center;
+    width: {passfail_cell_width_px}px; }}
+td.fail {{ color: {fail_text_color};
+    font-weight: {th_font_weight};
+    text-align: center;
+    width: {passfail_cell_width_px}px; }}
+td.na {{ color: {na_text_color};
+    font-weight: {th_font_weight};
+    text-align: center;
+    width: {passfail_cell_width_px}px; }}
+td.pass-qualified {{ color: {qualified_text_color};
+    font-weight: {th_font_weight};
+    text-align: center;
+    width: {passfail_cell_width_px}px; }}
+span.floor-note {{ color: {na_text_color}; font-weight: 400; font-style: italic; }}
+.banner {{ padding: {banner_padding_v_px}px {banner_padding_h_px}px;
+    border-radius: {banner_border_radius_px}px; margin: 10px 0 18px;
           font-weight: {th_font_weight}; font-size: {banner_font_size_px}px; }}
 .banner.pass {{ background-color: {pass_bg_color}; color: {pass_text_color}; border: 1px solid {pass_text_color}; }}
 .banner.fail {{ background-color: {fail_bg_color}; color: {fail_text_color}; border: 1px solid {fail_text_color}; }}
@@ -824,6 +770,13 @@ class ErrorsAndWarningsConfig(_HtmlTableStyleBase):
     banner_padding_h_px: int = Field(14)
     banner_border_radius_px: int = Field(6)
     banner_font_size_px: int = Field(14)
+    # `_status_of` returns four outcomes, not two. Before this the config CSS defined
+    # only `td.pass`/`td.fail`, so the `na` and `pass-qualified` classes the mapper
+    # emits had no rule at all -- an N/A cell would have rendered with no colour, no
+    # centring and no column width. Same greys as the module's (now deleted) dead
+    # `_INLINE_STYLE` twin, so the rendered bytes match what that constant intended.
+    na_text_color: str = Field("#6E7781")
+    qualified_text_color: str = Field("#9A6700")
 
     def render_inline_css(self) -> str:
         fields = self.model_dump()
@@ -847,17 +800,14 @@ class ScenarioStatusAppendixConfig(_HtmlTableStyleBase):
     hide_constant_columns: bool = Field(
         default=True,
         description=(
-            "If True, drop columns whose values are all identical (including all-NaN) "
-            "before rendering the Tabulator grid. Reduces visual clutter in single-model "
-            "or single-event analyses — e.g. an all-zero n_resumes column when no hotstart "
-            "resumes occurred is auto-hidden."
+            "If True, drop columns whose values are all identical, all-NaN included, before rendering the "
+            "Tabulator grid. Reduces visual clutter in single-model or single-event analyses. For example, "
+            "an all-zero n_resumes column is auto-hidden when no hotstart resumes occurred."
         ),
     )
 
     def render_inline_css(self) -> str:
-        return _HTML_TABLE_STYLE_TEMPLATE.format(
-            **self.model_dump(exclude={"interactive", "hide_constant_columns"})
-        )
+        return _HTML_TABLE_STYLE_TEMPLATE.format(**self.model_dump(exclude={"interactive", "hide_constant_columns"}))
 
 
 class report_config(cfgBaseModel):
@@ -870,24 +820,83 @@ class report_config(cfgBaseModel):
     sensitivity: SensitivityReportConfig | None = Field(
         None,
         description=(
-            "Required when the analysis is a sensitivity analysis; ignored for "
-            "main analyses. Cross-field validation occurs at analysis.run() entry."
+            "Required when the analysis is a sensitivity analysis and ignored for main analyses. "
+            "Cross-field validation occurs at `analysis.run()` entry."
         ),
     )
-    reporting_set: str = Field(
-        "default",
+    reporting_set: str | list[str] | None = Field(
+        ["default"],
+        validate_default=True,
         description=(
-            "ADR-5/ADR-7 layer-3 active reporting-set selector. Names an entry in "
-            "the ReportingSet registry (report_renderers/_reporting_sets.py). The "
-            "sentinel 'default' resolves at analysis.run() entry to 'benchmarking' "
-            "when toggle_sensitivity_analysis is True, else to the standard set. "
-            "Validated against the registry at run-entry (NOT at field-construction "
-            "time — that would create a config.report -> report_renderers import "
-            "cycle). A future named set is selected by writing its registered name "
-            "here, with no code edit (TO-8)."
+            "Active reporting-set selector. Names one or more entries in the ReportingSet registry, "
+            "report_renderers/_reporting_sets.py. A bare string is normalized to a one-element list, and "
+            "an empty list is treated as absent and takes the sentinel path. The sentinel 'default' "
+            "resolves at `analysis.run()` entry to 'sensitivity' when toggle_sensitivity_analysis is True "
+            "and to the standard set otherwise, and is unable to be named alongside another set. Validated "
+            "against the registry at run-entry and NEVER at field-construction time, because validation "
+            "there would create a config.report -> report_renderers import cycle. A future named set is "
+            "selected by writing the registered name here, with no code edit."
+        ),
+    )
+    disabled_renderers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "builder_key values to drop from the renderer_selection of the active reporting set. Filtered "
+            "by `_renderer_active()` at the dispatcher AND at every rule all / render_report input-list "
+            "site, so emission never disagrees with enumeration. An unknown key is a ConfigurationError at "
+            "`run()` entry and never a silent no-op."
         ),
     )
     interactive: InteractiveBackendConfig = Field(default_factory=InteractiveBackendConfig)
+
+    @field_validator("reporting_set", mode="before")
+    @classmethod
+    def _normalize_reporting_set_value(cls, v):
+        """Normalize the selection to a non-empty list of distinct set names.
+
+        mode="before" is load-bearing, not incidental. At mode="after" this body
+        would run on the value the ANNOTATION already coerced, so b"" would arrive
+        as "" and set() as [], and both would be swallowed by the absent arm --
+        turning D72's four-form ruling into a six-form behaviour with nothing in
+        the diff saying so. Running before the annotation also means a scalar is
+        refused by the guard below with one field-named message rather than by the
+        union with one opaque error per member.
+
+        SHAPE only; every registry question stays at run entry, because a
+        field-time reach into REPORTING_SETS creates the cycle
+        config.report -> report_renderers._reporting_sets -> config.report.
+        A bare string is the common spelling and stays valid permanently.
+        Order is load-bearing: first-appearance order determines renderer merge
+        order, so this must never normalize through a set.
+
+        D72: None, "", [] and () are four ways of writing "no selection was made",
+        and each stores the default. They are matched by MEMBERSHIP against
+        ABSENT_REPORTING_SET_FORMS, never by truthiness -- `not v` would also
+        swallow 0, False, b"" and set(), each of which is a type error the config
+        author needs to see. This is the config-object half of the decision; the
+        raw-dict half is rule 1 of resolve_reporting_set_names, which the bundle
+        callers reach without a model. Both call the same predicate, so widening
+        what counts as ABSENT is a one-site edit. The duplicate-member and
+        member-type arms stand; the isinstance(name, str) guard downstream was
+        never about emptiness.
+        """
+        if _is_absent_reporting_set(v):
+            return ["default"]
+        if isinstance(v, str):
+            v = [v]
+        elif not isinstance(v, (list, tuple)):
+            raise ValueError("reporting_set must be a set name or a list of set names")
+        v = list(v)
+        non_strings = [m for m in v if not isinstance(m, str)]
+        if non_strings:
+            raise ValueError(f"reporting_set members must be strings; got {non_strings!r}")
+        # Rename before the duplicate check so an old key listed beside its own new key is refused,
+        # and store the new key so a bundle never dumps the old one into cfg_analysis.yaml.
+        v = _apply_reporting_set_renames(v)
+        repeated = sorted({m for m in v if v.count(m) > 1})
+        if repeated:  # a duplicate doubles a contributor's templates into the merge
+            raise ValueError(f"reporting_set names the same set more than once: {repeated}")
+        return list(v)
 
 
 def validate_sensitivity_independent_vars(
@@ -967,20 +976,191 @@ def validate_sensitivity_independent_vars(
         )
 
 
-def resolve_active_reporting_set_name(
+ABSENT_REPORTING_SET_FORMS: tuple[object, ...] = (None, "", [], ())
+"""The four spellings that mean "no reporting set was selected" (D72).
+
+Membership, NOT truthiness. `not value` additionally swallows 0, False, 0.0,
+b"", bytearray(), set(), frozenset() and {} -- ten values that are type errors
+the config author needs to see. Written as a tuple so a reviewer can diff it
+against the ruling text without reasoning about Python's truth table.
+"""
+
+
+def _is_absent_reporting_set(value: object) -> bool:
+    """True for exactly the four D72 absent forms, and for nothing else."""
+    return value in ABSENT_REPORTING_SET_FORMS
+
+
+#: Every renamed reporting-set key. A configuration or a published bundle that
+#: still names an old key is rewritten to the new one, with one warning listing each rename
+#: applied, as config/eda.py's _EDA_RENAMES does for renamed plot kinds.
+_REPORTING_SET_RENAMES: dict[str, str] = {
+    "b4b": "compute_config_byte_identity",
+    "compute-sensitivity": "compute_sensitivity",
+    "dem-resolution": "dem_resolution",
+}
+
+
+def _apply_reporting_set_renames(names: list[str] | tuple[str, ...]) -> list[str]:
+    """Rewrite every renamed reporting-set key in ``names`` and warn once for the lot.
+
+    Three places receive a set name that a configuration or a published bundle may
+    still spell the old way: the ``report_config.reporting_set`` field validator, the
+    raw-dict resolver ``resolve_reporting_set_names`` and the published
+    ``eda._promote.register_eda_plot_in_reporting_set``. They all call this function,
+    so the table is applied by one implementation and the warning text cannot diverge.
+
+    Only ``str`` members are looked up: a non-``str`` member is returned unchanged so
+    the caller's own member-type arm names it, because a table lookup on an unhashable
+    member raises ``TypeError`` before that arm is reached. Order is preserved, since
+    first-appearance order determines renderer merge order. A member that is not an old
+    key passes through untouched, so a list with no renamed member emits no warning.
+    """
+    rewritten = [
+        _REPORTING_SET_RENAMES[member] if isinstance(member, str) and member in _REPORTING_SET_RENAMES else member
+        for member in names
+    ]
+    # The warning lists each rename once, in table order rather than member order, so a selection
+    # naming two old keys, or one old key twice, announces the same text however it is spelled.
+    applied = [f"{old} -> {new}" for old, new in _REPORTING_SET_RENAMES.items() if old in names]
+    if applied:
+        warnings.warn(
+            f"report.reporting_set: renamed [{', '.join(applied)}]; update the configuration to the new name(s).",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    return rewritten
+
+
+def resolve_reporting_set_names(
+    reporting_set: str | list[str] | tuple[str, ...] | None,
+    *,
+    is_sensitivity: bool,
+) -> tuple[str, ...]:
+    """Resolve a raw reporting-set selection into a tuple of registered NAMES.
+
+    This is the single implementation of the resolution rule, taking the raw
+    value rather than a report_config so that BOTH config-object callers and
+    raw-dict callers share it. The raw-dict callers matter more than they used
+    to: a bundle's cfg_analysis.yaml is dumped from the VALIDATED model, so
+    after the list widening those sites receive a LIST unconditionally and no
+    field validator has ever run on their input.
+
+    Five ordered rules, and the ORDER carries the semantics:
+
+    1. RESOLVE AN ABSENT SELECTION. None, "", [] and () all mean "no selection
+       was made" (D72) and all resolve to ("default",). Matched by MEMBERSHIP
+       via _is_absent_reporting_set, never by truthiness: `not value` would also
+       swallow 0, False and b"", each of which must stay a type error at rule 2's
+       else-arm. This is the raw-dict half of the decision -- the bundle callers
+       pass _report.get("reporting_set"), which is None for an absent key and
+       never passes through a model. report_config's field validator is the
+       config-object half, and calls the same predicate.
+    2. NORMALIZE BY TYPE. A str becomes a one-tuple; a list or tuple becomes
+       tuple(value). A bare string is normalized to a one-element tuple, so a
+       single-set config resolves exactly as it does today and
+       compose_reporting_sets returns the registered object itself. Rule 1 has
+       already removed the empty sequences, so this arm cannot produce an empty
+       tuple and no emptiness guard is needed below it.
+    3. REJECT A DUPLICATE MEMBER, naming the repeated name.
+    4. FENCE THE SENTINEL. "default" resolves by analysis shape, so it has no
+       meaning as one member of a composition and is refused alongside others.
+    5. PER MEMBER, RESOLVE THEN VALIDATE. Expand "default" by is_sensitivity,
+       then check the member is a str AND a registry key. The isinstance guard
+       is the repair, not decoration: without it a non-str member reaches
+       dict.__contains__ and raises TypeError instead of a field-named error.
+
+    Registry validation is not optional decoration. `get_reporting_set` is a bare
+    `REPORTING_SETS[name]` accessor whose docstring states it is for callers
+    "which receive an already-validated name" — so a caller that performs the
+    sentinel resolution WITHOUT this membership check turns a typo'd
+    reporting_set into a bare `KeyError` at the lookup instead of a field-named
+    ConfigurationError. That is exactly the divergence this helper exists to
+    prevent: the bundle-side harvest previously reimplemented the sentinel inline
+    and silently dropped the membership check.
+
+    REPORTING_SETS is imported LAZILY so this module never imports
+    report_renderers at module load — that would create the cycle
+    config.report -> report_renderers._reporting_sets -> config.report.
+    """
+    from hhemt.report_renderers._reporting_sets import (  # lazy: cycle-break
+        REPORTING_SETS,
+    )
+
+    # Rule 1.
+    if _is_absent_reporting_set(reporting_set):
+        requested: tuple[str, ...] = ("default",)
+    # Rule 2.
+    elif isinstance(reporting_set, str):
+        requested = (reporting_set,)
+    elif isinstance(reporting_set, (list, tuple)):
+        requested = tuple(reporting_set)
+    else:
+        raise ConfigurationError(
+            field="reporting_set",
+            message=(
+                "report.reporting_set must be a set name or a list of set names, got "
+                f"{type(reporting_set).__name__}. Registered sets: {sorted(REPORTING_SETS)}."
+            ),
+            config_path=None,
+        )
+    # Renamed keys are rewritten after rule 2 and before rule 3, so an old key listed beside its
+    # own new key is refused by rule 3 as a duplicate instead of doubling that set's templates.
+    requested = tuple(_apply_reporting_set_renames(requested))
+    # Rule 3.
+    repeated = sorted({n for n in requested if requested.count(n) > 1})
+    if repeated:
+        raise ConfigurationError(
+            field="reporting_set",
+            message=(
+                f"report.reporting_set names the same set more than once: {repeated}. Each set may appear at most once."
+            ),
+            config_path=None,
+        )
+    # Rule 4.
+    if len(requested) > 1 and "default" in requested:
+        raise ConfigurationError(
+            field="reporting_set",
+            message=(
+                "report.reporting_set lists 'default' alongside "
+                f"{sorted(n for n in requested if n != 'default')}. 'default' is a sentinel "
+                "that resolves to whichever set suits this analysis, so it cannot be one "
+                "member of a composition. Name the set you want instead."
+            ),
+            config_path=None,
+        )
+    # Rule 5.
+    resolved: list[str] = []
+    for raw in requested:
+        name = raw
+        if name == "default":
+            name = "sensitivity" if is_sensitivity else "default"
+        if not isinstance(name, str) or name not in REPORTING_SETS:
+            raise ConfigurationError(
+                field="reporting_set",
+                message=(
+                    f"report.reporting_set entry {raw!r} resolves to unknown set "
+                    f"{name!r}. Registered sets: {sorted(REPORTING_SETS)}."
+                ),
+                config_path=None,
+            )
+        resolved.append(name)
+    return tuple(resolved)
+
+
+def resolve_active_reporting_set(
     cfg: report_config,
     *,
     is_sensitivity: bool,
-) -> str:
-    """Resolve the active reporting-set NAME, CSV-free (F-B-1).
+):
+    """Resolve the active ReportingSet OBJECT, CSV-free (F-B-1).
 
-    `cfg.reporting_set == "default"` resolves to "benchmarking" when
-    is_sensitivity else "default" (the standard set). A non-"default" value is
-    taken verbatim. The resolved name is validated against the ReportingSet
-    registry (imported LAZILY here so this module never imports report_renderers
-    at module load — that would create the cycle config.report ->
-    report_renderers._reporting_sets -> config.report). Returns the resolved set
-    name.
+    Thin config-object wrapper over resolve_reporting_set_names (the sentinel
+    resolution and the registry validation) followed by compose_reporting_sets
+    (the template-level merge). Returns the composed ReportingSet, because a
+    composed set is not a registry key and a name cannot be round-tripped back
+    to an object. A one-name selection composes to the registered object
+    ITSELF, so a single-set config is unchanged at every consumer.
 
     This is the CSV-free resolver: it performs no sensitivity-CSV
     cross-validation, so it is safe to call from the render-without-run() path
@@ -989,22 +1169,15 @@ def resolve_active_reporting_set_name(
     layers the run-entry CSV cross-validation on top.
     """
     from hhemt.report_renderers._reporting_sets import (  # lazy: cycle-break
-        REPORTING_SETS,
+        compose_reporting_sets,
     )
 
-    name = cfg.reporting_set
-    if name == "default":
-        name = "benchmarking" if is_sensitivity else "default"
-    if name not in REPORTING_SETS:
-        raise ConfigurationError(
-            field="reporting_set",
-            message=(
-                f"report_config.reporting_set='{cfg.reporting_set}' resolves to "
-                f"unknown set '{name}'. Registered sets: {sorted(REPORTING_SETS)}."
-            ),
-            config_path=None,
+    return compose_reporting_sets(
+        resolve_reporting_set_names(
+            cfg.reporting_set,
+            is_sensitivity=is_sensitivity,
         )
-    return name
+    )
 
 
 def validate_active_reporting_set(
@@ -1012,24 +1185,111 @@ def validate_active_reporting_set(
     *,
     is_sensitivity: bool,
     sensitivity_csv_path: Path | None,
-) -> str:
+    varied_axes: frozenset[str] | None = None,
+):
     """Resolve and validate the active reporting set at analysis.run() entry.
 
-    Delegates name resolution + registry validation to
-    resolve_active_reporting_set_name (CSV-free). For a set whose validator_key
-    is "benchmarking", layers the run-entry CSV cross-validation by delegating to
-    validate_sensitivity_independent_vars (ADR-5: benchmarking's validation IS
-    that function). Returns the resolved set name for the caller to thread to the
-    renderer CLI / surgery.
+    Delegates name resolution + registry validation to resolve_reporting_set_names
+    (CSV-free), checks each NAMED member for suitability, then composes. Returns
+    the composed ReportingSet: a composed set is not a registry key, so the caller
+    cannot round-trip a name back to an object.
+
+    Which check is PER MEMBER and which is COMPOSED:
+      * shape and required_axes are PER MEMBER, so the error names the set that
+        does not fit rather than the composition. Per-member agreement with the
+        analysis's single shape also IMPLIES member-to-member homogeneity, so
+        homogeneity is derived and is not a second check.
+      * disabled_renderers is COMPOSED. A builder_key carried by one member and
+        not another is valid for the selection as a whole, and a per-member check
+        would reject it.
+      * the "benchmarking" validator runs ONCE if ANY member declares it, because
+        validate_sensitivity_independent_vars is config-scoped and idempotent, so
+        running it per member would emit N identical errors for one defect.
     """
     from hhemt.report_renderers._reporting_sets import (  # lazy: cycle-break
         REPORTING_SETS,
+        compose_reporting_sets,
     )
 
-    name = resolve_active_reporting_set_name(cfg, is_sensitivity=is_sensitivity)
-    if REPORTING_SETS[name].validator_key == "benchmarking":
+    names = resolve_reporting_set_names(cfg.reporting_set, is_sensitivity=is_sensitivity)
+    # S16 (D51): membership is not suitability. A set declares the analysis SHAPE it
+    # applies to and the sensitivity AXES its figures plot against; a set fitting
+    # neither is refused here, on the login node, before compute is committed.
+    # PER MEMBER, so the message names the set that does not fit.
+    _analysis_shape = "sensitivity" if is_sensitivity else "event_ensemble"
+    for name in names:
+        active = REPORTING_SETS[name]
+        if active.shape != _analysis_shape:
+            _fits = sorted(n for n, s in REPORTING_SETS.items() if s.shape == _analysis_shape)
+            if active.shape == "cross_experiment":
+                # Not selectable from an analysis config at all: the combine path reaches
+                # this set through hardcoded get_reporting_set("combined") literals, never
+                # through config resolution. Without this branch the message would name a
+                # "cross_experiment analysis", which is not a thing a user can create.
+                _why = "a set the `hhemt combine` verb selects for you, not one you set on an analysis"
+            elif active.shape == "sensitivity":
+                # The literal below is pinned by tests/test_config_validation.py's
+                # test_test_reference_report_scoping_passes_and_guard_intact, whose match=
+                # string bound validate_sensitivity_independent_vars before this check
+                # pre-empted it. Rewording this branch reds that test.
+                _why = "not a sensitivity analysis"
+            else:
+                _why = "not an event-ensemble analysis"
+            raise ConfigurationError(
+                field="reporting_set",
+                message=(
+                    f"report.reporting_set names '{name}', which declares shape "
+                    f"'{active.shape}', but this is {_why}. Sets that fit this analysis: {_fits}."
+                ),
+                config_path=None,
+            )
+        if active.required_axes:
+            if varied_axes is None:
+                raise ValueError(
+                    f"validate_active_reporting_set: reporting set '{name}' declares required_axes, "
+                    "so the caller must supply varied_axes. Passing None here would silently skip "
+                    "the compatibility check."
+                )
+            _unmet = [fam for fam in active.required_axes if not (set(fam) & varied_axes)]
+            if _unmet:
+                _fits = sorted(
+                    n
+                    for n, s in REPORTING_SETS.items()
+                    if s.shape == _analysis_shape and not [f for f in s.required_axes if not (set(f) & varied_axes)]
+                )
+                raise ConfigurationError(
+                    field="reporting_set",
+                    message=(
+                        f"report.reporting_set names '{name}', which plots against axes this sweep "
+                        f"does not vary. It requires at least one of each of "
+                        f"{[sorted(f) for f in _unmet]}; the sweep varies {sorted(varied_axes)}. "
+                        f"Sets that fit this sweep: {_fits}."
+                    ),
+                    config_path=None,
+                )
+    composed = compose_reporting_sets(names)
+    # Phase 3: an unknown disabled_renderers key is a ConfigurationError at run()
+    # entry, not a silent no-op. renderer_active() never matches a typo'd key to a
+    # selection entry, so it would drop nothing; this run-entry check (the sanctioned
+    # ReportingSet run-entry validation home, alongside the sensitivity cross-check
+    # below) is what closes the silent-typo gap the field description promises.
+    # COMPOSED, not per member: a key one member carries and another does not is
+    # valid for the selection as a whole.
+    known_builder_keys = {sel.builder_key for sel in composed.renderer_selection}
+    unknown = [k for k in cfg.disabled_renderers if k not in known_builder_keys]
+    if unknown:
+        raise ConfigurationError(
+            field="disabled_renderers",
+            message=(
+                f"report_config.disabled_renderers contains keys not present in the "
+                f"active reporting set '{composed.name}': {unknown}. Valid builder_key "
+                f"values for this set: {sorted(known_builder_keys)}."
+            ),
+            config_path=None,
+        )
+    if composed.validator_key == "benchmarking":
         validate_sensitivity_independent_vars(cfg, sensitivity_csv_path)
-    return name
+    return composed
 
 
 DEFAULT_REPORT_CONFIG = report_config()

@@ -16,9 +16,9 @@ from __future__ import annotations
 from pathlib import Path
 
 _INIT_BODY = '''\
-"""eda_local — your source-code-independent EDA surface (ADR-12).
+"""eda_local: your source-code-independent EDA surface.
 
-Author EDA reductions + plot functions here. This package is OUTSIDE git-tracked
+Author EDA reductions and plot functions here. This package is outside git-tracked
 hhemt source, so your exploration never modifies `src/hhemt/`. Import the installed
 toolkit with a plain `import hhemt`. Keep modules import-clean (installed hhemt +
 third-party only) so a function ports cleanly into `src/hhemt/eda/` if a developer
@@ -27,7 +27,7 @@ later promotes it into the report.
 '''
 
 _BOOTSTRAP_BODY = '''\
-"""eda_local/_bootstrap.py — wrong-kernel diagnostic (ADR-12).
+"""eda_local/_bootstrap.py: wrong-kernel diagnostic.
 
 Run this first if `import hhemt` fails in your notebook: it confirms the kernel
 resolves the installed `hhemt` and prints the resolving prefix so a wrong-env

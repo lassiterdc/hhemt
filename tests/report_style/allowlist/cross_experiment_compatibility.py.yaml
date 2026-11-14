@@ -1,0 +1,14 @@
+source: src/hhemt/report_renderers/cross_experiment_compatibility.py
+entries:
+- rule: capitals
+  string: ''',Roboto,sans-serif}table.compat th,table.compat td{border:1px solid #DADADA;padding:6px 12px;text-align:left;vertical-align:top}table.compat th{b'
+  status: permitted
+  reason: Comment or code inside JavaScript or CSS that the report emits as page script or style; a report reader does not read it.
+- rule: hedge
+  string: Layout-version skew between bundles; figures render, but cross-bundle field semantics may differ.
+  status: baseline
+  reason: present when the style test was added
+- rule: number_word
+  string: 'Sensitivity-axis divergence: the two bundles sweep different rows or columns of the compute matrix.'
+  status: baseline
+  reason: present when the style test was added

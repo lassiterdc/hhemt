@@ -1,0 +1,20 @@
+{
+  "checks": [
+    {
+      "name": "check_gpu_binding",
+      "level": "resource",
+      "passed": true,
+      "summary": "N/A",
+      "details": [],
+      "applicable": false
+    },
+    {
+      "name": "check_raw_outputs",
+      "level": "aggregate",
+      "passed": true,
+      "summary": "N/A",
+      "details": [],
+      "applicable": false
+    }
+  ]
+}

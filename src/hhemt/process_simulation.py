@@ -1,29 +1,69 @@
+"""Turn one scenario's raw solver outputs into processed per-scenario stores, then reclaim what is redundant.
+
+A simulation leaves raw outputs that downstream code cannot read directly: TRITON's
+per-reporting-step binary or ASCII rasters and per-checkpoint performance dumps, and
+SWMM's binary `.out` and text `.rpt` files. `TRITONSWMM_sim_post_processing` converts them
+into per-scenario timeseries stores, reduces those to the per-scenario summaries that
+consolidation concatenates, and records every write in the per-model log so a re-run
+skips finished work. It also removes the raw and intermediate artifacts the analysis
+config elects to remove: `clear_raw` governs the raw solver outputs, and
+`remove_after_processing` the artifacts made redundant once the summaries are provably
+present. The module-level functions are kept free of instance state, so they can be
+imported and called without constructing the class.
+"""
+
+import functools
+import gc
+import json
+import os
 import sys
 import time
-import json
-import xarray as xr
-import pandas as pd
-import numpy as np
-from typing import Literal
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
-import gc
-from hhemt.utils import (
-    write_zarr,
-    write_zarr_then_netcdf,
-    paths_to_strings,
-    get_file_size_MiB,
-    convert_datetime_to_str,
-    current_datetime_string,
-    fast_rmtree,
-    return_dic_zarr_encodings,
-)
+from typing import Literal
+
+import numpy as np
+import pandas as pd
+import xarray as xr
+
+from hhemt.cf_conventions import apply_cf_attributes, stamp_timestep_coordinate, timeseries_variable_attrs
+from hhemt.config.analysis import DEFAULT_FLOOD_VELOCITY_MIN_DEPTH_M, ClearRawValue
+from hhemt.exceptions import ProcessingError
+from hhemt.log import TRITONSWMM_model_log
 from hhemt.run_simulation import TRITONSWMM_run
 from hhemt.subprocess_utils import run_subprocess_with_tee
-from hhemt.swmm_output_parser import retrieve_SWMM_outputs_as_datasets
-from hhemt.log import TRITONSWMM_model_log
-from hhemt.config.analysis import ClearRawValue
-from hhemt.exceptions import ProcessingError
+from hhemt.summary_paths import parse_summary_clearing_record
+from hhemt.swmm_output_parser import (
+    pollutant_time_of_max_conc,
+    retrieve_SWMM_outputs_as_datasets,
+    return_system_time_series_results_from_outfile,
+)
+from hhemt.utils import (
+    _publish_flag_crash_safe,
+    chapter_flag_for,
+    chapter_store_for,
+    chapters_dir_for,
+    clear_raw_for_timesteps,
+    completed_chapters,
+    consolidate_zarr_store,
+    convert_datetime_to_str,
+    covered_timesteps,
+    current_datetime_string,
+    get_file_size_MiB,
+    merge_chapters_to_unified,
+    open_store,
+    paths_to_strings,
+    reap_unflagged_chapters,
+    resolve_chunk_grid,
+    return_dic_zarr_encodings,
+    unified_flag_for,
+    verify_and_flag_chapter,
+    write_netcdf,
+    write_zarr,
+    write_zarr_then_netcdf,
+    zarr_store_has_index,
+)
 
 # Subdirectories under `out_tritonswmm/` or `out_triton/` that the cleanup
 # helper deletes. The shape is an explicit DELETE allowlist rather than a
@@ -32,12 +72,153 @@ from hhemt.exceptions import ProcessingError
 # not silently deleted (data-loss failure mode). The coupled-SWMM
 # `hydraulics.rpt` at `out_tritonswmm/swmm/hydraulics.rpt` therefore survives
 # cleanup without an explicit preserve carve-out — its parent `swmm/` is
-# simply not in this allowlist. See the design-recommendation in the Phase 3
-# sidecar (sidecar_phase3_2026-05-21_2020.md) for the full Section 1-4
-# analysis that selected this shape over the original preserve-list.
-_CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset(
-    {"H", "QX", "QY", "MH", "bin", "cfg", "performance"}
+# simply not in this allowlist.
+#
+# SECOND load-bearing reason `swmm/` must NEVER join this DELETE allowlist:
+# `out_tritonswmm/**/swmm/{inp}_exchange_replay.bin` is TRITON's persisted
+# coupled-SWMM exchange history. Pinned TRITON 3a832f7d resumes a coupled sim by
+# REPLAYING that side-file; if a mid-workflow clear purged it, every subsequent
+# hotstart resume would find no history to replay and exit(EXIT_FAILURE) (or, worse,
+# silently re-init SWMM from t=0). Preserving `swmm/` by construction is what keeps
+# coupled resume viable. Do NOT "add swmm to a preserved set" — there is no such set;
+# adding `swmm` here would INVERT the intent and delete the side-file. The side-file
+# is reclaimed (bounded-retention) at a sanctioned point AFTER the final allocation —
+# see `_reclaim_exchange_replay_sidefiles` below.
+#
+# THIRD load-bearing reason, and it names a FILE rather than a directory:
+# `out_triton/performance.txt` (and its `out_tritonswmm/` sibling) is a LIVE COMPLETION
+# PREDICATE, not an output. `run_simulation._coupled_swmm_report_finalized`'s `triton` arm
+# returns False when it is absent, and `model_run_completed` calls that gate on BOTH the
+# log-True branch and the raw-marker fallback -- so deleting it converts every COMPLETED
+# triton sim into a permanently-incomplete one and burns the `retries:` budget re-running
+# work that already succeeded. It MUST NEVER be added to this allowlist nor to any
+# file-level reclaim allowlist under `out_*/`.
+#
+# CANONICAL STATEMENT of why it survives, and the ONLY one -- every other site points here
+# rather than restating it. The delete this allowlist feeds is guarded on
+# `child.is_dir() and child.name in _CLEAR_RAW_DELETE_SUBDIRS`
+# (`_clear_raw_outputs`, THIS file), so a top-level FILE is unreachable by it: the guard
+# makes the survival STRUCTURAL rather than documentary. TRITON puts the two on purpose --
+# `output<T>::write_times` writes `{output_folder}/performance/performance{N}.txt` for an
+# intermediate checkpoint and `{output_folder}/performance.txt` for the final state, on
+# separate branches -- so `performance.txt` sits BESIDE the reclaimable `performance/`
+# directory, not inside it. A future FILE-level reclaim under `out_triton/` would need an
+# explicit carve-out that this one does not. Cite this block by name, not by line number:
+# the prior citation of it in run_simulation.py went stale by 168 lines.
+_CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset({"H", "QX", "QY", "MH", "bin", "cfg", "performance"})
+
+# FILE-suffix allowlist for the post-processing reclaim INSIDE `out_tritonswmm/swmm/`.
+# Same shape rationale as _CLEAR_RAW_DELETE_SUBDIRS above and for the same reason: an
+# ALLOWLIST means a future coupled-SWMM artifact family added under `swmm/` is preserved
+# by default (disk-pressure failure) rather than silently deleted (data-loss failure).
+#
+# `.rpt` is NOT here and MUST NEVER BE. `out_tritonswmm/swmm/hydraulics.rpt` is a LIVE
+# COMPLETION PREDICATE, not an output: run_simulation._coupled_swmm_report_finalized
+# returns False when it is absent, and model_run_completed("tritonswmm") calls that gate
+# even on the log-True branch. Deleting the .rpt therefore converts every COMPLETED
+# coupled sim into a permanently-incomplete one -- _all_sims_run goes False,
+# check_scenarios_run reports the whole ensemble as failed, and
+# process_timeseries_runner's model_run_completed check refuses to process the scenario. It is also the
+# reprocess rebuild source (_export_SWMM_outputs reads it).
+#
+# `*_exchange_replay.bin` is likewise absent by construction (it is `.bin`, not `.out`);
+# its reclaim is owned by _reclaim_exchange_replay_sidefiles under the
+# multi_allocation_in_progress guard. Do not fold the two.
+_RECLAIM_COUPLED_SWMM_SUFFIXES: frozenset[str] = frozenset({".out"})
+
+# Content-addressed truncation boundary for out_tritonswmm/**/swmm/hydraulics.rpt.
+#
+# MEASURED, on two independently produced real coupled rpts (2026-08-17): every line
+# swmm_output_parser needs -- Element Count, Flow Units, Flow Routing Continuity,
+# Continuity Error (%), Flooding Loss, and the three summary tables -- precedes the FIRST
+# `Node Time Series Results` line, and the ONLY needed marker after it is the trailer.
+# Reference model: body starts at line 8,947 of 50,013 (82.1% is body). Synth model: line
+# 267 of 28,537 (99.0% is body).
+#
+# The boundary is a SENTINEL, never a line/byte count, and that is load-bearing. The head
+# scales with node/link COUNT, not with simulation length: 8,946 lines (~544 KB) on the
+# reference model versus 266 (~17 KB) on the synth, a 34x spread. A fixed-size head would
+# cut a summary table mid-table on a large model, and the parser would then read a PARTIAL
+# table rather than fail -- an absent row is indistinguishable from a node that never
+# flooded. Using the same sentinel _scan_metadata_and_summaries uses to find the body start
+# (the body-start test in `_scan_metadata_and_summaries`) is what keeps head and parser from
+# disagreeing.
+_RPT_BODY_START_SENTINEL = "Node Time Series Results"
+# The trailer is captured as a contiguous BLOCK from this sentinel to EOF, never as
+# the single matching line. MEASURED on two real rpts (2026-08-17): both end
+#     Analysis begun on:  ...
+#     Analysis ended on:  ...
+#     Total elapsed time: HH:MM:SS
+# so a one-line trailer silently drops "Total elapsed time".
+#
+# RETAINED-REGION INVARIANT, and it is what makes the standalone-rpt reclaim need no
+# consumer gate: every consumer of a truncated rpt reads only the HEAD, a SUMMARY
+# TABLE, or this TRAILER BLOCK -- never the per-timestep body. The six-site census at
+# HEAD d17c732 is
+#   run_simulation.py:1007 (write target, not a read)
+#   analysis.py:5168 -> retrieve_swmm_performance_stats_from_rpt (trailer; RAISES on absence)
+#   sensitivity_benchmarking.py:1403 -> parse_total_elapsed (trailer)
+#   workflow.py:3049 and :9121 (declared figure sources; provenance only)
+#   swmm_output_parser.py:201-215 (the three summary tables, head region)
+# Widening what the truncator drops REQUIRES re-running that census. The invariant is
+# enforced by a test asserting both trailer readers succeed against truncator OUTPUT.
+_RPT_TRAILER_SENTINEL = "Analysis ended on"
+# The marker MUST NOT contain any parser sentinel, or truncation stops being idempotent (a
+# second pass would find a body start that is not one) and _scan_metadata_and_summaries
+# would classify the marker as a section. Guarded by
+# test_truncation_marker_contains_no_parser_sentinel.
+_RPT_TRUNCATION_MARKER = (
+    "  ===  hhemt: {n_dropped} lines of per-timestep results were reclaimed by "
+    "remove_after_processing. The report header, continuity tables and summary tables "
+    "above, and the trailer below, are unmodified. This file is TRUNCATED, not deleted: it "
+    "remains the coupled-run completion signal. Rebuilding the coupled SWMM summaries from "
+    "raw is no longer possible; re-simulate instead.  ===\n"
 )
+
+
+def require_coupled_swmm_binary_output(rpt_path: Path) -> Path:
+    """The coupled run's binary SWMM output beside its report, refusing when it is not on disk.
+
+    The solver opens SWMM with a report and a binary output of the same stem (``hydraulics.rpt`` and
+    ``hydraulics.out``). Every coupled series is read from the binary file, so a missing one is an error naming the
+    file and the one setting that deletes it, ``remove_after_processing: raw_swmm_binaries``, which fires after the
+    summaries are verified; it is never a silent drop of the series. The check runs before any store is written.
+    """
+    out_path = Path(rpt_path).with_suffix(".out")
+    if not out_path.exists():
+        raise ProcessingError(
+            operation="_export_SWMM_outputs",
+            filepath=out_path,
+            reason=(
+                f"the coupled SWMM binary output {out_path.name} is not on disk, and every coupled series is read "
+                "from it. It is deleted by `remove_after_processing: raw_swmm_binaries`, which fires after the "
+                "summaries are verified; a reprocess of a scenario whose binary output was reclaimed cannot rebuild "
+                "its series and must re-simulate."
+            ),
+        )
+    return out_path
+
+
+def _deferred_log_writes(method):
+    """Run `method` inside `self.log.deferred_writes()` so every LogField.set() and
+    add_sim_processing_entry() it performs collapses into ONE read-modify-write at exit.
+
+    Each write is one rename of the log name, and exposure to the measured
+    lookup-vs-rename mechanism is linear in renames. Batching at the METHOD boundary
+    (not the whole runner pass) widens the crash window only to the method's own
+    artifacts, whose processing_log entries a retry re-derives by re-exporting them --
+    the same class of replay that a crash between an artifact write and its entry
+    write already produced. If the method switches self.log mid-way (a model-type
+    switch), writes to the NEW log are immediate; the deferral is bound to the log
+    object at entry.
+    """
+
+    @functools.wraps(method)
+    def _wrapped(self, *args, **kwargs):
+        with self.log.deferred_writes():
+            return method(self, *args, **kwargs)
+
+    return _wrapped
 
 
 class TRITONSWMM_sim_post_processing:
@@ -113,7 +294,7 @@ class TRITONSWMM_sim_post_processing:
                 "decode_timedelta": False,
             }
             if open_kwargs["engine"] == "zarr":
-                open_kwargs["consolidated"] = False
+                open_kwargs["consolidated"] = zarr_store_has_index(f)
             return xr.open_dataset(f, **open_kwargs)  # type: ignore
         else:
             raise ValueError(
@@ -142,22 +323,26 @@ class TRITONSWMM_sim_post_processing:
         comp_level: int,
         *,
         verbose: bool = False,
+        override_clear_raw: "ClearRawValue | None" = None,
     ) -> None:
-        """Stream TRITON binary outputs into a chunked zarr store via batched
-        appends. Single-sites the load-chunk + flush-byte-cap logic shared by the
-        TRITON-SWMM (model_type='tritonswmm') and TRITON-only (model_type='triton')
-        timeseries paths. The two prior loops differed only in the model_type
-        passed to latest_sim_date(); everything else was byte-identical."""
-        # Phase 1.2: Chunked processing - calculate optimal chunk size
+        """Stream TRITON binary outputs into flagged zarr chapter stores via batched
+        appends, then publish them at ``fname_out`` in the configured output type: a
+        chunked zarr store under ``zarr`` (``utils.merge_chapters_to_unified``), one
+        NetCDF file under ``nc`` (``publish_chapters_to_netcdf``). Single-sites the
+        load-chunk + flush-byte-cap logic shared by the TRITON-SWMM
+        (model_type='tritonswmm') and TRITON-only (model_type='triton') timeseries
+        paths. The two prior loops differed only in the model_type passed to
+        latest_sim_date(); everything else was byte-identical."""
+        # Chunked processing: size the in-memory load chunk
         from hhemt.utils import estimate_timesteps_per_chunk
 
         memory_budget_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
         flush_budget_MiB = self._analysis.cfg_analysis.process_append_batch_memory_budget_mb
         append_batch_timesteps = self._analysis.cfg_analysis.process_append_batch_timesteps
         # Per-timestep size (float64 H/QX/QY/MH). Computed once; reused by the
-        # floor warning (ANCHOR B) and the batch byte-cap (ANCHOR C). The `* 8`
-        # encodes the float64 storage width — the single site to revisit if a
-        # float32 storage downcast lands (OE-3 follow-up).
+        # floor warning and the batch byte-cap below. The `* 8` encodes the
+        # float64 storage width — the single site to revisit if storage is ever
+        # downcast to float32.
         per_ts_MiB = (len(df_outputs.columns) * len(rds_dem.y) * len(rds_dem.x) * 8) / (1024**2)
         n_variables = len(df_outputs.columns)  # H, QX, QY, MH
 
@@ -165,6 +350,20 @@ class TRITONSWMM_sim_post_processing:
             rds_dem=rds_dem,
             n_variables=n_variables,
             memory_budget_MiB=memory_budget_MiB,
+        )
+        # THE ON-DISK CHUNK GRID IS RESOLVED ONCE, HERE, AND REUSED BY EVERY CHAPTER.
+        # Its inputs are the processed DEM's spatial extent and the stored dtype width,
+        # both constant across this scenario by construction -- so every chapter of this
+        # store declares the same grid, including the short final one and including a
+        # chapter a LATER invocation writes on the resume path. It is deliberately NOT
+        # derived from `chunk_size` or from any flush quantity above: those resolve from
+        # the process rule's memory allocation and are constant within one invocation
+        # only. See utils.resolve_chunk_grid for why the timestep count is not an input.
+        _chunk_grid = resolve_chunk_grid(
+            ny=len(rds_dem.y),
+            nx=len(rds_dem.x),
+            itemsize=4 if self._analysis.cfg_analysis.process_store_float32 else 8,
+            override_t=self._analysis.cfg_analysis.process_timestep_chunk,
         )
         if chunk_size == 1:
             print(
@@ -175,7 +374,69 @@ class TRITONSWMM_sim_post_processing:
                 flush=True,
             )
 
+        # Per-chapter publish (see utils.verify_and_flag_chapter). Each batch is its
+        # OWN store plus a success flag; the unified store is merged at the end and
+        # the chapters die only after ITS flag lands.
+        #
+        # THE RESUME PREDICATE IS A COORDINATE SET, NEVER A COUNT. Before the loop,
+        # timestep_list drops every timestep a flagged chapter already covers
+        # (covered_timesteps), which is correct whatever order those chapters were
+        # written in; a count of published timesteps says how many are done, not which.
+        _chapters = chapters_dir_for(fname_out)
+        _scen_dir = self._scenario.scen_paths.sim_folder
+        _chapters.mkdir(parents=True, exist_ok=True)
+        reap_unflagged_chapters(_chapters, scenario_dir=_scen_dir)
+        # Under either output type the flag is written only after the artifact at fname_out
+        # is published complete (merge_chapters_to_unified for zarr,
+        # publish_chapters_to_netcdf for nc), so returning here never skips a publish.
+        if unified_flag_for(fname_out).exists():
+            warnings.warn(
+                f"{Path(fname_out).name} already carries its unified completion flag; "
+                "skipping the CHAPTER WRITER only -- under zarr the caller still consolidates "
+                "this store's metadata. Re-entering the writer would rebuild a chapter set "
+                "from whatever raw files survived the per-chapter clear and republish a "
+                "TRUNCATED store under a flag that still certifies it complete.",
+                stacklevel=2,
+            )
+            return
+        # Chapter-set build guard. Reuses provenance.py's
+        # producing-stamp family: the same (sha, dirty) key append_stage_provenance
+        # already writes, and the same refuse-with-declared-bypass shape
+        # assert_plots_match_running_build already uses. Placed after the reap and
+        # before the resume decision, which is the only point at which a mixed-build
+        # merge is still preventable.
+        #
+        # THE BUILD IS RECORDED IN verify_and_flag_chapter, NOT HERE. An entry-site
+        # record fires on every invocation that ENTERS this writer, including one that
+        # writes ZERO chapters and raises below -- so the history would name a build
+        # that contributed nothing, and the guard would then refuse a set every chapter
+        # of which the running build wrote. Recording beside the flag write makes the
+        # history the PROVENANCE of the chapters rather than a log of arrivals.
+        from hhemt.provenance import assert_chapters_match_running_build
+
+        assert_chapters_match_running_build(
+            _chapters,
+            declare_mixed_version_chapters=self._analysis.cfg_analysis.allow_mixed_version_chapters,
+        )
+        _done = completed_chapters(_chapters)
+        _covered_ts = covered_timesteps(_chapters)
+        _next_chapter = (max(_done) + 1) if _done else 0
+        _freed_bytes = 0
+        # THE PER-CHAPTER RAW CLEAR IS GATED ON analysis_config.clear_raw, exactly like
+        # every other raw clear in this module. Resolved ONCE here and tested at both
+        # flush sites, mirroring the per-model export methods, which resolve once and then
+        # test per model. Without this the per-chapter clear would bypass the config and
+        # the override_clear_raw escape hatch entirely.
+        _clear_raw_ok = self._should_clear_raw_for_model(self._resolve_clear_raw(override_clear_raw), model_type)
+
         timestep_list = sorted(df_outputs.index.tolist())
+        if _covered_ts:
+            timestep_list = [t for t in timestep_list if t not in _covered_ts]
+            print(
+                f"[Chunked Processing] Resuming: {len(_done)} flagged chapter(s) cover "
+                f"{len(_covered_ts)} timestep(s); {len(timestep_list)} remain.",
+                flush=True,
+            )
         total_timesteps = len(timestep_list)
         n_chunks = (total_timesteps + chunk_size - 1) // chunk_size
 
@@ -190,7 +451,6 @@ class TRITONSWMM_sim_post_processing:
 
         # Process in chunks; accumulate into batches to decouple append
         # granularity from the in-memory load-chunk size.
-        first_chunk = True
         pending_chunks: list = []
         pending_timesteps = 0
 
@@ -212,87 +472,74 @@ class TRITONSWMM_sim_post_processing:
                 lst_ds_timesteps = []
 
                 for tstep_min in chunk_timesteps:
-                    if tstep_min not in files.index:
-                        continue
                     f = files[tstep_min]
+                    # FAIL-CLOSED. The frame came from triton_raw_frame_or_raise, which refuses a
+                    # ragged frame, so every variable has a file at every listed timestep and a
+                    # file that vanished between listing and read is a
+                    # genuine anomaly. Skipping it produces a chapter with this variable absent
+                    # at this timestep, written and FLAGGED complete (verify_and_flag_chapter is
+                    # per-variable blind). No guard in this consumer may continue past a missing
+                    # per-variable cell; the only admissible response is a loud refusal.
                     if not f.exists():
-                        if verbose:
-                            print(
-                                f"[Chunked Processing] Warning: Missing file {f}, skipping",
-                                flush=True,
-                            )
-                        continue
+                        raise ProcessingError(
+                            "chapter build (raw output file missing between listing and read)",
+                            filepath=f,
+                            reason=(
+                                f"variable {varname!r} at timestep={tstep_min} was listed by "
+                                "return_fpath_wlevels but does not exist at read time. Refusing to "
+                                "skip it: a skipped cell yields a silently-incomplete flagged chapter."
+                            ),
+                        )
 
                     ds_triton_output = load_triton_output_w_xarray(rds_dem, f, varname, raw_out_type)
                     lst_ds_timesteps.append(ds_triton_output)
 
-                if not lst_ds_timesteps:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] No valid files for {varname} in this chunk",
-                            flush=True,
-                        )
-                    continue
-
-                # Determine valid timesteps (those we actually loaded)
-                valid_timesteps = []
-                for tstep_min in chunk_timesteps:
-                    if tstep_min in files.index:
-                        f_path = files[tstep_min]
-                        if isinstance(f_path, Path) and f_path.exists():
-                            valid_timesteps.append(tstep_min)
-
-                ds_var_chunk = xr.concat(lst_ds_timesteps, dim="timestep_min")
-                ds_var_chunk = ds_var_chunk.assign_coords(timestep_min=valid_timesteps)
+                # Given that non-ragged frame and the refusal above, the loop either appended every
+                # member of chunk_timesteps or raised, so the loaded set IS chunk_timesteps by
+                # construction: no second stat loop, no value guard, and no `continue` --
+                # a skip that drops a whole variable is a worse survivor than the index guard
+                # this change removed, because it produces a flagged chapter missing that
+                # variable at every timestep of the chunk.
+                ds_var_chunk = xr.concat(lst_ds_timesteps, dim="timestep")
+                ds_var_chunk = ds_var_chunk.assign_coords(timestep=chunk_timesteps)
                 lst_ds_vars_chunk.append(ds_var_chunk)
 
                 # Clear per-variable temporaries
                 del lst_ds_timesteps
                 gc.collect()
 
-            if not lst_ds_vars_chunk:
-                if verbose:
-                    print(
-                        f"[Chunked Processing] No valid data in chunk {chunk_idx + 1}, skipping",
-                        flush=True,
-                    )
-                continue
-
             ds_chunk = xr.merge(lst_ds_vars_chunk)
             pending_chunks.append(ds_chunk)
-            pending_timesteps += ds_chunk.sizes["timestep_min"]
+            pending_timesteps += ds_chunk.sizes["timestep"]
 
-            # Flush one zarr append per batch: trigger on the timestep count OR
-            # a byte cap of 2x the load budget so the pending buffer stays
-            # bounded. pending_bytes_MiB reuses the hoisted per_ts_MiB (SE
-            # F-I-3) so the float64-width assumption stays single-sited.
+            # Flush one zarr append per batch: trigger on the timestep count OR the
+            # byte cap process_append_batch_memory_budget_mb (flush_budget_MiB), so the
+            # pending buffer stays bounded. pending_bytes_MiB reuses the hoisted
+            # per_ts_MiB so the float64-width assumption stays single-sited.
             pending_bytes_MiB = pending_timesteps * per_ts_MiB
             if pending_timesteps >= append_batch_timesteps or pending_bytes_MiB >= flush_budget_MiB:
-                ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
-                if first_chunk:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] Creating new zarr store: {fname_out.name}",
-                            flush=True,
-                        )
-                    encoding = return_dic_zarr_encodings(
-                        ds_batch,
-                        comp_level,
-                        store_float32=self._analysis.cfg_analysis.process_store_float32,
-                        time_chunk=self._analysis.cfg_analysis.process_timestep_chunk,
+                ds_batch = xr.concat(pending_chunks, dim="timestep") if len(pending_chunks) > 1 else pending_chunks[0]
+                _n = ds_batch.sizes["timestep"]
+                _ts = list(ds_batch["timestep"].values)
+                _store = chapter_store_for(_chapters, _next_chapter)
+                _flag = chapter_flag_for(_chapters, _next_chapter)
+                encoding = return_dic_zarr_encodings(
+                    ds_batch,
+                    comp_level,
+                    store_float32=self._analysis.cfg_analysis.process_store_float32,
+                    chunk_grid=_chunk_grid,
+                )
+                ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
+                ds_batch.attrs["output_creation_date"] = current_datetime_string()
+                ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
+                stamp_timestep_coordinate(ds_batch)
+                write_zarr(ds_batch, _store, chunks=None, encoding=encoding)
+                verify_and_flag_chapter(_store, _flag, _n)
+                if _clear_raw_ok:
+                    _freed_bytes += clear_raw_for_timesteps(
+                        df_outputs, _ts, scenario_dir=self._scenario.scen_paths.sim_folder
                     )
-                    ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
-                    ds_batch.attrs["output_creation_date"] = current_datetime_string()
-                    ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
-                    ds_batch.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
-                    first_chunk = False
-                else:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] Appending batch of {pending_timesteps} timesteps to zarr store",
-                            flush=True,
-                        )
-                    ds_batch.to_zarr(fname_out, mode="a", append_dim="timestep_min")
+                _next_chapter += 1
                 del ds_batch
                 pending_chunks = []
                 pending_timesteps = 0
@@ -303,35 +550,37 @@ class TRITONSWMM_sim_post_processing:
 
         # Flush any remaining pending timesteps (final partial batch)
         if pending_chunks:
-            ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
-            if first_chunk:
-                encoding = return_dic_zarr_encodings(
-                    ds_batch,
-                    comp_level,
-                    store_float32=self._analysis.cfg_analysis.process_store_float32,
-                    time_chunk=self._analysis.cfg_analysis.process_timestep_chunk,
+            ds_batch = xr.concat(pending_chunks, dim="timestep") if len(pending_chunks) > 1 else pending_chunks[0]
+            _n = ds_batch.sizes["timestep"]
+            _ts = list(ds_batch["timestep"].values)
+            _store = chapter_store_for(_chapters, _next_chapter)
+            _flag = chapter_flag_for(_chapters, _next_chapter)
+            encoding = return_dic_zarr_encodings(
+                ds_batch,
+                comp_level,
+                store_float32=self._analysis.cfg_analysis.process_store_float32,
+                chunk_grid=_chunk_grid,
+            )
+            ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
+            ds_batch.attrs["output_creation_date"] = current_datetime_string()
+            ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
+            stamp_timestep_coordinate(ds_batch)
+            write_zarr(ds_batch, _store, chunks=None, encoding=encoding)
+            verify_and_flag_chapter(_store, _flag, _n)
+            if _clear_raw_ok:
+                _freed_bytes += clear_raw_for_timesteps(
+                    df_outputs, _ts, scenario_dir=self._scenario.scen_paths.sim_folder
                 )
-                ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
-                ds_batch.attrs["output_creation_date"] = current_datetime_string()
-                ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
-                ds_batch.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
-                first_chunk = False
-            else:
-                ds_batch.to_zarr(fname_out, mode="a", append_dim="timestep_min")
+            _next_chapter += 1
             del ds_batch
             pending_chunks = []
 
-        # Guard (SE F-I-2): if no batch was ever written (first_chunk still
-        # True), every chunk was skipped — all source output files missing — so
-        # the zarr store was never created with mode="w". Consolidating a
-        # nonexistent store raises a cryptic error; raise a diagnosable signal
-        # instead.
-        if first_chunk:
-            raise ProcessingError(
-                f"write_timeseries_outputs: no valid timesteps to write for "
-                f"{fname_out.name} — every chunk was skipped (all source output "
-                f"files missing?). Zarr store not created; nothing to consolidate."
-            )
+        if self._analysis.cfg_analysis.target_processed_output_type == "nc":
+            publish_chapters_to_netcdf(_chapters, fname_out, scenario_dir=_scen_dir, compression_level=comp_level)
+        else:
+            merge_chapters_to_unified(_chapters, fname_out, scenario_dir=_scen_dir)
+        if _freed_bytes:
+            print(f"[Chunked Processing] Reclaimed {_freed_bytes} raw byte(s) across chapters.", flush=True)
 
     def write_timeseries_outputs(
         self,
@@ -368,7 +617,7 @@ class TRITONSWMM_sim_post_processing:
                 raise RuntimeError(
                     f"SWMM simulation not completed. Check model log files in {self._scenario.scen_paths.logs_dir}"
                 )
-        print(f"Processing run results for scenario {scen.event_iloc}", flush=True)  # type: ignore
+        print(f"Processing run results for scenario {scen.event_iloc}", flush=True)
 
         # Performance time series processing: model_type determines which performance files to process
         # Performance files only exist for TRITON models (not SWMM-only)
@@ -404,7 +653,7 @@ class TRITONSWMM_sim_post_processing:
             print(
                 f"Processed TRITON outputs for scenario {scen.event_iloc}",
                 flush=True,
-            )  # type: ignore
+            )
         # SWMM outputs processing: model_type determines which SWMM outputs to process
         if (which == "both") or (which == "SWMM"):
             if model_type == "tritonswmm":
@@ -417,7 +666,7 @@ class TRITONSWMM_sim_post_processing:
                 print(
                     f"Processed TRITON-SWMM SWMM outputs for scenario {scen.event_iloc}",
                     flush=True,
-                )  # type: ignore
+                )
             elif model_type == "swmm":
                 self._export_SWMM_outputs(
                     model="swmm",
@@ -428,7 +677,7 @@ class TRITONSWMM_sim_post_processing:
                 print(
                     f"Processed SWMM-only outputs for scenario {scen.event_iloc}",
                     flush=True,
-                )  # type: ignore
+                )
 
         return
 
@@ -535,7 +784,12 @@ class TRITONSWMM_sim_post_processing:
             comp_level=comp_level,
             verbose=verbose,
             log_field=self.log.performance_timeseries_written,
-            mode="tritonswmm_performance",
+            # `_tseries`-SUFFIXED, and the suffix is what keeps the summary's `cell_methods`
+            # off this artifact. The series has collapsed NEITHER `timestep` nor `Rank`,
+            # so the reduction string the summary carries would mislabel it. Not a
+            # `processing_analysis._MODE_CONFIG` key, because the per-rank series is never
+            # consolidated; it reaches only `cf_conventions._CF_VARIABLE_OVERRIDES_BY_MODE`.
+            mode="tritonswmm_performance_tseries",
         )
         return
 
@@ -556,10 +810,12 @@ class TRITONSWMM_sim_post_processing:
             comp_level=comp_level,
             verbose=verbose,
             log_field=self.log.performance_timeseries_written,
-            mode="triton_only_performance",
+            # `_tseries`-SUFFIXED -- see the coupled sibling above for why.
+            mode="triton_only_performance_tseries",
         )
         return
 
+    @_deferred_log_writes
     def _export_performance_tseries(
         self,
         fname_out: Path,
@@ -569,9 +825,22 @@ class TRITONSWMM_sim_post_processing:
         log_field,
         mode: str,
     ):
-        if self._already_written(fname_out):
+        # A series store deleted after its slice was read back from the `performance/timeseries` branch counts as
+        # written, as the other cleared series stores do. Deliberately NOT the processing record alone: a forced
+        # re-run clears that record, and the raw performance files that `clear_raw` removes are then parsed again
+        # (or the parse fails) for a store whose slice the tree already holds.
+        if self._consolidated_timeseries_cleared("performance") or self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and this reconciliation's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if log_field is not None:
+                log_field.set(True)
             return
 
         start_time = time.time()
@@ -590,16 +859,31 @@ class TRITONSWMM_sim_post_processing:
                 "Ensure the simulation completed successfully and wrote outputs to the expected location."
             )
 
-        reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
-        min_per_tstep = reporting_interval_s / 60
+        reporting_interval = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
+        min_per_tstep = reporting_interval / 60
         # Delegate parsing + per-rank diff aggregation to the module-level helper so
         # the V0008 migration and the regression test share one source of truth.
         # The helper raises FileNotFoundError if no performance{N}.txt files match.
-        ds = _aggregate_perf_tseries(performance_dir, min_per_tstep=min_per_tstep)
+        # The ledger the corrected aggregator joins on. `self.log` IS the
+        # TRITONSWMM_model_log for the active model type (bound in __init__ /
+        # _set_active_model_log), so no plumbing is needed -- the exporter has always
+        # held it. Logs written before this field existed coalesce None -> [] (no claimed
+        # resumes).
+        _resume_steps = list(self.log.resume_reporting_tsteps.get() or [])
+        ds = _aggregate_perf_tseries(performance_dir, min_per_tstep=min_per_tstep, resume_steps=_resume_steps)
 
         event_iloc = self._scenario.event_iloc
         ds = ds.assign_coords(coords=dict(event_iloc=event_iloc))
         ds = ds.expand_dims("event_iloc")
+        # THE SITE-1 RECORD. Assigned HERE, in the caller, and not at the detection site:
+        # `event_iloc` does not exist until the two lines above, so a coord written inside
+        # `_aggregate_perf_tseries` would be SCALAR by construction -- the one shape
+        # measured to fail under every reading of the across-member concat. Immediately
+        # after expand_dims is the first moment the dimensioned form is available, and it
+        # is before `_write_output`, so the record reaches disk on the per-scenario store
+        # and from there rides the summary reduction (which reduces over timestep and
+        # Rank, leaving an event_iloc coord intact) into the consolidated tree.
+        ds = stamp_perf_column_set(ds)
 
         self._write_output(ds, fname_out, comp_level, verbose, mode=mode)
 
@@ -640,6 +924,7 @@ class TRITONSWMM_sim_post_processing:
             verbose=verbose,
             log_field=self.log.performance_summary_written,
             mode="tritonswmm_performance",
+            verify_present=True,
         )
         return
 
@@ -659,9 +944,11 @@ class TRITONSWMM_sim_post_processing:
             verbose=verbose,
             log_field=self.log.performance_summary_written,
             mode="triton_only_performance",
+            verify_present=True,
         )
         return
 
+    @_deferred_log_writes
     def _export_performance_summary(
         self,
         ds: xr.Dataset,
@@ -670,16 +957,180 @@ class TRITONSWMM_sim_post_processing:
         verbose: bool,
         log_field,
         mode: str,
+        *,
+        verify_present: bool,
     ):
         start_time = time.time()
-        if self._already_written(fname_out):
+        # KEYWORD-ONLY WITH NO DEFAULT, deliberately: `fname_out` is a PARAMETER, so this
+        # function cannot self-identify its artifact class, and a default in EITHER
+        # direction relocates the hazard instead of closing it. Omission is a TypeError at
+        # the call site; the class decision is made where the class is known.
+        if self._already_written(fname_out) and (not verify_present or self._summary_usable(fname_out)):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass a set placed lower is
+            # unreachable. The skip pass is taken only by a scenario latched in the log
+            # whose performance summary is also usable (the `_summary_usable` conjunct on
+            # the `if` above); one latched in the log with the summary absent reads False
+            # above and takes the BUILD pass, where this marker is set truthfully.
+            # `is not None`, never bare truthiness: LogField defines no __bool__, and this
+            # reconciliation's whole job is the None -> True transition a value-based
+            # __bool__ would silently block.
+            if log_field is not None:
+                log_field.set(True)
             return
 
-        event_iloc = self._scenario.event_iloc
+        # `skipna=False` ON THE TIME SUM IS THE WHOLE OF THE FIX, and its ASYMMETRY with the
+        # Rank max is load-bearing rather than an oversight.
+        #
+        # WHAT IT REPAIRS. `_aggregate_perf_tseries`'s `pd.concat` OUTER-joins and NaN-fills
+        # any column an allocation never emitted, so a member that spanned a solver rebuild
+        # carries a column present for only SOME of its reporting steps. Under xarray's
+        # default `skipna=True` that column does not reduce to NaN -- it reduces to a FINITE,
+        # UNDERSTATED number, which is then written to the summary store, published to the
+        # consolidated tree, and read back as an ordinary float. The one consumer that raises
+        # on a non-finite read (`report_renderers/sensitivity_benchmarking.py`) therefore
+        # cannot fire on it at any width of `_WALLCLOCK_SAFE_COLS`, because the value arrives
+        # finite. Measured on a member emitting SWMM_STEP for 2 of 4 reporting steps: 2.0
+        # under the default, NaN under this form, against a truthful Total of 4.0 in both.
+        #
+        # WHY NOT ALSO ON THE RANK MAX, which is the symmetric-looking form and is WRONG.
+        # `deltas.to_xarray()` pads the rank axis when the allocations did not all run the
+        # same rank count -- ranks present in one allocation and absent from another become
+        # NaN for the timesteps they did not exist in, which is a reshape artefact and not a
+        # data defect. Measured on a 2-rank then 4-rank member: `skipna=False` on BOTH
+        # reductions turns the HEADLINE `Total` into NaN, which the non-finite raise above
+        # would then convert into a hard render failure on a sound member. With the max left
+        # at its default, that same case reduces `Total` to 4.0 (correct, from the ranks that
+        # ran throughout) while a genuinely short COLUMN is NaN at EVERY rank -- the outer
+        # join adds the column to the whole allocation frame, so all ranks are short together
+        # -- and an all-NaN slice maxes to NaN with no warning. The discrimination this needs
+        # therefore comes from the time axis alone.
+        #
+        # A WHOLLY-ABSENT COLUMN STAYS DISTINGUISHABLE and is not touched by this: it has no
+        # entry in `ds` at all, so it is absent from the summary rather than NaN in it. The
+        # two cases must not collapse into one another, and under this form they do not.
+        # `keepdims=True` RETAINS `Rank` AS A SIZE-ONE DIMENSION, and it is the carrier for
+        # this reduction's CF `cell_methods` domain rather than a formatting preference.
+        # CF-1.13 section 7.3 admits a cell_methods name only if it is "a dimension of the
+        # variable, a scalar coordinate variable, a valid standard name, or the word `area`",
+        # and section 7.3.2 states that a size-one dimension "may be the result of
+        # 'collapsing' an axis" and that retaining it is what enables "documentation of the
+        # method (through the cell_methods attribute)". Fully collapsing the axis leaves
+        # `Rank: maximum` naming nothing, so `cf_conventions._PERF_SUMMARY_CELL_METHODS`
+        # would be inadmissible the moment it were stamped.
+        #
+        # THAT PREMISE IS ABOUT ONE PAIR AND THE CONCLUSION DRAWN FROM IT WAS ABOUT THE WHOLE
+        # CONSTANT, which is the one step it overshoots -- the same premise-to-conclusion
+        # widening the sibling recording at `cf_conventions.py:251` repairs, and the fifth and
+        # last site in the tree to record it. Section 7.3 defines the attribute as "a list of
+        # blank-separated words of the form name: method", so admissibility is PER PAIR, and the
+        # constant is now the TWO-pair `"time: sum Rank: maximum"`. Fully collapsing the axis
+        # therefore invalidates the `Rank:` pair ALONE: the `time:` pair is admitted by section
+        # 7.3.4's standard-name class, whose licensing condition is the ABSENCE of a time axis on
+        # this artifact, so it survives the collapse untouched -- and would survive it even if
+        # `Rank` were the only axis there was. The premise above is RETAINED unedited because it
+        # re-measures true of the pair it names; only the scope of its conclusion is new, and the
+        # reason to state it is that a reader who takes the constant as the unit concludes that
+        # retaining `Rank` is what makes ANY annotation possible here, which is false and would
+        # make the retained axis look load-bearing for a pair that does not depend on it.
+        #
+        # WHY A RETAINED DIMENSION AND NOT A SCALAR COORDINATE, which the same CF sentence
+        # also permits and which is the smaller-looking change. A scalar was measured to fail
+        # twice. It documents a collapsed domain of ONE rank, which is true of a selection and
+        # false of a maximum over N -- and false again for every column whose own winning rank
+        # differs, which is most of them. And a DIFFERING scalar does not survive: at the real
+        # consolidation concat (`processing_analysis.py`, `dim="event_iloc"`) it is promoted to
+        # `ndim=1, dims=("event_iloc",)` -- measured -- which is none of CF's four admissible
+        # names, so the annotation would resolve in this store and STOP resolving in the
+        # consolidated product a reader is actually given. The retained DIMENSION was measured
+        # surviving that same concat as a dimension: `("event_iloc", "Rank")`, with
+        # `"Rank" in tree.dims` True.
+        #
+        # NO CONSUMER MOVES, measured rather than assumed. `keepdims` changes only the shape,
+        # never a value, and both readers of these columns reduce through `.item()`, which
+        # accepts a shape-(1,) array identically to a 0-d one: `analysis._perf_row_from_
+        # dataset` does `float(ds[v].values.item())` per member, and
+        # `report_renderers/sensitivity_benchmarking._scalar_at_event` does
+        # `float(da.sel(event_iloc=...).values.item())` on the consolidated node. Both were
+        # run against the post-change shape and returned the pre-change value.
+        #
+        # THE COHERENT AND `min` FAMILIES BELOW STAY 0-d, deliberately. `<Col>_coherent` is a
+        # SELECTION at one named rank, not a reduction over the axis, so it must not sit on an
+        # axis whose whole meaning is "this domain was collapsed by a method" -- and the
+        # coherent rank id is carried by `coherent_rank` as its own scalar that no
+        # cell_methods string names. `<Col>_min` IS a reduction over the same domain and could
+        # share the axis, but its descriptor is not supplied in this change, and a retained
+        # axis with no documented method is worse than no axis at all.
+        _summed = ds.sum(dim="timestep", skipna=False)
+        ds = _summed.max(dim="Rank", keepdims=True)
 
-        ds = ds.sum(dim="timestep_min").max(dim="Rank")
+        # THE RANK-COHERENT AND MIN FAMILIES, plus the two scalars that name the selection.
+        # DUPLICATED, DELIBERATELY, in the module-level `_aggregate_perf_summary` -- see the
+        # note at that site for why the two are not one call. The full rationale lives HERE
+        # and is not restated there, so the two cannot drift as prose.
+        #
+        # WHAT THEY REPAIR. `max` is applied PER VARIABLE, so a sum of per-column maxima is
+        # not the cost of ANY single rank. Measured over the 52-store non-fixture corpus, the
+        # published children overshoot their own `Simulation` parent by 17.17 % to 40.80 % of
+        # `Total`, because no one rank attains the maximum of every child. The coherent family
+        # reads every column at the ONE rank that attains `max(Total)`, so on that row the
+        # children close the level. The published names are untouched and NO PUBLISHED FIGURE
+        # MOVES: `Total` at `argmax(Total)` IS `max(Total)` identically, not approximately, and
+        # measured on the 40.80 % member both read 3.521. `min` is the cheapest sufficient
+        # dispersion statistic -- with `max` and `min` present the imbalance ratio, the spread
+        # and a bound on the coherent value are all derivable, whereas a `mean(Rank)` would
+        # answer none of those and would re-admit the quantity V0008 exists to have removed.
+        #
+        # WHY THESE ARE STORED AND NOT COMPUTED ON READ. They are a re-reduction of the
+        # per-rank `*_perf_tseries` store, which is absent from the consolidated tier entirely
+        # and is deletable at the per-scenario tier by configured policy -- `remove_after_
+        # processing` names "timeseries" as the class that drops it, and "all" selects it too.
+        # That reclaim fires only AFTER this summary is verified present, so writing the family
+        # here is the last moment at which it is recoverable at all.
+        #
+        # WHY THE SELECTOR STAYS AT THE DEFAULT `skipna`, which is the opposite of the
+        # symmetric-LOOKING form. The `skipna=False` above is on the TIME SUM, not on the rank
+        # reduction, and the block above argues that asymmetry. Forcing `skipna=False` onto this
+        # selector is MEASURED WRONG: on a partial-NaN rank axis it returns the index of a NaN
+        # rank (measured 1 against a correct 2), which would read the WHOLE coherent row at a
+        # rank the selector did not choose and publish it as coherent. The default is what makes
+        # this selector symmetric with the `max` it sits beside.
+        #
+        # WHY THE ALL-NaN CASE IS GUARDED RATHER THAN LEFT TO RAISE. `argmax` raises
+        # `ValueError: All-NaN slice encountered` exactly where the sibling `max` degrades to
+        # NaN, so an unguarded selector would convert an architecturally-permitted input -- a
+        # genuinely short COLUMN, NaN at every rank, which the block above measures as real --
+        # into a hard failure in a production export path. `_selectable` is False only in that
+        # case; masking on it degrades the whole family to the same graceful NaN `max` produces,
+        # and it also discards the arbitrary rank `fillna` picks, so no column is ever read at a
+        # rank that was not chosen. `coherent_rank` is float rather than integer precisely so
+        # that degradation is representable: a NaN there says "no rank was selectable", where an
+        # integer sentinel would assert a selection that did not happen.
+        #
+        # WHY THE SELECTION IS A MASK-AND-REDUCE RATHER THAN `isel(Rank=...)`. Vectorized `isel`
+        # with a lazy indexer raises `IndexError: vindex does not support indexing with dask
+        # objects` on the zarr-backed input THIS site receives, while the numpy-backed input the
+        # module-level sibling receives accepts it -- so `isel` would work at one of the two
+        # duplicated sites and fail at the other, which is exactly the drift the duplication
+        # already risks. The mask form is identical on both and stays lazy.
+        #
+        # THE ANCHOR GUARD. `Total` is the selector's anchor, so with it absent there is no
+        # coherent rank to name. The family is then SKIPPED, not faked -- the same "absence is
+        # absence, never zero" convention the paragraph above states for a wholly-absent column.
+        if "Total" in _summed.data_vars:
+            _rank_pos = xr.DataArray(np.arange(_summed.sizes["Rank"]), dims="Rank")
+            _selectable = _summed["Total"].notnull().any(dim="Rank")
+            _chosen = _rank_pos == _summed["Total"].fillna(-np.inf).argmax(dim="Rank")
+            _coherent = _summed.where(_chosen).max(dim="Rank")
+            for _name in _summed.data_vars:
+                ds[f"{_name}_coherent"] = _coherent[_name].where(_selectable)
+                ds[f"{_name}_min"] = _summed[_name].min(dim="Rank")
+            ds["coherent_rank"] = _summed["Rank"].where(_chosen).max(dim="Rank").where(_selectable)
+            ds["n_ranks"] = xr.full_like(_selectable, _summed.sizes["Rank"], dtype="int64")
+
         ds.attrs["units"] = "seconds"
         ds.attrs["notes"] = (
             "Per-column slowest-rank cumulative cost. 'Total' / 'Simulation' / 'Init' "
@@ -687,12 +1138,46 @@ class TRITONSWMM_sim_post_processing:
             "barrier (TRITON synchronizes ranks before every checkpoint per "
             "triton.h:2151-2162). On a hotstart-resumed sim these columns are the "
             "CUMULATIVE wallclock across every allocation, because _aggregate_perf_tseries "
-            "concatenates all preserved performance{N}.txt checkpoints and detects "
-            "the per-resume timer reset (process_simulation.py resume-reset branch); "
+            "concatenates all preserved performance{N}.txt checkpoints and applies the "
+            "reset boundaries named by the model log's resume_reporting_tsteps ledger "
+            "(never inferred from the data); "
             "they are therefore NOT the final-allocation-only figure that the SLURM "
             "Elapsed field reports. Category columns ('Compute','MPI','IO','SWMM',"
             "'Resize','Other') are upper bounds on the per-category contribution "
-            "to wallclock — slowest-rank category cost, NOT per-rank means."
+            "to wallclock — slowest-rank category cost, NOT per-rank means. "
+            "'SWMM' decomposes into 'SWMM_XFER' + 'SWMM_MPI' + 'SWMM_STEP' + "
+            "'SWMM_OTHER', which close the level exactly on each emitted PER-RANK "
+            "row; that identity does NOT survive this reduction, because max() is "
+            "applied PER VARIABLE and each column's max may come from a different "
+            "rank. That is what the rank-COHERENT family beside these columns is for: "
+            "every '<Col>_coherent' is that column read at the SINGLE rank attaining "
+            "max(Total), named on 'coherent_rank', so on that one row the children DO "
+            "close their level. 'Total_coherent' equals 'Total' identically rather than "
+            "approximately, so no figure keyed on the published names moves. '<Col>_min' "
+            "is the same column's minimum over ranks, which with the max present makes the "
+            "imbalance ratio and the spread derivable. 'n_ranks' is the LENGTH of this "
+            "member's rank axis, which for a member whose allocations ran different rank "
+            "counts is the UNION across them and therefore exceeds any single allocation's "
+            "count. A 'coherent_rank' of NaN means no rank was selectable because Total was "
+            "short at every rank, and the whole coherent family is NaN with it. "
+            "'SWMM_MPI' is the coupling's gather/scatter and is part of "
+            "'SWMM', NOT part of the top-level 'MPI' column, which times TRITON's "
+            "own halo exchange; the two are siblings at different levels and must "
+            "not be summed. 'SWMM_STEP' is nonzero on rank 0 only (its bracket sits "
+            "inside the solver's rank-0 guard), so for that one column max(Rank) is "
+            "exact rather than an upper bound — but NOT purely the solve: the bracket "
+            "also spans its local/global remaps and the per-timestep append to the "
+            "exchange-replay side-file. The rank-0-onlyness, the remaps and the "
+            "included write are all properties of the current coupling architecture, "
+            "not of the quantity. "
+            "Absence is reported two different ways and they mean different things. A "
+            "column this member never emitted AT ALL has no entry in this dataset -- it is "
+            "absent here, not zero. A column this member emitted for only SOME of its "
+            "reporting steps -- which is what a member spanning a solver rebuild across its "
+            "own allocations produces -- reads NaN here, never a partial sum: the time "
+            "reduction runs with skipna=False precisely so a partly-emitted column cannot "
+            "present as a finite, understated total. Which case applies is recorded per "
+            "member on the perf_column_set_across_allocations coordinate."
         )
         self._write_output(ds, fname_out, compression_level, verbose, mode=mode)
         elapsed_s = time.time() - start_time
@@ -700,6 +1185,7 @@ class TRITONSWMM_sim_post_processing:
         log_field.set(True)
         return
 
+    @_deferred_log_writes
     def _export_TRITONSWMM_TRITON_outputs(
         self,
         *,
@@ -713,9 +1199,22 @@ class TRITONSWMM_sim_post_processing:
             self.scen_paths.output_tritonswmm_triton_timeseries,
             "output_tritonswmm_triton_timeseries",
         )
-        if self._already_written(fname_out):
+        # A cleared store has had its `.done` flag and its `.chapters` removed with it, so the chapter writer's own
+        # "already carries its unified completion flag" return no longer protects it: re-entering the writer would
+        # rebuild a store from whatever raw files survived the per-chapter clear and publish it truncated. The
+        # cleared record, read first, is what keeps a resume out of the writer.
+        if self._consolidated_timeseries_cleared("triton") or self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and this reconciliation's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if self.log.TRITON_timeseries_written is not None:
+                self.log.TRITON_timeseries_written.set(True)
             if self._should_clear_raw_for_model(resolved_clear_raw, "tritonswmm"):
                 self._clear_raw_outputs("tritonswmm")
             return
@@ -723,37 +1222,33 @@ class TRITONSWMM_sim_post_processing:
         raw_out_type = self._analysis.cfg_analysis.TRITON_raw_output_type
         fldr_out_triton = self._run.raw_triton_output_dir(model_type="tritonswmm")
 
-        if fldr_out_triton is None or not fldr_out_triton.exists():
-            raise FileNotFoundError(
-                f"Raw TRITON-SWMM outputs not found at {fldr_out_triton}. "
-                "Ensure the TRITON-SWMM coupled simulation completed and wrote outputs to "
-                f"the configured output directory."
-            )
-        reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
+        reporting_interval = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         rds_dem = self._system.processed_dem_rds
 
         start_time = time.time()
 
         # Get output files
-        df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
-        if df_outputs.empty:
-            raise FileNotFoundError(
-                f"No TRITON output files (H, QX, QY, MH) found in {fldr_out_triton}. "
-                "Ensure the TRITON-SWMM coupled simulation completed successfully."
-            )
-
-        self._streaming_chunked_zarr_write(
-            df_outputs, rds_dem, fname_out,
-            model_type="tritonswmm", raw_out_type=raw_out_type,
-            comp_level=comp_level, verbose=verbose,
+        df_outputs = triton_raw_frame_or_raise(
+            fldr_out_triton, reporting_interval, model_label="the TRITON-SWMM coupled model", fname_out=fname_out
         )
 
-        # Consolidate metadata
-        if verbose:
-            print(f"[Chunked Processing] Consolidating zarr metadata", flush=True)
-        import zarr
+        self._streaming_chunked_zarr_write(
+            df_outputs,
+            rds_dem,
+            fname_out,
+            model_type="tritonswmm",
+            raw_out_type=raw_out_type,
+            comp_level=comp_level,
+            verbose=verbose,
+            override_clear_raw=override_clear_raw,
+        )
 
-        zarr.consolidate_metadata(fname_out)
+        # Consolidated metadata belongs to a zarr STORE. Under nc the writer published a
+        # NetCDF file at fname_out, and zarr.consolidate_metadata would raise on it.
+        if self._analysis.cfg_analysis.target_processed_output_type == "zarr":
+            if verbose:
+                print("[Chunked Processing] Consolidating zarr metadata", flush=True)
+            consolidate_zarr_store(fname_out)
 
         if verbose:
             print(f"[Chunked Processing] Complete: {fname_out.name}", flush=True)
@@ -762,13 +1257,14 @@ class TRITONSWMM_sim_post_processing:
         self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 
         # Mark timeseries as written
-        if self.log.TRITON_timeseries_written:
+        if self.log.TRITON_timeseries_written is not None:
             self.log.TRITON_timeseries_written.set(True)
 
         if self._should_clear_raw_for_model(resolved_clear_raw, "tritonswmm"):
             self._clear_raw_outputs("tritonswmm")
         return
 
+    @_deferred_log_writes
     def _export_TRITON_only_outputs(
         self,
         *,
@@ -783,9 +1279,22 @@ class TRITONSWMM_sim_post_processing:
             "output_triton_only_timeseries",
         )
 
-        if self._already_written(fname_out):
+        # A cleared store has had its `.done` flag and its `.chapters` removed with it, so the chapter writer's own
+        # "already carries its unified completion flag" return no longer protects it: re-entering the writer would
+        # rebuild a store from whatever raw files survived the per-chapter clear and publish it truncated. The
+        # cleared record, read first, is what keeps a resume out of the writer.
+        if self._consolidated_timeseries_cleared("triton") or self._already_written(fname_out):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
+            # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass -- the only pass an
+            # already-latched scenario ever takes again -- a set placed lower is
+            # unreachable. `is not None`, never bare truthiness: LogField defines no
+            # __bool__, and this reconciliation's whole job is the None -> True transition a
+            # value-based __bool__ would silently block.
+            if self.log.TRITON_timeseries_written is not None:
+                self.log.TRITON_timeseries_written.set(True)
             if self._should_clear_raw_for_model(resolved_clear_raw, "triton"):
                 self._clear_raw_outputs("triton")
             return
@@ -796,47 +1305,33 @@ class TRITONSWMM_sim_post_processing:
             raise FileNotFoundError("out_triton path is None. Ensure TRITON-only model is enabled in system config.")
         fldr_out_triton = out_triton / raw_out_type
 
-        if not fldr_out_triton.exists() or not any(fldr_out_triton.iterdir()):
-            if self._already_written(fname_out):
-                if verbose:
-                    print(
-                        f"Raw TRITON-only outputs not found, but {fname_out.name} exists. Skipping reprocessing.",
-                        flush=True,
-                    )
-                if self._should_clear_raw_for_model(resolved_clear_raw, "triton"):
-                    self._clear_raw_outputs("triton")
-                return
-            raise FileNotFoundError(
-                "No TRITON outputs found to process for TRITON-only model. "
-                f"Expected files in: {fldr_out_triton} " + f" (raw type: {raw_out_type}). "
-                "Ensure the TRITON-only simulation completed and wrote outputs."
-            )
-        reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
+        reporting_interval = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         rds_dem = self._system.processed_dem_rds
 
         start_time = time.time()
 
         # Get output files
-        df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
-        if df_outputs.empty:
-            raise FileNotFoundError(
-                "No TRITON outputs found to process for TRITON-only model. "
-                f"Expected files in: {fldr_out_triton}. "
-                "Ensure the TRITON-only simulation completed and wrote outputs."
-            )
-
-        self._streaming_chunked_zarr_write(
-            df_outputs, rds_dem, fname_out,
-            model_type="triton", raw_out_type=raw_out_type,
-            comp_level=comp_level, verbose=verbose,
+        df_outputs = triton_raw_frame_or_raise(
+            fldr_out_triton, reporting_interval, model_label="the TRITON-only model", fname_out=fname_out
         )
 
-        # Consolidate metadata
-        if verbose:
-            print(f"[Chunked Processing] Consolidating zarr metadata", flush=True)
-        import zarr
+        self._streaming_chunked_zarr_write(
+            df_outputs,
+            rds_dem,
+            fname_out,
+            model_type="triton",
+            raw_out_type=raw_out_type,
+            comp_level=comp_level,
+            verbose=verbose,
+            override_clear_raw=override_clear_raw,
+        )
 
-        zarr.consolidate_metadata(fname_out)
+        # Consolidated metadata belongs to a zarr STORE. Under nc the writer published a
+        # NetCDF file at fname_out, and zarr.consolidate_metadata would raise on it.
+        if self._analysis.cfg_analysis.target_processed_output_type == "zarr":
+            if verbose:
+                print("[Chunked Processing] Consolidating zarr metadata", flush=True)
+            consolidate_zarr_store(fname_out)
 
         if verbose:
             print(f"[Chunked Processing] Complete: {fname_out.name}", flush=True)
@@ -845,7 +1340,7 @@ class TRITONSWMM_sim_post_processing:
         self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 
         # Mark timeseries as written
-        if self.log.TRITON_timeseries_written:
+        if self.log.TRITON_timeseries_written is not None:
             self.log.TRITON_timeseries_written.set(True)
 
         if self._should_clear_raw_for_model(resolved_clear_raw, "triton"):
@@ -882,6 +1377,7 @@ class TRITONSWMM_sim_post_processing:
                 comp_level=comp_level,
             )
 
+    @_deferred_log_writes
     def _export_SWMM_outputs(
         self,
         model: Literal["swmm", "tritonswmm"],
@@ -903,13 +1399,15 @@ class TRITONSWMM_sim_post_processing:
             )
 
             f_inp = self.scen_paths.swmm_hydraulics_inp
-            swmm_timeseries_result_file = self.scen_paths.swmm_hydraulics_rpt
-            if swmm_timeseries_result_file is None:
+            if self.scen_paths.swmm_hydraulics_rpt is None:
                 raise FileNotFoundError(
                     "Cannot find SWMM output file from TRITON-SWMM coupled run in "
                     f"{self.scen_paths.swmm_hydraulics_rpt}. "
                     "Ensure the TRITON-SWMM simulation completed successfully."
                 )
+            # The coupled series are read from the binary output the solver writes beside the report (same stem,
+            # `.out`); the report supplies the summary tables only. Refused HERE, before any store is written.
+            swmm_timeseries_result_file = require_coupled_swmm_binary_output(self.scen_paths.swmm_hydraulics_rpt)
         else:  # model == "swmm" (standalone SWMM)
             f_out_nodes = self._validate_path(
                 self.scen_paths.output_swmm_only_node_time_series,
@@ -925,8 +1423,18 @@ class TRITONSWMM_sim_post_processing:
 
         nodes_already_written = self._swmm_node_outputs_processed(model)
         links_already_written = self._swmm_link_outputs_processed(model)
+        # The standalone SWMM model also stores its six system series (flood and water-balance quantities, D19). The
+        # coupled model writes no such store, so for it the system arm counts as written.
+        f_out_system = (
+            self._validate_path(
+                self.scen_paths.output_swmm_only_system_time_series, "output_swmm_only_system_time_series"
+            )
+            if model == "swmm"
+            else None
+        )
+        system_already_written = model != "swmm" or self._swmm_system_outputs_processed()
 
-        if nodes_already_written and links_already_written:
+        if nodes_already_written and links_already_written and system_already_written:
             if verbose:
                 print(f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting.")
             if self._should_clear_raw_for_model(resolved_clear_raw, model):
@@ -936,7 +1444,18 @@ class TRITONSWMM_sim_post_processing:
         ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(
             f_inp,
             swmm_timeseries_result_file,
+            family=model,
         )
+        if model == "tritonswmm" and "pollutant" in ds_nodes.dims:
+            # Identical text for every event, so it survives consolidation's drop_conflicts rule.
+            ds_nodes.attrs["swmm_quality_limitation"] = SWMM_QUALITY_LIMITATION
+            ds_links.attrs["swmm_quality_limitation"] = SWMM_QUALITY_LIMITATION
+            # The same withholding the summaries get: these stores carry S2, S3, S5, S8, S9 (nodes) and
+            # S6 (links) as SWMM printed them, and the timeseries consolidation publishes them.
+            ds_nodes = self._apply_quality_stats_rule(ds_nodes, model)
+            ds_links = self._apply_quality_stats_rule(ds_links, model)
+        if model == "tritonswmm" and not nodes_already_written:
+            ds_nodes = self._attach_coupling_outputs(ds_nodes, f_inp)
         node_mode = "tritonswmm_swmm_node" if model == "tritonswmm" else "swmm_only_node"
         link_mode = "tritonswmm_swmm_link" if model == "tritonswmm" else "swmm_only_link"
         # WRITE NODES
@@ -945,7 +1464,7 @@ class TRITONSWMM_sim_post_processing:
                 print(f"{f_out_nodes.name} already written. Not overwriting.")
         else:
             elapsed_s = time.time() - start_time
-            self._write_output(ds_nodes, f_out_nodes, comp_level, verbose, mode=node_mode)  # type: ignore
+            self._write_output(ds_nodes, f_out_nodes, comp_level, verbose, mode=node_mode)
             self.log.add_sim_processing_entry(f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True)
         # WRITE LINKS
         if links_already_written:
@@ -953,7 +1472,7 @@ class TRITONSWMM_sim_post_processing:
                 print(f"{f_out_links.name} already written. Not overwriting.")
         else:
             elapsed_s = time.time() - start_time
-            self._write_output(ds_links, f_out_links, comp_level, verbose, mode=link_mode)  # type: ignore
+            self._write_output(ds_links, f_out_links, comp_level, verbose, mode=link_mode)
             self.log.add_sim_processing_entry(
                 f_out_links,
                 get_file_size_MiB(f_out_links),
@@ -961,13 +1480,24 @@ class TRITONSWMM_sim_post_processing:
                 True,
                 notes="links are written after nodes so time elapsed reflecs writing both link AND node time series",
             )
+        # WRITE SYSTEM SERIES (standalone SWMM only)
+        if f_out_system is not None:
+            if system_already_written:
+                if verbose:
+                    print(f"{f_out_system.name} already written. Not overwriting.")
+            else:
+                ds_system = return_system_time_series_results_from_outfile(swmm_timeseries_result_file)
+                elapsed_s = time.time() - start_time
+                self._write_output(ds_system, f_out_system, comp_level, verbose, mode="swmm_only_system")
+                self.log.add_sim_processing_entry(f_out_system, get_file_size_MiB(f_out_system), elapsed_s, True)
+                del ds_system
         # Mark timeseries as written (set both node and link flags)
-        if self.log.SWMM_node_timeseries_written:
+        if self.log.SWMM_node_timeseries_written is not None:
             self.log.SWMM_node_timeseries_written.set(True)
-        if self.log.SWMM_link_timeseries_written:
+        if self.log.SWMM_link_timeseries_written is not None:
             self.log.SWMM_link_timeseries_written.set(True)
 
-        # Phase 1.3: Explicit garbage collection after large dataset operations
+        # Explicit garbage collection after large dataset operations
         del ds_nodes, ds_links
         gc.collect()
 
@@ -979,24 +1509,28 @@ class TRITONSWMM_sim_post_processing:
     def _resolve_producing_stamp() -> tuple[str, str]:
         """Resolve the ``(producing_git_sha, producing_semver)`` stamp for the running toolkit.
 
-        sha: the toolkit git sha via the provenance layer (``strict=False`` ->
-        ``"unknown"`` when the working tree is dirty / the checkout sha cannot be
-        resolved), the SAME source that feeds the render-bundle ``toolkit_git_sha``.
-        semver: ``importlib.metadata.version("hhemt")``, falling back to
-        ``"0+unknown"`` for an uninstalled/egg-less tree (the version_migration
-        ``state._toolkit_version`` precedent). Called once per write; both values
+        sha: the toolkit git sha via the provenance layer (``running_identity().sha[:12]``,
+        or ``"unknown"`` when ``running_identity()`` refuses, as for a wheel install or a
+        checkout git cannot read; a dirty checkout still resolves to its COMMITTED sha),
+        the SAME source that feeds the render-bundle ``toolkit_git_sha``.
+        semver: ``provenance._describe_version()``, a PEP-440 version derived from
+        ``git describe`` (``{tag}+{N}.g{sha}``); without git it composes the pin with
+        the identity sha, returns the bare pin for a wheel install, and returns
+        ``"0+unknown"`` when the installed version cannot be read. Called once per write; both values
         are process-stable for a given checkout, so re-producing at the same
         checkout yields byte-identical stamps.
         """
         from hhemt.provenance import _toolkit_git_sha
 
         producing_sha = _toolkit_git_sha()
-        try:
-            from importlib.metadata import version
+        # Not `importlib.metadata.version("hhemt")`, which returns the STATIC pyproject
+        # pin "0.1.0" that commits do not update, so it cannot tell two builds apart.
+        # `_describe_version` derives {tag}+{N}.g{sha} from `git describe`, which does,
+        # and is recomputable from an archived sha alone. It never raises; without git
+        # it falls back as its own docstring states (the bare pin on a wheel install).
+        from hhemt.provenance import _describe_version
 
-            producing_version = version("hhemt")
-        except Exception:
-            producing_version = "0+unknown"
+        producing_version = _describe_version()
         return producing_sha, producing_version
 
     def _write_output(
@@ -1007,14 +1541,12 @@ class TRITONSWMM_sim_post_processing:
         verbose: bool,
         mode: str,
     ):
-        from hhemt.cf_conventions import apply_cf_attributes
-
         processed_out_type = self._analysis.cfg_analysis.target_processed_output_type
 
         if isinstance(ds, xr.Dataset):
             apply_cf_attributes(ds, mode)
 
-        # ADR-15 Phase 1: bake the producing git-sha + semver into the FLAT
+        # Bake the producing git-sha + semver into the FLAT
         # per-scenario summary as per-event_iloc COORDINATES. They MUST land here
         # (capture time), NOT post-concat like event_id, so a later reprocess that
         # does not re-run this scenario reads its OLD stamp and yields the divergent
@@ -1030,8 +1562,14 @@ class TRITONSWMM_sim_post_processing:
 
         ds.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=self._current_model_type, astype="str")
         ds.attrs["output_creation_date"] = current_datetime_string()
-        paths_attr = paths_to_strings(self._analysis._dict_of_all_sim_files(self._scenario.event_iloc))
-        config_attr = paths_to_strings(
+        # noqa below: these two are the surviving PRODUCERS of a disabled provenance-
+        # stamping feature. Every consumer is commented out immediately after this block
+        # and each commented line REFERENCES these names, so deleting the producers would
+        # make that block un-restorable. Retained deliberately rather than removed.
+        paths_attr = paths_to_strings(  # noqa: F841
+            self._analysis._dict_of_all_sim_files(self._scenario.event_iloc)
+        )
+        config_attr = paths_to_strings(  # noqa: F841
             {
                 "system": self._system.cfg_system.model_dump(),
                 "analysis": self._analysis.cfg_analysis.model_dump(),
@@ -1057,12 +1595,29 @@ class TRITONSWMM_sim_post_processing:
 
         return
 
+    def _summary_usable(self, f_out) -> bool:
+        """Gates 2+3 of the exit gate, applied at ENTRY: path present AND store OPENABLE.
+
+        A zarr store is a DIRECTORY, so ``Path.exists()`` is True for an empty one and for
+        a mid-stream-crashed write; only opening the store discriminates. Mirrors
+        ``process_timeseries_runner``'s reclaim gate (parts 2 and 3 of 3). Called ONLY on
+        the never-reclaimed SUMMARY classes; the reclaimable timeseries classes keep the
+        log-only gate, because their absence is the normal post-reclaim state.
+        """
+        try:
+            if f_out is None or not Path(f_out).exists():
+                return False
+            self._open(f_out).load()
+            return True
+        except Exception:  # noqa: BLE001 -- any failure to open disqualifies the skip
+            return False
+
     def _already_written(self, f_out) -> bool:
         """Checks the per-model log to determine whether the file was
         previously written successfully.
 
         This gate is the runner-subprocess-level idempotency primitive. It
-        serves three roles in the post-Phase-4 architecture:
+        serves three roles:
 
         - Crash recovery: a worker that dies between writing the zarr and
           the success-flag-touch leaves no log entry; the next runner
@@ -1074,8 +1629,7 @@ class TRITONSWMM_sim_post_processing:
           targeted scenarios BEFORE Snakemake re-plans the DAG, so this
           gate naturally returns False for force-rerun targets.
 
-        Per cleanup-rerun-delete-redesign Phase 4 + B-mechanism. The gate
-        is NOT user-toggleable — the retired rule-shell overwrite
+        The gate is NOT user-toggleable — the retired rule-shell overwrite
         toggle (legacy ``--overwrite-outputs-if-already-created`` flag)
         has been replaced end-to-end by the force-rerun architecture.
         """
@@ -1088,20 +1642,27 @@ class TRITONSWMM_sim_post_processing:
 
     @property
     def TRITON_outputs_processed(self) -> bool:
-        """Check if TRITON outputs processed for current model log."""
-        if self.log.TRITON_timeseries_written:
+        """Check if TRITON outputs processed for current model log.
+
+        A gridded series store deleted after its slice was read back from its family's ``triton/timeseries`` branch
+        counts as processed, for the coupled model and the TRITON-only model alike (the log read is the model's
+        own): the deletion is the consolidation's doing, not a missing output.
+        """
+        if self._consolidated_timeseries_cleared("triton"):
+            return True
+        if self.log.TRITON_timeseries_written is not None:
             return bool(self.log.TRITON_timeseries_written.get())
         return False
 
     @property
     def raw_TRITON_outputs_cleared(self) -> bool:
-        if self.log.raw_TRITON_outputs_cleared:
+        if self.log.raw_TRITON_outputs_cleared is not None:
             return bool(self.log.raw_TRITON_outputs_cleared.get())
         return False
 
     @property
     def raw_SWMM_outputs_cleared(self) -> bool:
-        if self.log.raw_SWMM_outputs_cleared:
+        if self.log.raw_SWMM_outputs_cleared is not None:
             return bool(self.log.raw_SWMM_outputs_cleared.get())
         return False
 
@@ -1117,31 +1678,60 @@ class TRITONSWMM_sim_post_processing:
         link_ok = self.log.SWMM_link_timeseries_written and bool(self.log.SWMM_link_timeseries_written.get())
         return node_ok and link_ok
 
+    def _consolidated_timeseries_cleared(
+        self, kind: Literal["node", "link", "triton", "system", "performance"]
+    ) -> bool:
+        """Whether this scenario's ``kind`` time-series store was deleted after its slice was read back.
+
+        True only on the model log's own record (``consolidated_{kind}_timeseries_cleared``), written by the
+        consolidation after the read-back passed. A store that is merely absent reads False. The log is the one
+        of the model this object processes, so the record is read for the coupled, the SWMM-only and the
+        TRITON-only family alike. ``performance`` is the per-rank performance series of either TRITON model.
+        """
+        field = getattr(self.log, f"consolidated_{kind}_timeseries_cleared", None)
+        return bool(field is not None and field.get())
+
     def _swmm_link_outputs_processed(self, model: Literal["swmm", "tritonswmm"]) -> bool:
+        if self._consolidated_timeseries_cleared("link"):
+            # Cleared on purpose, after its slice was verified in the `timeseries` branch of analysis_datatree.zarr:
+            # processed, never re-derived. Read for every family: the log is the model's own.
+            return True
         if model == "tritonswmm":
             swmm_links = self._already_written(self.scen_paths.output_tritonswmm_link_time_series)
         else:
             swmm_links = self._already_written(self.scen_paths.output_swmm_only_link_time_series)
         # With model-specific logs, just set the single field
-        if self.log.SWMM_link_timeseries_written:
+        if self.log.SWMM_link_timeseries_written is not None:
             self.log.SWMM_link_timeseries_written.set(swmm_links)
         return swmm_links
 
+    def _swmm_system_outputs_processed(self) -> bool:
+        """Whether the standalone SWMM model's system series store is written, or was cleared after consolidation.
+
+        A store deleted after its slice was read back from ``swmm_only/system/timeseries`` counts as processed, as the
+        node and link stores do; the log read is the standalone model's own.
+        """
+        if self._consolidated_timeseries_cleared("system"):
+            return True
+        return self._already_written(self.scen_paths.output_swmm_only_system_time_series)
+
     def _swmm_node_outputs_processed(self, model: Literal["swmm", "tritonswmm"]) -> bool:
+        if self._consolidated_timeseries_cleared("node"):
+            return True
         if model == "tritonswmm":
             swmm_nodes = self._already_written(self.scen_paths.output_tritonswmm_node_time_series)
         else:
             swmm_nodes = self._already_written(self.scen_paths.output_swmm_only_node_time_series)
         # With model-specific logs, just set the single field
-        if self.log.SWMM_node_timeseries_written:
+        if self.log.SWMM_node_timeseries_written is not None:
             self.log.SWMM_node_timeseries_written.set(swmm_nodes)
         return swmm_nodes
 
+    @_deferred_log_writes
     def _clear_raw_outputs(self, model_type: Literal["tritonswmm", "triton", "swmm"]) -> None:
         """Delete raw model outputs for the named model type.
 
-        Per cleanup-rerun-delete-redesign Phase 3 + the user-corrected
-        semantics:
+        Semantics:
 
         - For ``"tritonswmm"`` or ``"triton"``: under ``out_tritonswmm/`` or
           ``out_triton/``, delete every subdirectory whose name is in
@@ -1151,17 +1741,16 @@ class TRITONSWMM_sim_post_processing:
           not in the allowlist — is preserved. The coupled-SWMM
           ``hydraulics.rpt`` (at ``out_tritonswmm/swmm/hydraulics.rpt``)
           therefore survives because its parent ``swmm/`` is not in the
-          allowlist; no explicit preserve carve-out is required. The
-          phase-doc spec described the .rpt as a "top-level *.rpt", which
-          is incorrect — the path is one level deeper.
+          allowlist; no explicit preserve carve-out is required. It is one
+          level below ``out_tritonswmm/``, not a top-level file.
         - For ``"swmm"``: delete ``self.scen_paths.swmm_full_out_file`` (the
           standalone-SWMM binary ``.out`` file). The standalone-SWMM ``.rpt``
           is preserved automatically — no enumeration of ``out_swmm/`` is
           performed.
 
-        The ``clear raw triton outputs deferred until last allocation``
-        stipulation governs WHEN this helper may fire — callers MUST gate the
-        invocation so it only fires after the final allocation completes.
+        WHEN it may fire: callers MUST gate the invocation so it only fires after
+        the final allocation completes, because an earlier call deletes inputs a
+        later allocation's processing still needs (see Raises).
 
         Raises:
             RuntimeError: when invoked while the owning analysis is still
@@ -1169,11 +1758,10 @@ class TRITONSWMM_sim_post_processing:
                 is True). Deleting raw outputs before the final allocation strips
                 the pre-resume ``performance{N}.txt`` checkpoints that the V0008
                 ``_aggregate_perf_tseries`` aggregator concatenates, silently
-                corrupting cumulative-wallclock metrics. Defense-in-depth backstop
-                for the ``clear raw triton outputs deferred until last allocation``
-                stipulation.
+                corrupting cumulative-wallclock metrics. A defense-in-depth backstop
+                for the caller-side gating above.
         """
-        # Defense-in-depth runtime guard (resume-retry-resilience P3): refuse a
+        # Defense-in-depth runtime guard: refuse a
         # raw-output delete while the analysis is mid-multi-allocation. The field
         # is unset (None) on legacy logs and on single-allocation runs -> coalesce
         # to not-in-progress, so the guard fires ONLY when an active multi-allocation
@@ -1185,12 +1773,11 @@ class TRITONSWMM_sim_post_processing:
                 "analysis is mid-multi-allocation (multi_allocation_in_progress=True). "
                 "This is forbidden because removing pre-resume performance{N}.txt "
                 "checkpoints would corrupt the V0008 per-checkpoint wallclock "
-                "aggregation. See library/docs/stipulations/hhemt/clear raw triton "
-                "outputs deferred until last allocation.md. Clearing is only safe "
+                "aggregation. Clearing is only safe "
                 "after the final-allocation consolidation succeeds and clears the flag."
             )
 
-        from hhemt.du_sentinels import restamp_parent_sentinels
+        from hhemt.du_sentinels import delete_and_account
 
         _OUT_DIR_BY_MODEL = {
             "tritonswmm": self.scen_paths.out_tritonswmm,
@@ -1200,12 +1787,23 @@ class TRITONSWMM_sim_post_processing:
             out_dir = _OUT_DIR_BY_MODEL[model_type]
             if out_dir is None or not out_dir.exists():
                 return
-            for child in out_dir.iterdir():
-                if child.is_dir() and child.name in _CLEAR_RAW_DELETE_SUBDIRS:
-                    fast_rmtree(child, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
+            _targets = [c for c in out_dir.iterdir() if c.is_dir() and c.name in _CLEAR_RAW_DELETE_SUBDIRS]
+            delete_and_account(_targets, scope_dir=self.scen_paths.sim_folder, scope="scenario")
+            # Reclaim the coupled-SWMM exchange-replay side-file: it is dead weight
+            # once the FINAL allocation is done (this method is guarded against a
+            # mid-multi-allocation invocation above) and grows unbounded in sim length if
+            # retained. tritonswmm only — a triton-only tree has no swmm/ subtree.
+            # While the exchange flux is configured, the side-file is the only source of
+            # `coupling_exchange_flow` and is read when the SWMM node store is written; `write_timeseries_outputs`
+            # runs the TRITON export (which calls this method) BEFORE the SWMM export, so reclaiming here would
+            # delete it unread. The call that ends `_export_SWMM_outputs` reclaims it once the store exists.
+            if model_type == "tritonswmm" and not (
+                self._coupling_exchange_flow_on() and not self._swmm_node_outputs_processed("tritonswmm")
+            ):
+                self._reclaim_exchange_replay_sidefiles()
             # Per-model log bookkeeping: model logs carry both
             # raw_TRITON_outputs_cleared and raw_SWMM_outputs_cleared (for the
-            # coupled tritonswmm case). Phase 3 semantics: the cleanup has
+            # coupled tritonswmm case). The cleanup has
             # "completed per design" once it returns, even when the design
             # intentionally preserves swmm/ + hydraulics.rpt under tritonswmm.
             if getattr(self.log, "raw_TRITON_outputs_cleared", None):
@@ -1215,12 +1813,132 @@ class TRITONSWMM_sim_post_processing:
         elif model_type == "swmm":
             out_file = self.scen_paths.swmm_full_out_file
             if out_file is not None and Path(out_file).exists():
-                Path(out_file).unlink()
-                restamp_parent_sentinels(Path(out_file), analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN B
+                delete_and_account([Path(out_file)], scope_dir=self.scen_paths.sim_folder, scope="scenario")
             if getattr(self.log, "raw_SWMM_outputs_cleared", None):
                 self.log.raw_SWMM_outputs_cleared.set(True)
         else:
             raise ValueError(f"Unknown model_type for _clear_raw_outputs: {model_type!r}")
+
+    def _coupling_exchange_flow_on(self) -> bool:
+        """Whether ``toggle_coupling_exchange_flow`` is on for this analysis.
+
+        Read through ``getattr`` with a False fallback, deliberately: ``_clear_raw_outputs`` is driven
+        directly by unit tests against a minimal ``_analysis`` stub that carries no ``cfg_analysis``, and a
+        strict read would fail every one of them on a toggle they never set. A real analysis always has the
+        field (it is a declared pydantic field, default False), so the fallback is reachable only from such
+        a stub. Not established: that no other caller passes an ``_analysis`` without ``cfg_analysis``.
+        """
+        cfg = getattr(self._analysis, "cfg_analysis", None)
+        return bool(getattr(cfg, "toggle_coupling_exchange_flow", False))
+
+    def _attach_coupling_outputs(self, ds_nodes: xr.Dataset, f_inp: Path) -> xr.Dataset:
+        """Add the coupling-node flag, and when configured the exchange flux, to the coupled node dataset.
+
+        ``is_coupling_node`` (int8 on ``node_id``) is always added: 1 where the node is a line of the
+        scenario's ``coupling_nodes.txt``, else 0. When ``toggle_coupling_exchange_flow`` is on, the
+        solver's exchange side-file is decoded and added as ``coupling_exchange_flow`` on
+        ``(date_time, node_id)`` (the mean over each report interval, NaN at uncoupled nodes) plus the
+        eight per-node statistics of ``coupling_exchange.STATISTIC_NAMES`` on ``node_id`` (NaN at
+        uncoupled nodes).
+
+        Raises
+        ------
+        ProcessingError
+            If a listed coupling node is missing from the SWMM output, or the flux is requested and the
+            side-file is absent. A store is never written with the flux variable silently missing:
+            ``_clear_raw_outputs`` reclaims the side-file once the node store is written, so a missing
+            file means the reclaim ran too early or the run did not couple.
+        """
+        from hhemt.coupling_exchange import exchange_statistics, read_exchange_sidefile, to_reporting_intervals
+        from hhemt.scenario import coupling_nodes_file_for
+        from hhemt.swmm_output_parser import RPT_DATETIME_FORMAT, read_rpt_starting_date
+
+        nodes_file = coupling_nodes_file_for(f_inp)
+        names = [line.strip() for line in nodes_file.read_text().splitlines() if line.strip()]
+        node_ids = [str(n) for n in ds_nodes["node_id"].values]
+        missing = sorted(set(names) - set(node_ids))
+        if missing:
+            raise ProcessingError(
+                "attach coupling outputs",
+                nodes_file,
+                f"{len(missing)} listed coupling node(s) are absent from the SWMM node output: {missing[:5]}",
+            )
+        position = {n: i for i, n in enumerate(node_ids)}
+        slots = np.array([position[n] for n in names], dtype=int)
+        flag = np.zeros(len(node_ids), dtype="int8")
+        flag[slots] = 1
+        ds_nodes["is_coupling_node"] = ("node_id", flag)
+        if not self._coupling_exchange_flow_on():
+            return ds_nodes
+
+        sidefiles = sorted(self.scen_paths.out_tritonswmm.glob("**/swmm/*_exchange_replay.bin"))
+        if len(sidefiles) != 1:
+            raise ProcessingError(
+                "attach coupling exchange flow",
+                self.scen_paths.out_tritonswmm,
+                f"found {len(sidefiles)} exchange side-file(s) where exactly one is required; "
+                "_reclaim_exchange_replay_sidefiles deletes it, and it must not run before the node store is written",
+            )
+        rpt_file = self.scen_paths.swmm_hydraulics_rpt
+        starting = read_rpt_starting_date(rpt_file)
+        if starting is None:
+            raise ProcessingError("attach coupling exchange flow", rpt_file, "the report has no Starting Date line")
+        start = pd.to_datetime(starting, format=RPT_DATETIME_FORMAT)
+        report_times_s = (pd.to_datetime(ds_nodes["date_time"].values) - start).total_seconds().to_numpy()
+        series = read_exchange_sidefile(sidefiles[0], nodes_file)
+        intervals = to_reporting_intervals(series, report_times_s)
+        flow = np.full((len(report_times_s), len(node_ids)), np.nan)
+        flow[:, slots] = intervals.exchange_mean_cms
+        ds_nodes["coupling_exchange_flow"] = xr.DataArray(
+            flow,
+            dims=("date_time", "node_id"),
+            coords={"date_time": ds_nodes["date_time"], "node_id": ds_nodes["node_id"]},
+            attrs={"cell_methods": intervals.cell_methods},
+        )
+        for name, values in exchange_statistics(series).as_dict().items():
+            column = np.full(len(node_ids), np.nan)
+            column[slots] = values
+            ds_nodes[name] = ("node_id", column)
+        return ds_nodes
+
+    def _reclaim_exchange_replay_sidefiles(self) -> None:
+        """Reclaim TRITON's coupled-SWMM exchange-replay side-file(s) (bounded retention).
+
+        ``out_tritonswmm/**/swmm/*_exchange_replay.bin`` is the persisted exchange history
+        that pinned TRITON builds replay to resume a coupled sim. Its size grows with
+        sim length —
+
+            bytes = header + n_triton_steps × sizeof(value_t) × (1 + global_num_of_swmm_links)
+
+        with header = 8 bytes for the V1 magic 0x53574D4D (two int32: magic, num_nodes; written by
+        3a832f7d) and 12 bytes for the V2 magic 0x53574D32 (a third int32, the value width; written
+        by faba2232), and the log call is per-TRITON-step, ``triton.h:2408`` at 3a832f7d and
+        ``triton.h:2628`` at faba2232, NOT per print interval. At the double-precision default
+        (``sizeof(value_t)``=8) a fine-grid 100-node 1e6-step
+        coupled sim writes ~808 MB PER SIM. Retained across every member in an ensemble
+        and counted against the analysis-scope DU sentinels, that is unbounded permanent
+        disk. The side-file is dead weight once the sim can no longer resume: after the FINAL
+        allocation ``checkpoint_id`` never regresses, and a force-rerun restarts at
+        ``checkpoint_id=0``, which calls ``open_exchange_log_truncate()`` and rewrites the
+        file from scratch — so unlinking here never breaks a subsequent resume or force-rerun.
+        Called ONLY from the ``tritonswmm`` branch of ``_clear_raw_outputs``, which is already
+        gated (a) on the ``multi_allocation_in_progress`` guard (final allocation complete)
+        and (b) on the ``clear_raw`` config electing tritonswmm cleanup, and, while
+        ``toggle_coupling_exchange_flow`` is on, (c) on the SWMM node store having been written, because
+        ``_attach_coupling_outputs`` decodes this file. Size-mutating, so it
+        routes through ``du_sentinels.delete_and_account`` (the unified deletion tool), which
+        adjusts this scenario's own sentinel once — NOT ``# EXEMPT-DU``.
+        """
+        from hhemt.du_sentinels import delete_and_account
+
+        out_dir = self.scen_paths.out_tritonswmm
+        if out_dir is None or not out_dir.exists():
+            return
+        delete_and_account(
+            list(out_dir.glob("**/swmm/*_exchange_replay.bin")),
+            scope_dir=self.scen_paths.sim_folder,
+            scope="scenario",
+        )
 
     @staticmethod
     def _should_clear_raw_for_model(
@@ -1348,11 +2066,103 @@ class TRITONSWMM_sim_post_processing:
                     "model_type parameter is required for SWMM summary generation. Must be 'tritonswmm' or 'swmm'."
                 )
 
-        # Phase 1.3: Explicit garbage collection after summary generation
+        # A per-scenario summary store was just (re)written, so the record that the model's summary stores were cleared
+        # no longer describes the stems whose store is back: the next consolidation reads the new store, rewrites that
+        # event's slice from it and clears it again. Only those stems leave the record. A partial call (one half of the
+        # model) keeps the record naming the stems it did not rewrite, because their slices are still the only copy
+        # and a record cleared whole would leave them unreadable and the scenario unconsolidatable.
+        record_field = getattr(self.log, "consolidated_summaries_cleared", None)
+        record = None if record_field is None else parse_summary_clearing_record(record_field.get())
+        if record is not None:
+            rewritten = {
+                stem
+                for stem in record["stems"]
+                if (path := self._analysis.process._stem_path(scen, stem)) is not None and path.exists()
+            }
+            remaining = {stem: groups for stem, groups in record["stems"].items() if stem not in rewritten}
+            if not remaining:
+                record_field.clear()
+            elif rewritten:
+                record_field.set({"state": record["state"], "stems": remaining})
+
+        # The summaries are written; the time-series variables the keep-lists do not select can leave disk now.
+        self._prune_timeseries_stores(model_type, which)
+
+        # Explicit garbage collection after summary generation
         gc.collect()
 
         return
 
+    # (model_type, kind) -> the ScenarioPaths attribute of that kind's per-scenario time-series store.
+    _TIMESERIES_STORE_ATTR: dict[tuple[str, str], str] = {
+        ("tritonswmm", "swmm_node"): "output_tritonswmm_node_time_series",
+        ("tritonswmm", "swmm_link"): "output_tritonswmm_link_time_series",
+        ("tritonswmm", "triton_gridded"): "output_tritonswmm_triton_timeseries",
+        ("swmm", "swmm_node"): "output_swmm_only_node_time_series",
+        ("swmm", "swmm_link"): "output_swmm_only_link_time_series",
+        ("triton", "triton_gridded"): "output_triton_only_timeseries",
+    }
+    _FAMILY_OF_MODEL = {"tritonswmm": "tritonswmm", "swmm": "swmm_only", "triton": "triton_only"}
+
+    def _prune_timeseries_stores(self, model_type: str, which: str) -> None:
+        """Delete the unkept time-series variables from this scenario's stores, once their summaries exist.
+
+        Applies the three ``timeseries_keep_*`` fields of the analysis config. Gridded stores are pruned when the
+        TRITON summary was just written (``which`` TRITON or both), SWMM node and link stores when the SWMM
+        summaries were (SWMM or both). Applies whether or not ``toggle_consolidate_timeseries`` is on. A store that
+        is absent (reclaimed, or cleared after consolidation) is skipped, and a store already pruned is a no-op.
+        """
+        from hhemt.timeseries_selection import keep_setting, prune_timeseries_store, resolve_keep
+
+        cfg = getattr(getattr(self, "_analysis", None), "cfg_analysis", None)
+        if cfg is None:
+            return
+        kinds = []
+        if which in ("TRITON", "both") and model_type in ("triton", "tritonswmm"):
+            kinds.append("triton_gridded")
+        if which in ("SWMM", "both") and model_type in ("tritonswmm", "swmm"):
+            kinds.extend(["swmm_node", "swmm_link"])
+        family = self._FAMILY_OF_MODEL[model_type]
+        for kind in kinds:
+            value = keep_setting(cfg, kind)
+            if (
+                value is None
+                or (isinstance(value, str) and not value.strip())
+                or (not isinstance(value, str) and not value)
+            ):
+                continue  # blank keeps everything
+            path = getattr(self.scen_paths, self._TIMESERIES_STORE_ATTR[(model_type, kind)])
+            if path is None or not Path(path).exists():
+                continue
+            prune_timeseries_store(
+                Path(path),
+                kind,
+                family,
+                resolve_keep(kind, family, value),
+                # Read with a default: a scenario-less stand-in has no folder, and a real scenario always does.
+                scope_dir=getattr(self.scen_paths, "sim_folder", None),
+            )
+
+    @staticmethod
+    def _refuse_summary_rebuild_from_pruned_store(path: Path) -> None:
+        """Refuse to (re)build a summary from a store whose variables were pruned.
+
+        A summary built from fewer series returns fewer statistics with no error (measured: ``depth`` and
+        ``inflow_flow`` alone give four summary variables where all four series give eight), so a rebuild after
+        the prune would lose the removed series' statistics silently.
+        """
+        from hhemt.timeseries_selection import pruned_variables
+
+        pruned = pruned_variables(Path(path))
+        if pruned:
+            raise ProcessingError(
+                "build a summary from a pruned time-series store",
+                Path(path),
+                f"the store was pruned of {list(pruned)} (timeseries_keep_* fields); a summary built from it would "
+                "silently lose those series' statistics. Re-run processing from the raw outputs to rebuild it.",
+            )
+
+    @_deferred_log_writes
     def _export_TRITON_summary(
         self,
         model_type: Literal["triton", "tritonswmm"] = "tritonswmm",
@@ -1378,19 +2188,56 @@ class TRITONSWMM_sim_post_processing:
             summary_path = self.scen_paths.output_tritonswmm_triton_summary
             path_name = "output_tritonswmm_triton_summary"
 
-        # Validate that input timeseries exists
+        fname_out = self._validate_path(summary_path, path_name)
+
+        if self._already_written(fname_out) and self._summary_usable(fname_out):
+            if verbose:
+                print(f"{fname_out.name} already written. Not overwriting.")
+            # PLACEMENT CONSTRAINT: this reconciliation MUST stay ABOVE the branch
+            # terminator below it. Every other `.set()` for this marker sits BELOW an
+            # `_already_written` branch, so on the skip pass a set placed lower is
+            # unreachable. The skip pass is taken only by a scenario latched in the log
+            # whose summary is also usable (the `_summary_usable` conjunct on the `if`
+            # above); one latched in the log with the summary absent reads False above and
+            # takes the BUILD pass, where this marker is set truthfully. `is not None`,
+            # never bare truthiness: LogField defines no __bool__, and this
+            # reconciliation's whole job is the None -> True transition a value-based
+            # __bool__ would silently block.
+            if self.log.TRITON_summary_written is not None:
+                self.log.TRITON_summary_written.set(True)
+            return
+
+        # Validate that input timeseries exists.
+        #
+        # ORDER IS LOAD-BEARING: this check MUST sit BELOW the _already_written
+        # early-return, not above it. The timeseries is a precondition of BUILDING the
+        # summary, not of calling this function. With the check above the early-return,
+        # any re-invocation for a scenario whose timeseries was reclaimed after
+        # processing succeeded raises here even though the summary is present, correct
+        # and recorded -- turning a routine Snakemake re-fire (INPUT/CODE trigger,
+        # reprocess(start_with="process"), a --rerun-triggers mtime fire) into a hard
+        # workflow failure whose message asserts the run is broken when it is not.
+        # write_timeseries_outputs does not recreate the timeseries on a re-fire (its own
+        # _already_written gate reads the LOG), so the re-fire path always
+        # arrives here with the timeseries absent.
+        if self._consolidated_timeseries_cleared("triton"):
+            if timeseries_path is None or not timeseries_path.exists():
+                family = "tritonswmm" if model_type == "tritonswmm" else "triton_only"
+                raise ProcessingError(
+                    "create the TRITON summary",
+                    timeseries_path,
+                    "the scenario's gridded TRITON series store was deleted after consolidation "
+                    "(toggle_clear_scenario_timeseries_after_consolidation); the series is in the "
+                    f"`{family}/triton/timeseries` branch of analysis_datatree.zarr and a summary cannot be "
+                    "rebuilt from it here",
+                )
         if timeseries_path is None or not timeseries_path.exists():
             raise FileNotFoundError(
                 f"Cannot create {model_type} TRITON summary: input timeseries not found at {timeseries_path}. "
                 f"Ensure timeseries processing completed successfully for {model_type} model."
             )
 
-        fname_out = self._validate_path(summary_path, path_name)
-
-        if self._already_written(fname_out):
-            if verbose:
-                print(f"{fname_out.name} already written. Not overwriting.")
-            return
+        self._refuse_summary_rebuild_from_pruned_store(timeseries_path)
 
         start_time = time.time()
 
@@ -1409,6 +2256,7 @@ class TRITONSWMM_sim_post_processing:
             self._scenario.event_iloc,
             target_dem_res,
             chunksize_mb=chunksize_mb,
+            flood_velocity_min_depth_m=self._analysis.cfg_analysis.flood_velocity_min_depth_m,
             verbose=verbose,
         )
 
@@ -1418,10 +2266,80 @@ class TRITONSWMM_sim_post_processing:
         elapsed_s = time.time() - start_time
         self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
         # With model-specific logs, just set the single field
-        if self.log.TRITON_summary_written:
+        if self.log.TRITON_summary_written is not None:
             self.log.TRITON_summary_written.set(True)
         return
 
+    def _quality_stats_status(self, model_type: Literal["swmm", "tritonswmm"]) -> str:
+        """Why this event's water-quality statistics are or are not trustworthy, as the status text.
+
+        A coupled run that resumed from a SNAPSHOT at a build whose snapshot excludes SWMM's node and
+        link water-quality state restarts that state, so its pollutant statistics are withheld; a
+        resume by exact replay re-derives it and the statistics stay valid, and so does a snapshot
+        resume at a build listed in ``SWMM_QUALITY_SNAPSHOT_SHAS``, whose snapshot carries it (the
+        status then records the route: ``QUALITY_STATS_SNAPSHOT``). The route is read from the
+        per-event resume-event ledger, whose rows record the solver's own marker for each resume
+        (``path``: ``snapshot`` or ``replay``). For a tree whose ledger is absent the fallback is:
+        the sim resumed at least once and its TRITON cfg carries no ``swmm_snapshot_disable=1``
+        line, which means the snapshot route was available; at a carrying build that inferred
+        route yields ``QUALITY_STATS_COMPUTED``, because the statistics are valid by either route.
+        The build is read from the system log by `scenario.coupled_build_sha`, the same function
+        and mode rule the preparation-time default uses, so the two cannot disagree on one run.
+        """
+        from hhemt import resume_events
+        from hhemt.run_simulation import model_logfile_for
+        from hhemt.scenario import coupled_build_sha, snapshot_carries_quality_state
+
+        if model_type != "tritonswmm":
+            return QUALITY_STATS_COMPUTED
+        carried = snapshot_carries_quality_state(
+            coupled_build_sha(
+                getattr(getattr(self, "_system", None), "log", None),
+                execution_environment=getattr(
+                    getattr(getattr(self, "_analysis", None), "cfg_analysis", None), "execution_environment", "native"
+                ),
+            )
+        )
+        ledger = resume_events.ledger_path_for(model_logfile_for(self._analysis, self._scenario.event_iloc, model_type))
+        rows = resume_events.read_resume_events(ledger)
+        paths = [row.get("path") for row in rows]
+        if "snapshot" in paths:
+            return QUALITY_STATS_SNAPSHOT if carried else QUALITY_STATS_WITHHELD
+        if "replay" in paths:
+            return QUALITY_STATS_REPLAY
+        if not rows:
+            n_resumes = self.log.n_resumes.get() if self.log.n_resumes is not None else None
+            if n_resumes is not None and int(n_resumes) >= 1:
+                cfg = Path(self.scen_paths.triton_swmm_cfg)
+                carries_disable = cfg.exists() and "\nswmm_snapshot_disable=1" in f"\n{cfg.read_text()}"
+                if not carries_disable:
+                    return QUALITY_STATS_COMPUTED if carried else QUALITY_STATS_WITHHELD
+        return QUALITY_STATS_COMPUTED
+
+    def _apply_quality_stats_rule(self, ds, model_type):
+        """Record each event's water-quality status and withhold the statistics a snapshot resume spoils.
+
+        Applies only to a coupled dataset that carries pollutant results: a summary, or a per-scenario
+        node or link store. The status goes in a COORDINATE (``pollutant_stats_status``), not an
+        attribute, because consolidation drops an attribute whose text differs across events. On a
+        summary it is dimensioned on ``event_iloc``; a per-scenario store has no such dimension, so
+        there it is a scalar that the timeseries consolidation's concat along ``event_iloc`` turns
+        into a per-event vector. For a withheld event the statistics
+        in ``_QUALITY_STATS_VARIABLES`` and the quality-continuity and runoff-quality tables become
+        NaN; the concentration time series and the outfall volume (a hydraulic quantity) are kept.
+        """
+        if model_type != "tritonswmm" or "pollutant" not in ds.dims:
+            return ds
+        status = self._quality_stats_status(model_type)
+        if status == QUALITY_STATS_WITHHELD:
+            for name in list(ds.data_vars):
+                if name in _QUALITY_STATS_VARIABLES or name.startswith(("qual_routing_", "runoff_qual_")):
+                    ds[name] = xr.full_like(ds[name], np.nan, dtype=float)
+        if "event_iloc" in ds.dims:
+            return ds.assign_coords(pollutant_stats_status=("event_iloc", [status]))
+        return ds.assign_coords(pollutant_stats_status=status)
+
+    @_deferred_log_writes
     def _export_SWMM_summaries(
         self,
         model_type: Literal["swmm", "tritonswmm"] = "tritonswmm",
@@ -1455,7 +2373,61 @@ class TRITONSWMM_sim_post_processing:
             node_path_name = "output_tritonswmm_node_summary"
             link_path_name = "output_tritonswmm_link_summary"
 
-        # Validate that input timeseries exist
+        f_out_nodes = self._validate_path(node_summary_path, node_path_name)
+        f_out_links = self._validate_path(link_summary_path, link_path_name)
+
+        # The usability conjunct goes IN THE BINDINGS, never on the combined return below:
+        # the return form cannot see the partial state (nodes present, links absent) and
+        # would leave the reconciliation latch firing on an absent artifact.
+        nodes_already_written = self._already_written(f_out_nodes) and self._summary_usable(f_out_nodes)
+        links_already_written = self._already_written(f_out_links) and self._summary_usable(f_out_links)
+
+        # PLACEMENT CONSTRAINT: reconcile PER ARM and ABOVE every branch below.
+        # The combined early return and the two `if not ..._already_written:` blocks
+        # all sit lower, so a set placed in any of them is unreachable on the skip pass.
+        # An arm takes the skip pass only when it is latched in the log AND its artifact
+        # is usable (the `_summary_usable` conjunct in the bindings above); an arm
+        # latched in the log whose artifact is absent reads False and takes the BUILD
+        # pass, where the marker is set truthfully (nodes/links build blocks below).
+        # PER ARM rather than on the combined condition, because the partial state
+        # (nodes written, links not) skips the nodes block without reaching the
+        # combined return. `is not None`, never bare truthiness: LogField defines no
+        # __bool__, and this reconciliation's whole job is the None -> True transition a value-based
+        # __bool__ would silently block.
+        if nodes_already_written and self.log.SWMM_node_summary_written is not None:
+            self.log.SWMM_node_summary_written.set(True)
+        if links_already_written and self.log.SWMM_link_summary_written is not None:
+            self.log.SWMM_link_summary_written.set(True)
+
+        if nodes_already_written and links_already_written:
+            if verbose:
+                print(f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting.")
+            return
+
+        # Validate that input timeseries exist.
+        # Order is load-bearing -- see the matching comment in _export_TRITON_summary.
+        # Both checks (node and link) MUST sit below the already-written early-return, or
+        # a re-fire on a post-processing-reclaimed scenario raises on an input the
+        # function no longer needs.
+        system_timeseries_path = self.scen_paths.output_swmm_only_system_time_series if model_type == "swmm" else None
+        if (
+            self._consolidated_timeseries_cleared("node")
+            or self._consolidated_timeseries_cleared("link")
+            or (system_timeseries_path is not None and self._consolidated_timeseries_cleared("system"))
+        ):
+            if not (
+                node_timeseries_path.exists()
+                and link_timeseries_path.exists()
+                and (system_timeseries_path is None or system_timeseries_path.exists())
+            ):
+                raise ProcessingError(
+                    "create the SWMM summaries",
+                    node_timeseries_path,
+                    "the scenario's time-series stores were deleted after consolidation "
+                    "(toggle_clear_scenario_timeseries_after_consolidation); the series is in the `timeseries` branch "
+                    "of analysis_datatree.zarr "
+                    "and a summary cannot be rebuilt from it here",
+                )
         if node_timeseries_path is None or not node_timeseries_path.exists():
             raise FileNotFoundError(
                 f"Cannot create {model_type} SWMM node summary: input timeseries not found at {node_timeseries_path}. "
@@ -1467,16 +2439,14 @@ class TRITONSWMM_sim_post_processing:
                 f"Ensure timeseries processing completed successfully for {model_type} model."
             )
 
-        f_out_nodes = self._validate_path(node_summary_path, node_path_name)
-        f_out_links = self._validate_path(link_summary_path, link_path_name)
+        if system_timeseries_path is not None and not nodes_already_written and not system_timeseries_path.exists():
+            raise FileNotFoundError(
+                f"Cannot create {model_type} SWMM system summary: input timeseries not found at "
+                f"{system_timeseries_path}. Ensure timeseries processing completed successfully for {model_type} model."
+            )
 
-        nodes_already_written = self._already_written(f_out_nodes)
-        links_already_written = self._already_written(f_out_links)
-
-        if nodes_already_written and links_already_written:
-            if verbose:
-                print(f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting.")
-            return
+        for _store in (node_timeseries_path, link_timeseries_path):
+            self._refuse_summary_rebuild_from_pruned_store(_store)
 
         # Load full timeseries from the appropriate files
         ds_nodes_full = self._open(node_timeseries_path)
@@ -1487,17 +2457,29 @@ class TRITONSWMM_sim_post_processing:
         # Summarize nodes
         if not nodes_already_written:
             ds_nodes_summary = summarize_swmm_simulation_results(ds_nodes_full, self._scenario.event_iloc)
+            ds_nodes_summary = self._apply_quality_stats_rule(ds_nodes_summary, model_type)
+            if system_timeseries_path is not None:
+                # The twelve `_max` and `_last` reductions of the six system series ride in the node summary store, so
+                # the stem is read back and cleared once. The consolidation hands them to `swmm_only/system/summary`
+                # and keeps them out of `swmm_only/swmm_node/summary` (D19, the source rule).
+                ds_system_summary = summarize_swmm_simulation_results(
+                    self._open(system_timeseries_path), self._scenario.event_iloc
+                )
+                ds_nodes_summary = ds_nodes_summary.assign(
+                    {name: ds_system_summary[name] for name in ds_system_summary}
+                )
 
             elapsed_s = time.time() - start_time
             self._write_output(ds_nodes_summary, f_out_nodes, comp_level, verbose, mode=node_mode)
             self.log.add_sim_processing_entry(f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True)
             # With model-specific logs, just set the single field
-            if self.log.SWMM_node_summary_written:
+            if self.log.SWMM_node_summary_written is not None:
                 self.log.SWMM_node_summary_written.set(True)
 
         # Summarize links
         if not links_already_written:
             ds_links_summary = summarize_swmm_simulation_results(ds_links_full, self._scenario.event_iloc)
+            ds_links_summary = self._apply_quality_stats_rule(ds_links_summary, model_type)
 
             elapsed_s = time.time() - start_time
             self._write_output(ds_links_summary, f_out_links, comp_level, verbose, mode=link_mode)
@@ -1509,81 +2491,448 @@ class TRITONSWMM_sim_post_processing:
                 notes="links summary written after nodes summary",
             )
             # With model-specific logs, just set the single field
-            if self.log.SWMM_link_summary_written:
+            if self.log.SWMM_link_summary_written is not None:
                 self.log.SWMM_link_summary_written.set(True)
 
         return
 
-    def _clear_full_timeseries_outputs(
+    # Paired complement of summary_paths._SUMMARY_STEMS_BY_MODEL. ScenarioPaths declares
+    # eight *_summary attrs and eight matching *_timeseries / *_time_series siblings --
+    # one per (model, artifact family) -- and this HAND-MAINTAINED table lists the
+    # timeseries half, which is the reclaim drop set. It is not derived from the
+    # canonical table: a ninth summary family added there alone is simply not reclaimed
+    # until it is added here too (the safe direction -- the artifact is retained). The
+    # guards in tests/test_synth_remove_after_processing.py compare this table with the
+    # guard's own copy, not with the canonical table.
+    _TIMESERIES_ATTRS_BY_MODEL: dict[str, tuple[str, ...]] = {
+        "tritonswmm": (
+            "output_tritonswmm_triton_timeseries",
+            "output_tritonswmm_node_time_series",
+            "output_tritonswmm_link_time_series",
+            "output_tritonswmm_performance_timeseries",
+        ),
+        "triton": (
+            "output_triton_only_timeseries",
+            "output_triton_only_performance_timeseries",
+        ),
+        "swmm": (
+            "output_swmm_only_node_time_series",
+            "output_swmm_only_link_time_series",
+        ),
+    }
+
+    @staticmethod
+    def _attr_is_swmm_side(attr: str) -> bool:
+        """True for the SWMM node/link artifacts; False for TRITON gridded + performance."""
+        return ("_node_" in attr) or ("_link_" in attr)
+
+    @staticmethod
+    def _reclaim_classes(policy) -> tuple[str, ...]:
+        """Normalize a RemoveValue to the tuple of artifact classes it elects."""
+        if policy is None or policy == "none":
+            return ()
+        if policy == "all":
+            # "all" is the FULL class set, and that is load-bearing rather than a
+            # convenience: a class omitted here is silently unreachable via the
+            # sentinel while remaining reachable via the list form, which is the
+            # shape in which a new class ships half-wired. Electing "all" therefore
+            # elects hydro_out AND hydrographs together -- see the T1 note on
+            # RemoveValue: that combination removes the re-prep path entirely.
+            return (
+                "timeseries",
+                "raw_swmm_binaries",
+                "coupled_rpt",
+                "hydro_out",
+                "prep_inputs",
+                "hydrographs",
+                "standalone_rpt",
+            )
+        return tuple(policy)
+
+    @staticmethod
+    def _timeseries_drop_names(
+        model_type: Literal["tritonswmm", "triton", "swmm"],
+        *,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+    ) -> tuple[str, ...]:
+        """ScenarioPaths attr names of the per-scenario time-series stores the ``timeseries`` class names.
+
+        This is the NAME set of the class, independent of whether the process runner applies it. It exists
+        separately from ``_reclaim_attrs`` because that method applies D24 (b) and returns nothing for the class
+        under either value of the consolidation toggle, which would make the disjointness guard in
+        tests/test_synth_remove_after_processing.py pass against an empty set. The guard reads this set instead.
+        """
+        cls = TRITONSWMM_sim_post_processing
+        attrs = cls._TIMESERIES_ATTRS_BY_MODEL.get(model_type, ())
+        if which == "TRITON":
+            attrs = tuple(a for a in attrs if not cls._attr_is_swmm_side(a))
+        elif which == "SWMM":
+            attrs = tuple(a for a in attrs if cls._attr_is_swmm_side(a))
+        return attrs
+
+    @staticmethod
+    def _reclaim_attrs(
+        model_type: Literal["tritonswmm", "triton", "swmm"],
+        *,
+        policy,
+        consolidation_on: bool,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+    ) -> tuple[str, ...]:
+        """ScenarioPaths attr names the PROCESS RUNNER's reclaim would remove for this model + policy.
+
+        NAME-level and STATIC on purpose, so the falsifying disjointness guard in
+        tests/test_synth_remove_after_processing.py runs without a fixture. For that reason
+        ``consolidation_on`` is an ARGUMENT and is never read from a scenario or a config here: the caller
+        resolves ``cfg_analysis.toggle_consolidate_timeseries`` and passes it.
+
+        D24 (b): the ``timeseries`` class is not applied by the process runner under either value.
+        With consolidation on it is DISCHARGED by the consolidation's verified clearing, which deletes the
+        per-scenario series only after the read-back, so a runner that deleted them first would leave the
+        consolidation nothing to copy. With consolidation off the per-scenario series ARE the processed
+        output and exist nowhere else, so the class is a no-op with a logged reason. The set returned is
+        therefore empty for the ``timeseries`` class either way, and the argument is what a caller states
+        about which of the two arms it is on; the name set itself is ``_timeseries_drop_names``.
+        Resolving these names to concrete Paths needs self.scen_paths and is _reclaim_paths' job.
+        """
+        cls = TRITONSWMM_sim_post_processing
+        if "timeseries" not in cls._reclaim_classes(policy):
+            return ()
+        # Both arms of D24 (b) apply nothing; `consolidation_on` selects only which reason the caller logs.
+        _ = consolidation_on
+        return ()
+
+    def _reclaim_paths(
         self,
+        model_type: Literal["tritonswmm", "triton", "swmm"],
+        *,
+        policy,
+        consolidation_on: bool,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+    ) -> list[tuple[str, Path]]:
+        """Resolve the drop set to ``(artifact_class, path)`` pairs for this scenario.
+
+        The class travels WITH the path rather than being re-derived from the filename at
+        deletion time, so the per-class log record cannot drift from what was actually
+        removed. Classes: ``timeseries_triton``, ``timeseries_swmm``, ``raw_swmm_binaries``.
+        """
+        out: list[tuple[str, Path]] = []
+        for attr in self._reclaim_attrs(model_type, policy=policy, consolidation_on=consolidation_on, which=which):
+            p = getattr(self.scen_paths, attr, None)
+            if p is None:
+                continue
+            klass = "timeseries_swmm" if self._attr_is_swmm_side(attr) else "timeseries_triton"
+            out.append((klass, Path(p)))
+        if model_type == "tritonswmm" and "raw_swmm_binaries" in self._reclaim_classes(policy):
+            out_dir = self.scen_paths.out_tritonswmm
+            if out_dir is not None and out_dir.exists():
+                for p in sorted(out_dir.glob("**/swmm/*")):
+                    if p.is_file() and p.suffix in _RECLAIM_COUPLED_SWMM_SUFFIXES:
+                        out.append(("raw_swmm_binaries", p))
+        return out
+
+    @staticmethod
+    def _remove_reclaimed(path: Path, scenario_dir: Path, verbose: bool) -> None:
+        """Delete one reclaimed artifact through the unified deletion tool."""
+        from hhemt.du_sentinels import delete_and_account
+
+        if verbose:
+            print(f"[reclaim] removing {path}", flush=True)
+        delete_and_account([path], scope_dir=scenario_dir, scope="scenario")
+
+    @staticmethod
+    def _capture_landed(path) -> bool:
+        """True iff a capture artifact exists AND OPENS. Both legs, never just one.
+
+        STATICMETHOD, not a closure, and the distinction is the point. As a closure
+        inside the reclaim method this could not be reached without running the
+        function that uses it, so its two negative arms would never be asserted, and a
+        check whose negative arms are never exercised cannot tell "examined and found
+        nothing" from "examined nothing". At class scope it is directly testable.
+
+        Openability, not just existence: a zarr store is a DIRECTORY, so `.exists()`
+        is True for an empty one and there is no meaningful `st_size` to fall back on.
+        A comment in `processing_analysis` records the same reasoning for the analysis tree --
+        "a present-but-corrupt zarr (a write that crashed mid-stream) .exists() as True".
+        """
+        if path is None or not Path(path).exists():
+            return False
+        try:
+            open_store(str(path), kind="zarr").close()
+        except Exception:
+            return False
+        return True
+
+    @staticmethod
+    def _hydrology_capture_consolidated(scen) -> bool:
+        """True iff the scenario's log records its per-node inflow capture as consolidated into the tree.
+
+        The second way the ``hydrographs`` reclaim's capture gate is satisfied. Once the analysis consolidation
+        has read every slice of ``processed/hydrology_inflow_summary.zarr`` back from the ``swmm_node_hydro``
+        groups and cleared the store, the capture is gone and ``_capture_landed`` is False, yet the data the
+        hydrographs would be rebuilt from is in the tree (``pending`` or ``done`` both mean it was read back
+        equal). Without this arm a scenario reaching the reclaim AFTER its clearing would decline forever and keep
+        ``tseries.hyg`` and ``loc.txt`` that the tree can regenerate. The record names the stem it covers, so a
+        record of the report capture alone does not satisfy it.
+        """
+        from hhemt.summary_paths import parse_summary_clearing_record
+
+        field = getattr(scen.log, "consolidated_hydrology_cleared", None)
+        record = parse_summary_clearing_record(None if field is None else field.get())
+        return record is not None and "hydrology_inflow_summary" in record["stems"]
+
+    @staticmethod
+    def _declared_nonzero_subcatchments(inp_path) -> int | None:
+        """Count `[SUBCATCHMENTS]` rows whose authored Area is nonzero, or None if unknown.
+
+        This is the DISCRIMINATOR the capture decision needs, and the nonzero-Area
+        restriction is the whole point rather than a refinement. SWMM's summary emitter
+        loops `j < Nobjects[SUBCATCH]` and does `a = Subcatch[j].area; if (a == 0.0)
+        continue;` -- `a` is the divisor of every depth column, so the skip is a
+        divide-by-zero guard that cannot be configured away. A bare row count therefore
+        over-predicts the summary on any model carrying a zero-area subcatchment, and a
+        legal model would be declined forever.
+
+        The authored token and the runtime member differ by a unit conversion:
+        `subcatch.c` assigns `Subcatch[j].area = x[3] / UCF(LANDAREA)`, where
+        `UCF(LANDAREA)` is a strictly positive finite `const` (`{2.2956e-5, 0.92903e-5}`)
+        with no configuration path to zero. Division by a positive constant preserves the
+        zero/nonzero partition exactly, and because both factors are ~1e-5 the division
+        scales UP, so a small nonzero area cannot underflow to zero. The count is exact.
+
+        `Nobjects[SUBCATCH]` is incremented at one site only, keyed on the
+        `[SUBCATCHMENT` section keyword, so rows and objects are the same population.
+
+        None means UNAVAILABLE, never zero: an unreadable file or a missing section is
+        absence of evidence, and the caller must not read it as "zero declared".
+        """
+        from pathlib import Path as _Path
+
+        try:
+            text = _Path(inp_path).read_text(encoding="latin-1")
+        except OSError:
+            return None
+        seen_section = False
+        n = 0
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("["):
+                if seen_section:
+                    break
+                seen_section = stripped.upper().startswith("[SUBCATCHMENT")
+                continue
+            if not seen_section or not stripped or stripped.startswith(";"):
+                continue
+            tok = stripped.split()
+            if len(tok) < 4:
+                return None
+            try:
+                area = float(tok[3])
+            except ValueError:
+                return None
+            if area != 0.0:
+                n += 1
+        if not seen_section:
+            return None
+        return n
+
+    @staticmethod
+    def _truncate_coupled_rpt(rpt_path: Path, verbose: bool) -> bool:
+        """Truncate a finalized coupled rpt to header+summaries+trailer. Returns True iff written.
+
+        STREAMING by construction: the Norfolk rpt is ~318 MB / ~5M lines, so this reads
+        line-by-line and never `read_text()`s the file. Peak memory is the HEAD, which is
+        bounded by node/link count (measured ~544 KB on the reference model).
+
+        Two refusals, both fail-closed, and neither is theoretical:
+        - no trailer  -> the rpt is NOT finalized, so `rpt_is_complete` is already False and
+          truncating would destroy the evidence of an incomplete run.
+        - no body start -> either already truncated (the idempotent no-op) or a structure
+          this was never measured against; in both cases doing nothing is correct.
+        """
+        head: list[str] = []
+        trailer_lines: list[str] = []
+        trailer_started = False
+        n_dropped = 0
+        body_started = False
+        with open(rpt_path, errors="replace") as fh:
+            for line in fh:
+                if not body_started:
+                    if _RPT_BODY_START_SENTINEL in line:
+                        body_started = True
+                    else:
+                        head.append(line)
+                        continue
+                n_dropped += 1
+                if _RPT_TRAILER_SENTINEL in line:
+                    trailer_started = True
+                if trailer_started:
+                    # BLOCK, not LINE. MEASURED on two real rpts (2026-08-17):
+                    # test_data/swmm_refactoring_reference/hydraulics.rpt and a real
+                    # Norfolk swmm/hydro.rpt both end
+                    #     Analysis begun on:  ...
+                    #     Analysis ended on:  ...
+                    #     Total elapsed time: HH:MM:SS
+                    # so a single-line trailer keyed on "Analysis ended on" DROPS
+                    # "Total elapsed time". That line is not decorative:
+                    # swmm_output_parser.retrieve_swmm_performance_stats_from_rpt
+                    # RAISES ValueError when it is absent (there is no graceful
+                    # branch), and parse_total_elapsed returns None, which silently
+                    # empties the SWMM-only series in sensitivity_benchmarking.
+                    # Capturing from the sentinel to EOF is bounded by construction
+                    # (SWMM writes at most three lines after it) and stays idempotent,
+                    # because a second pass finds no body start and returns early.
+                    trailer_lines.append(line)
+                    n_dropped -= 1
+        if not body_started:
+            if verbose:
+                print(f"[reclaim] {rpt_path}: no time-series body found -- already truncated, skipping.", flush=True)
+            return False
+        if not trailer_lines:
+            print(
+                f"[reclaim] REFUSING to truncate {rpt_path}: no {_RPT_TRAILER_SENTINEL!r} line. "
+                "The coupled SWMM report is not finalized, so this run is not complete and the "
+                "untruncated file is the evidence of that.",
+                flush=True,
+            )
+            return False
+        tmp = rpt_path.with_suffix(rpt_path.suffix + ".hhemt-tmp")
+        with open(tmp, "w") as out:
+            out.writelines(head)
+            out.write(_RPT_TRUNCATION_MARKER.format(n_dropped=n_dropped))
+            out.writelines(trailer_lines)
+        os.replace(tmp, rpt_path)
+        # An in-place rewrite (os.replace of a smaller file) is a WRITE; the scenario's
+        # DU sentinel is re-derived at consolidate_scenario, so it is not adjusted here.
+        if verbose:
+            print(f"[reclaim] truncated {rpt_path}: dropped {n_dropped} time-series line(s).", flush=True)
+        return True
+
+    @_deferred_log_writes
+    def remove_after_processing(
+        self,
+        *,
+        model_type: Literal["tritonswmm", "triton", "swmm"],
         which: Literal["TRITON", "SWMM", "both"] = "both",
         verbose: bool = False,
-    ):
+    ) -> None:
+        """Reclaim redundant per-scenario artifacts once the summaries are PROVABLY intact.
+
+        Repair-and-rename of the former ``_clear_full_timeseries_outputs``, which was
+        emitted by no Snakefile and therefore unreachable in production. Four defects are
+        fixed here and each is load-bearing:
+
+        1. WHERE IT FIRES. The process runner calls this only after its completion gate
+           has checked, for this model, that the log records the summaries as written,
+           that the summary files exist on disk, and that they open -- so all three legs
+           of the proof have already passed when it runs -- and BEFORE it writes the
+           d_process completion flag, so a reclaim that raises leaves no flag and the
+           scenario re-runs from raws still on disk. The old call ran before those
+           checks, so it cleared on the strength of the log alone.
+        2. WHAT IT GATES ON. The old body re-read ``self.log.*_summary_written``; this one
+           does not re-derive the proof at all -- the caller owns it, and a second, weaker
+           copy of a gate is how the two drift apart.
+        3. COVERAGE. The old body touched only the three ``output_tritonswmm_*`` paths, so a
+           triton-only or swmm-only analysis reclaimed nothing while printing a message
+           about a TRITON summary it does not have. The pairing table above covers all
+           three model types.
+        4. THE PERFORMANCE TIMESERIES. Absent from the old body; present in the pairing.
+
+        The policy is read from ``cfg_analysis.remove_after_processing``, which the process
+        runner loads from the PERSISTED config (the runner is a subprocess, so a
+        driver-side in-memory mutation never reaches here). It NEVER re-derives intent from
+        ``clear_raw``; the two are orthogonal axes.
         """
-        Clear full timeseries files after summaries have been successfully created.
+        policy = getattr(self._analysis.cfg_analysis, "remove_after_processing", "none")
+        classes = self._reclaim_classes(policy)
+        if not classes:
+            return
 
-        Parameters
-        ----------
-        which : Literal["TRITON", "SWMM", "both"]
-            Which full timeseries to clear
-        verbose : bool
-            If True, print progress messages
-        """
-        from hhemt.du_sentinels import restamp_parent_sentinels
+        # D24 (b): the `timeseries` class is never applied here. Resolved from the persisted config (the
+        # runner is a subprocess) and passed down as an argument, so the static helpers never read it.
+        consolidation_on = bool(getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False))
+        _clearing = getattr(self._analysis.cfg_analysis, "toggle_clear_scenario_timeseries_after_consolidation", None)
+        clearing_on = consolidation_on if _clearing is None else bool(_clearing)
+        if "timeseries" in classes:
+            if consolidation_on and not clearing_on:
+                print(
+                    f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' is elected "
+                    "but toggle_clear_scenario_timeseries_after_consolidation is off -- declining that class. The "
+                    "per-scenario series stay in the per-scenario store because clearing is off; the consolidated "
+                    "tree holds a copy.",
+                    flush=True,
+                )
+            elif consolidation_on:
+                print(
+                    f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' discharged "
+                    "by consolidation -- the per-scenario series are deleted by the consolidation's verified "
+                    "clearing after the read-back, not by this step.",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' is elected "
+                    "but toggle_consolidate_timeseries is off -- declining that class. With no consolidated "
+                    "copy the per-scenario series are the processed output and exist nowhere else.",
+                    flush=True,
+                )
 
-        if (which == "both") or (which == "TRITON"):
-            if self.log.TRITON_summary_written and self.log.TRITON_summary_written.get():
-                triton_ts_path = self.scen_paths.output_tritonswmm_triton_timeseries
-                if triton_ts_path is not None and triton_ts_path.exists():
-                    if verbose:
-                        print(f"Clearing TRITON full timeseries for scenario {self._scenario.event_iloc}")
-                    if triton_ts_path.is_dir():
-                        fast_rmtree(triton_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
-                    else:
-                        triton_ts_path.unlink()
-                        restamp_parent_sentinels(triton_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN B
-                    if self.log.full_TRITON_timeseries_cleared:
-                        self.log.full_TRITON_timeseries_cleared.set(True)
-            elif verbose:
-                print("TRITON summary not created yet, not clearing full timeseries")
+        # The raw_swmm_binaries class no-ops when clear_raw == "none", and the decline is
+        # LOGGED rather than silent. Its only reader, eda.raw_byte_identity.compare_swmm_raw,
+        # needs out_tritonswmm/swmm/hydraulics.out ALONGSIDE the raw H/QX/QY/MH set that
+        # clear_raw governs; on a preserve-raws run those .out files are still live evidence.
+        # A policy that silently declines is indistinguishable from one that ran, which is the
+        # whole failure this feature's disclosure half exists to prevent.
+        if "raw_swmm_binaries" in classes and self._resolve_clear_raw(None) == "none":
+            print(
+                f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: "
+                "'raw_swmm_binaries' is elected but clear_raw == 'none' -- declining that "
+                "class. eda.raw_byte_identity.compare_swmm_raw reads "
+                "out_tritonswmm/swmm/*.out together with the raw H/QX/QY/MH set that "
+                "clear_raw preserves, so those files are still live evidence on this run.",
+                flush=True,
+            )
+            classes = tuple(c for c in classes if c != "raw_swmm_binaries")
+            if not classes:
+                return
 
-        if (which == "both") or (which == "SWMM"):
-            node_summary_ok = self.log.SWMM_node_summary_written and self.log.SWMM_node_summary_written.get()
-            link_summary_ok = self.log.SWMM_link_summary_written and self.log.SWMM_link_summary_written.get()
-            if node_summary_ok and link_summary_ok:
-                # Clear node timeseries
-                node_ts_path = self.scen_paths.output_tritonswmm_node_time_series
-                if node_ts_path is not None and node_ts_path.exists():
-                    if verbose:
-                        print(f"Clearing SWMM node full timeseries for scenario {self._scenario.event_iloc}")
-                    if node_ts_path.is_dir():
-                        fast_rmtree(node_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
-                    else:
-                        node_ts_path.unlink()
-                        restamp_parent_sentinels(node_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN B
+        # coupled_rpt is TRUNCATION, not deletion, so it does not join the _reclaim_paths
+        # drop set -- that set is deleted wholesale and the rpt must survive as the
+        # completion signal. It is also tritonswmm-only: no other model writes
+        # out_tritonswmm/swmm/hydraulics.rpt.
+        truncated_rpt = False
+        if "coupled_rpt" in classes and model_type == "tritonswmm":
+            rpt = self.scen_paths.swmm_hydraulics_rpt
+            if rpt is not None and rpt.exists():
+                truncated_rpt = self._truncate_coupled_rpt(rpt, verbose)
 
-                # Clear link timeseries
-                link_ts_path = self.scen_paths.output_tritonswmm_link_time_series
-                if link_ts_path is not None and link_ts_path.exists():
-                    if verbose:
-                        print(f"Clearing SWMM link full timeseries for scenario {self._scenario.event_iloc}")
-                    if link_ts_path.is_dir():
-                        fast_rmtree(link_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
-                    else:
-                        link_ts_path.unlink()
-                        restamp_parent_sentinels(link_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN B
+        effective_policy = list(classes)
+        removed: set[str] = set()
+        for klass, path in self._reclaim_paths(
+            model_type, policy=effective_policy, consolidation_on=consolidation_on, which=which
+        ):
+            if not path.exists():
+                continue
+            self._remove_reclaimed(path, self.scen_paths.sim_folder, verbose)
+            removed.add(klass)
 
-                if self.log.full_SWMM_timeseries_cleared:
-                    self.log.full_SWMM_timeseries_cleared.set(True)
-            elif verbose:
-                print("SWMM summaries not created yet, not clearing full timeseries")
-
+        # Per-scenario disclosure ground truth, written by the ACTOR. analysis_validation's
+        # CheckResult docstring (its `instrument` field) forbids deriving a provenance claim from
+        # cfg_analysis; the symmetric error here would be labelling a scenario "reclaimed"
+        # from the config value rather than from what this call actually removed.
+        if "timeseries_triton" in removed and getattr(self.log, "full_TRITON_timeseries_cleared", None):
+            self.log.full_TRITON_timeseries_cleared.set(True)
+        if "timeseries_swmm" in removed and getattr(self.log, "full_SWMM_timeseries_cleared", None):
+            self.log.full_SWMM_timeseries_cleared.set(True)
+        if "raw_swmm_binaries" in removed and getattr(self.log, "raw_SWMM_binaries_reclaimed", None):
+            self.log.raw_SWMM_binaries_reclaimed.set(True)
+        if truncated_rpt and getattr(self.log, "coupled_rpt_truncated", None):
+            self.log.coupled_rpt_truncated.set(True)
         return
 
     @property
     def TRITON_summary_processed(self) -> bool:
         """Check if TRITON summary has been created for current model log."""
-        if self.log.TRITON_summary_written:
+        if self.log.TRITON_summary_written is not None:
             return bool(self.log.TRITON_summary_written.get())
         return False
 
@@ -1595,48 +2944,456 @@ class TRITONSWMM_sim_post_processing:
         return node_ok and link_ok
 
 
-def _aggregate_perf_tseries(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> xr.Dataset:
+def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> dict[str, bool]:
+    """Reclaim the four SCENARIO-SCOPED artifact classes for one scenario.
+
+    WHY THESE FOUR AND NOT THE OTHER THREE. The selector is the per-class SCOPE
+    property the source documents, not the `model_type == "tritonswmm"` fence that
+    used to implement it. Five of the seven classes carried that fence and only four
+    are scenario-scoped, so the fence was never the property -- it was a guard against
+    three enabled models racing to unlink one file. `hydro_out`, `prep_inputs`,
+    `hydrographs` and `standalone_rpt` are each documented model-INDEPENDENT (a
+    scenario-prep or per-model-report artifact, not a per-model output) and move here.
+    `coupled_rpt` stays per-model because no model but tritonswmm writes
+    out_tritonswmm/swmm/hydraulics.rpt; `raw_swmm_binaries` stays because it reads
+    out_tritonswmm/ and is gated on the per-model `clear_raw` axis; `timeseries` is
+    per-model by construction.
+
+    WHY NO `_unrun` GUARD HERE. Both callers supply a stronger precondition.
+    `rule consolidate_scenario` fans in on `d_process_{m}` for every enabled model;
+    both that flag and the `c_run_{m}` it depends on are SUCCESS markers -- each runner
+    refuses to write its flag and returns 1 on failure -- so arrival from it entails
+    that every enabled model both RAN and PROCESSED.
+    `consolidate_workflow.reclaim_unconsolidated_scenarios` reaches events that have no
+    per-scenario consolidate flag, and calls this only after
+    `summary_paths.scenario_summaries_present` confirms every enabled model's summaries
+    are present (its SKIP 2). That is strictly stronger than the retired runtime guard, which
+    tested run-completion only and inherited its soundness from a predicate that was a
+    fixed point until 2026-08-31. A second, derivative gate behind a structural one is
+    a second thing to keep true, not defence in depth.
+
+    NOTE FOR THE NEXT READER, so it is not re-derived: constructing the
+    `TRITONSWMM_scenario` this takes runs `_create_directories()`, which mkdirs `dats/`
+    and `extbc/` -- two of the three paths `prep_inputs` removes. Nothing reads their
+    existence as an inputs-present predicate (checked), so the consequence is bounded
+    to empty directories reappearing after the reclaim empties them.
+
+    Returns a per-class outcome map so the CALLER records what was actually removed
+    rather than what the config elected -- the same actor-writes-the-record rule the
+    per-model disclosure block follows.
+    """
+    scenario_dir = Path(scen.scen_paths.sim_folder)
+    _P = TRITONSWMM_sim_post_processing
+    reclaimed_hydro_out = False
+    removed_prep_inputs = False
+    removed_hydrographs = False
+    removed_standalone_rpt = False
+
+    # hydro.out is the SWMM hydrology output that write_hydrograph_files reads to build
+    # TRITON's inflow hydrographs. It is safe to reclaim ONLY because that function has an
+    # already-written gate: without the gate, every subsequent re-prep would
+    # re-open this file and fail. Do NOT enable this class in a tree whose
+    # swmm_runoff_modeling.py predates that gate.
+    if "hydro_out" in classes:
+        _hydro_out = Path(str(scen.scen_paths.swmm_hydro_inp).replace(".inp", ".out"))
+        if _hydro_out.exists():
+            _P._remove_reclaimed(_hydro_out, scenario_dir, verbose)
+            reclaimed_hydro_out = True
+
+    # T0 -- regenerable by prepare_scenario template-fill, no solver. No capture gate:
+    # nothing is lost that a re-prep cannot rebuild from persistent inputs.
+    if "prep_inputs" in classes:
+        for _p in (
+            scen.scen_paths.dir_weather_datfiles,
+            scen.scen_paths.extbc_tseries.parent,
+            scen.scen_paths.weather_timeseries,
+        ):
+            if _p is not None and Path(_p).exists():
+                _P._remove_reclaimed(Path(_p), scenario_dir, verbose)
+                removed_prep_inputs = True
+
+    # T1 -- CAPTURE-GATED, and the gate is the whole safety property.
+    if "hydrographs" in classes:
+        _cap = Path(scen.scen_paths.sim_folder) / "processed" / "hydrology_inflow_summary.zarr"
+        if _P._capture_landed(_cap) or _P._hydrology_capture_consolidated(scen):
+            for _p in (scen.scen_paths.hyg_timeseries, scen.scen_paths.hyg_locs):
+                if _p is not None and Path(_p).exists():
+                    _P._remove_reclaimed(Path(_p), scenario_dir, verbose)
+                    removed_hydrographs = True
+        elif verbose:
+            print(
+                f"[reclaim] scenario {scen.event_iloc}: 'hydrographs' elected but "
+                f"the capture at {_cap} is absent or unopenable and the log records no consolidation of it -- "
+                "declining. Re-run processing after the capture lands.",
+                flush=True,
+            )
+
+    # T2 -- full.rpt is TRUNCATED (five live consumers read its head or trailer, and one
+    # RAISES on a missing 'Total elapsed time'). hydro.rpt is capture-then-DELETE: the
+    # truncator is a provable no-op on it (no time-series body) and 39% of it is the
+    # Subcatchment Runoff Summary, the only per-subcatchment runoff-volume and
+    # hydrology-continuity record on disk.
+    if "standalone_rpt" in classes:
+        _full_rpt = scen.scen_paths.swmm_full_rpt_file
+        if _full_rpt is not None and Path(_full_rpt).exists():
+            if _P._truncate_coupled_rpt(Path(_full_rpt), verbose):
+                removed_standalone_rpt = True
+        _hydro_rpt = Path(str(scen.scen_paths.swmm_hydro_inp).replace(".inp", ".rpt"))
+        _hydro_cap = Path(scen.scen_paths.sim_folder) / "processed" / "hydrology_rpt_summary.zarr"
+        if _hydro_rpt.exists() and not _P._capture_landed(_hydro_cap):
+            from hhemt.swmm_output_parser import parse_hydrology_rpt_summary
+
+            # The capture is written ONLY when it carries what the model declares. An
+            # empty-but-openable store satisfies _capture_landed, so writing one here
+            # would delete the .rpt on the strength of a capture holding nothing --
+            # `parse_hydrology_rpt_summary` returns exactly that on a section it cannot
+            # recognize, and its empty return is DELIBERATELY legal (a zero-subcatchment
+            # hydrology model), so the parser cannot be the place this is caught.
+            # Omit-rather-than-write-empty is the convention the `hydrographs` capture
+            # already follows (swmm_runoff_modeling: `if not d_node_capture: return`),
+            # which is why _capture_landed needs no change: absence IS the signal.
+            #
+            # The parse is guarded because it RAISES on a report it cannot read, one line
+            # above the decision that would otherwise decline -- measured: a trailer-less
+            # report gives `ValueError: Analysis end line not found in RPT file.`, and a
+            # walltime-killed SWMM leaves precisely that file. Unguarded, a disk-hygiene
+            # step fails rule consolidate_scenario over data whose validity is gated
+            # elsewhere (the c_run flags and model_run_completed, not this parse). An
+            # unreadable report IS the unavailable case, so it routes to the same decline.
+            _ds = None
+            _parse_error = None
+            try:
+                _ds = parse_hydrology_rpt_summary(_hydro_rpt, f_inp=scen.scen_paths.swmm_hydro_inp)
+            except Exception as _exc:  # noqa: BLE001 -- any unreadable report is UNAVAILABLE
+                _parse_error = f"{type(_exc).__name__}: {_exc}"
+            _declared = _P._declared_nonzero_subcatchments(scen.scen_paths.swmm_hydro_inp)
+            _captured = 0 if _ds is None else int(_ds.sizes.get("subcatchment_id", 0))
+            if _ds is not None and _declared is not None and _captured == _declared:
+                _hydro_cap.parent.mkdir(parents=True, exist_ok=True)
+                # Written without the `_write_output` choke point, so the unit of every variable is stamped
+                # here: the store is a stored output like the others and a variable with no unit is a defect.
+                apply_cf_attributes(_ds, "hydrology_rpt_summary")
+                write_zarr(_ds, _hydro_cap, chunks=None, encoding={})
+                # A WRITE; the scenario's DU sentinel is re-derived at consolidate_scenario.
+            elif verbose:
+                # THREE reasons and THREE remedies, built together. Splitting the reason
+                # while appending one remedy to all three is the shape this replaced: on a
+                # count mismatch the report parsed fine, so "re-run processing once the
+                # report parses" is false and re-running reproduces the identical decline
+                # forever; on a missing [SUBCATCHMENTS] section the report is not
+                # implicated at all; and an unparseable report needs the SIM re-run, not
+                # processing. A remedy that is wrong for two of three cases is worse than
+                # none, because it is actionable and the action does not work.
+                if _parse_error is not None:
+                    _why = f"the report did not parse ({_parse_error})"
+                    _fix = (
+                        "the simulation most likely did not finish -- check its log for a "
+                        "walltime kill and re-run the SIMULATION; re-running processing "
+                        "alone cannot repair an incomplete report"
+                    )
+                elif _declared is None:
+                    _why = "the hydrology .inp declares no readable [SUBCATCHMENTS] section"
+                    _fix = (
+                        "the report is not implicated -- check scenario preparation, since "
+                        "the .inp is not the file this reclaim expects"
+                    )
+                else:
+                    _why = f"the capture holds {_captured} subcatchment(s) against {_declared} declared"
+                    _fix = (
+                        "the report parsed completely, so re-run PROCESSING for this "
+                        "scenario; the capture is short, not unreadable"
+                    )
+                print(
+                    f"[reclaim] scenario {scen.event_iloc}: 'standalone_rpt' elected but "
+                    f"{_why} -- declining to capture, so hydro.rpt is kept. {_fix}.",
+                    flush=True,
+                )
+        if _hydro_rpt.exists() and _P._capture_landed(_hydro_cap):
+            _P._remove_reclaimed(_hydro_rpt, scenario_dir, verbose)
+            removed_standalone_rpt = True
+
+    return {
+        "hydro_out": reclaimed_hydro_out,
+        "prep_inputs": removed_prep_inputs,
+        "hydrographs": removed_hydrographs,
+        "standalone_rpt": removed_standalone_rpt,
+    }
+
+
+#: Name of the per-``event_iloc`` COORDINATE carrying the across-ALLOCATIONS
+#: column-set finding. The shape is settled rather than chosen: a per-member
+#: ``attrs`` stamp is DELETED by ``processing_analysis.py``'s
+#: ``combine_attrs="drop_conflicts"`` join precisely when the members disagree --
+#: which is the case being detected -- and a SCALAR coord is wrong under every
+#: available reading of the concat defaults. The dimensioned ``event_iloc`` coord is
+#: the toolkit's own idiom (the per-``event_iloc`` producing-sha coordinates
+#: ``_write_output`` attaches) and is the ONE shape that survives BOTH joins a site-1 record
+#: must cross: the pandas concat here, and the later ``xr.concat`` across members.
+PERF_COLUMN_SET_COORD: str = "perf_column_set_across_allocations"
+
+#: TRANSPORT ONLY, never the record. ``event_iloc`` does not exist inside
+#: ``_aggregate_perf_tseries`` -- it is assigned by the caller at
+#: ``_export_performance_tseries`` -- so a coord written here would be SCALAR by
+#: construction. The aggregator therefore carries its one statement out on the
+#: returned Dataset's ``attrs``, which is safe on exactly that hop because no combine
+#: runs between the aggregator's return and the caller's ``expand_dims``. The caller
+#: POPS it onto the coord, so exactly one carrier reaches disk.
+_PERF_COLUMN_SET_ATTR: str = "_hhemt_perf_column_set_finding"
+
+#: Sentinel written when an artifact predates this guard. NEVER backfilled onto a
+#: historical store: the raw ``performance{N}.txt`` inputs a truthful value would have
+#: to be recomputed from are routinely reclaimed by ``clear_raw``, so a backfill could
+#: only fabricate a verdict. Same ground V0016/V0017 record for their own no-op bodies.
+NAME_SET_UNKNOWN: str = "unknown (produced before the column-set guard shipped)"
+
+
+def diagnose_name_set_heterogeneity(
+    labels: Sequence[str],
+    name_sets: Sequence[object],
+) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
+    """Diagnose column/variable-set heterogeneity across the objects about to be joined.
+
+    Returns ``(union, short)``: ``union`` is every name seen across all objects, sorted;
+    ``short`` maps each label whose object LACKS at least one union member to the sorted
+    names it lacks. A homogeneous population yields an empty ``short``.
+
+    This is the primitive both join sites share, and it is deliberately pure -- it takes
+    name sets rather than frames or Datasets -- so the detection can be exercised without
+    a pipeline. It is immune to what defeats the arithmetic identity check: NAMES survive
+    ``sum`` and ``max``, which reduce over dims rather than over variables, whereas
+    ``SWMM_XFER + SWMM_MPI + SWMM_STEP + SWMM_OTHER == SWMM`` holds only on an emitted
+    PER-RANK row and is destroyed by the slowest-rank reduction (it overshoots on every
+    multi-rank member, so it fires where nothing is wrong and points the wrong way).
+    """
+    sets = [frozenset(ns) for ns in name_sets]  # type: ignore[arg-type]
+    union: frozenset[str] = frozenset().union(*sets) if sets else frozenset()
+    short = {label: tuple(sorted(union - s)) for label, s in zip(labels, sets, strict=True) if union - s}
+    return tuple(sorted(union)), short
+
+
+def format_missing_names(names: Sequence[str], *, max_named: int = 8) -> str:
+    """Render a missing-name list bounded in length.
+
+    The finding is written into a stored coordinate value, so an unbounded enumeration
+    over a 144-checkpoint member would put kilobytes of filenames into every consolidated
+    tree. Bounded, and the overflow is COUNTED rather than dropped silently.
+    """
+    names = list(names)
+    if len(names) <= max_named:
+        return ", ".join(names)
+    return ", ".join(names[:max_named]) + f", +{len(names) - max_named} more"
+
+
+#: Opening of the no-heterogeneity finding. Shared by the PRODUCER below and by
+#: ``column_set_verdict``, deliberately, so the one consumer that has to recognize the
+#: uniform case cannot drift from the one site that writes it. Changing the wording here
+#: changes both at once; changing it in only one of them is not expressible.
+_UNIFORM_FINDING_PREFIX: str = "uniform: "
+
+
+def describe_allocation_column_sets(labels: Sequence[str], column_sets: Sequence[object]) -> str:
+    """The site-1 finding: one statement about this member's own allocation set.
+
+    Says WHAT is missing, WHERE, and WHAT IT COSTS a downstream reader, because the
+    acceptance condition is that the finding reach a reader of the PUBLISHED artifacts --
+    and a reader of a consolidated tree has neither the source nor the runtime log.
+    """
+    union, short = diagnose_name_set_heterogeneity(labels, column_sets)
+    n = len(labels)
+    if not short:
+        return f"{_UNIFORM_FINDING_PREFIX}all {n} performance{{N}}.txt file(s) carry the same {len(union)} column(s)"
+    first_short = next(lbl for lbl in labels if lbl in short)
+    missing_any = sorted({m for ms in short.values() for m in ms})
+    return (
+        f"HETEROGENEOUS across allocations: {len(short)} of {n} performance{{N}}.txt file(s) "
+        f"lack column(s) {format_missing_names(missing_any)} (first: {first_short}). "
+        "Those columns are NaN-filled for the reporting steps the short files cover, so "
+        "every downstream sum over them is SHORT by the omitted steps while Total / "
+        "Simulation / Init remain correct. Most likely this simulation resumed across a "
+        "solver rebuild that changed the emitted timer set."
+    )
+
+
+#: The single value every no-heterogeneity member reduces to on a PANDAS surface. It is a
+#: constant by construction, which is the whole reason it exists -- see ``column_set_verdict``.
+UNIFORM_COLUMN_SET_VERDICT: str = "uniform across allocations"
+
+
+def column_set_verdict(finding: str | None) -> str | None:
+    """Reduce a stored column-set finding to a value that varies ONLY with the outcome.
+
+    WHY THIS EXISTS, because the mapping looks redundant until you know. The stored finding
+    is a SENTENCE, and its uniform form embeds ``len(labels)`` -- and ``labels`` is
+    ``df_labels``, appended once per PARSED ``performance{N}.txt`` CHECKPOINT file, not once
+    per allocation (three branches in that loop ``continue`` before the append: a 0-byte
+    file from a kill, a malformed file from a concurrent-writer interleave, and a
+    non-matching filename). So two members that agree PERFECTLY on their column set carry
+    DIFFERENT stored strings whenever they ran different numbers of reporting steps, or
+    whenever one of them lost a checkpoint. Measured: an identical 3-column set over 1 label
+    versus 2 labels yields "uniform: all 1 ..." and "uniform: all 2 ...".
+
+    That defeats a mechanism keeping this out of a homogeneous analysis's rendered
+    appendix. ``report_renderers/scenario_status_appendix.py`` hid a column whose
+    ``nunique(dropna=False)`` was 1; on the raw strings it is 2, so the column rendered on
+    an analysis with no heterogeneity anywhere, where it carries no information.
+    Mapping through here collapses every uniform member to one constant.
+
+    THE COLLAPSE IS NECESSARY AND IS NOT SUFFICIENT, and this paragraph previously claimed
+    it was sufficient -- that the hide predicate would then do what the appendix needs
+    "without the renderer learning anything about this column". That is FALSE and is
+    retired here rather than deleted, because the reasoning that produced it is the
+    reasoning a future reader will repeat. A cardinality test reads only HOW MANY distinct
+    values a column holds. A one-member analysis whose sole member is uniform must HIDE the
+    column, and a one-member analysis whose sole member is heterogeneous must SHOW it, and
+    both hold exactly one distinct value. No cardinality-only predicate is correct on both,
+    so NO change to what this function returns can make the column hide exactly when no
+    member is heterogeneous, by itself -- remapping
+    the null, ignoring nulls, or collapsing the verdicts differently all change WHICH
+    values appear and none of them changes that count. The whole value-domain family is
+    excluded as a family.
+
+    SO THE RENDERER IS COLUMN-AWARE, BY NECESSITY.
+    ``report_renderers/scenario_status_appendix.py::_keep_column`` reads this column's
+    VALUES: it recognizes ``UNIFORM_COLUMN_SET_VERDICT`` and ``NAME_SET_UNKNOWN`` by name
+    and shows the column only when some member carries neither. The collapse below still
+    earns its place and must not be removed as newly redundant -- without it the uniform
+    members carry one distinct string PER CHECKPOINT COUNT, and the renderer's
+    set-membership test would recognize none of them.
+
+    WHAT IS DELIBERATELY NOT COLLAPSED. The heterogeneous finding passes through VERBATIM:
+    it is the statement a reader needs, it names which files are short and what it costs
+    them, and flattening it to a flag would strand that reader with a boolean and no route
+    to the full text. ``NAME_SET_UNKNOWN`` also passes through unchanged -- it is already a
+    constant, so it cannot reintroduce the count variance, and it is a DIFFERENT claim from
+    "uniform" (we did not measure, versus we measured and nothing was short) that must not
+    be laundered into one. An absent finding maps to ``None``, never to a sentinel: a member
+    consolidated before the coordinate shipped carries no stamp at all, and inventing one
+    here would assert a record no artifact holds.
+
+    THE ZARR IS NOT TOUCHED BY ANY OF THIS. The stored coordinate keeps the full sentence,
+    count included; this function governs only what a pandas column carries.
+    """
+    if finding is None:
+        return None
+    return UNIFORM_COLUMN_SET_VERDICT if finding.startswith(_UNIFORM_FINDING_PREFIX) else finding
+
+
+def stamp_perf_column_set(ds: xr.Dataset) -> xr.Dataset:
+    """Move the transported site-1 finding onto the dimensioned ``event_iloc`` coord.
+
+    MUST be called only AFTER ``expand_dims("event_iloc")``: the whole point of the shape
+    is that the coord is dimensioned, and stamping before the dim exists produces the
+    SCALAR coord the design prohibits. Extracted as a free function so the shape clause of
+    the construction check can be evaluated on the stamped object directly, without
+    standing up a ``TRITONSWMM_sim_post_processing``.
+    """
+    if "event_iloc" not in ds.dims:
+        raise ProcessingError(
+            "stamp performance column-set record",
+            filepath=None,
+            reason=(
+                "stamp_perf_column_set was called on a Dataset with no 'event_iloc' DIM. "
+                "The record must be a DIMENSIONED event_iloc coordinate; a scalar coord "
+                "does not survive the across-member concat. Call this after expand_dims."
+            ),
+        )
+    finding = str(ds.attrs.pop(_PERF_COLUMN_SET_ATTR, NAME_SET_UNKNOWN))
+    return ds.assign_coords({PERF_COLUMN_SET_COORD: ("event_iloc", [finding])})
+
+
+def _aggregate_perf_tseries(
+    raw_perf_dir: Path,
+    min_per_tstep: float = 1.0,
+    *,
+    resume_steps: Sequence[int],
+) -> xr.Dataset:
     """Parse per-checkpoint ``performance{N}.txt`` files into an :class:`xr.Dataset`
     of corrected per-rank deltas.
 
     The diff fix vs the pre-V0008 implementation: prior code called ``pd.diff()`` on a
-    ``(timestep_min, Rank)`` MultiIndex frame, which crossed rank boundaries and produced
+    ``(timestep, Rank)`` MultiIndex frame, which crossed rank boundaries and produced
     inter-rank-skew rather than per-rank deltas. ``groupby(level='Rank').diff()`` keeps
     the diff within each rank's checkpoint sequence.
 
     Module-level so the V0008 migration and the production ``_export_performance_tseries``
     aggregator share one source of truth. The optional ``min_per_tstep`` argument lets
-    production preserve its prior coord-value semantics (``timestep_min = filename_int *
+    production preserve its prior coord-value semantics (``timestep = filename_int *
     min_per_tstep``); the default ``1.0`` matches V0008's prescription and the
     regression-test fixtures.
+        ``resume_steps`` is REQUIRED and keyword-only, deliberately: it is the caller's
+    ``TRITONSWMM_model_log.resume_reporting_tsteps`` (``[]`` when the sim never resumed).
+    There is no default and no inference fallback -- a defaulted value would let a caller
+    silently reintroduce the ``(deltas <= 0).all(axis=1)`` guess this parameter replaces,
+    which is the failure mode the parameter exists to make impossible.
     """
     import re
 
     files = sorted(
         raw_perf_dir.glob("performance*.txt"),
-        key=lambda f: int(re.search(r"(\d+)", f.name).group(1) or 0)
-        if re.search(r"(\d+)", f.name)
-        else 0,
+        key=lambda f: int(re.search(r"(\d+)", f.name).group(1) or 0) if re.search(r"(\d+)", f.name) else 0,
     )
     files = [f for f in files if re.search(r"performance(\d+)", f.name)]
     if not files:
-        raise FileNotFoundError(
-            f"Performance directory {raw_perf_dir} contains no performance{{N}}.txt files."
-        )
+        raise FileNotFoundError(f"Performance directory {raw_perf_dir} contains no performance{{N}}.txt files.")
 
+    # Integer reporting-step index of every file actually parsed. The reset-row
+    # selection below joins on THIS, never on the `timestep` coord: that coord is
+    # `tstep_iloc * min_per_tstep` where `min_per_tstep = TRITON_reporting_timestep_s/60`,
+    # which is not exactly representable when the reporting interval is not a clean
+    # multiple of 60 s -- a float `.loc[]` lookup would then match nothing and drop the
+    # correction silently.
+    tstep_ilocs_seen: set[int] = set()
     dfs = []
+    # Parallel to `dfs` and appended at the same site, so the detection below can NAME
+    # which checkpoint files are short rather than only counting them. A finding that
+    # says "some file is missing a column" costs the reader the search the guard exists
+    # to save.
+    df_labels: list[str] = []
     perfs_with_negatives: list[str] = []
+    empty_perfs: list[str] = []
+    malformed_perfs: list[tuple[str, str]] = []
     dfs_with_negatives: list[pd.DataFrame] = []
     for f in files:
         m = re.search(r"performance(\d+)", f.name)
         if m is None:
             continue
+        if f.stat().st_size == 0:
+            # A hard kill (walltime, SIGKILL, or the deterministic multi-resume
+            # harness) can leave a 0-byte performance{N}.txt — the perf dump for a
+            # checkpoint created but killed before any row was written. It carries
+            # no timing data; skip it (the wallclock series simply omits that
+            # reporting step, which the per-rank diff/reset logic below already
+            # tolerates) rather than let pandas.read_csv raise EmptyDataError and
+            # fail the whole process rule. Empirically: synth_cc_resume_triton
+            # member_gpu_1_r1 left performance110.txt at 0 bytes of 144 perf files.
+            empty_perfs.append(str(f))
+            continue
         tstep_iloc = int(m.group(1))
-        df_ranks, _ = parse_performance_file(f)
+        # Parse BEFORE recording the iloc. Ordering is load-bearing: `tstep_ilocs_seen`
+        # feeds the ledger-driven reset-row join below, which converts an iloc to a
+        # `timestep` coord and looks it up in `full.index`. Recording an iloc whose
+        # file was then skipped yields a coord that is absent from the index, `idx`
+        # comes back empty, and the resume correction is dropped SILENTLY -- the exact
+        # failure the join's own comment was written to prevent. The 0-byte branch above
+        # avoids this by `continue`-ing before the add; this branch must too.
+        try:
+            df_ranks, _ = parse_performance_file(f)
+        except ProcessingError as exc:
+            # A concurrent-writer interleave (see parse_performance_file's structural
+            # validation). Skip this checkpoint rather than fail the whole process rule:
+            # the per-rank `groupby(level='Rank').diff()` below telescopes across a gap,
+            # so omitting one reporting step of ~1081 leaves the cumulative sum intact.
+            # Measured incidence 10/1080 and 3/1080 across two synth_sensitivity trees.
+            # Raising instead would cost the member its `d_process` flag and, with
+            # it, the whole fixture tree.
+            malformed_perfs.append((str(f), exc.reason or str(exc)))
+            continue
+        tstep_ilocs_seen.add(tstep_iloc)
         df_ranks = df_ranks.reset_index()
-        df_ranks["timestep_min"] = tstep_iloc * min_per_tstep
-        df_ranks = df_ranks.set_index(["timestep_min", "Rank"])
+        df_ranks["timestep"] = tstep_iloc * min_per_tstep
+        df_ranks = df_ranks.set_index(["timestep", "Rank"])
         dfs.append(df_ranks)
+        df_labels.append(f.name)
         if (df_ranks < 0).any().any():
             perfs_with_negatives.append(str(f))
             dfs_with_negatives.append(df_ranks)
@@ -1655,6 +3412,81 @@ def _aggregate_perf_tseries(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> x
             stacklevel=2,
         )
 
+    if empty_perfs:
+        warnings.warn(
+            (
+                f"Skipped {len(empty_perfs)} empty (0-byte) performance.txt file(s) "
+                "left by a hard kill (walltime / SIGKILL / deterministic-resume harness); "
+                "the wallclock series omits those reporting steps.\n"
+                f" Skipped files: {chr(10).join('    - ' + p for p in empty_perfs)}"
+            ),
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if malformed_perfs:
+        _detail = chr(10).join(f"    - {p}: {why}" for p, why in malformed_perfs)
+        warnings.warn(
+            (
+                f"Skipped {len(malformed_perfs)} MALFORMED performance.txt file(s) in "
+                f"{raw_perf_dir}; the wallclock series omits those reporting steps.\n"
+                "These files are the on-disk fingerprint of TWO PROCESSES writing this "
+                "performance directory CONCURRENTLY -- each writing from offset 0 with "
+                "a slightly different formatted length, leaving one writer's overhang "
+                "behind. TRITON's own writer truncates (output.h uses a default-mode "
+                "std::ofstream), so a single process cannot produce this. Treat it as "
+                "evidence of duplicate simulation execution for this scenario (two "
+                "copies of the simulation running against the same scenario directory "
+                "at once), NOT as a TRITON output-format bug. Every other artifact this sim wrote "
+                "is under the same doubt; the performance dump is merely the only one "
+                "where the interleave is textually visible.\n"
+                f" Skipped files:\n{_detail}"
+            ),
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if not dfs:
+        # Every file was skipped (0-byte and/or malformed). `pd.concat([])` raises an
+        # opaque `ValueError: No objects to concatenate` two frames below the real
+        # cause; the `if not files:` guard above covers "no files on disk", not "all
+        # files skipped". Reachable through the ALREADY-SHIPPED 0-byte branch alone, so
+        # this hole predates the malformed branch, which merely widens it.
+        raise ProcessingError(
+            "aggregate TRITON performance time series",
+            filepath=Path(raw_perf_dir),
+            reason=(
+                f"all {len(empty_perfs) + len(malformed_perfs)} performance{{N}}.txt "
+                f"file(s) were skipped ({len(empty_perfs)} empty, "
+                f"{len(malformed_perfs)} malformed); no timing data remains to "
+                "aggregate."
+            ),
+        )
+
+    # COLUMN-SET HETEROGENEITY DETECTION -- SITE 1, immediately before the join.
+    #
+    # WHY HERE AND NOWHERE ELSE: `dfs` is still a LIST of frames each carrying its own
+    # header. One line below, `pd.concat` performs its default OUTER join and NaN-fills
+    # any column a frame lacks, and from that moment the distinction between "this
+    # allocation never emitted the column" and "this allocation emitted it as NaN" does
+    # not exist in the data. This is the last frame in which the question is answerable.
+    #
+    # WHY NOT THE ARITHMETIC IDENTITY: `SWMM_XFER + SWMM_MPI + SWMM_STEP + SWMM_OTHER ==
+    # SWMM` closes only on an emitted PER-RANK row. `_export_performance_summary` reduces
+    # with `.sum(dim="timestep").max(dim="Rank")`, and `max` applies PER VARIABLE, so
+    # post-reduction the children OVERSHOOT their parent on every multi-rank member --
+    # the identity fires where nothing is wrong, and in the mixed case it points the
+    # other way. Names survive both reductions; the identity does not. The identity is
+    # NOT the detector.
+    #
+    # DELIVER, DO NOT STOP. This records and continues. The condition describes data
+    # already on disk rather than an operator error caught before cost, and the columns
+    # that ARE short are the SWMM decomposition, never Total / Simulation / Init -- so
+    # refusing here would make the consolidated tree unbuildable for exactly the corpus
+    # whose headline figure is intact. Raising would also cost the member its d_process
+    # flag, the same cost the malformed-checkpoint branch above declines to pay.
+    _column_set_finding = describe_allocation_column_sets(df_labels, [df.columns for df in dfs])
+
     full = pd.concat(dfs).sort_index()
     # Per-rank diff (BUGFIX V0008): keep within each rank's checkpoint sequence.
     deltas = full.groupby(level="Rank").diff()
@@ -1663,29 +3495,149 @@ def _aggregate_perf_tseries(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> x
     # process construction; see triton.h:362).
     first_per_rank = full.groupby(level="Rank").head(1)
     deltas.loc[first_per_rank.index, :] = first_per_rank
-    # Reset detector: per-rank deltas <= 0 imply a resume reset; the row's
-    # absolute value IS the new cumulative for that rank.
-    idx_resets = (deltas <= 0).all(axis=1)
-    idx = idx_resets[idx_resets].index
+    # LEDGER-DRIVEN reset correction. `resume_steps` is the caller's
+    # `TRITONSWMM_model_log.resume_reporting_tsteps` — the REALIZED reporting step of
+    # each hotstart resume, appended in run_simulation.py's hotstart branch BEFORE the
+    # attempt launches. It is the ONLY admissible source: inferring resets from the
+    # perf data itself is foreclosed, because the inferred predicate
+    # `(deltas <= 0).all(axis=1)` requires EVERY column to decrease and `Init` INCREASES
+    # at a real boundary (the restarted process re-pays init: measured 0.05694 -> 0.07816
+    # on member_serial_6_r1). One positive column defeated `.all()` and a whole segment was
+    # subtracted instead of added -- 56 of 112 sims on the synth_cc campaign, every
+    # resumed sim on both models.
+    #
+    # Join: TRITON writes config_N.cfg 1-based contiguous and performance{N}.txt shares
+    # that index, so a resume FROM step t produces its first post-restart checkpoint at
+    # the smallest surviving index > t. Selection is on the INTEGER file index captured
+    # during the parse loop, NEVER on the `timestep` coord -- that coord is
+    # `tstep_iloc * min_per_tstep` and is not exactly representable when the reporting
+    # interval is not a clean multiple of 60 s, so a float `.loc[]` lookup would match
+    # nothing and drop the correction silently.
+    reset_ilocs: set[int] = set()
+    for _t in sorted({int(v) for v in resume_steps}):
+        _after = [i for i in sorted(tstep_ilocs_seen) if i > _t]
+        if _after:
+            reset_ilocs.add(_after[0])
+        else:
+            warnings.warn(
+                f"Resume ledger names a resume at reporting step {_t}, but no "
+                f"performance{{N}}.txt survives above it in {raw_perf_dir}. That attempt "
+                "wrote no checkpoint (hard kill before the first dump); no reset row to "
+                "correct.",
+                UserWarning,
+                stacklevel=2,
+            )
+    # Compare in the SAME space the index was built in. `reset_ilocs` holds raw
+    # performance{N}.txt file indices, but `full.index`'s first level is
+    # `timestep = tstep_iloc * min_per_tstep` (the assignment in the parse loop above), so
+    # comparing `int(t)` against a file index silently matches NOTHING whenever
+    # min_per_tstep != 1.0 -- and production passes TRITON_reporting_timestep_s / 60, which
+    # is 1.0 only for a 60 s reporting interval, while every test
+    # and the V0018 migration use the 1.0 default, which is the one value where the two
+    # spaces coincide. Measured: member_serial_6_r1 produced 89.51 s (the pure telescope to
+    # performance144.txt) instead of 409.30 s, with a correct ledger and correct raw.
+    # Deriving the coords by the identical multiplication keeps float equality exact even
+    # when min_per_tstep is not representable, because both sides are the same product of
+    # the same operands.
+    _reset_coords = {iloc * min_per_tstep for iloc in reset_ilocs}
+    idx = full.index[[t in _reset_coords for t, _ in full.index]]
     deltas.loc[idx, :] = full.loc[idx, :]
-    return deltas.to_xarray()
+
+    # Reconciliation, NOT a fallback. The ledger decides; the data only corroborates.
+    # `resume_reporting_tsteps` is cumulative and is never reset, so a sim that resumed,
+    # lost its checkpoints, then ran FRESH to completion carries a stale list (the same
+    # staleness channel documented for its sibling `n_resumes`). Surface the disagreement
+    # loudly rather than silently mis-summing, and do NOT re-derive resets from the data.
+    _wallclock_drop = (deltas["Total"] < 0) if "Total" in deltas.columns else None
+    if _wallclock_drop is not None and bool(_wallclock_drop.any()):
+        _unclaimed = sorted({int(t) for t, _ in deltas.index[_wallclock_drop]})
+        warnings.warn(
+            f"Cumulative 'Total' decreases at reporting step(s) {_unclaimed} in "
+            f"{raw_perf_dir}, but the resume ledger claims resumes only at "
+            f"{sorted({int(v) for v in resume_steps})}. The ledger is authoritative and "
+            "was NOT overridden; these rows remain uncorrected. Most likely the analysis "
+            "was re-run without start_from_scratch, leaving a stale "
+            "resume_reporting_tsteps.",
+            UserWarning,
+            stacklevel=2,
+        )
+    _ds_out = deltas.to_xarray()
+    # TRANSPORT, not the record -- see `_PERF_COLUMN_SET_ATTR`. The caller pops this onto
+    # the dimensioned event_iloc coord as soon as that dim exists. Attrs survive
+    # everywhere EXCEPT a combine, and there is no combine between this return and that
+    # stamp, which is the whole (and only) hop this carrier has to be safe on.
+    _ds_out.attrs[_PERF_COLUMN_SET_ATTR] = _column_set_finding
+    return _ds_out
 
 
-def _aggregate_perf_summary(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> xr.Dataset:
+def _aggregate_perf_summary(
+    raw_perf_dir: Path,
+    min_per_tstep: float = 1.0,
+    *,
+    resume_steps: Sequence[int],
+) -> xr.Dataset:
     """Reduce per-rank deltas to a slowest-rank wallclock summary.
 
-    Computes ``_aggregate_perf_tseries(...).sum(dim='timestep_min').max(dim='Rank')`` —
-    the ``max(Rank)`` reduction is the slowest-rank cumulative per Hager-Wellein 2011 ch.5
+    Computes ``_aggregate_perf_tseries(...).sum(dim='timestep', skipna=False)
+    .max(dim='Rank')`` — the ``skipna=False`` is not incidental: it is what makes a
+    column that only SOME allocations emitted reduce to NaN rather than to a finite,
+    understated number. The max is deliberately left at its default; the asymmetry is
+    argued in full at the inline reduction in ``_export_performance_summary``. The
+    ``max(Rank)`` reduction is the slowest-rank cumulative per Hager-Wellein 2011 ch.5
     convention. Module-level so the V0008 migration and the regression test share one
     source of truth with the corrected aggregator.
 
-    Note: in Phase 1 the production instance method ``_export_performance_summary`` does
-    NOT call this helper — it retains its inline ``mean(Rank)`` aggregation at line ~530.
-    Phase 2 of the ``superlinear-speedup-fixes`` plan wires the instance method through
-    this helper, completing the aggregation-semantic switch.
+    Note: the production instance method ``_export_performance_summary`` does NOT call
+    this helper; it carries its own inline copy of the same ``max(Rank)`` reduction, kept
+    in step with this one (see the comment below).
+        ``resume_steps`` is REQUIRED and keyword-only, matching ``_aggregate_perf_tseries``
+    exactly. The symmetry is load-bearing, not stylistic: this function's whole body
+    forwards to that one, so a DEFAULT here would let ``_aggregate_perf_summary(dir)``
+    keep compiling while silently supplying an empty ledger to a required parameter --
+    reintroducing, one layer up, the very guess the required parameter removes. Callers
+    pass ``[]`` only when they positively know the sim never resumed.
     """
-    ds = _aggregate_perf_tseries(raw_perf_dir, min_per_tstep=min_per_tstep)
-    return ds.sum(dim="timestep_min").max(dim="Rank")
+    ds = _aggregate_perf_tseries(raw_perf_dir, min_per_tstep=min_per_tstep, resume_steps=resume_steps)
+    # KEPT IN STEP WITH `_export_performance_summary`'s inline reduction DELIBERATELY. The
+    # two are duplicated rather than one calling the other (the instance method was never
+    # routed through this helper), so a `skipna` change applied to
+    # only one of them leaves the OTHER understating -- and this is the arm the V0008 and
+    # V0018 migrations call, so the untouched arm would re-write an understated number onto
+    # a tree those migrations exist to repair. The full rationale for the asymmetry between
+    # the two reductions is at the inline site; it is not restated here so the two cannot
+    # drift as prose.
+    # `keepdims=True` MUST MATCH the inline site's form. The full rationale for retaining
+    # `Rank` as a size-one dimension -- the CF-1.13 section 7.3 / 7.3.2 admissibility
+    # argument, the two measured defects in the scalar alternative, and the measured
+    # shape-tolerance of both consumers -- is at the inline site and is not restated here so
+    # the two cannot drift as prose. This is the arm the V0008 and V0018 migrations call, so a
+    # form applied to only one of the two would re-write the OTHER shape onto a tree those
+    # migrations exist to repair.
+    _summed = ds.sum(dim="timestep", skipna=False)
+    _out = _summed.max(dim="Rank", keepdims=True)
+
+    # THE RANK-COHERENT AND MIN FAMILIES, DUPLICATED FROM `_export_performance_summary` FOR
+    # THE SAME REASON THE REDUCTION ABOVE IS. The full rationale -- why the selector stays at
+    # the default `skipna`, why the all-NaN case is guarded rather than left to raise, why the
+    # selection is a mask-and-reduce rather than `isel`, and why `coherent_rank` is float -- is
+    # stated ONCE at the inline site and is deliberately not restated here, so the two cannot
+    # drift as prose. What they MUST not drift as is CODE: the block below is byte-identical to
+    # the inline one modulo indentation and the target name, and
+    # `tests/test_perf_rank_coherent_family.py::test_both_reduction_sites_agree_on_one_input`
+    # drives both sites over one input and asserts identical output, so a one-sided edit is a
+    # red test rather than an invisible divergence.
+    if "Total" in _summed.data_vars:
+        _rank_pos = xr.DataArray(np.arange(_summed.sizes["Rank"]), dims="Rank")
+        _selectable = _summed["Total"].notnull().any(dim="Rank")
+        _chosen = _rank_pos == _summed["Total"].fillna(-np.inf).argmax(dim="Rank")
+        _coherent = _summed.where(_chosen).max(dim="Rank")
+        for _name in _summed.data_vars:
+            _out[f"{_name}_coherent"] = _coherent[_name].where(_selectable)
+            _out[f"{_name}_min"] = _summed[_name].min(dim="Rank")
+        _out["coherent_rank"] = _summed["Rank"].where(_chosen).max(dim="Rank").where(_selectable)
+        _out["n_ranks"] = xr.full_like(_selectable, _summed.sizes["Rank"], dtype="int64")
+
+    return _out
 
 
 def parse_performance_file(filepath):
@@ -1716,7 +3668,59 @@ def parse_performance_file(filepath):
     # Clean up column names (remove leading % and whitespace)
     df.columns = df.columns.str.lstrip("%").str.strip()
 
-    # Separate average row from rank rows
+    # Structural validation, BEFORE any cast. TRITON writes this file from
+    # output.h's `std::ofstream output(filedir)` (default mode -> truncating) as
+    # exactly N integer-labelled rank rows plus one "Average" row, so any other
+    # token in the Rank column is by construction not TRITON's output. Two shapes
+    # are observed in the wild, and they have ONE cause:
+    #   (a) a trailing numeric fragment after the Average row (e.g. a bare ".6453"
+    #       line), which read_csv NaN-pads into a valid-looking row and which then
+    #       explodes at the Rank astype(int) below;
+    #   (b) a mangled Average row ("AAverage"), which leaves the file with no
+    #       Average sentinel at all and explodes at the .iloc[0] below.
+    # Both are the fingerprint of TWO PROCESSES writing one performance/ directory
+    # concurrently, each from offset 0 with a slightly different formatted length.
+    # The proof is not the junk token, it is that in
+    # synth_sensitivity.setaside-20260824T0000Z member_2 performance911.txt the rank
+    # row and the Average row carry DIFFERENT numbers (0.5636 vs 0.5606, 3.466 vs
+    # 3.464) -- a single 1-rank TRITON process computes Average as the mean over
+    # one element, so those lines are byte-identical in all healthy files.
+    # Raise a TYPED error so the aggregator can skip this checkpoint narrowly; a
+    # row-drop "repair" here would silently admit mixed-provenance timings.
+    # Do NOT add a NaN check: both interleave shapes above are caught without one
+    # (the Rank-token and Average-presence checks below), so a NaN clause would add a
+    # rejection this detector does not need.
+    if "Rank" not in df.columns:
+        raise ProcessingError(
+            "parse TRITON performance file",
+            filepath=Path(filepath),
+            reason="no 'Rank' column in the header row; the file is not a TRITON "
+            "performance dump (likely a concurrent-writer interleave).",
+        )
+    _rank_tokens = df["Rank"].astype(str).str.strip()
+    _junk = _rank_tokens[~(_rank_tokens.str.fullmatch(r"\d+") | (_rank_tokens == "Average"))]
+    if len(_junk):
+        raise ProcessingError(
+            "parse TRITON performance file",
+            filepath=Path(filepath),
+            reason=f"unparseable Rank token(s) {sorted(set(_junk))}; expected integer "
+            "rank labels and one 'Average'. Evidence of two processes writing this "
+            "performance directory concurrently.",
+        )
+    if not (_rank_tokens == "Average").any():
+        raise ProcessingError(
+            "parse TRITON performance file",
+            filepath=Path(filepath),
+            reason="no 'Average' row. TRITON always writes one; its absence means the "
+            "row was overwritten mid-line by a concurrent writer.",
+        )
+
+    # Separate average row from rank rows. NOTE: `s_average` is discarded by the
+    # only production caller (`_aggregate_perf_tseries`, which unpacks
+    # `df_ranks, _`). The Average-presence check above is therefore a DETECTOR, not
+    # a functional prerequisite -- do not "fix" a future IndexError here by making
+    # Average optional; that would remove one of the two clauses that catch the
+    # interleave.
     s_average = df[df["Rank"] == "Average"].iloc[0].drop("Rank")
     s_average.name = "Average"
 
@@ -1732,6 +3736,27 @@ def parse_performance_file(filepath):
     return df_ranks, s_average
 
 
+#: Raw-file glob PREFIX -> canonical variable name, in the order return_fpath_wlevels
+#: builds the four per-variable Series. This is the single definition of that mapping:
+#: `return_fpath_wlevels` iterates it to build the frame and `triton_raw_frame_or_raise`
+#: inverts it to name a short variable by its PREFIX in the ragged message, so the two
+#: cannot disagree about which name goes with which file.
+#: IT LIVES HERE AND NOT IN eda/raw_byte_identity.py, and the direction is the reason:
+#: that module imports FROM this one (`from hhemt.process_simulation import ...`), and this
+#: module imports nothing from `hhemt.eda` -- measured, 0 occurrences -- so defining it
+#: there and importing it here would invert the dependency and cycle.
+TRITON_RAW_VAR_BY_PREFIX: dict[str, str] = {
+    "MH": "max_flood_depth",
+    "H": "flood_depth",
+    "QX": "unit_discharge_x",
+    "QY": "unit_discharge_y",
+}
+
+#: The four canonical variable names, in frame-column order. The required set for the
+#: processing path: `triton_raw_frame_or_raise` refuses a frame missing any of them.
+CANONICAL_TRITON_VARS: tuple[str, ...] = tuple(TRITON_RAW_VAR_BY_PREFIX.values())
+
+
 def return_filelist_by_tstep(fldr_out_triton: Path, fpattern_prefix, min_per_tstep, varname):
     lst_f_out = list(fldr_out_triton.glob(f"{fpattern_prefix}*"))
     if len(lst_f_out) == 0:
@@ -1742,7 +3767,8 @@ def return_filelist_by_tstep(fldr_out_triton: Path, fpattern_prefix, min_per_tst
             tstep_parts = f.name.split(f"{fpattern_prefix}_")[-1].split(".")[0].split("_")
             if int(tstep_parts[1]) != 0:
                 sys.exit(
-                    f"problem parsing reporting timestep for file {f}\nnot expecting nonzero values behind the last underscore"
+                    f"problem parsing reporting timestep for file {f}\n"
+                    "not expecting nonzero values behind the last underscore"
                 )
             reporting_tstep_iloc = int(tstep_parts[0])
         else:
@@ -1752,32 +3778,228 @@ def return_filelist_by_tstep(fldr_out_triton: Path, fpattern_prefix, min_per_tst
         reporting_tstep_min = reporting_tstep_iloc * min_per_tstep
         lst_reporting_tstep_min.append(reporting_tstep_min)
     s_outputs = pd.Series(index=lst_reporting_tstep_min, data=lst_f_out)
-    s_outputs.index.name = "timestep_min"
+    s_outputs.index.name = "timestep"
     s_outputs.name = varname
     s_outputs = s_outputs.sort_index()
     return s_outputs
 
 
-def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | float):
+def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval: int | float):
     ## retrive the reporting time interval from the cfg file
-    min_per_tstep = reporting_interval_s / 60
+    min_per_tstep = reporting_interval / 60
     # associate filepaths to timesteps
-    s_outputs_mh = return_filelist_by_tstep(fldr_out_triton, "MH", min_per_tstep, "max_wlevel_m")
-    s_outputs_h = return_filelist_by_tstep(fldr_out_triton, "H", min_per_tstep, "wlevel_m")
-    s_outputs_qx = return_filelist_by_tstep(fldr_out_triton, "QX", min_per_tstep, "velocity_x_mps")
-    s_outputs_qy = return_filelist_by_tstep(fldr_out_triton, "QY", min_per_tstep, "velocity_y_mps")
-    lst_out = [s_outputs_mh, s_outputs_h, s_outputs_qx, s_outputs_qy]
-    non_empty_dfs = [s for s in lst_out if s is not None]
-    df_outputs = pd.concat(non_empty_dfs, axis=1)
+    lst_out = [
+        return_filelist_by_tstep(fldr_out_triton, _prefix, min_per_tstep, _var)
+        for _prefix, _var in TRITON_RAW_VAR_BY_PREFIX.items()
+    ]
+    # THIS FUNCTION DESCRIBES WHAT IT FOUND. IT REFUSES NOTHING AND IT INVENTS NOTHING.
+    # The refusal moved to `triton_raw_frame_or_raise` below, because it is a POLICY and
+    # not a property of enumeration: of the eight consumption points measured at aaefe392,
+    # SEVEN tolerate a partial frame by design (three in eda/raw_byte_identity.py, four
+    # in the private estate, all of which carry their own `isinstance`/`dropna`/membership
+    # guards) and exactly ONE wants the refusal. A fail-closed default here was a rule
+    # imposed on callers whose requirements this function cannot know, and it broke every
+    # one of the seven.
+    # DROPPING an empty Series rather than NAMING it is deliberate. A
+    # variable that contributed zero files yields a bare unnamed `pd.Series()` from
+    # `return_filelist_by_tstep`, and `pd.concat` then labels it POSITIONALLY -- an
+    # integer-named all-NaN column describing nothing the solver wrote, which also drops
+    # the `timestep` index name. Naming it instead would relabel the fabrication; the
+    # drop removes it, so an absent variable can produce no NaN cell at all and absence is
+    # visible to a consumer as a missing column. Measured consequence that decided it: an
+    # estate consumer's `"max_flood_depth" not in df.columns` check keeps working under the
+    # drop and would have silently stopped firing under naming.
+    # The empty-frame return is load-bearing, not defensive: `pd.concat([])` raises
+    # ValueError, and `.empty` is the "no processable output" discriminator for BOTH
+    # `triton_raw_frame_or_raise` and `compare_triton_raw_timeseries`.
+    _present = [s for s in lst_out if len(s)]
+    if not _present:
+        return pd.DataFrame(index=pd.Index([], name="timestep", dtype=float))
+    return pd.concat(_present, axis=1)
+
+
+def triton_raw_frame_or_raise(fldr_out_triton, reporting_interval, *, model_label: str, fname_out=None):
+    """The per-timestep raw-output frame, or a loud refusal naming which condition failed.
+
+    ONE PREFLIGHT, SHARED BY BOTH TRITON EXPORTS, and the sharing is the point. The two
+    arms previously grew two different preflights: the TRITON-only arm tested DIRECTORY
+    emptiness (`any(dir.iterdir())`), which is TRUE when the directory holds only TRITON's
+    `GR_*` ghost-ring side-files -- not processable output -- so control fell through and a
+    later step raised on genuinely absent data; the coupled arm had no emptiness test at
+    all. A predicate for "is there processable output here" that is expressed anywhere but
+    in the enumerator can drift from it, which is the defect shape being removed, so this
+    asks the ENUMERATOR: every condition below is a test on the frame the enumerator
+    returned, and nothing here re-globs the directory.
+
+    MODULE-LEVEL, not a method, and the body reads no instance state -- which is what lets
+    the regression test call it the same way it called the enumerator, as a plain function
+    rather than an unbound method against a stub `self`. A future edit adding a `self.`
+    read here would break that test from a distance; being a free function makes that
+    impossible rather than merely discouraged.
+
+    Each refusal carries its own message, because each is a different fault and the
+    remedy differs for each. ORDER IS LOAD-BEARING: the emptiness arm must precede the
+    absent arm, or a `GR_*`-only directory is reported as "a variable is missing" and the
+    purpose-built ghost-ring explanation is lost.
+    """
+    if fldr_out_triton is None or not Path(fldr_out_triton).exists():
+        raise FileNotFoundError(
+            f"Raw TRITON outputs not found for {model_label} at {fldr_out_triton}. "
+            "Ensure the simulation completed and wrote outputs to the configured "
+            "output directory."
+        )
+    df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval)
+    if df_outputs.empty:
+        # ARM 2, WIDENED. An empty frame has two causes that need opposite remedies:
+        # nothing was ever produced, or the raw was CONSUMED by the chapter writer and
+        # cleared per chapter. The second is recoverable and the chapters hold the data,
+        # so admit it -- but ONLY on the merge's own precondition, reused rather than
+        # restated: a non-empty flagged set whose index is contiguous from 0
+        # (utils.merge_chapters_to_unified, which asserts both conjuncts in this order).
+        # THE `_parts` GUARD ON THE SECOND RAISE IS LOAD-BEARING: an EMPTY chapters
+        # directory is the genuinely-empty fault, not an incomplete-chapter fault, and
+        # its remedy is not a rebuild-from-raw. Without the guard it would report
+        # "index set [] is not contiguous from 0" and send an operator to rebuild from
+        # raw that is already gone.
+        if fname_out is not None and not unified_flag_for(fname_out).exists():
+            _parts = completed_chapters(chapters_dir_for(fname_out))
+            if _parts and sorted(_parts) == list(range(len(_parts))):
+                return df_outputs
+            if _parts:
+                raise ProcessingError(
+                    "triton_raw_frame_or_raise (raw consumed, chapters incomplete)",
+                    filepath=fldr_out_triton,
+                    reason=(
+                        f"the raw directory holds no processable file for {model_label} and its "
+                        f"chapter set is not usable: index set {sorted(_parts)} is not contiguous "
+                        "from 0, so merge_chapters_to_unified would refuse it. Re-run processing "
+                        "with override_force_rerun to rebuild the chapter set from raw, which "
+                        "requires the raw outputs to still exist."
+                    ),
+                )
+        raise FileNotFoundError(
+            f"No processable TRITON output files (MH, H, QX, QY) found for {model_label} "
+            f"in {fldr_out_triton}. The directory exists but holds no file the frame "
+            "builder recognises -- TRITON's GR_* ghost-ring side-files alone produce "
+            "this state, as does a directory whose raw was already cleared. Ensure the "
+            "simulation completed successfully."
+        )
+    _absent = [_v for _v in CANONICAL_TRITON_VARS if _v not in df_outputs.columns]
+    if _absent:
+        raise ProcessingError(
+            "triton_raw_frame_or_raise (raw output frame missing a variable entirely)",
+            filepath=fldr_out_triton,
+            reason=(
+                f"{model_label} requires all four TRITON raw variables; this directory "
+                f"emitted NONE of: {_absent}. A variable absent at EVERY timestep is "
+                "usually a CONFIGURATION outcome rather than corruption -- TRITON writes "
+                "H/QX/QY only for the letters named in the cfg's print_option, and writes "
+                "MH only when max_value_print_option is non-empty, and the toolkit supplies "
+                "no default for either, so a cfg omitting max_value_print_option emits no "
+                "MH tree-wide. CHECK THE CFG FIRST: re-running an unchanged cfg reproduces "
+                "this state forever, which is why this message does not tell you to force a "
+                "re-run. Refused here because nothing downstream fails on it -- the chapter "
+                "writer iterates whatever columns it is given, verify_and_flag_chapter "
+                "checks only the timestep count, xr.concat fills a missing variable with "
+                "NaN, and the summary RECONSTRUCTS max_flood_depth from flood_depth -- so an "
+                "absent variable would be written, flagged complete and merged with no "
+                "error raised anywhere."
+            ),
+        )
+    _var_prefix = {_v: _p for _p, _v in TRITON_RAW_VAR_BY_PREFIX.items()}
+    _missing = {
+        _var_prefix[_c]: sorted(float(_t) for _t in df_outputs.index[df_outputs[_c].isna()])
+        for _c in df_outputs.columns
+        if df_outputs[_c].isna().any()
+    }
+    if _missing:
+        raise ProcessingError(
+            "triton_raw_frame_or_raise (ragged raw output frame)",
+            filepath=fldr_out_triton,
+            reason=(
+                "the four per-variable timestep index sets are NOT equal; short variable(s) and "
+                f"missing timestep values: {_missing}. This frame is refused rather than "
+                "joined, because an outer join would fabricate NaN cells the consumer treats as "
+                "paths (the AttributeError: 'float' object has no attribute 'exists' class). "
+                "Produced by an interrupted raw clear (MH deleted first) or an interrupted solver "
+                "write (MH written last); do NOT repair by hand or delete raw selectively -- re-run "
+                "the simulation via a force at stage='simulate' naming this model arm."
+            ),
+        )
     return df_outputs
+
+
+def publish_chapters_to_netcdf(chapters: Path, fname_out, *, scenario_dir: Path, compression_level: int = 5) -> None:
+    """Publish a flagged chapter set as ONE NetCDF file at ``fname_out``, then flag it, then drop the chapters.
+
+    This is the ``nc`` arm of the gridded TRITON timeseries writer; the ``zarr`` arm is
+    ``utils.merge_chapters_to_unified``. Both consume the same flagged chapter stores, and both
+    end in the same three-state order, which is what makes a crash at any point resumable:
+
+    1. The file is written under ``{fname_out}.tmp`` and moved onto ``fname_out`` with
+       ``os.replace``, so ``fname_out`` is either absent or a complete NetCDF file. Writing
+       ``fname_out`` directly would leave a truncated file there on a crash, because
+       ``utils.write_netcdf`` has no temp-and-rename of its own.
+    2. The ``{fname_out}.done`` flag is written only after that move. The writer returns early
+       when the flag exists, so a flag written before the file is published would make a
+       truncated or missing file permanent.
+    3. The chapters are deleted only after the flag. Raw outputs are cleared chapter by chapter
+       as the chapters are written, so the chapters are the sole copy of the data until the
+       flag certifies the published file.
+
+    A write that raises leaves no file at ``fname_out``, no flag, and every chapter in place;
+    the next invocation finds the chapters already cover every timestep and publishes again.
+
+    Deliberately NOT ``utils.merge_chapters_to_unified`` followed by a conversion: that function
+    writes the flag and deletes the chapters as soon as its zarr store is published, so a crash
+    during the conversion would leave neither the chapters nor the NetCDF file.
+    """
+    final = Path(fname_out)
+    flag = unified_flag_for(final)
+    tmp = final.with_name(final.name + ".tmp")
+    parts = completed_chapters(chapters)
+    if not parts:
+        raise ProcessingError(
+            operation="publish_chapters_to_netcdf",
+            filepath=str(chapters),
+            reason="no flagged chapter stores to publish",
+        )
+    if sorted(parts) != list(range(len(parts))):
+        raise ProcessingError(
+            operation="publish_chapters_to_netcdf",
+            filepath=str(chapters),
+            reason=(
+                f"chapter index set {sorted(parts)} is not contiguous from 0; a flagged chapter's "
+                "store is missing and publishing would write a file with an interior gap and flag it complete"
+            ),
+        )
+    # A temp left by a process killed mid-write is a partial file and is never promoted.
+    if tmp.exists():
+        tmp.unlink()  # EXEMPT-DU: transient-intermediate
+    stores = [open_store(parts[k], kind="zarr") for k in sorted(parts)]
+    try:
+        ds = xr.concat(stores, dim="timestep")
+        try:
+            write_netcdf(ds, tmp, compression_level)
+        except BaseException:
+            if tmp.exists():
+                tmp.unlink()  # EXEMPT-DU: transient-intermediate
+            raise
+    finally:
+        for store in stores:
+            store.close()
+    os.replace(tmp, final)
+    _publish_flag_crash_safe(flag)
+    from hhemt.du_sentinels import delete_and_account
+
+    delete_and_account([chapters], scope_dir=scenario_dir, scope="scenario")
 
 
 def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, raw_out_type):
     """
-    Load TRITON binary/ASCII output directly to xarray DataArray.
+    Load one TRITON binary/ASCII output file into an xarray Dataset holding one (y, x) variable.
 
-    Memory-optimized version that bypasses pandas DataFrame operations,
-    reducing memory footprint by ~85% compared to previous implementation.
+    The array is built from numpy directly, without an intermediate pandas DataFrame.
 
     Parameters
     ----------
@@ -1830,6 +4052,9 @@ def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, raw_out_type)
         },
         name=varname,
         attrs={
+            # `units` first: the timeseries is written by `_streaming_chunked_zarr_write`, which does not call
+            # `apply_cf_attributes`, so this is the only place a timeseries variable gains its unit.
+            **timeseries_variable_attrs(varname),
             "source_file": str(f_triton_output),
             "format": raw_out_type,
         },
@@ -1839,6 +4064,28 @@ def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, raw_out_type)
 
 
 # %% SUMMARIZATION FUNCTIONS
+
+#: One sentence, identical for every event, stamped on the coupled datasets that carry pollutant results.
+SWMM_QUALITY_LIMITATION = (
+    "Coupled TRITON-SWMM water quality: no subcatchment washoff reaches the coupled network; pollutant mass "
+    "leaving to the 2D surface is counted in Quality Routing Continuity External Outflow and is not "
+    "transported; concentrations are read from the SWMM report at 0.001 of each pollutant's unit."
+)
+QUALITY_STATS_COMPUTED = "computed"
+QUALITY_STATS_REPLAY = "computed: resumed by exact replay"
+QUALITY_STATS_WITHHELD = (
+    "withheld: resumed from a snapshot; SWMM water-quality state is not carried across a snapshot resume"
+)
+#: Statistics kept for an event that resumed from a snapshot written by a build that carries SWMM
+#: water-quality state (`scenario.SWMM_QUALITY_SNAPSHOT_SHAS`); the route stays a recorded fact.
+QUALITY_STATS_SNAPSHOT = "computed: resumed from a snapshot that carries SWMM water-quality state"
+#: Water-quality statistics set to NaN for an event that resumed from a snapshot (the continuity tables are
+#: matched by prefix in `_apply_quality_stats_rule`). Outfall volume and the concentration series are kept.
+_QUALITY_STATS_VARIABLES = frozenset(
+    {"pollutant_max_conc", "pollutant_time_of_max_conc", "outfall_total_load", "outfall_emc", "link_total_load"}
+)
+
+
 def summarize_swmm_simulation_results(ds, event_iloc, tstep_dimname="date_time"):
     """
     Summarize SWMM simulation results by computing max and last values for time-variant variables.
@@ -1864,10 +4111,27 @@ def summarize_swmm_simulation_results(ds, event_iloc, tstep_dimname="date_time")
         ds_summary = ds_summary.assign_coords(coords=dict(event_iloc=event_iloc))
         ds_summary = ds_summary.expand_dims("event_iloc")
         return ds_summary
+    # Pollutant concentration series are reduced by explicit rules below, NOT by the generic
+    # `_max`/`_last` pair: the cross-simulation identity check compares every `_max` that has a
+    # `_last` partner, so a generic pair would enter its compared set for every water-quality member.
+    quality_series = [v for v in ("pollutant_conc", "link_pollutant_conc") if v in ds.data_vars]
+    # The exchange flux gets no generic `_max`/`_last` pair for the same reason, and its summary is the eight
+    # static statistics written beside it, which carry no time dimension and pass through unchanged.
+    ds = ds.drop_vars([v for v in ("coupling_exchange_flow",) if v in ds.data_vars])
     lst_time_variant_vars = []
     for var in ds.data_vars:
-        if tstep_dimname in ds[var].coords:
+        if var not in quality_series and tstep_dimname in ds[var].coords:
             lst_time_variant_vars.append(var)
+
+    if "pollutant_conc" in quality_series:
+        conc = ds["pollutant_conc"]
+        ds["pollutant_max_conc"] = conc.max(dim=tstep_dimname, skipna=True)
+        # The peak's time was measured when the report was parsed (the simulation start is known there) and rides
+        # as the declared variable `pollutant_time_of_max_conc`. A caller that supplies none gets it from
+        # the first reported step.
+        if "pollutant_time_of_max_conc" not in ds.data_vars:
+            ds["pollutant_time_of_max_conc"] = pollutant_time_of_max_conc(conc, None, tstep_dimname)
+    ds = ds.drop_vars(quality_series)
 
     for var in lst_time_variant_vars:
         ds[f"{var}_max"] = ds[var].max(dim=tstep_dimname, skipna=True)
@@ -1909,12 +4173,12 @@ def _streaming_argmax_with_companions(
     primary_var : str
         Variable name whose max-along-``dim`` is computed. May be a name that is
         NOT in ``ds.data_vars`` if it is constructed by the caller and assigned
-        to ``ds`` before invocation (e.g., ``velocity_mps``).
+        to ``ds`` before invocation (e.g., ``unit_discharge_magnitude``).
     companion_vars : list[str]
         Names of variables to sample at the per-cell argmax timestep. Each name
         must exist in ``ds.data_vars`` and share ``dim``.
     dim : str
-        Name of the dimension to reduce along (typically ``"timestep_min"``).
+        Name of the dimension to reduce along (typically ``"timestep"``).
     chunksize_mb : float
         Target memory budget per chunk, in MiB. Used by
         ``estimate_timesteps_per_chunk`` to derive ``chunk_timesteps``.
@@ -1933,9 +4197,10 @@ def _streaming_argmax_with_companions(
 
     Examples
     --------
-    >>> # Helper call with primary='velocity_mps', companions=['velocity_x_mps','velocity_y_mps']:
-    >>> # result.keys() = {'max_velocity_mps', 'argmax_timestep_min',
-    >>> #                  'velocity_x_mps_at_argmax', 'velocity_y_mps_at_argmax'}
+    >>> # Helper call with primary='unit_discharge_magnitude',
+    >>> # companions=['unit_discharge_x','unit_discharge_y']:
+    >>> # result.keys() = {'max_unit_discharge_magnitude', 'argmax_timestep',
+    >>> #                  'unit_discharge_x_at_argmax', 'unit_discharge_y_at_argmax'}
 
     Notes
     -----
@@ -1981,25 +4246,19 @@ def _streaming_argmax_with_companions(
 
     running_max = np.full((ny, nx), -np.inf, dtype=np.float64)
     argmax_idx = np.full((ny, nx), -1, dtype=np.int64)
-    companion_at_argmax = {
-        cv: np.full((ny, nx), np.nan, dtype=np.float64) for cv in companion_vars
-    }
+    companion_at_argmax = {cv: np.full((ny, nx), np.nan, dtype=np.float64) for cv in companion_vars}
 
     for chunk_idx, chunk_start in enumerate(range(0, total_timesteps, chunk_size)):
         chunk_end = min(chunk_start + chunk_size, total_timesteps)
 
         if verbose:
             print(
-                f"[Streaming Argmax] chunk {chunk_idx + 1}/{n_chunks}: "
-                f"timesteps {chunk_start}-{chunk_end - 1}",
+                f"[Streaming Argmax] chunk {chunk_idx + 1}/{n_chunks}: timesteps {chunk_start}-{chunk_end - 1}",
                 flush=True,
             )
 
         primary_chunk = ds[primary_var].isel({dim: slice(chunk_start, chunk_end)}).values
-        companion_chunks = {
-            cv: ds[cv].isel({dim: slice(chunk_start, chunk_end)}).values
-            for cv in companion_vars
-        }
+        companion_chunks = {cv: ds[cv].isel({dim: slice(chunk_start, chunk_end)}).values for cv in companion_vars}
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
@@ -2017,9 +4276,7 @@ def _streaming_argmax_with_companions(
         for cv, cv_chunk in companion_chunks.items():
             yi, xi = np.ogrid[:ny, :nx]
             cv_at_chunk_argmax = cv_chunk[chunk_argmax_local, yi, xi]
-            companion_at_argmax[cv] = np.where(
-                update_mask, cv_at_chunk_argmax, companion_at_argmax[cv]
-            )
+            companion_at_argmax[cv] = np.where(update_mask, cv_at_chunk_argmax, companion_at_argmax[cv])
 
         del primary_chunk
         del companion_chunks
@@ -2028,18 +4285,16 @@ def _streaming_argmax_with_companions(
     no_data_mask = argmax_idx == -1
 
     running_max_out = np.where(no_data_mask, np.nan, running_max).astype(np.float64)
-    argmax_dim_values_out = np.where(
-        no_data_mask, np.nan, dim_values[np.where(no_data_mask, 0, argmax_idx)]
-    ).astype(np.float64)
+    argmax_dim_values_out = np.where(no_data_mask, np.nan, dim_values[np.where(no_data_mask, 0, argmax_idx)]).astype(
+        np.float64
+    )
 
     result = {
         f"max_{primary_var}": running_max_out,
         f"argmax_{dim}": argmax_dim_values_out,
     }
     for cv in companion_vars:
-        result[f"{cv}_at_argmax"] = np.where(
-            no_data_mask, np.nan, companion_at_argmax[cv]
-        ).astype(np.float64)
+        result[f"{cv}_at_argmax"] = np.where(no_data_mask, np.nan, companion_at_argmax[cv]).astype(np.float64)
 
     return result
 
@@ -2050,12 +4305,13 @@ def summarize_triton_simulation_results(
     target_dem_resolution,
     *,
     chunksize_mb,
-    tstep_dimname="timestep_min",
+    flood_velocity_min_depth_m=DEFAULT_FLOOD_VELOCITY_MIN_DEPTH_M,
+    tstep_dimname="timestep",
     verbose=False,
 ):
     """
-    Summarize TRITON simulation results by computing max velocity, time of max
-    velocity, water level statistics, and final flood volume — using a streaming
+    Summarize TRITON simulation results by computing max unit discharge, time of max
+    unit discharge, flood depth statistics, and final flood volume — using a streaming
     chunked reduction that bounds peak working-set memory by ``chunksize_mb``.
 
     Replaces a prior lazy-dask implementation whose final ``.compute()``
@@ -2080,8 +4336,13 @@ def summarize_triton_simulation_results(
         ``_streaming_argmax_with_companions``. Typically sourced from
         ``cfg_analysis.process_append_batch_memory_budget_mb`` (the job-RAM budget),
         not the smaller per-LOAD-chunk guard ``process_output_target_chunksize_mb``.
+    flood_velocity_min_depth_m : float, optional
+        Wet-depth threshold (m): at a print where the same-print ``flood_depth`` is at or below
+        this value, or NaN, the flood velocity |q| / h is NaN (default
+        ``DEFAULT_FLOOD_VELOCITY_MIN_DEPTH_M``, which the ``flood_velocity_min_depth_m`` config
+        field also defaults to; the one production caller passes the configured value).
     tstep_dimname : str, optional
-        Name of timestep dimension (default: ``"timestep_min"``).
+        Name of timestep dimension (default: ``"timestep"``).
     verbose : bool, optional
         Print progress messages (default: ``False``).
 
@@ -2089,97 +4350,166 @@ def summarize_triton_simulation_results(
     -------
     xr.Dataset
         Summarized dataset with ``event_iloc`` coordinate and expanded dims.
-        Schema preserved verbatim from the prior implementation: variables
-        ``max_velocity_mps``, ``time_of_max_velocity_min``,
-        ``velocity_x_mps_at_time_of_max_velocity``,
-        ``velocity_y_mps_at_time_of_max_velocity``, ``max_wlevel_m``,
-        ``time_of_max_wlevel_min``, ``wlevel_m_last_tstep``,
-        ``final_surface_flood_volume_m3``.
+        Variables: ``max_flood_velocity``, ``time_of_max_flood_velocity``,
+        ``x_flood_velocity_at_time_of_max_flood_velocity``,
+        ``y_flood_velocity_at_time_of_max_flood_velocity`` (the maximum over prints of the
+        depth-averaged flood velocity |q| / h, NaN where it is never defined), plus the
+        unit-discharge and depth variables, whose schema is preserved from the prior implementation:
+        ``max_unit_discharge``, ``time_of_max_unit_discharge``,
+        ``unit_discharge_x_at_time_of_max_unit_discharge``,
+        ``unit_discharge_y_at_time_of_max_unit_discharge``, ``max_flood_depth``,
+        ``time_of_max_flood_depth``, ``flood_depth_last_tstep``,
+        ``final_surface_flood_volume``.
     """
     if verbose:
         print(
-            f"[Summary] Computing summary statistics (streaming chunked reduction, "
-            f"chunksize_mb={chunksize_mb})",
+            f"[Summary] Computing summary statistics (streaming chunked reduction, chunksize_mb={chunksize_mb})",
             flush=True,
         )
 
     tsteps = ds[tstep_dimname].to_series()
 
-    ds_with_velocity = ds.assign(
-        velocity_mps=(ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5
+    # QX and QY are the solver's depth-integrated flow per meter of flow width (m2/s), so their
+    # magnitude is a unit discharge, not a velocity. It is assigned lazily because the streaming
+    # reduction needs a named variable of ``ds`` and the timeseries store does not hold it.
+    ds_with_magnitude = ds.assign(
+        unit_discharge_magnitude=(ds["unit_discharge_x"] ** 2 + ds["unit_discharge_y"] ** 2) ** 0.5
     )
 
-    velocity_result = _streaming_argmax_with_companions(
-        ds=ds_with_velocity,
-        primary_var="velocity_mps",
-        companion_vars=["velocity_x_mps", "velocity_y_mps"],
+    discharge_result = _streaming_argmax_with_companions(
+        ds=ds_with_magnitude,
+        primary_var="unit_discharge_magnitude",
+        companion_vars=["unit_discharge_x", "unit_discharge_y"],
         dim=tstep_dimname,
         chunksize_mb=chunksize_mb,
         verbose=verbose,
     )
-    del ds_with_velocity
+    del ds_with_magnitude
+    gc.collect()
+
+    # Flood velocity = unit discharge / depth, with BOTH taken from the SAME print (QX, QY and H of one
+    # print come from one solver state; MH is a running maximum and is NOT the divisor). It is NaN, not 0,
+    # where the depth is at or below the threshold or NaN: the streaming reduction starts its running
+    # maximum at -inf and updates on a strict greater-than, so an always-dry cell filled with 0 would
+    # report a maximum of 0 at the FIRST print, a fabricated time, whereas NaN keeps argmax_idx == -1 and
+    # every output for that cell reads NaN. ``h_wet`` is the masked divisor, which also avoids a 0 / 0.
+    h_wet = ds["flood_depth"].where(ds["flood_depth"] > flood_velocity_min_depth_m)
+    ds_with_flood_velocity = ds.assign(
+        flood_velocity_magnitude=(ds["unit_discharge_x"] ** 2 + ds["unit_discharge_y"] ** 2) ** 0.5 / h_wet,
+        flood_velocity_h_wet=h_wet,
+    )
+    flood_velocity_result = _streaming_argmax_with_companions(
+        ds=ds_with_flood_velocity,
+        primary_var="flood_velocity_magnitude",
+        companion_vars=["unit_discharge_x", "unit_discharge_y", "flood_velocity_h_wet"],
+        dim=tstep_dimname,
+        chunksize_mb=chunksize_mb,
+        verbose=verbose,
+    )
+    del ds_with_flood_velocity, h_wet
     gc.collect()
 
     ds_summary = xr.Dataset()
     cell_dims = ("y", "x")
     cell_coords = {"y": ds["y"].values, "x": ds["x"].values}
 
-    ds_summary["max_velocity_mps"] = xr.DataArray(
-        velocity_result["max_velocity_mps"], dims=cell_dims, coords=cell_coords
+    ds_summary["max_unit_discharge"] = xr.DataArray(
+        discharge_result["max_unit_discharge_magnitude"], dims=cell_dims, coords=cell_coords
     )
-    ds_summary["time_of_max_velocity_min"] = xr.DataArray(
-        velocity_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
+    ds_summary["time_of_max_unit_discharge"] = xr.DataArray(
+        discharge_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
     )
-    ds_summary["velocity_x_mps_at_time_of_max_velocity"] = xr.DataArray(
-        velocity_result["velocity_x_mps_at_argmax"], dims=cell_dims, coords=cell_coords
+    ds_summary["unit_discharge_x_at_time_of_max_unit_discharge"] = xr.DataArray(
+        discharge_result["unit_discharge_x_at_argmax"], dims=cell_dims, coords=cell_coords
     )
-    ds_summary["velocity_y_mps_at_time_of_max_velocity"] = xr.DataArray(
-        velocity_result["velocity_y_mps_at_argmax"], dims=cell_dims, coords=cell_coords
+    ds_summary["unit_discharge_y_at_time_of_max_unit_discharge"] = xr.DataArray(
+        discharge_result["unit_discharge_y_at_argmax"], dims=cell_dims, coords=cell_coords
     )
 
-    if "max_wlevel_m" in ds.data_vars and tstep_dimname in ds.max_wlevel_m.dims:
-        ds_summary["max_wlevel_m"] = (
-            ds.max_wlevel_m.sel(timestep_min=ds.max_wlevel_m.timestep_min.to_series().max())
+    flood_velocity_comment = (
+        f"maximum over reported timesteps of sqrt(qx^2 + qy^2) / h, where q is the unit discharge and h the "
+        f"flood depth of the SAME timestep; NaN where h <= {flood_velocity_min_depth_m} m (the "
+        f"flood_velocity_min_depth_m threshold) or h is NaN. A maximum over output prints only: a peak "
+        f"between prints is not seen."
+    )
+    ds_summary["max_flood_velocity"] = xr.DataArray(
+        flood_velocity_result["max_flood_velocity_magnitude"], dims=cell_dims, coords=cell_coords
+    )
+    ds_summary["time_of_max_flood_velocity"] = xr.DataArray(
+        flood_velocity_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
+    )
+    # Components are qx / h and qy / h at the time of the maximum, from the companions sampled there; where
+    # the cell never had a defined flood velocity every companion is NaN, so the components are NaN too.
+    h_at_max = flood_velocity_result["flood_velocity_h_wet_at_argmax"]
+    ds_summary["x_flood_velocity_at_time_of_max_flood_velocity"] = xr.DataArray(
+        flood_velocity_result["unit_discharge_x_at_argmax"] / h_at_max, dims=cell_dims, coords=cell_coords
+    )
+    ds_summary["y_flood_velocity_at_time_of_max_flood_velocity"] = xr.DataArray(
+        flood_velocity_result["unit_discharge_y_at_argmax"] / h_at_max, dims=cell_dims, coords=cell_coords
+    )
+    for _name in (
+        "max_flood_velocity",
+        "time_of_max_flood_velocity",
+        "x_flood_velocity_at_time_of_max_flood_velocity",
+        "y_flood_velocity_at_time_of_max_flood_velocity",
+    ):
+        ds_summary[_name].attrs["comment"] = flood_velocity_comment
+
+    if "max_flood_depth" in ds.data_vars and tstep_dimname in ds.max_flood_depth.dims:
+        ds_summary["max_flood_depth"] = (
+            ds.max_flood_depth.sel(timestep=ds.max_flood_depth.timestep.to_series().max())
             .reset_coords(drop=True)
             .compute()
         )
-        wlevel_argmax_result = _streaming_argmax_with_companions(
-            ds=ds, primary_var="wlevel_m", companion_vars=[],
-            dim=tstep_dimname, chunksize_mb=chunksize_mb, verbose=verbose,
-        )
-        ds_summary["time_of_max_wlevel_min"] = xr.DataArray(
-            wlevel_argmax_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords,
-        )
-    elif "max_wlevel_m" in ds.data_vars:
-        ds_summary["max_wlevel_m"] = ds["max_wlevel_m"].compute()
-        wlevel_argmax_result = _streaming_argmax_with_companions(
-            ds=ds, primary_var="wlevel_m", companion_vars=[],
-            dim=tstep_dimname, chunksize_mb=chunksize_mb, verbose=verbose,
-        )
-        ds_summary["time_of_max_wlevel_min"] = xr.DataArray(
-            wlevel_argmax_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords,
-        )
-    else:
-        wlevel_result = _streaming_argmax_with_companions(
+        flood_depth_argmax_result = _streaming_argmax_with_companions(
             ds=ds,
-            primary_var="wlevel_m",
+            primary_var="flood_depth",
             companion_vars=[],
             dim=tstep_dimname,
             chunksize_mb=chunksize_mb,
             verbose=verbose,
         )
-        ds_summary["max_wlevel_m"] = xr.DataArray(
-            wlevel_result["max_wlevel_m"], dims=cell_dims, coords=cell_coords
+        ds_summary["time_of_max_flood_depth"] = xr.DataArray(
+            flood_depth_argmax_result[f"argmax_{tstep_dimname}"],
+            dims=cell_dims,
+            coords=cell_coords,
         )
-        ds_summary["time_of_max_wlevel_min"] = xr.DataArray(
-            wlevel_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
+    elif "max_flood_depth" in ds.data_vars:
+        ds_summary["max_flood_depth"] = ds["max_flood_depth"].compute()
+        flood_depth_argmax_result = _streaming_argmax_with_companions(
+            ds=ds,
+            primary_var="flood_depth",
+            companion_vars=[],
+            dim=tstep_dimname,
+            chunksize_mb=chunksize_mb,
+            verbose=verbose,
+        )
+        ds_summary["time_of_max_flood_depth"] = xr.DataArray(
+            flood_depth_argmax_result[f"argmax_{tstep_dimname}"],
+            dims=cell_dims,
+            coords=cell_coords,
+        )
+    else:
+        flood_depth_result = _streaming_argmax_with_companions(
+            ds=ds,
+            primary_var="flood_depth",
+            companion_vars=[],
+            dim=tstep_dimname,
+            chunksize_mb=chunksize_mb,
+            verbose=verbose,
+        )
+        ds_summary["max_flood_depth"] = xr.DataArray(
+            flood_depth_result["max_flood_depth"], dims=cell_dims, coords=cell_coords
+        )
+        ds_summary["time_of_max_flood_depth"] = xr.DataArray(
+            flood_depth_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
         )
 
-    ds_summary["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(
-        timestep_min=tsteps.max()
-    ).reset_coords(drop=True).compute()
-    ds_summary["wlevel_m_last_tstep"].attrs["notes"] = (
-        "this is the water level in the last reported time step for computing mass balance"
+    ds_summary["flood_depth_last_tstep"] = (
+        ds["flood_depth"].sel(timestep=tsteps.max()).reset_coords(drop=True).compute()
+    )
+    ds_summary["flood_depth_last_tstep"].attrs["notes"] = (
+        "this is the flood depth in the last reported time step for computing mass balance"
     )
 
     x_dim = ds.x.to_series().diff().mode().iloc[0]
@@ -2202,10 +4532,8 @@ def summarize_triton_simulation_results(
             f"Tolerance: {tolerance}m"
         )
 
-    ds_summary["final_surface_flood_volume_m3"] = (
-        ds_summary["wlevel_m_last_tstep"] * abs(x_dim) * abs(y_dim)
-    ).sum()
-    ds_summary["final_surface_flood_volume_m3"].attrs["units"] = "m3"
+    ds_summary["final_surface_flood_volume"] = (ds_summary["flood_depth_last_tstep"] * abs(x_dim) * abs(y_dim)).sum()
+    ds_summary["final_surface_flood_volume"].attrs["units"] = "m3"
 
     ds_summary = ds_summary.assign_coords(coords=dict(event_iloc=event_iloc))
     ds_summary = ds_summary.expand_dims("event_iloc")

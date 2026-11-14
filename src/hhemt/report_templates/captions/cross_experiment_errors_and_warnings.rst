@@ -1,0 +1,1 @@
+Check outcomes for each experiment. Most cells are one experiment's result for one check; hover a failing cell for its summary. Any row marked *(derived across experiments)* is computed at combine time from the whole combined set rather than reported by any single experiment.

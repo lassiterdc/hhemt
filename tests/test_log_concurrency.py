@@ -1,4 +1,5 @@
 """Concurrency + compute-on-read regression tests for the log-write-race fix."""
+
 from __future__ import annotations
 
 import json
@@ -40,9 +41,7 @@ def test_rollups_compute_on_read_and_are_not_persisted(synthetic_multisim_comple
 # TEST-NEW-2b (main agent authored) — legacy log.json with stale all_* keys still loads (extra="ignore").
 def test_legacy_log_with_stale_rollup_keys_loads(tmp_path):
     logfile = tmp_path / "log.json"
-    logfile.write_text(
-        json.dumps({"logfile": str(logfile), "all_sims_run": True, "all_scenarios_created": True})
-    )
+    logfile.write_text(json.dumps({"logfile": str(logfile), "all_sims_run": True, "all_scenarios_created": True}))
     assert TRITONSWMM_analysis_log.from_json(logfile) is not None  # no validation error
 
 
@@ -54,9 +53,7 @@ def test_n_resumes_coalesce_and_increment(tmp_path):
     from hhemt.log import TRITONSWMM_model_log
 
     logfile = tmp_path / "log_tritonswmm.json"
-    log = TRITONSWMM_model_log(
-        event_iloc=0, event_idx={}, simulation_folder=tmp_path, logfile=logfile
-    )
+    log = TRITONSWMM_model_log(event_iloc=0, event_idx={}, simulation_folder=tmp_path, logfile=logfile)
     # Unset on a fresh log -> get() is None; readers MUST coalesce to 0.
     assert log.n_resumes.get() is None
     assert (log.n_resumes.get() or 0) == 0
@@ -122,5 +119,60 @@ def test_log_single_writer_invariant():
     import hhemt
 
     src = Path(hhemt.__file__).parent
-    assert "sub_analysis._update_log()" not in (src / "sensitivity_analysis.py").read_text()
+    assert "member._update_log()" not in (src / "sensitivity_analysis.py").read_text()
     assert "skip_log_update=True" in (src / "report_renderers" / "_cli.py").read_text()
+
+
+# TEST-NEW-5 (hhemt-specialist, friction round 27 VMS-D2) — M3 version-skew field drop.
+# `write()`'s overlay is filtered by `k in mine`, so a writer whose model does not
+# DECLARE an on-disk field erases it silently. Arm (a): non-null undeclared key -> warn.
+def test_write_warns_when_it_drops_a_nonnull_undeclared_field(tmp_path, caplog):
+    import logging
+
+    from hhemt.log import TRITONSWMM_system_log
+
+    logfile = tmp_path / "system_log.json"
+    logfile.write_text(
+        json.dumps(
+            {
+                "logfile": str(logfile),
+                "dem_processed": True,
+                "triton_head_sha": "deadbeefcafe0000000000000000000000000000",
+                "legacy_only_field": "irreplaceable-provenance",
+            },
+            indent=4,
+        )
+    )
+    log = TRITONSWMM_system_log.from_json(logfile)
+    with caplog.at_level(logging.WARNING, logger="hhemt.log"):
+        log.write()
+    assert "legacy_only_field" not in json.loads(logfile.read_text())  # still dropped
+    assert [r for r in caplog.records if "legacy_only_field" in r.getMessage()]
+
+
+# Arm (b): a DIFFERENTLY-positioned satisfying state — the undeclared key is NULL on
+# disk (nothing is lost by dropping it) and a declared field is DELIBERATELY changed.
+# Must stay silent, or the warning over-fires on every legitimate write.
+def test_write_is_silent_when_the_undeclared_field_is_null(tmp_path, caplog):
+    import logging
+
+    from hhemt.log import TRITONSWMM_system_log
+
+    logfile = tmp_path / "system_log.json"
+    logfile.write_text(
+        json.dumps(
+            {
+                "logfile": str(logfile),
+                "dem_processed": True,
+                "triton_head_sha": "deadbeefcafe0000000000000000000000000000",
+                "legacy_only_field": None,
+            },
+            indent=4,
+        )
+    )
+    log = TRITONSWMM_system_log.from_json(logfile)
+    with caplog.at_level(logging.WARNING, logger="hhemt.log"):
+        log.dem_processed.set(False)
+        log.write()
+    assert json.loads(logfile.read_text())["dem_processed"] is False
+    assert not [r for r in caplog.records if "legacy_only_field" in r.getMessage()]

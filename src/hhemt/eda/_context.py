@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from hhemt.utils import open_store
+
 if TYPE_CHECKING:
     import geopandas as gpd
     import pandas as pd
@@ -43,18 +45,51 @@ class EdaContext:
     is_bundle: bool
 
 
-def load_eda_context(root: Path | str) -> EdaContext:
-    """Re-derive the 9 EdaContext fields from artifacts resident at ``root``.
+def _holds_relative_path_records(cfg_analysis_path: Path, cfg_system_path: Path) -> bool:
+    """True when BOTH config files carry the forced-dot fields as ``.``: the signature of a
+    relative-path record, unpacked from a deposit.
 
-    Raises ``FileNotFoundError`` only for the two config files (a root without a
-    config is not a valid EDA root). Every data field is ``None`` when its artifact
-    is legitimately absent (non-sensitivity → no ``sensitivity_datatree``; a bundle
-    or partial tree → no ``datatree``/``scenario_status``/``swmm_features``/``triton_dem``).
+    The data deposit's two configs are written with every path measured from the deposit
+    folder, so ``analysis_dir`` and ``system_directory`` -- the two fields the bundle path
+    policy forces to ``.`` -- both read ``.``. A data deposit carries no ``bundle_manifest.json``,
+    so ``is_bundle`` cannot tell the loader that. The fields are FOUND by reading
+    ``_PATH_FIELD_POLICY`` for ``FORCED_DOT``, not typed here, so a field the policy later forces
+    is recognised without an edit.
+
+    EXACTLY ONE of the two reading ``.`` is NOT recognised: a live analysis directory whose
+    ``analysis_dir`` is null and whose ``system_directory`` is absolute (the dump this
+    repository produces) or one with an absolute ``analysis_dir`` reads as it always has. The
+    one wrong reading is a live config that writes ``.`` for both fields and is read from a
+    folder other than its own.
+    """
+    import yaml
+
+    from hhemt.bundle._path_policy import _PATH_FIELD_POLICY, PathPolicy, enumerate_path_fields
+    from hhemt.config.analysis import analysis_config
+    from hhemt.config.system import system_config
+
+    forced_dot = {name for name, policy in _PATH_FIELD_POLICY.items() if policy is PathPolicy.FORCED_DOT}
+    for path, model in ((cfg_analysis_path, analysis_config), (cfg_system_path, system_config)):
+        names = forced_dot & set(enumerate_path_fields(model))
+        if not names:
+            return False
+        raw = yaml.safe_load(path.read_text()) or {}
+        if not all(raw.get(name) == "." for name in names):
+            return False
+    return True
+
+
+def load_eda_context(root: Path | str) -> EdaContext:
+    """Re-derive the EdaContext fields from artifacts resident at ``root``.
+
+    Raises ``FileNotFoundError`` only for the config files, because a root without a
+    config is not a valid EDA root. Every data field is ``None`` when the artifact
+    is absent. A non-sensitivity analysis has no ``sensitivity_datatree``. A bundle
+    or partial tree has no ``datatree``, ``scenario_status``, ``swmm_features``, or ``triton_dem``.
     """
     import geopandas as gpd
     import pandas as pd
     import rioxarray as rxr
-    import xarray as xr
 
     from hhemt.config.analysis import analysis_config
     from hhemt.config.loaders import yaml_to_model
@@ -72,21 +107,40 @@ def load_eda_context(root: Path | str) -> EdaContext:
         )
     if not cfg_system_path.exists():
         raise FileNotFoundError(f"{root} is not a valid EDA root: cfg_system.yaml absent.")
-    cfg_analysis = yaml_to_model(cfg_analysis_path, analysis_config)
-    cfg_system = yaml_to_model(cfg_system_path, system_config)
+    # A bundle's archived cfg carries bundle-relative paths, and so does an unpacked DATA
+    # deposit's (publish writes them in that form), but a deposit has no bundle_manifest.json.
+    # `is_bundle` stays derived from the manifest alone; only the config loader asks the
+    # second question. A live analysis_dir's cfg may carry whatever the user's YAML carried,
+    # so rebasing it would repoint a legitimately-relative input at the analysis tree.
+    # Gate, do not rebase blind.
+    if is_bundle or _holds_relative_path_records(cfg_analysis_path, cfg_system_path):
+        from hhemt.bundle._path_policy import load_bundle_config
+
+        cfg_analysis = load_bundle_config(cfg_analysis_path, analysis_config, root)
+        cfg_system = load_bundle_config(cfg_system_path, system_config, root)
+    else:
+        # `metadata`: a live analysis tree's own configs, read to RENDER. The EDA surface
+        # consumes the consolidated tree and the emitted figures, never a raw simulation
+        # input, so a campaign whose inputs were reclaimed must still re-render. This is
+        # UPSTREAM of the four _dem_resolution_plots.py reads -- without it they are
+        # unreachable on exactly the tree they exist to serve.
+        cfg_analysis = yaml_to_model(cfg_analysis_path, analysis_config, existence="metadata")
+        cfg_system = yaml_to_model(cfg_system_path, system_config, existence="metadata")
+
+    from hhemt.utils import resolve_experiment_tree
 
     def _open_tree(p: Path) -> xr.DataTree | None:
-        return xr.open_datatree(str(p), engine="zarr", consolidated=False) if p.exists() else None
+        return open_store(str(p)) if p.exists() else None
 
     datatree = _open_tree(root / "analysis_datatree.zarr")
     sensitivity_datatree = (
-        _open_tree(root / "sensitivity_datatree.zarr") if cfg_analysis.toggle_sensitivity_analysis else None
+        _open_tree(resolve_experiment_tree(root)) if cfg_analysis.toggle_sensitivity_analysis else None
     )
 
     status_csv = root / "scenario_status.csv"
     scenario_status = pd.read_csv(status_csv) if status_csv.exists() else None
 
-    # SWMM GIS layers are exported under system_dir/gis (system_overview.py:138),
+    # SWMM GIS layers are exported under system_dir/gis (`_swmm_gis_layers.py::export_swmm_gis_layers`),
     # NOT analysis_dir/gis. On a bundle root the harvested copy is at {root}/gis;
     # prefer the bundle copy, fall back to the system-dir source for a live analysis.
     bundle_gis = root / "gis"

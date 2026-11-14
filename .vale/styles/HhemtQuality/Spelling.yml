@@ -1,0 +1,9 @@
+# A word outside the en_US dictionary is accepted by accept.txt, which only this rule reads. A snake_case or camelCase token is an identifier and is filtered.
+extends: spelling
+message: "Spelling: '%s'."
+level: warning
+ignore:
+  - HhemtQuality/accept.txt
+filters:
+  - '\b\w+_\w+\b'
+  - '\b[a-z]+[A-Z]\w*\b'

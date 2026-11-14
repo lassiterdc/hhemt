@@ -10,19 +10,76 @@ import numpy as np
 import pandas as pd
 import rioxarray as rxr
 import xarray as xr
+from filelock import Timeout
 from rasterio.enums import Resampling
 from rasterio.transform import from_origin
 
 import hhemt.utils as ut
+from hhemt._compile_venue import COMPILE_VENUE_ENV, refused_in_undeclared_test_venue
+from hhemt._filelock_compat import resolve_filelock
 from hhemt.analysis import TRITONSWMM_analysis
 from hhemt.config.loaders import load_system_config
 from hhemt.exceptions import CompilationError, ConfigurationError, ProcessingError
 from hhemt.log import TRITONSWMM_system_log
 from hhemt.paths import SysPaths
 from hhemt.plot_system import TRITONSWMM_system_plotting
+from hhemt.swmm_markers import MAIN_C_RELATIVE_PATH, SWMM_MARKERS
+
+
+def _refuse_compile_in_undeclared_test_venue(entry_point: str) -> None:
+    """Refuse to build a solver from a test session that declared no permitted venue.
+
+    WHY A TEST-FRAMEWORK NAME APPEARS IN SHIPPED CODE. The predicate is a CONJUNCTION
+    whose first term is an ambient environment fact, false for every process not inside
+    a pytest test phase -- so no user can reach this refusal, even though compiling is
+    something users legitimately do. This mirrors
+    ``swmm_runoff_modeling._refuse_swmm_in_undeclared_test_venue``, whose guarded act is
+    likewise on an ordinary user path.
+
+    WHY IT EXISTS ALONGSIDE tests/fixtures/_compile_guard.py. That guard is armed from a
+    pytest conftest hook and REPLACES the method; while armed, this body never runs. They
+    cover DISJOINT populations -- a conftest hook reaches only its own process, and a
+    Snakemake rule shelling ``python -m hhemt.setup_workflow`` creates one that has none.
+    Deleting either leaves a population unguarded.
+
+    ConfigurationError, not CompilationError: nothing failed to build. Raising the
+    compile type renders "compilation failed / Return code / Run: cat {log}" and hands
+    the reader a log path that does not exist.
+    """
+    if refused_in_undeclared_test_venue():
+        raise ConfigurationError(
+            field=COMPILE_VENUE_ENV,
+            message=(
+                f"{entry_point} was called from a test session on a machine that has not "
+                f"been declared a permitted build venue. Nothing has failed: building a "
+                f"solver is only performed where the venue is declared."
+            ),
+            fix_hint=(
+                f"Run `just test-gated`, which sets {COMPILE_VENUE_ENV} for you; or run the "
+                f"fast test tier, which builds nothing. To invoke pytest directly, set "
+                f"{COMPILE_VENUE_ENV}=toolchain. See the compile-venue note in "
+                f"docs/contributing.md."
+            ),
+        )
 
 
 _ROW_BLOCK_SIZE = 1024  # row-streaming block size for _write_raster (D-PR-5 B)
+
+#: Pinned-fix shas MOVED to `model_defects.REGISTRY`, which is now the single place a
+#: fix commit is named. Both constants that lived here were duplicated (the coupled-resume
+#: one was mirrored in analysis_validation.py with an in-code note about the duplication),
+#: and each existed only to derive one boolean at compile time. Applicability is now derived
+#: at READ time from the recorded producing sha, so the compile path names no fix at all.
+
+#: Wall-clock cap on waiting for a sibling process's compile of the SAME build dir.
+#: Keyed on the BUILD DIR (not the software dir) so a CPU and a GPU compile of one
+#: tree still proceed in parallel. Sized for a cold TRITON+Kokkos build plus queue
+#: slack. On expiry we FAIL LOUD rather than proceed: proceeding would reintroduce
+#: the concurrent-write corruption the lock exists to prevent (Gotcha 52), and on a
+#: flock-less filesystem `resolve_filelock` returns a SoftFileLock, which has no
+#: crash-release — so a stale lock from a SLURM-killed compile must surface as an
+#: actionable error naming the lock file, never as an indefinite hang.
+_COMPILE_LOCK_TIMEOUT_SECONDS = 3600
 
 
 def _assert_dem_integrity(fpath_raster):
@@ -87,6 +144,64 @@ def _assert_dem_integrity(fpath_raster):
             )
 
 
+# ONE table for CUDA gpu_hardware -> (TRITON_ARCH, Kokkos_ARCH_* token); read by
+# _resolve_cuda_arch_flags (compile) and hhemt.sif.identity.kokkos_arch_for (SIF identity).
+CUDA_ARCH_MAP: dict[str, tuple[str, str]] = {
+    "rtx3090": ("AMPERE80", "Kokkos_ARCH_AMPERE86"),
+    "a6000": ("AMPERE80", "Kokkos_ARCH_AMPERE86"),
+    "a100": ("AMPERE80", "Kokkos_ARCH_AMPERE80"),
+    "h100": ("HOPPER90", "Kokkos_ARCH_HOPPER90"),
+    "h200": ("HOPPER90", "Kokkos_ARCH_HOPPER90"),
+    "v100": ("VOLTA70", "Kokkos_ARCH_VOLTA70"),
+    "rtx2080": ("TURING75", "Kokkos_ARCH_TURING75"),
+}
+
+
+def _emit_swmm_marker_check_lines() -> list[str]:
+    """Shell lines that verify the cloned SWMM source prints the literals the verdict reads.
+
+    The toolkit decides a standalone SWMM run by two literal strings in the engine's log, and
+    both are printed by third-party source cloned at ``SWMM_tag_key``. This emits a
+    ``grep -qF`` per literal (``hhemt.swmm_markers.SWMM_MARKERS`` -- interpolated from the
+    module, NEVER retyped here) whose failure branch echoes a ``WARNING:`` naming the missing
+    literal.
+
+    THREE PROPERTIES ARE LOAD-BEARING, each because the obvious alternative is wrong:
+
+    - **Non-failing.** The generated script opens with ``set -e``, so a bare ``grep`` that
+      finds nothing would abort the compile. ``if ! grep ...; then echo ...; fi`` makes the
+      failure branch the only effect. A drifted marker is upstream's to fix and the item asks
+      for a warning, not a refusal.
+    - **Emitted OUTSIDE the clone branch.** A clone that already exists at a different tag
+      never re-runs the clone, and that is exactly the clone whose source decides the verdict.
+      Emitting this inside the ``if`` would check only freshly cloned trees.
+    - **Reads the script's own ``${SWMM_SOURCE_DIR}``**. The same variable the clone wrote to,
+      so the check cannot drift from where the source actually landed.
+
+    The ``[ -f "$_swmm_main_c" ]`` guard mirrors ``hhemt.swmm_markers.producer_check``'s
+    ``None``: an absent ``main.c`` means there is no producer to be wrong about, and grepping a
+    missing path would only add stderr noise to the compile log the operator reads.
+    """
+    suffix = "the toolkit reads that literal to decide a standalone SWMM run completed."
+    lines = [
+        "# Verify the SWMM source prints the two log literals the toolkit's completion verdict",
+        "# reads. Emitted OUTSIDE the clone branch so a pre-existing clone is checked too, and",
+        "# non-failing because `set -e` is on and a drifted marker is a warning, not a failure.",
+        f'_swmm_main_c="${{SWMM_SOURCE_DIR}}/{MAIN_C_RELATIVE_PATH}"',
+        'if [ -f "$_swmm_main_c" ]; then',
+    ]
+    for marker in SWMM_MARKERS:
+        lines.extend(
+            [
+                f"""  if ! grep -qF -- '{marker}' "$_swmm_main_c"; then""",
+                f"""    echo "WARNING: SWMM source $_swmm_main_c does not print '{marker}'; {suffix}" >&2""",
+                "  fi",
+            ]
+        )
+    lines.append("fi")
+    return lines
+
+
 class TRITONSWMM_system:
     def __init__(
         self,
@@ -96,6 +211,8 @@ class TRITONSWMM_system:
         gpu_compilation_backend: Literal["HIP", "CUDA"] | None = None,
         additional_modules: str | None = None,
         execution_container_mode: bool = False,
+        skip_log_update: bool = False,
+        skip_layout_state: bool = False,
     ) -> None:
         self.system_config_yaml = system_config_yaml
         self.cfg_system = load_system_config(system_config_yaml)
@@ -121,6 +238,28 @@ class TRITONSWMM_system:
         # True only at the compile-driving construction sites in container mode; the
         # render/status-only sites keep the False default (byte-identical native).
         self._execution_container_mode = execution_container_mode
+        # OBSERVER MODE. Mirrors TRITONSWMM_analysis.skip_log_update (analysis.py:416),
+        # which the sim/prepare/process runners already pass: a process that only READS
+        # compile state must not author a write to the SHARED system_log.json. Under ~30
+        # concurrent runners the create-capable open in log.write() intermittently raised
+        # FileNotFoundError on WekaFS (14 of 822 SLURM logs on the four 4a3r2 synth_cc
+        # arms), because every writer's atomic temp+os.replace manufactures the rename
+        # window the server answers ENOENT inside. Gating the write is the root-cause
+        # shape; retrying the open is refused by developer ruling [Q167].
+        # In this mode construction neither creates nor writes the document and
+        # _sync_compilation_log_field persists nothing, while the properties still derive
+        # their verdicts freshly from the build trees.
+        self._skip_log_update = skip_log_update
+
+        # LAYOUT-STATE GATE. Deliberately NOT folded into skip_log_update: that flag is
+        # named for one artifact and justified by one failure (the shared-log create race
+        # described above), while this one suppresses the two artifacts a read-only caller
+        # must not materialise -- the _version.json stamp at the end of __init__ and, on
+        # TRITONSWMM_analysis, the simulation_directory mkdir. Stretching the log flag to
+        # cover a version stamp would make its name describe the wrong thing about two of
+        # the three artifacts it would then govern. Default False keeps every existing
+        # constructing caller byte-identical.
+        self._skip_layout_state = skip_layout_state
 
         system_dir = self.cfg_system.system_directory
         tritonswmm_dir = self.cfg_system.TRITONSWMM_software_directory
@@ -149,11 +288,7 @@ class TRITONSWMM_system:
                 config_path=self.system_config_yaml,
             )
 
-        gpu_suffix = (
-            f"_{self.gpu_hardware}"
-            if self.gpu_compilation_backend and self.gpu_hardware
-            else ""
-        )
+        gpu_suffix = f"_{self.gpu_hardware}" if self.gpu_compilation_backend and self.gpu_hardware else ""
         # Initialize paths with backend split
         self.sys_paths = SysPaths(
             dem_processed=system_dir / f"elevation_{self.cfg_system.target_dem_resolution:.2f}m.dem",
@@ -161,9 +296,7 @@ class TRITONSWMM_system:
             # TRITON-SWMM build dirs (coupled model)
             TRITONSWMM_build_dir_cpu=tritonswmm_dir / "build_tritonswmm_cpu",
             TRITONSWMM_build_dir_gpu=(
-                tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}"
-                if self.gpu_compilation_backend
-                else None
+                tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}" if self.gpu_compilation_backend else None
             ),
             # TRITON-only build dirs (no SWMM coupling)
             TRITON_build_dir_cpu=tritonswmm_dir / "build_triton_cpu",
@@ -192,11 +325,20 @@ class TRITONSWMM_system:
 
         # Initialize system log
         log_path = system_dir / "system_log.json"
-        if log_path.exists():
+        # ONE name resolution (M1, read side): EVERY runner constructs TRITONSWMM_system,
+        # so on the sensitivity path thousands of runners probe this name while N
+        # setup_target jobs rename it; a stale negative sent them down the create path
+        # and into the write refusal. Absent -> a fresh default, exactly as before.
+        try:
             self.log = TRITONSWMM_system_log.from_json(log_path)
-        else:
+        except FileNotFoundError:
             self.log = TRITONSWMM_system_log(logfile=log_path)
-            self.log.write()
+            # Observer mode creates nothing: a fresh default log is held in memory and
+            # every later write goes through _sync_compilation_log_field, which this mode
+            # gates. Writing here is the measured failure site (see __init__'s
+            # skip_log_update note).
+            if not self._skip_log_update:
+                self.log.write()
 
         self._analysis: TRITONSWMM_analysis | None = None
         self.plot = TRITONSWMM_system_plotting(self)
@@ -208,11 +350,15 @@ class TRITONSWMM_system:
         self._sync_compilation_status_on_init()
 
         # Stamp _version.json at LAYOUT_VERSION at construction (eager - system
-        # dir is materialized synchronously by __init__).
-        from hhemt.version_migration import LAYOUT_VERSION
-        from hhemt.version_migration.state import stamp_new_target
+        # dir is materialized synchronously by __init__). Gated by skip_layout_state so a
+        # caller that must not materialise layout state -- the migration dry run -- leaves
+        # no _version.json behind; the default still stamps, which the compile rung and the
+        # migration ladder both read.
+        if not self._skip_layout_state:
+            from hhemt.version_migration import LAYOUT_VERSION
+            from hhemt.version_migration.state import stamp_new_target
 
-        stamp_new_target(self.cfg_system.system_directory, LAYOUT_VERSION)
+            stamp_new_target(self.cfg_system.system_directory, LAYOUT_VERSION, mode="construction")
 
     @property
     def analysis(self) -> "TRITONSWMM_analysis":
@@ -320,7 +466,7 @@ class TRITONSWMM_system:
         unique_values = np.unique(arr[~np.isnan(arr)])
         no_data_value = rds_lu.rio.nodata
         # create dataframe from landuse vals in the landuse raster
-        df_lu_vals = pd.Series(index=unique_values, name="placeholder").to_frame()  # type: ignore
+        df_lu_vals = pd.Series(index=unique_values, name="placeholder").to_frame()
         df_lu_vals.index.name = landuse_colname
         # join the landuse values present in the raster with the lookup table
         df_lu_vals = df_lu_vals.join(df_lu_lookup.set_index(landuse_colname), how="left")
@@ -342,11 +488,12 @@ class TRITONSWMM_system:
         target_resolution = self.cfg_system.target_dem_resolution
 
         rds_dem = rxr.open_rasterio(dem_unprocessed)
-        # crs = rds_dem.rio.crs  # type: ignore
+        # crs = rds_dem.rio.crs
         # og_dem_res_xy, og_dem_avg_gridsize = compute_grid_resolution(rds_dem)
         if (rds_dem.data < -100).sum() > 0:  # type: ignore
             sys.exit(
-                "Error - gaps found in DEM. Consider interpolating elevations using method = 'nearest' (see below in this function)"
+                "Error - gaps found in DEM. Consider interpolating elevations using"
+                " method = 'nearest' (see below in this function)"
             )
             rds_dem = rds_dem.rio.interpolate_na(method="nearest")
         # coarsen
@@ -373,8 +520,7 @@ class TRITONSWMM_system:
         configured = self.cfg_system.crs.horizontal_epsg
         if epsg is not None and configured != epsg:
             raise ConfigurationError(
-                f"DEM CRS (EPSG:{epsg}) does not match configured "
-                f"cfg_system.crs.horizontal_epsg (EPSG:{configured})."
+                f"DEM CRS (EPSG:{epsg}) does not match configured cfg_system.crs.horizontal_epsg (EPSG:{configured})."
             )
         if epsg is None:
             raise ConfigurationError(
@@ -413,18 +559,14 @@ class TRITONSWMM_system:
         return rds_mannings_coarse
 
     def _write_raster_formatted_for_TRITON(self, rds, output: Path, include_metadata: bool, fillna_val=-9999):
-        __, og_avg_gridsize = compute_grid_resolution(rds)
-        ncols = rds.x.shape[0]
-        nrows = rds.y.shape[0]
-        xllcorner = rds.x.values.min() - og_avg_gridsize / 2  # adjusted from center to corner
-        yllcorner = rds.y.values.min() - og_avg_gridsize / 2  # adjusted from center to corner
+        header = triton_grid_header(rds)
         # define DEM
         raster_metadata = {
-            "ncols         ": ncols,
-            "nrows         ": nrows,
-            "xllcorner     ": xllcorner,
-            "yllcorner     ": yllcorner,
-            "cellsize      ": og_avg_gridsize,
+            "ncols         ": header["ncols"],
+            "nrows         ": header["nrows"],
+            "xllcorner     ": header["xllcorner"],
+            "yllcorner     ": header["yllcorner"],
+            "cellsize      ": header["cellsize"],
             "NODATA_value  ": fillna_val,
         }
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -502,7 +644,77 @@ class TRITONSWMM_system:
                 pass
             raise
 
-    def _sync_compilation_log_field(self, log_field, success: bool):
+    def _sync_compilation_log_field(
+        self,
+        log_field,
+        success: bool,
+        *,
+        derived_from_resolvable_input: bool = True,
+    ):
+        """Persist a derived compile verdict — ONLY when it was actually measured.
+
+        TWO distinct conditions are ABSTENTIONS, not measurements, and both must
+        pass `derived_from_resolvable_input=False`:
+
+          1. UNRESOLVABLE INPUT — a `None` build-dir / logfile path, which arises
+             whenever this system was constructed without a gpu_compilation_backend
+             injection.
+          2. RESOLVABLE PATH, ABSENT ARTIFACT — the path resolves (every non-GPU
+             build dir is hardcoded in SysPaths and always does) but the
+             compilation.log is GONE. A build tree is a TRANSIENT INPUT: it is
+             consumed at sim time and may legitimately be cleaned up afterwards.
+             Its absence months later is not evidence the compile failed.
+
+        Condition 2 is why this parameter's NAME is narrower than its meaning —
+        read it as "was this a measurement". MEASURED 2026-08-10: the four synth_cc
+        arms compiled successfully on Aug 4 (`logs/setup_target_0.log`:
+        "[TRITON-only CPU] Already compiled successfully (skipping)"), the build
+        trees were removed, and reconstruction on Aug 5 17:13-17:16 overwrote a
+        measured True with False on all four — dated by the log writes themselves,
+        because this helper writes ONLY on change.
+
+        Persisting an abstention silently overwrites a measured True with False on
+        every reconstruction — a property READ mutating provenance.
+        `_sync_compilation_status_on_init` (system.py) reads all five compilation
+        properties at EVERY construction, so this fires on reconstruction, not only
+        after a compile.
+        """
+        # OBSERVER MODE persists NOTHING, including the False->None restore below. The
+        # restore is itself a write, and this mode exists because a runner's write to the
+        # shared document is the measured failure. The value a caller reads back is
+        # unaffected: every property returns its freshly derived verdict regardless.
+        if self._skip_log_update:
+            return
+        if not derived_from_resolvable_input:
+            # RESTORE, don't just abstain. Returning early leaves a STALE value — and on
+            # the four synth_cc arms that stale value is a False this very helper wrote on
+            # 2026-08-05 17:13-17:16, overwriting a True measured on Aug 4. Abstaining
+            # going forward stops the recurrence but cannot repair the record, so clear a
+            # stale False to None: the in-schema value for "not measured"
+            # (compilation_swmm_successful already reads null on all four arms).
+            #
+            # ASYMMETRIC BY DESIGN. Only a False is cleared:
+            #   False -> None  (unverifiable now; do not assert a failure we cannot see)
+            #   True  -> True  (LEFT ALONE — this is the historical record being protected;
+            #                   clearing it would be the very destruction this fix exists
+            #                   to stop)
+            #   None  -> None  (no write; preserves write-only-on-change)
+            # Cost, accepted: a genuinely measured failure whose artifact is later removed
+            # also becomes None. That is honest — the instrument can no longer see it — and
+            # a truly failed compile would not have produced completed sims.
+            #
+            # DEPENDS ON AN UNWIRED FEATURE. set(None) writes None only because
+            # LogField._expected_type is None: set_type() (log.py:42) is defined and never
+            # called, so the coercion at log.py:46-47 is skipped. If auto-registration is
+            # ever wired up as the LogField docstring promises, set(None) becomes
+            # bool(None) == False and this restoration silently inverts into the defect.
+            if log_field.get() is False:
+                # clear(), NOT set(None): on a hydrated log the pydantic
+                # before-validator supplies expected_type=bool, so set(None)
+                # coerces to False and rewrites the stale value this branch
+                # exists to clear. See LogField.clear.
+                log_field.clear()
+            return
         current_value = log_field.get()
         if current_value is None or current_value != success:
             log_field.set(success)
@@ -538,6 +750,7 @@ class TRITONSWMM_system:
         verbose : bool
             If True, print progress messages
         """
+        _refuse_compile_in_undeclared_test_venue("System.compile_TRITON_SWMM")
 
         # Determine which backends to compile
         if backends is None:
@@ -554,7 +767,25 @@ class TRITONSWMM_system:
         ):
             self._download_tritonswmm_source(verbose=verbose)
 
-        # Compile each backend sequentially
+        # Pin enforcement (D3): a pre-existing clone with a CMakeLists.txt is NEVER
+        # re-checked-out by the gate above, and its cached build is never invalidated
+        # (Gotcha 6 log-marker completion). So verify the checked-out HEAD matches the
+        # pinned sha and FAIL LOUD on mismatch, rather than silently reusing a stale
+        # binary. Gated on a set TRITONSWMM_branch_key so synth fixtures / examples that
+        # omit the pin are unaffected. Read-only w.r.t. the clone (no Gotcha-52 build
+        # collision). NOT recompute.py::_is_scope_pre_fix (that runs git against CWD).
+        self._verify_tritonswmm_pin(verbose=verbose)
+        # Provenance capture (D2): stamp the producing-TRITON sha + coupled-resume-fix
+        # ancestry onto the system log NOW, against the actual cloned tree, so the two
+        # consolidation stamp sites (a DIFFERENT process on HPC) can carry it onto the
+        # consolidated-tree root attrs. Read-only; graceful no-op when the clone has no
+        # git checkout.
+        self._capture_tritonswmm_provenance(verbose=verbose)
+
+        # Compile each backend sequentially. `_built` collects the build-executed signal
+        # each helper now returns, so the per-target provenance stamp below fires only
+        # when this invocation actually produced a binary.
+        _built: list[bool] = []
         for backend in backends:
             if verbose:
                 print(f"\n{'=' * 60}", flush=True)
@@ -562,14 +793,16 @@ class TRITONSWMM_system:
                 print("=" * 60, flush=True)
 
             if backend == "cpu":
-                self._compile_backend(
-                    backend="cpu",
-                    build_dir=self.sys_paths.TRITONSWMM_build_dir_cpu,
-                    compilation_script=self.sys_paths.compilation_script_cpu,
-                    compilation_logfile=self.sys_paths.compilation_logfile_cpu,
-                    cmake_backend_flag="-DKokkos_ENABLE_OPENMP=ON",
-                    recompile=recompile_if_already_done_successfully,
-                    verbose=verbose,
+                _built.append(
+                    self._compile_backend(
+                        backend="cpu",
+                        build_dir=self.sys_paths.TRITONSWMM_build_dir_cpu,
+                        compilation_script=self.sys_paths.compilation_script_cpu,
+                        compilation_logfile=self.sys_paths.compilation_logfile_cpu,
+                        cmake_backend_flag="-DKokkos_ENABLE_OPENMP=ON",
+                        recompile=recompile_if_already_done_successfully,
+                        verbose=verbose,
+                    )
                 )
             elif backend == "gpu":
                 if self.gpu_compilation_backend is None:
@@ -588,19 +821,20 @@ class TRITONSWMM_system:
                 else:
                     raise ConfigurationError(
                         field="gpu_compilation_backend",
-                        message=f"Invalid value '{self.gpu_compilation_backend}'.\n"
-                        "  Must be 'HIP' or 'CUDA'.",
+                        message=f"Invalid value '{self.gpu_compilation_backend}'.\n  Must be 'HIP' or 'CUDA'.",
                         config_path=self.system_config_yaml,
                     )
 
-                self._compile_backend(
-                    backend="gpu",
-                    build_dir=self.sys_paths.TRITONSWMM_build_dir_gpu,  # type: ignore
-                    compilation_script=self.sys_paths.compilation_script_gpu,  # type: ignore
-                    compilation_logfile=self.sys_paths.compilation_logfile_gpu,  # type: ignore
-                    cmake_backend_flag=cmake_backend_flag,
-                    recompile=recompile_if_already_done_successfully,
-                    verbose=verbose,
+                _built.append(
+                    self._compile_backend(
+                        backend="gpu",
+                        build_dir=self.sys_paths.TRITONSWMM_build_dir_gpu,  # type: ignore
+                        compilation_script=self.sys_paths.compilation_script_gpu,  # type: ignore
+                        compilation_logfile=self.sys_paths.compilation_logfile_gpu,  # type: ignore
+                        cmake_backend_flag=cmake_backend_flag,
+                        recompile=recompile_if_already_done_successfully,
+                        verbose=verbose,
+                    )
                 )
             else:
                 raise ConfigurationError(
@@ -608,14 +842,12 @@ class TRITONSWMM_system:
                     message=f"Unknown backend '{backend}'. Must be 'cpu' or 'gpu'.",
                 )
 
+        if any(_built):
+            self._capture_target_producing_sha("tritonswmm_producing_sha", verbose=verbose)
+
     def _download_tritonswmm_source(self, verbose: bool = True):
         """Download TRITON-SWMM source code from git repository."""
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
-
-        clone_cmd = f"git clone {self.cfg_system.TRITONSWMM_git_URL}"
-        branch_checkout_cmd = ""
-        if self.cfg_system.TRITONSWMM_branch_key:
-            branch_checkout_cmd = f" && git checkout {self.cfg_system.TRITONSWMM_branch_key}"
 
         if verbose:
             print(
@@ -626,18 +858,319 @@ class TRITONSWMM_system:
         # Create parent directory
         TRITONSWMM_software_directory.parent.mkdir(parents=True, exist_ok=True)
 
-        # Remove existing directory
+        # DIAGNOSABILITY CONTRACT. This provisioning is a multi-step sequence (remove, clone,
+        # checkout, submodule init) that was previously one `shell=True` `&&` chain under
+        # `check=True` with no `capture_output`. Every step exits 128 on failure, so all of
+        # them collapsed into one opaque `CalledProcessError: non-zero exit status 128` with
+        # no stderr retained. That is not a hygiene complaint: it caused a documented
+        # misdiagnosis (a populated `triton/` with its own `.git` was read as "clone blocked
+        # by an existing destination", when the removal above provably runs and the same
+        # evidence is equally consistent with a clone that SUCCEEDED and a later step
+        # failing), and it left a real intermittent failure permanently undiagnosable.
+        # Each step now runs on its own, names itself, and surfaces what the tool said.
+        #
+        # `cwd=` replaces `cd &&`, which removes the shell entirely: no quoting exposure on
+        # a path, and no dependence on `&&` short-circuit semantics for correctness.
+        _download_log = TRITONSWMM_software_directory.parent / "_download_triton.log"
+
+        def _run_step(label: str, argv: list[str], cwd: Path) -> None:
+            """Run one provisioning step, or raise naming the step and its stderr.
+
+            The log lands in the PARENT of the software directory, deliberately: the
+            removal step deletes the software directory itself, so a log written inside it
+            would be destroyed by the very step whose failure it exists to explain.
+            """
+            proc = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True)
+            _entry = (
+                f"[{label}] cwd={cwd}\n"
+                f"[{label}] argv={argv}\n"
+                f"[{label}] returncode={proc.returncode}\n"
+                f"[{label}] stdout:\n{proc.stdout}\n"
+                f"[{label}] stderr:\n{proc.stderr}\n"
+            )
+            try:
+                with open(_download_log, "a") as _fh:
+                    _fh.write(_entry)
+            except OSError:
+                pass  # never let logging mask the underlying failure
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(proc.returncode, argv, output=proc.stdout, stderr=proc.stderr)
+
+        # STEP 1 -- remove. Verified by POST-CONDITION, not by the call returning. fast_rmtree
+        # sends its own stderr to DEVNULL and falls back to shutil.rmtree, so a partial
+        # removal can return without raising. The build dirs live INSIDE this directory
+        # (`triton/build_tritonswmm_cpu`), so a survivor here means the removal did not
+        # complete -- and the next step's `git clone` would then fail with a bare 128 that
+        # says nothing about why.
         if TRITONSWMM_software_directory.exists():
             # EXEMPT-DU: system-dir
             ut.fast_rmtree(TRITONSWMM_software_directory)
+        if TRITONSWMM_software_directory.exists():
+            _survivors = sorted(p.name for p in TRITONSWMM_software_directory.iterdir())[:10]
+            raise ConfigurationError(
+                field="TRITONSWMM_software_directory",
+                message=(
+                    f"Failed to remove {TRITONSWMM_software_directory} before re-cloning: the "
+                    f"directory still exists after fast_rmtree. Surviving entries (first 10): "
+                    f"{_survivors}. A clone into a non-empty destination fails with git's "
+                    "already-exists fatal (exit 128), which is indistinguishable from a "
+                    "network or checkout failure once the steps are chained -- hence this "
+                    "explicit post-condition. Check for a held file handle, a read-only "
+                    "child, or a concurrent process using this tree."
+                ),
+                config_path=self.system_config_yaml,
+            )
 
-        # Clone and checkout
-        subprocess.run(
-            f'cd "{TRITONSWMM_software_directory.parent}" && {clone_cmd} && '
-            f"cd triton{branch_checkout_cmd} && git submodule update --init --recursive",
-            shell=True,
-            check=True,
+        # STEP 2 -- clone. The clone TARGET is named EXPLICITLY from the configured
+        # directory. It may not be inferred from the repo URL: `git clone <url>` derives the
+        # directory from the repo NAME, so a previous hardcoded `triton` only worked while
+        # TRITONSWMM_software_directory happened to end in `triton`. Point the config at any
+        # other basename -- a per-pin cache dir such as `triton_5d2ad1e8adf9` -- and the
+        # clone landed in `triton/` while the configured directory was never created. Worse,
+        # ORNL upstream and the user's fork are BOTH named `triton.git`, so two different
+        # remotes collided on one path; and since `_verify_tritonswmm_pin` compares the
+        # COMMIT and never the REMOTE, a clone from the wrong remote whose HEAD matched the
+        # pin would verify clean.
+        _run_step(
+            "clone",
+            ["git", "clone", str(self.cfg_system.TRITONSWMM_git_URL), TRITONSWMM_software_directory.name],
+            cwd=TRITONSWMM_software_directory.parent,
         )
+
+        # STEP 3 -- checkout the pin, when one is configured.
+        if self.cfg_system.TRITONSWMM_branch_key:
+            _run_step(
+                "checkout",
+                ["git", "checkout", str(self.cfg_system.TRITONSWMM_branch_key)],
+                cwd=TRITONSWMM_software_directory,
+            )
+
+        # STEP 4 -- submodules. This step reaches a DIFFERENT HOST from the clone:
+        # `.gitmodules` points external/kokkos and external/yaml-cpp at github.com while the
+        # clone targets code.ornl.gov, so an `ls-remote` against the TRITON remote says
+        # nothing about whether this step can succeed. It is also the heaviest operation in
+        # the sequence (a recursive Kokkos clone), which makes it the most exposed to a
+        # transient network failure -- and, before this split, the failure least
+        # distinguishable from the others.
+        _run_step(
+            "submodule",
+            ["git", "submodule", "update", "--init", "--recursive"],
+            cwd=TRITONSWMM_software_directory,
+        )
+
+    def _verify_tritonswmm_pin(self, verbose: bool = True):
+        """Fail loud if the TRITON clone's HEAD does not match the pinned branch_key sha.
+
+        Gated on a set TRITONSWMM_branch_key: when None/empty this is a no-op (synth
+        fixtures / example configs that do not pin). Resolves BOTH the pin and HEAD to
+        full shas via `git rev-parse --verify` (handles a short pin vs the 40-char HEAD),
+        then compares. On mismatch raises ConfigurationError instructing the operator to
+        remove the stale clone. A branch-NAME pin (not a resolvable commit-ish) that
+        cannot be rev-parsed is surfaced as a ConfigurationError too (a mistyped pin must
+        not silently pass). This is read-only — it never re-clones or rebuilds.
+        """
+        branch_key = self.cfg_system.TRITONSWMM_branch_key
+        if not branch_key:
+            return
+        d = self.cfg_system.TRITONSWMM_software_directory
+        if d is None or not (d / ".git").exists():
+            return  # no git checkout to verify (e.g. a reconstituted reprex bundle)
+
+        def _rev_parse(ref: str) -> str | None:
+            r = subprocess.run(
+                ["git", "-C", str(d), "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                capture_output=True,
+                text=True,
+            )
+            return r.stdout.strip() if r.returncode == 0 else None
+
+        head = _rev_parse("HEAD")
+        pinned = _rev_parse(str(branch_key))
+        if pinned is None:
+            raise ConfigurationError(
+                field="TRITONSWMM_branch_key",
+                message=(
+                    f"TRITONSWMM_branch_key {branch_key!r} does not resolve to a commit in the "
+                    f"TRITON clone at {d}. Either the pin is wrong, or the clone's object store "
+                    f"cannot serve it (a clone predating the pinned commit, a pruned/partial "
+                    f"object store, or a borrowed store whose source is gone). Fix: correct the "
+                    f"pin, OR `git -C {d} fetch --all` if the clone merely predates it, OR remove "
+                    f"the clone (rm -rf {d}) and re-run — the clone gate re-clones at the pinned "
+                    "commit AND runs `git submodule update --init --recursive`. If you remove the "
+                    "clone by hand you MUST also delete the build directory: hhemt's compile gate "
+                    "is log-marker-based, so a cached build with a passing compilation log is "
+                    "skipped and your re-clone is silently defeated."
+                ),
+                config_path=self.system_config_yaml,
+            )
+        if head is None or head != pinned:
+            raise ConfigurationError(
+                field="TRITONSWMM_branch_key",
+                message=(
+                    f"TRITON clone at {d} is checked out at {head} but the config pins "
+                    f"{branch_key!r} ({pinned}). A pre-existing clone is never re-checked-out by "
+                    "the clone gate and its cached build is never invalidated, so this run would "
+                    f"silently use STALE TRITON numerics. Fix: remove the clone (rm -rf {d}) and "
+                    "re-run — the clone gate re-clones at the pinned commit AND runs "
+                    "`git submodule update --init --recursive`. If you instead check out by hand, "
+                    f"you MUST also (a) run `git -C {d} submodule update --init --recursive` (a bare "
+                    "`git checkout` does NOT move the Kokkos submodule, and a stale Kokkos does not "
+                    "always fail loudly at CMake configure) and (b) DELETE the build directory — "
+                    "hhemt's compile gate is log-marker-based, so a cached build with a passing "
+                    "compilation log is skipped and your re-checkout is silently defeated."
+                ),
+                config_path=self.system_config_yaml,
+            )
+        if verbose:
+            print(f"[Pin] TRITON clone verified at pinned commit {branch_key} ({head})", flush=True)
+
+    def _capture_tritonswmm_provenance(self, verbose: bool = True):
+        """Capture the producing-TRITON provenance onto the system log (D2, R5).
+
+        Records, against the ACTUAL cloned TRITON tree, the full HEAD sha and whether
+        that HEAD is at-or-after the coupled-resume-fix commit (3a832f7d…, tested via
+        `git merge-base --is-ancestor` — NOT sha-equality, so any DESCENDANT of the fix
+        commit is correctly classified post-fix; this is why R5 stamps a boolean rather
+        than an equality flag). These two values are the named carrier between this
+        compile process and the consolidation process (a DIFFERENT SLURM job on HPC): the
+        two consolidation stamp sites read them off `self.log` and stamp them onto the
+        consolidated-tree root attrs. Read-only w.r.t. the clone; a graceful no-op when
+        the clone has no git checkout, and it leaves `triton_has_coupled_resume_fix` None
+        (INDETERMINATE — never a false pre-fix warn) when the fix commit is not present in
+        the clone's object DB (e.g. a shallow or unrelated remote).
+        """
+        d = self.cfg_system.TRITONSWMM_software_directory
+        if d is None or not (d / ".git").exists():
+            return  # no git checkout to read provenance from (e.g. a reprex bundle)
+
+        head = subprocess.run(
+            ["git", "-C", str(d), "rev-parse", "--verify", "HEAD^{commit}"],
+            capture_output=True,
+            text=True,
+        )
+        if head.returncode != 0:
+            return  # git unavailable / not a repo -> leave provenance None (INDETERMINATE)
+        head_sha = head.stdout.strip()
+        self.log.triton_head_sha.set(head_sha)
+
+        # The COMMIT DATE of the clone HEAD, captured at the same moment as the sha and from the
+        # same clone, with the expression Decision 4 specifies for the estate's
+        # `_identity_token(pin)` (package 2a.1, not yet landed), so the two agree on form once it
+        # lands: an 8-digit `YYYYMMDD` committer date. It is the date the cross-solver figure is
+        # to order its series by (chunk 1b.4, not yet landed); measured from the clone that built the data
+        # rather than declared by a caller. Best-effort and never raises: a failed query leaves
+        # the field unset, which every reader treats as "date not captured", never as a date.
+        try:
+            _date = subprocess.run(
+                ["git", "-C", str(d), "log", "-1", "--format=%cd", "--date=format:%Y%m%d", "HEAD"],
+                capture_output=True,
+                text=True,
+            )
+            _date_s = _date.stdout.strip()
+            if _date.returncode == 0 and len(_date_s) == 8 and _date_s.isdigit():
+                self.log.triton_head_commit_date.set(_date_s)
+        except OSError:
+            pass
+
+        # NO ancestry queries here. This method now records WHAT BUILT THE DATA and nothing
+        # about which defects that build carries: `merge-base --is-ancestor` needs both shas in
+        # one object DB, and the compile-time clone is not guaranteed to contain a fix sha named
+        # by a registry entry written later. Applicability is derived at read time by
+        # `model_defects`, from the sha captured above.
+        self.log.write()
+        if verbose:
+            print(f"[Provenance] TRITON producing sha {head_sha}", flush=True)
+
+    def _capture_target_producing_sha(self, log_field: str, verbose: bool = True):
+        """Record the clone HEAD against ONE build target, for a target that ACTUALLY built.
+
+        The per-target counterpart to `_capture_tritonswmm_provenance`, and deliberately
+        NOT a replacement for it: that method records WHAT SOURCE this analysis came from
+        and runs at compile entry; this one records WHICH SOURCE STATE PRODUCED THIS
+        BINARY and runs only when a build executed. `triton_head_sha` keeps its meaning
+        and all of its consumers.
+
+        Callers pass `log_field` as either "tritonswmm_producing_sha" or
+        "triton_only_producing_sha" and gate the call on at least one backend having
+        returned True from its compile helper. A target skipped by the log-marker gate
+        must NOT re-stamp: the persisted system log already carries the sha of the run
+        that built it, and overwriting that with the current clone HEAD is precisely the
+        "skipped, carrying an older artifact" fabrication `provenance.producing_stamp`'s
+        corollary forbids. The two slots diverging is the signal, not a defect.
+
+        Graceful-absent and never raises: no clone, no `.git`, or an unresolvable HEAD
+        leaves the field unset, which downstream reads as INDETERMINATE.
+        """
+        d = self.cfg_system.TRITONSWMM_software_directory
+        if d is None or not (d / ".git").exists():
+            return
+        head = subprocess.run(
+            ["git", "-C", str(d), "rev-parse", "--verify", "HEAD^{commit}"],
+            capture_output=True,
+            text=True,
+        )
+        if head.returncode != 0 or not head.stdout.strip():
+            return
+        getattr(self.log, log_field).set(head.stdout.strip())
+        self.log.write()
+        if verbose:
+            print(f"[Provenance] {log_field} {head.stdout.strip()}", flush=True)
+
+    def _capture_swmm_provenance(self, swmm_source_dir, verbose: bool = True):
+        """Capture the STANDALONE SWMM provenance onto the system log (contract axis 4).
+
+        Called from the SUCCESS branch of `_compile_SWMM_locked` -- after the build, not
+        at compile entry. That placement is the point: `provenance.producing_stamp`'s
+        corollary forbids stamping a stage that did not execute, and the already-compiled
+        gate returns early above this call, so a skipped build keeps the persisted stamp
+        from the run that actually produced the binary.
+
+        MEASURED, never declared. Reads the CMakeLists `VERSION` of the tree that was
+        just compiled and that tree's git HEAD -- never `cfg_system.SWMM_tag_key`, which
+        is a CLAIM about what was asked for. The version is normalized by stripping a
+        leading "v" so it is the same KIND as the container-mode `org.hhemt.swmm_version`
+        label, which is tag-shaped. Graceful-absent throughout: an unparseable
+        CMakeLists or a missing .git leaves the corresponding field unset (INDETERMINATE)
+        and never raises -- a provenance capture that can fail a compile is worse than
+        the absence it would report.
+
+        This is the STANDALONE SWMM only. The COUPLED model's SWMM is vendored inside
+        TRITON at external/swmm and travels with the TRITON pin, so it is covered by
+        triton_head_sha and is deliberately NOT a separate axis.
+        """
+        import re as _re
+
+        try:
+            src = Path(swmm_source_dir)
+        except Exception:
+            return
+
+        cml = src / "CMakeLists.txt"
+        if cml.is_file():
+            try:
+                m = _re.search(r"^\s*VERSION\s+([0-9][0-9A-Za-z.\-+]*)\s*$", cml.read_text(), _re.M)
+            except Exception:
+                m = None
+            if m:
+                self.log.standalone_swmm_producing_version.set(m.group(1).lstrip("vV"))
+
+        if (src / ".git").exists():
+            head = subprocess.run(
+                ["git", "-C", str(src), "rev-parse", "--verify", "HEAD^{commit}"],
+                capture_output=True,
+                text=True,
+            )
+            if head.returncode == 0 and head.stdout.strip():
+                self.log.standalone_swmm_producing_sha.set(head.stdout.strip())
+
+        self.log.write()
+        if verbose:
+            print(
+                f"[Provenance] standalone SWMM version "
+                f"{self.log.standalone_swmm_producing_version.get()} "
+                f"sha {self.log.standalone_swmm_producing_sha.get()}",
+                flush=True,
+            )
 
     def _emit_libstdcpp_ld_preamble_lines(self) -> list:
         # Container mode (M-7): the SIF's %post build owns its own self-consistent
@@ -721,8 +1254,13 @@ class TRITONSWMM_system:
         )
 
     def _emit_module_load_lines(self, modules: str) -> list:
-        """Emit the HPC module-load block shared by the coupled (_compile_backend)
-        and TRITON-only (_compile_triton_only_backend) compile-script emitters.
+        """Emit the HPC module-load block shared by ALL THREE compile-script
+        emitters: coupled (_compile_backend), TRITON-only
+        (_compile_triton_only_backend), and standalone SWMM (_compile_SWMM_locked).
+        SWMM was omitted until 2026-08-17 and that omission read as the design; every
+        emitter that spawns a compiler under a loaded module toolchain needs this
+        block, because cmake honors conda's exported CC and the module's GCC_ROOT
+        breaks that compiler's own backend lookup.
 
         Responsibilities: (1) neutralize the miniforge Lmod unload hook so
         `module purge` does not abort under `set -e`; (2) purge + load the module
@@ -751,8 +1289,11 @@ class TRITONSWMM_system:
             )
         lines.extend(
             [
-                # This compile script runs as a plain `/bin/bash` subprocess of the
-                # setup rule; it inherits conda's ENV VARS but NOT the `conda` shell
+                # This compile script runs as a plain `/bin/bash` subprocess of
+                # whatever invoked the compile (a by-hand `setup_workflow` run, a
+                # sensitivity direct-execution helper, or a suite chunk; never an
+                # emitted setup rule, which passes no `--compile-*` flag). It
+                # inherits conda's ENV VARS but NOT the `conda` shell
                 # function (conda init never `export -f`s it). On sites whose
                 # miniforge module carries an Lmod unload hook that runs `conda
                 # deactivate`, `module purge` would invoke the conda BINARY -> errors
@@ -790,8 +1331,12 @@ class TRITONSWMM_system:
                     # into a clear, early error. NOTE: the fallback hardcodes the env
                     # name `hhemt` (consistent with workflow.py's `conda activate
                     # hhemt`) and the standard envs/ layout.
-                    'if [ -z "${CONDA_LIB:-}" ] && [ -n "${CONDA_EXE:-}" ]; then CONDA_LIB="$(dirname "$(dirname "${CONDA_EXE}")")/envs/hhemt/lib"; fi',
-                    'if [ -z "${CONDA_LIB:-}" ] || [ ! -e "${CONDA_LIB}/libstdc++.so.6" ]; then echo "ERROR: conda env lib dir not resolved (CONDA_LIB=${CONDA_LIB:-(empty)}); the libstdc++/libgcc_s ABI fix would degrade to -L/lib and ld.lld would bind the wrong-arch /lib/libgcc_s.so.1" >&2; exit 1; fi',
+                    'if [ -z "${CONDA_LIB:-}" ] && [ -n "${CONDA_EXE:-}" ]; then'
+                    ' CONDA_LIB="$(dirname "$(dirname "${CONDA_EXE}")")/envs/hhemt/lib"; fi',
+                    'if [ -z "${CONDA_LIB:-}" ] || [ ! -e "${CONDA_LIB}/libstdc++.so.6" ]; then'
+                    ' echo "ERROR: conda env lib dir not resolved (CONDA_LIB=${CONDA_LIB:-(empty)});'
+                    " the libstdc++/libgcc_s ABI fix would degrade to -L/lib and ld.lld would bind"
+                    ' the wrong-arch /lib/libgcc_s.so.1" >&2; exit 1; fi',
                     'echo "[compile] CONDA_LIB=${CONDA_LIB}"',
                     "",
                 ]
@@ -808,7 +1353,84 @@ class TRITONSWMM_system:
         recompile: bool,
         verbose: bool,
     ):
-        """Internal method to compile a single backend."""
+        """Internal method to compile a single backend.
+
+        Serialized on a per-BUILD-DIR lock. `TRITONSWMM_build_dir_cpu` carries no
+        per-target component, so two `UniqueSystemTarget`s that differ only in
+        `target_dem_resolution` (or in partition, at equal `gpu_hardware`) resolve to
+        the SAME cpu build dir, and any two compilers that reach it write one
+        directory and one `compilation.log`. Without this lock the loser's
+        objects are interleaved with the winner's and the log can still read
+        "Build finished" (Gotcha 52's corruption class, on production HPC). The lock
+        wraps the already-compiled gate too, so a waiter re-reads the log marker AFTER
+        the holder finishes and correctly skips instead of rebuilding.
+
+        WHO CONTENDS, and it is no longer the emitted rules. `workflow.py` does emit
+        one INDEPENDENT `rule setup_target_{N}` per target with no Snakemake `group:`,
+        and those rules do run concurrently in every execution mode, but none of them
+        passes a `--compile-*` flag, so none of them reaches this method. The MEASURED
+        contender is the parallel pytest suite, whose chunks share the compiled tier
+        by design: on runs `20260904T074157Z_cd4d8f6d9a91` and
+        `20260904T145255Z_2853a077a3ee`, four chunk writers each acquired
+        `triton/.build_tritonswmm_cpu.compile.lock` (see suite/aggregate.py's
+        shared-by-design write analysis). The second contender is by-hand compiling:
+        `docs/how-to/compiling-the-solver.md` tells an operator to run
+        `setup_workflow --compile-triton-swmm` once per GPU partition, and every one
+        of those runs builds the same shared CPU directory.
+        """
+        build_dir.parent.mkdir(parents=True, exist_ok=True)
+        lock = resolve_filelock(
+            str(build_dir.parent / f".{build_dir.name}.compile.lock"),
+            timeout=_COMPILE_LOCK_TIMEOUT_SECONDS,
+        )
+        try:
+            with lock:
+                return self._compile_backend_locked(
+                    backend=backend,
+                    build_dir=build_dir,
+                    compilation_script=compilation_script,
+                    compilation_logfile=compilation_logfile,
+                    cmake_backend_flag=cmake_backend_flag,
+                    recompile=recompile,
+                    verbose=verbose,
+                )
+        except Timeout as exc:
+            # CompilationError takes no free-text message (exceptions.py) and renders
+            # only "Return code / Log / Run: cat {log}" — but on a lock timeout NO
+            # compile ran, so that log is empty or stale and the lock path, the only
+            # actionable datum, would never reach the operator. On Lustre
+            # resolve_filelock returns a crash-release-less SoftFileLock, so a
+            # SLURM-killed compile holder leaves exactly this state: a by-hand
+            # `setup_workflow --compile-*` job or a suite chunk, never an emitted
+            # setup_target rule, which passes no `--compile-*` flag. Emit the
+            # diagnostic first (same stderr idiom as _assert_dem_integrity), then
+            # raise so the exit-code-3 mapping is preserved.
+            print(
+                f"[{backend.upper()}] Timed out after {_COMPILE_LOCK_TIMEOUT_SECONDS}s "
+                f"waiting for the compile lock at {lock.lock_file}. Another process is "
+                f"compiling {build_dir}, or a killed holder left a stale lock. If no "
+                f"compile is running, remove the lock file and re-run.",
+                flush=True,
+                file=sys.stderr,
+            )
+            raise CompilationError(
+                model_type="tritonswmm",
+                backend=backend,
+                logfile=compilation_logfile,
+                return_code=1,
+            ) from exc
+
+    def _compile_backend_locked(
+        self,
+        backend: str,
+        build_dir: Path,
+        compilation_script: Path,
+        compilation_logfile: Path,
+        cmake_backend_flag: str,
+        recompile: bool,
+        verbose: bool,
+    ):
+        """Compile one backend. Caller MUST hold the per-build-dir compile lock."""
 
         # Check if already compiled
         if backend == "cpu":
@@ -822,7 +1444,13 @@ class TRITONSWMM_system:
                     f"[{backend.upper()}] Already compiled successfully (skipping)",
                     flush=True,
                 )
-            return
+            # BUILD-EXECUTED SIGNAL. Both paths of this helper returned None, so "did this
+            # target actually build?" was unobservable to the caller -- which is why the
+            # TRITON provenance capture had to run at compile ENTRY and therefore stamped
+            # the clone's HEAD whether or not that HEAD produced the binary. Returning the
+            # fact makes the per-target capture possible and is what turns the two
+            # producing-sha slots into a measurement rather than one value written twice.
+            return False
 
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
 
@@ -867,7 +1495,10 @@ class TRITONSWMM_system:
                 "-DCMAKE_CXX_FLAGS='-O3 -fopenmp' "
                 "-DCMAKE_C_FLAGS='-fopenmp' "
                 "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' " + '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
+                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' "
+                + '-DCMAKE_CXX_STANDARD_LIBRARIES="'
+                + self._libstdcpp_linker_flag_fragment()
+                + '"'
             )
         else:
             # GPU: Enable GPU backend, disable OpenMP for Kokkos
@@ -888,7 +1519,10 @@ class TRITONSWMM_system:
                     "-DCMAKE_CXX_FLAGS='-O3' "
                     "-DCMAKE_C_FLAGS='-fopenmp' "
                     "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' " + '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
+                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' "
+                    + '-DCMAKE_CXX_STANDARD_LIBRARIES="'
+                    + self._libstdcpp_linker_flag_fragment()
+                    + '"'
                 )
             else:
                 cmake_flags = (
@@ -898,7 +1532,10 @@ class TRITONSWMM_system:
                     "-DCMAKE_CXX_FLAGS='-O3' "
                     "-DCMAKE_C_FLAGS='-fopenmp' "
                     "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' " + '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
+                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' "
+                    + '-DCMAKE_CXX_STANDARD_LIBRARIES="'
+                    + self._libstdcpp_linker_flag_fragment()
+                    + '"'
                 )
 
         # Build commands
@@ -906,15 +1543,25 @@ class TRITONSWMM_system:
             [
                 'cd "${TRITON_DIR}"',
                 'mkdir -p "${BUILD_DIR}"',
-                'rm -rf "${BUILD_DIR}/CMakeFiles" "${BUILD_DIR}/CMakeCache.txt" "${BUILD_DIR}/Makefile" "${BUILD_DIR}/cmake_install.cmake"',
+                # Reconfigure from clean: remove ALL prior build state (stale objects and
+                # the external/{kokkos,swmm} trees included, which the old four-path rm
+                # left behind, so a cache-variable change could produce a mismatched
+                # binary with no error). MUST spare compilation.log: it lives INSIDE
+                # BUILD_DIR and _compile_backend already holds it open as this script's
+                # stdout, so a bare `rm -rf "${BUILD_DIR}"` unlinks it and the post-run
+                # read_text_file_as_string raises an UNCAUGHT FileNotFoundError on every
+                # compile (verified). Do not "simplify" this back to rm -rf.
+                'find "${BUILD_DIR}" -mindepth 1 -maxdepth 1 ! -name compilation.log -exec rm -rf {} +',
                 'cd "${BUILD_DIR}"',
                 "",
-                f'cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags} "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
+                f"cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags}"
+                f' "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
                 "",
             ]
             + [
                 "echo '=== CMAKE CONFIGURATION ==='",
-                "grep -E 'CMAKE_CXX_FLAGS|TRITON_IGNORE_MACHINE|Kokkos.*ENABLE' CMakeCache.txt | head -20 || echo 'CMakeCache.txt not found'",
+                "grep -E 'CMAKE_CXX_FLAGS|TRITON_IGNORE_MACHINE|Kokkos.*ENABLE' CMakeCache.txt"
+                " | head -20 || echo 'CMakeCache.txt not found'",
                 "",
                 "make -j4",
                 "",
@@ -974,6 +1621,7 @@ class TRITONSWMM_system:
                 logfile=compilation_logfile,
                 return_code=1,  # Subprocess didn't fail, but build markers missing
             )
+        return True  # this invocation actually built; see the skip path's note
 
     def retrieve_compilation_log(self, backend: str) -> str:
         """
@@ -1015,15 +1663,7 @@ class TRITONSWMM_system:
                 config_path=self.system_config_yaml,
             )
 
-        mapping = {
-            "rtx3090": ("AMPERE80", "Kokkos_ARCH_AMPERE86"),
-            "a6000": ("AMPERE80", "Kokkos_ARCH_AMPERE86"),
-            "a100": ("AMPERE80", "Kokkos_ARCH_AMPERE80"),
-            "h100": ("HOPPER90", "Kokkos_ARCH_HOPPER90"),
-            "h200": ("HOPPER90", "Kokkos_ARCH_HOPPER90"),
-            "v100": ("VOLTA70", "Kokkos_ARCH_VOLTA70"),
-            "rtx2080": ("TURING75", "Kokkos_ARCH_TURING75"),
-        }
+        mapping = CUDA_ARCH_MAP
 
         if gpu_hardware not in mapping:
             raise ConfigurationError(
@@ -1084,11 +1724,14 @@ class TRITONSWMM_system:
         verbose : bool
             If True, print progress messages
         """
-        # TODO - if TRITON-SWMM is enabled, re-downloading should only be allowed to occur once. Otherwise, previous compilations could be overwritten.
+        # TODO - if TRITON-SWMM is enabled, re-downloading should only be allowed to occur
+        # once. Otherwise, previous compilations could be overwritten.
         if not self.cfg_system.toggle_triton_model:
             if verbose:
                 print("[TRITON-only] Skipped (toggle_triton_model=False)", flush=True)
             return
+
+        _refuse_compile_in_undeclared_test_venue("System.compile_TRITON_only")
 
         # Determine which backends to compile
         if backends is None:
@@ -1106,7 +1749,25 @@ class TRITONSWMM_system:
         ):
             self._download_tritonswmm_source(verbose=verbose)
 
-        # Compile each backend sequentially
+        # Pin enforcement (D3): a pre-existing clone with a CMakeLists.txt is NEVER
+        # re-checked-out by the gate above, and its cached build is never invalidated
+        # (Gotcha 6 log-marker completion). So verify the checked-out HEAD matches the
+        # pinned sha and FAIL LOUD on mismatch, rather than silently reusing a stale
+        # binary. Gated on a set TRITONSWMM_branch_key so synth fixtures / examples that
+        # omit the pin are unaffected. Read-only w.r.t. the clone (no Gotcha-52 build
+        # collision). NOT recompute.py::_is_scope_pre_fix (that runs git against CWD).
+        self._verify_tritonswmm_pin(verbose=verbose)
+        # Provenance capture (D2): stamp the producing-TRITON sha + coupled-resume-fix
+        # ancestry onto the system log NOW, against the actual cloned tree, so the two
+        # consolidation stamp sites (a DIFFERENT process on HPC) can carry it onto the
+        # consolidated-tree root attrs. Read-only; graceful no-op when the clone has no
+        # git checkout.
+        self._capture_tritonswmm_provenance(verbose=verbose)
+
+        # Compile each backend sequentially. See the sibling loop in compile_TRITON_SWMM:
+        # `_built` carries the build-executed signal so the per-target stamp below fires
+        # only for a target this invocation actually produced.
+        _built: list[bool] = []
         for backend in backends:
             if verbose:
                 print(f"\n{'=' * 60}", flush=True)
@@ -1114,26 +1775,33 @@ class TRITONSWMM_system:
                 print("=" * 60, flush=True)
 
             if backend == "cpu":
-                self._compile_triton_only_backend(
-                    backend="cpu",
-                    build_dir=self.sys_paths.TRITON_build_dir_cpu,
-                    recompile=recompile_if_already_done_successfully,
-                    verbose=verbose,
+                _built.append(
+                    self._compile_triton_only_backend(
+                        backend="cpu",
+                        build_dir=self.sys_paths.TRITON_build_dir_cpu,
+                        recompile=recompile_if_already_done_successfully,
+                        verbose=verbose,
+                    )
                 )
             elif backend == "gpu":
                 if self.gpu_compilation_backend is None:
                     raise ValueError("GPU backend requested but gpu_compilation_backend not set in config.")
-                self._compile_triton_only_backend(
-                    backend="gpu",
-                    build_dir=self.sys_paths.TRITON_build_dir_gpu,  # type: ignore
-                    recompile=recompile_if_already_done_successfully,
-                    verbose=verbose,
+                _built.append(
+                    self._compile_triton_only_backend(
+                        backend="gpu",
+                        build_dir=self.sys_paths.TRITON_build_dir_gpu,  # type: ignore
+                        recompile=recompile_if_already_done_successfully,
+                        verbose=verbose,
+                    )
                 )
             else:
                 raise ConfigurationError(
                     field="backends",
                     message=f"Unknown backend '{backend}'. Must be 'cpu' or 'gpu'.",
                 )
+
+        if any(_built):
+            self._capture_target_producing_sha("triton_only_producing_sha", verbose=verbose)
 
     def _compile_triton_only_backend(
         self,
@@ -1142,7 +1810,56 @@ class TRITONSWMM_system:
         recompile: bool,
         verbose: bool,
     ):
-        """Internal method to compile TRITON-only for a single backend."""
+        """Internal method to compile TRITON-only for a single backend.
+
+        Serialized on the per-BUILD-DIR compile lock — see _compile_backend for the
+        full rationale (the build dir carries no per-target component, so every
+        concurrent compiler lands in one directory). No emitted `setup_target_{N}`
+        rule reaches here: this method's only caller chain begins at
+        ``setup_workflow.py:510``, behind ``--compile-triton-only``, which no rule
+        emits. The live contenders are concurrent by-hand ``setup_workflow`` runs
+        and parallel suite chunks sharing the compiled tier. The lock wraps the
+        already-compiled gate too, so a waiter re-reads the log marker after the
+        holder finishes and skips instead of rebuilding.
+        """
+        build_dir.parent.mkdir(parents=True, exist_ok=True)
+        lock = resolve_filelock(
+            str(build_dir.parent / f".{build_dir.name}.compile.lock"),
+            timeout=_COMPILE_LOCK_TIMEOUT_SECONDS,
+        )
+        try:
+            with lock:
+                return self._compile_triton_only_backend_locked(
+                    backend=backend,
+                    build_dir=build_dir,
+                    recompile=recompile,
+                    verbose=verbose,
+                )
+        except Timeout as exc:
+            print(
+                f"[TRITON-only {backend.upper()}] Timed out after "
+                f"{_COMPILE_LOCK_TIMEOUT_SECONDS}s waiting for the compile lock at "
+                f"{lock.lock_file}. Another process is compiling {build_dir}, or a "
+                f"killed holder left a stale lock. If no compile is running, remove "
+                f"the lock file and re-run.",
+                flush=True,
+                file=sys.stderr,
+            )
+            raise CompilationError(
+                model_type="triton",
+                backend=backend,
+                logfile=build_dir / "compilation.log",
+                return_code=1,
+            ) from exc
+
+    def _compile_triton_only_backend_locked(
+        self,
+        backend: str,
+        build_dir: Path,
+        recompile: bool,
+        verbose: bool,
+    ):
+        """Compile TRITON-only for one backend. Caller MUST hold the per-build-dir compile lock."""
         # Check if already compiled
         if backend == "cpu":
             already_compiled = self.compilation_triton_only_cpu_successful
@@ -1155,7 +1872,7 @@ class TRITONSWMM_system:
                     f"[TRITON-only {backend.upper()}] Already compiled successfully (skipping)",
                     flush=True,
                 )
-            return
+            return False  # build-executed signal; see the TRITON-SWMM sibling's note
 
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
         logfile = build_dir / "compilation.log"
@@ -1200,7 +1917,10 @@ class TRITONSWMM_system:
                 "-DCMAKE_CXX_FLAGS='-O3 -fopenmp' "
                 "-DCMAKE_C_FLAGS='-fopenmp' "
                 "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' " + '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
+                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' "
+                + '-DCMAKE_CXX_STANDARD_LIBRARIES="'
+                + self._libstdcpp_linker_flag_fragment()
+                + '"'
             )
         else:
             # GPU backend
@@ -1237,7 +1957,10 @@ class TRITONSWMM_system:
             [
                 'cd "${TRITON_DIR}"',
                 'mkdir -p "${BUILD_DIR}"',
-                'rm -rf "${BUILD_DIR}/CMakeFiles" "${BUILD_DIR}/CMakeCache.txt" "${BUILD_DIR}/Makefile" "${BUILD_DIR}/cmake_install.cmake"',
+                # Reconfigure from clean, sparing compilation.log (it is inside BUILD_DIR
+                # and is already this script's open stdout) — see the identical site in
+                # _compile_backend for the full rationale.
+                'find "${BUILD_DIR}" -mindepth 1 -maxdepth 1 ! -name compilation.log -exec rm -rf {} +',
                 'cd "${BUILD_DIR}"',
                 "",
                 f'cmake -DTRITON_ENABLE_SWMM=OFF {cmake_flags} "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
@@ -1307,6 +2030,7 @@ class TRITONSWMM_system:
                 logfile=logfile,
                 return_code=1,  # Subprocess didn't fail, but build markers missing
             )
+        return True  # build-executed signal; see the TRITON-SWMM sibling's note
 
     @property
     def compilation_triton_only_cpu_successful(self) -> bool:
@@ -1318,7 +2042,16 @@ class TRITONSWMM_system:
             triton_check = "[100%] Built target triton.exe" in log
             success = triton_check
         else:
-            success = False
+            # ABSTENTION (helper condition 2): the path RESOLVES — TRITON_build_dir_cpu
+            # is hardcoded at system.py:200 and always does — but the artifact is gone.
+            # A build tree is transient; its absence is not evidence of failure.
+            # Return False for the caller's boolean contract, persist NOTHING.
+            self._sync_compilation_log_field(
+                self.log.compilation_triton_cpu_successful,
+                False,
+                derived_from_resolvable_input=False,
+            )
+            return False
         self._sync_compilation_log_field(self.log.compilation_triton_cpu_successful, success)
         return success
 
@@ -1326,8 +2059,17 @@ class TRITONSWMM_system:
     def compilation_triton_only_gpu_successful(self) -> bool:
         """Check if TRITON-only GPU backend compiled successfully."""
         if self.sys_paths.TRITON_build_dir_gpu is None:
+            # ABSTENTION, not a measurement: this system carries no resolvable
+            # GPU build dir (constructed without a gpu_compilation_backend
+            # injection; sys_paths is frozen at __init__ and is NOT rebuilt by a
+            # later attribute assignment — see sensitivity_analysis.py:2270-2271).
+            # Return False for the caller's boolean contract but do NOT persist.
             success = False
-            self._sync_compilation_log_field(self.log.compilation_triton_gpu_successful, success)
+            self._sync_compilation_log_field(
+                self.log.compilation_triton_gpu_successful,
+                success,
+                derived_from_resolvable_input=False,
+            )
             return success
         logfile = self.sys_paths.TRITON_build_dir_gpu / "compilation.log"
         if logfile.exists():
@@ -1342,10 +2084,22 @@ class TRITONSWMM_system:
     @property
     def compilation_triton_only_successful(self) -> bool:
         """
-        Returns True if TRITON-only (CPU and GPU if configured) compiled successfully.
-        For individual backend checks, use compilation_triton_only_cpu_successful and compilation_triton_only_gpu_successful.
+        Returns True if TRITON-only (CPU and GPU if configured AND RESOLVABLE) compiled successfully.
+        For individual backend checks, use compilation_triton_only_cpu_successful and
+        compilation_triton_only_gpu_successful.
+
+        The GPU term is evaluated ONLY when this system resolves a GPU build dir.
+        A system may declare a truthy `gpu_compilation_backend` and still resolve
+        `TRITON_build_dir_gpu is None`, because `sys_paths` is frozen at __init__
+        from the CONSTRUCTOR-INJECTED backend while the attribute may be mutated
+        afterwards (``sensitivity_analysis.cleanup_all_orphans`` does exactly this on the
+        sensitivity-master template, and its own comment records that sys_paths is
+        NOT rebuilt). ANDing against that unresolvable term reported a false
+        "TRITON-only compilation failed" on a campaign whose 112 sims all completed.
+        A single-hardware system resolves a real path, so a genuinely-absent
+        compilation.log still returns False here — byte-identical to prior behavior.
         """
-        if self.gpu_compilation_backend:
+        if self.gpu_compilation_backend and self.sys_paths.TRITON_build_dir_gpu is not None:
             return self.compilation_triton_only_cpu_successful and self.compilation_triton_only_gpu_successful
         else:
             return self.compilation_triton_only_cpu_successful
@@ -1378,6 +2132,61 @@ class TRITONSWMM_system:
                 print("[SWMM] Skipped (toggle_swmm_model=False)", flush=True)
             return
 
+        _refuse_compile_in_undeclared_test_venue("System.compile_SWMM")
+
+        build_dir = self.sys_paths.SWMM_build_dir
+        if build_dir is None:
+            raise ValueError("SWMM build dir not configured (toggle_swmm_model may be False)")
+
+        # Serialize on the per-build-dir compile lock (see _compile_backend). SWMM's
+        # build dir carries no per-target component either, so any two concurrent
+        # compilers would otherwise race one swmm_build. No emitted setup_target rule
+        # is one of them: this method's only caller is setup_workflow.py:539, behind
+        # --compile-swmm, which no rule emits. The live contenders are by-hand
+        # setup_workflow runs and parallel suite chunks sharing the compiled tier.
+        # The already-compiled gate is re-read
+        # INSIDE the lock so a waiter skips instead of rebuilding.
+        build_dir.mkdir(parents=True, exist_ok=True)
+        lock = resolve_filelock(
+            str(build_dir / ".swmm.compile.lock"),
+            timeout=_COMPILE_LOCK_TIMEOUT_SECONDS,
+        )
+        try:
+            with lock:
+                self._compile_SWMM_locked(
+                    recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                    redownload_swmm_if_exists=redownload_swmm_if_exists,
+                    verbose=verbose,
+                    build_dir=build_dir,
+                )
+        except Timeout as exc:
+            # Same diagnostic + exit-3 contract as _compile_backend: cli.py maps
+            # CompilationError -> exit 3 and does NOT catch filelock.Timeout, so a
+            # stale-lock timeout must surface as CompilationError to keep the setup
+            # workflow's clean exit-3 path rather than an uncaught traceback.
+            print(
+                f"[SWMM] Timed out after {_COMPILE_LOCK_TIMEOUT_SECONDS}s waiting for "
+                f"the compile lock at {lock.lock_file}. Another process is compiling "
+                f"{build_dir}, or a killed holder left a stale lock. If no compile is "
+                f"running, remove the lock file and re-run.",
+                flush=True,
+                file=sys.stderr,
+            )
+            raise CompilationError(
+                model_type="swmm",
+                backend="cpu",
+                logfile=build_dir / "compilation.log",
+                return_code=1,
+            ) from exc
+
+    def _compile_SWMM_locked(
+        self,
+        recompile_if_already_done_successfully: bool,
+        redownload_swmm_if_exists: bool,
+        verbose: bool,
+        build_dir: Path,
+    ):
+        """Compile standalone SWMM. Caller MUST hold the per-build-dir compile lock."""
         if self.compilation_swmm_successful and not recompile_if_already_done_successfully:
             if verbose:
                 print("[SWMM] Already compiled successfully (skipping)", flush=True)
@@ -1387,10 +2196,6 @@ class TRITONSWMM_system:
             print(f"\n{'=' * 60}", flush=True)
             print("Compiling Standalone EPA SWMM", flush=True)
             print("=" * 60, flush=True)
-
-        build_dir = self.sys_paths.SWMM_build_dir
-        if build_dir is None:
-            raise ValueError("SWMM build dir not configured (toggle_swmm_model may be False)")
 
         swmm_source_dir = build_dir / "swmm_source"
         logfile = build_dir / "compilation.log"
@@ -1425,7 +2230,41 @@ class TRITONSWMM_system:
             )
             bash_script_lines.append("")
 
+        # The producer check is emitted AFTER and OUTSIDE the clone branch above, deliberately:
+        # a clone that already exists at a different tag never re-runs that branch, and it is
+        # exactly that clone whose source decides the toolkit's completion verdict.
+        bash_script_lines.extend(_emit_swmm_marker_check_lines())
+        bash_script_lines.append("")
+
         # Build SWMM
+        # Load HPC modules FIRST -- parity with _compile_backend_locked and
+        # _compile_triton_only_backend_locked, which have always emitted this block.
+        # Two responsibilities of the helper are load-bearing on THIS rung:
+        #   (1) the CC/CXX pin. `conda activate hhemt` exports
+        #       CC=x86_64-conda-linux-gnu-cc, and cmake HONORS $CC -- it never
+        #       searches PATH. When an EasyBuild gcc module is also loaded (which is
+        #       exactly when additional_modules is non-empty), that module exports
+        #       GCC_ROOT, which relocates the conda gcc driver's program search root
+        #       into the module tree, so the driver looks for its own cc1 under
+        #       .../gcc/14.2.0/libexec/gcc/x86_64-conda-linux-gnu/<ver>/ and dies with
+        #       "cannot execute 'cc1': posix_spawnp: No such file or directory".
+        #       Measured on Rivanna 2026-08-17 (srun 18632246): without this block the
+        #       cmake configure fails; with it, cmake selects the module gcc 14.2.0 and
+        #       the build produces libswmm5.so + runswmm. A -DCMAKE_C_COMPILER pin to
+        #       /usr/bin/cc was measured and does NOT work -- the inherited CPATH and
+        #       conda's -isystem CFLAGS leave the system gcc unable to find stddef.h.
+        #   (2) the pre-purge CONDA_LIB capture, which is the ONLY producer of the
+        #       ${CONDA_LIB} that _emit_libstdcpp_ld_preamble_lines() consumes below.
+        #       Standalone SWMM is pure C and does not itself need the libstdc++ ABI
+        #       fix (a no-preamble arm builds identically); the preamble is retained
+        #       for uniformity with the sibling emitters, and this call is what makes
+        #       its anchor well-formed instead of dangling.
+        # The `if self.additional_modules:` guard is causally exact, not conventional:
+        # the hazard exists only when a gcc module is loaded, and this field is what
+        # loads it -- so a no-modules host (local dev, synth tier) emits a
+        # byte-identical script to before this change.
+        if self.additional_modules:
+            bash_script_lines.extend(self._emit_module_load_lines(self.additional_modules))
         bash_script_lines.extend(self._emit_libstdcpp_ld_preamble_lines())
         bash_script_lines.extend(
             [
@@ -1475,6 +2314,7 @@ class TRITONSWMM_system:
         self.log.write()
 
         if success:
+            self._capture_swmm_provenance(swmm_source_dir, verbose=verbose)
             if verbose:
                 print("[SWMM] ✓ Compilation successful!", flush=True)
                 print(f"[SWMM]   Executable: {self.swmm_executable}", flush=True)
@@ -1487,8 +2327,16 @@ class TRITONSWMM_system:
     def compilation_swmm_successful(self) -> bool:
         """Check if standalone SWMM compiled successfully."""
         if self.sys_paths.SWMM_build_dir is None:
+            # ABSTENTION, not a measurement: SWMM_build_dir is None whenever
+            # toggle_swmm_model is off OR SWMM_software_directory is unset, so this
+            # branch cannot distinguish "not compiled" from "not asked about".
+            # Return False for the caller's boolean contract but do NOT persist.
             success = False
-            self._sync_compilation_log_field(self.log.compilation_swmm_successful, success)
+            self._sync_compilation_log_field(
+                self.log.compilation_swmm_successful,
+                success,
+                derived_from_resolvable_input=False,
+            )
             return success
         logfile = self.sys_paths.SWMM_build_dir / "compilation.log"
         if not logfile.exists():
@@ -1542,6 +2390,19 @@ class TRITONSWMM_system:
     @property
     def compilation_cpu_successful(self) -> bool:
         """Check if TRITON-SWMM CPU backend compiled successfully."""
+        # ABSTENTION CHECK MUST PRECEDE THE READ. retrieve_compilation_log returns a
+        # PLACEHOLDER STRING ("No compilation log found for ...") when the file is
+        # absent, which fails the marker tests below and is indistinguishable from a
+        # genuine build failure — so without this guard a cleaned-up build tree
+        # persists as a measured False. See helper condition 2.
+        _logfile = self.sys_paths.compilation_logfile_cpu
+        if _logfile is None or not _logfile.exists():
+            self._sync_compilation_log_field(
+                self.log.compilation_tritonswmm_cpu_successful,
+                False,
+                derived_from_resolvable_input=False,
+            )
+            return False
         log = self.retrieve_compilation_log("cpu")
         swmm_check = "Built target swmm5" in log
         triton_check = "[100%] Built target triton.exe" in log
@@ -1553,8 +2414,17 @@ class TRITONSWMM_system:
     def compilation_gpu_successful(self) -> bool:
         """Check if TRITON-SWMM GPU backend compiled successfully."""
         if self.sys_paths.compilation_logfile_gpu is None:
+            # ABSTENTION, not a measurement: no resolvable GPU compilation log on
+            # this system (constructed without a gpu_compilation_backend injection;
+            # sys_paths is frozen at __init__ and is NOT rebuilt by a later attribute
+            # assignment — see sensitivity_analysis.py:2270-2271). Return False for
+            # the caller's boolean contract but do NOT persist.
             success = False
-            self._sync_compilation_log_field(self.log.compilation_tritonswmm_gpu_successful, success)
+            self._sync_compilation_log_field(
+                self.log.compilation_tritonswmm_gpu_successful,
+                success,
+                derived_from_resolvable_input=False,
+            )
             return success
         if not self.sys_paths.compilation_logfile_gpu.exists():
             success = False
@@ -1570,10 +2440,13 @@ class TRITONSWMM_system:
     @property
     def compilation_successful(self) -> bool:
         """
-        Returns True if CPU backend (and GPU if configured) compiled successfully.
+        Returns True if CPU backend (and GPU if configured AND RESOLVABLE) compiled successfully.
         For individual backend checks, use compilation_cpu_successful and compilation_gpu_successful.
+
+        See compilation_triton_only_successful for why the GPU term is gated on
+        path resolvability rather than on the backend attribute alone.
         """
-        if self.gpu_compilation_backend:
+        if self.gpu_compilation_backend and self.sys_paths.compilation_logfile_gpu is not None:
             success = self.compilation_cpu_successful and self.compilation_gpu_successful
         else:
             success = self.compilation_cpu_successful
@@ -1658,12 +2531,52 @@ def spatial_resampling(xds_to_resample, xds_target, missingfillval=-9999):
     # resample
     ## https://corteva.github.io/rioxarray/stable/rioxarray.html#rioxarray.raster_dataset.RasterDataset.reproject_match
     ## (https://rasterio.readthedocs.io/en/stable/api/rasterio.enums.html#rasterio.enums.Resampling)
-    xds_to_resampled = xds_to_resample.rio.reproject_match(  # type: ignore
-        xds_target, resampling=Resampling.average
-    )
-    # fill missing values with prespecified val (this should just corresponds to areas where one dataset has pieces outside the other)
+    xds_to_resampled = xds_to_resample.rio.reproject_match(xds_target, resampling=Resampling.average)
+    # fill missing values with prespecified val (this should just corresponds to areas
+    # where one dataset has pieces outside the other)
     xds_to_resampled = xr.where(xds_to_resampled >= 3.403e37, x=missingfillval, y=xds_to_resampled)
     return xds_to_resampled
+
+
+def triton_grid_header(rds) -> dict:
+    """The TRITON grid header for raster ``rds``: ``ncols``, ``nrows``, ``xllcorner``, ``yllcorner``, ``cellsize``.
+
+    The ONE computation of the grid TRITON reads. The DEM writer writes these values into the
+    processed DEM's header, and the run-entry grid check judges coupling nodes against them,
+    so the check refuses exactly the nodes the solver would place outside the grid it is
+    given. The lower-left corner is the lowest cell CENTRE less half a cell, because TRITON's
+    header names the corner, not the centre. Values are returned with the types the writer
+    has always written, so the processed DEM's bytes do not change.
+    """
+    __, og_avg_gridsize = compute_grid_resolution(rds)
+    return {
+        "ncols": rds.x.shape[0],
+        "nrows": rds.y.shape[0],
+        "xllcorner": rds.x.values.min() - og_avg_gridsize / 2,  # adjusted from center to corner
+        "yllcorner": rds.y.values.min() - og_avg_gridsize / 2,  # adjusted from center to corner
+        "cellsize": og_avg_gridsize,
+    }
+
+
+def read_triton_grid_header(fpath_raster) -> dict:
+    """The grid header of a processed TRITON DEM on disk, keyed as `triton_grid_header` keys it.
+
+    Reads the first five header lines the DEM writer writes (``ncols``, ``nrows``,
+    ``xllcorner``, ``yllcorner``, ``cellsize``), case-insensitively, so a processed DEM can be
+    judged without rasterizing it again.
+    """
+    header: dict = {}
+    with open(fpath_raster) as f:
+        for _ in range(6):
+            key, _, value = f.readline().strip().partition(" ")
+            header[key.lower()] = value.strip()
+    return {
+        "ncols": int(header["ncols"]),
+        "nrows": int(header["nrows"]),
+        "xllcorner": float(header["xllcorner"]),
+        "yllcorner": float(header["yllcorner"]),
+        "cellsize": float(header["cellsize"]),
+    }
 
 
 def compute_grid_resolution(rds):
@@ -1679,7 +2592,7 @@ def coarsen_georaster(rds, target_resolution, xllcorner=None, yllcorner=None, nr
     target_res = og_avg_gridsize * res_multiplier
 
     if xllcorner is not None and yllcorner is not None and nrows is not None and ncols is not None:
-        # left, bottom, right, top = rds.rio.bounds()  # type: ignore
+        # left, bottom, right, top = rds.rio.bounds()
         # ncols = int(np.ceil((right - xllcorner) / target_resolution))
         # nrows = int(np.ceil((top - yllcorner) / target_resolution))
         transform = from_origin(
@@ -1688,16 +2601,14 @@ def coarsen_georaster(rds, target_resolution, xllcorner=None, yllcorner=None, nr
             target_resolution,
             target_resolution,
         )
-        rds_coarse = rds.rio.reproject(  # type: ignore
+        rds_coarse = rds.rio.reproject(
             crs,
             transform=transform,
             shape=(nrows, ncols),
             resampling=Resampling.average,
         )
     else:
-        rds_coarse = rds.rio.reproject(  # type: ignore
-            crs, resolution=target_res, resampling=Resampling.average
-        )  # aggregate cells
+        rds_coarse = rds.rio.reproject(crs, resolution=target_res, resampling=Resampling.average)  # aggregate cells
     _, coarse_avg_gridsize = compute_grid_resolution(rds_coarse)
     assert np.isclose(coarse_avg_gridsize, target_resolution)
 

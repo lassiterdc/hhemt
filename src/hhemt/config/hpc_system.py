@@ -3,7 +3,7 @@
 A user authors ONE file per cluster from its public docs: a ``partitions:`` block
 whose field names mirror the ``snakemake-executor-plugin-slurm`` ``PartitionLimits``
 schema (native vocabulary) plus toolkit-only extension fields (node topology,
-gres-vs-gpus flavor, execution-mode default, login node, modules, and a guarded
+gres-vs-gpus flavor, login node, modules, and a guarded
 ``executor_profile_extras`` escape hatch). Realizes ADR-6 of the
 ``public-release-reproducibility`` system design.
 
@@ -20,10 +20,12 @@ hand-mirror, not an import of the plugin class.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from hhemt.config.base import field_meta
 from hhemt.exceptions import ConfigurationError
 
 # Resources the toolkit emits per-rule whose override via a profile
@@ -43,6 +45,14 @@ _TOOLKIT_EMITTED_RESOURCES: frozenset[str] = frozenset(
         "mem_mb_per_cpu",
         "cpus_per_task",
         "nodes",
+        # T15(iii): the per-rule in-flight CPU weight. LIVE: executor_profile_extras
+        # is merged into the generated profile by
+        # SnakemakeWorkflowBuilder._merge_executor_profile_extras, so an override
+        # would silently un-weight a rule and the cap would stop
+        # capping with no error -- the same self-certifying-green shape the
+        # --exclusive under-count has. The top-level `resources:` bag the toolkit
+        # emits is a DIFFERENT key and is not scanned by this guard.
+        "hhemt_cpus",
     }
 )
 
@@ -98,21 +108,59 @@ class PartitionSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # --- NATIVE (mirror snakemake-executor-plugin-slurm 2.0.3 PartitionLimits) ---
-    max_runtime: int | None = None  # minutes; per-partition wall-clock cap
-    max_mem_mb: int | None = None
-    max_mem_mb_per_cpu: int | None = None
-    max_cpus_per_task: int | None = None
-    max_nodes: int | None = None
-    max_gpu: int | None = None  # per-job GPU cap
-    available_gpu_models: list[str] | None = None
-    supports_mpi: bool = False
+    max_runtime: int | None = Field(
+        None,
+        description="Caps wall-clock for any job on this partition, in minutes. Preflight rejects a longer request.",
+    )  # minutes; per-partition wall-clock cap
+    max_mem_mb: int | None = Field(
+        None,
+        description="Caps total memory one job may request here, in MB. Preflight rejects a larger request.",
+    )
+    max_mem_mb_per_cpu: int | None = Field(
+        None,
+        description="Caps memory per CPU, in MB. With cpus_per_task, the cap bounds the memory a single task may hold.",
+    )
+    max_cpus_per_task: int | None = Field(
+        None,
+        description="Caps CPUs one task may request. n_omp_threads must not exceed the cap.",
+    )
+    max_nodes: int | None = Field(
+        None,
+        description="Caps how many nodes one job may span. n_nodes must not exceed the cap.",
+    )
+    max_gpu: int | None = Field(
+        None,
+        description="Caps GPUs per job. n_gpus must not exceed the cap.",
+    )  # per-job GPU cap
+    available_gpu_models: list[str] | None = Field(
+        None,
+        description="Allowlist of GPU models schedulable here. A request naming a model outside the list is rejected.",
+    )
+    supports_mpi: bool = Field(
+        True,
+        description="A partition accepts multi-rank jobs unless the value is false. False refuses a "
+        "run_mode of mpi or hybrid.",
+    )
     # --- EXTENSION (no native PartitionLimits field) ---
-    gpus_per_node: int | None = None  # node topology
-    cpus_per_node: int | None = None  # node topology
-    gpu_hardware: str | None = None  # D1 Option-A (VMS-4a): the specific arch string
+    gpus_per_node: int | None = Field(
+        None,
+        description="GPUs physically present per node. The value decides whether a multi-GPU request takes "
+        "a whole node or a strict subset.",
+    )  # node topology
+    cpus_per_node: int | None = Field(
+        None,
+        description="CPUs physically present per node. The value bounds how many concurrent tasks one node can hold.",
+    )  # node topology
+    gpu_hardware: str | None = Field(
+        None,
+        description="Selects the GPU architecture flags the solver is compiled against. Examples are a6000 and a100.",
+    )  # D1 Option-A (VMS-4a): the specific arch string
     #                                  _resolve_cuda_arch_flags keys on (a6000/a100/h100/...),
     #                                  distinct from available_gpu_models (capability allowlist)
-    gpu_compilation_backend: Literal["HIP", "CUDA"] | None = None  # D1: per-partition GPU backend
+    gpu_compilation_backend: Literal["HIP", "CUDA"] | None = Field(
+        None,
+        description="Selects the GPU toolchain the solver is built with. HIP serves AMD and CUDA serves NVIDIA.",
+    )  # D1: per-partition GPU backend
 
 
 class hpc_system_config(BaseModel):
@@ -124,32 +172,115 @@ class hpc_system_config(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    system_name: str
-    default_account: str | None = None  # NATIVE value -> slurm_account default-resource
-    login_node: str | None = None  # EXTENSION (tmux orchestration; batch_job only)
-    default_execution_mode: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None
-    gpu_allocation_flavor: Literal["gres", "gpus"] | None = None  # EXTENSION (chooses native channel)
-    additional_modules: list[str] | None = None
-    max_concurrent_jobs: int | None = None  # EXTENSION (D-D): cluster-throughput cap; new home
+    hpc_name: str = Field(
+        ...,
+        description=(
+            "Free-text name of the HPC system this profile describes. The name is documentation, drives no "
+            "behavior, and is carried into the template of an emitted bundle."
+        ),
+    )
+    default_account: str | None = Field(
+        None,
+        description="Charges every submitted job to this allocation unless a run overrides the allocation.",
+    )  # NATIVE value -> slurm_account default-resource
+    login_node: str | None = Field(
+        None,
+        description="Host the batch_job tmux orchestrator runs on. The other dispatch methods leave the field unused.",
+    )  # EXTENSION (tmux orchestration; batch_job only)
+    gpu_allocation_flavor: Literal["gres", "gpus"] | None = Field(
+        None,
+        description="The SLURM channel that requests GPUs here. gres emits --gres=gpu and gpus emits --gpus-per-node.",
+    )  # EXTENSION (chooses native channel)
+    additional_modules: list[str] | None = Field(
+        None,
+        description="Environment modules loaded before every compile and simulation on this cluster.",
+    )
+    max_concurrent_jobs: int | None = Field(
+        None,
+        description="Caps how many jobs the workflow keeps in flight at once, bounding queue pressure on a shared "
+        "cluster.",
+    )  # EXTENSION (D-D): cluster-throughput cap; new home
     #                                          for the retired analysis_config.hpc_max_simultaneous_sims
-    partitions: dict[str, PartitionSpec]
+    max_concurrent_cpus: int | None = Field(
+        None,
+        gt=0,
+        description=(
+            "OPTIONAL global cap on the total CPUs this workflow holds in flight across all cluster jobs "
+            "at once. Leave UNSET, the default, and the toolkit emits no profile `resources:` entry and no "
+            "per-rule weight, so every generated byte is identical to a tree that has never heard of this "
+            "field. Default-OFF here is ABSENT and no infinite value. The scheduler in snakemake, pinned "
+            "==9.15.0 in pyproject.toml, iterates `for name in self.global_resources` in "
+            "JobScheduler.update_available_resources and frees on `if name in self.resources` in "
+            "JobScheduler._free_resources, so an undeclared budget name is absent from the loop and no "
+            "comparison against a large number occurs.\n\nWHEN SET, the per-rule weight is the quantity "
+            "SLURM METERS and never the quantity the job requests. A full-node `--exclusive` GPU hold is "
+            "charged `nodes x cpus_per_node`, measured at 6x the requested `tasks x cpus_per_task` on one "
+            "observed allocation, with ReqTRES cpu=16 against AllocTRES cpu=96. A budget that under-counts "
+            "is worse than no budget, because the budget permits breaching the ceiling while reporting "
+            "compliance.\n\nDENOMINATION CAVEAT. The budget counts CPUs, and the budget tracks a site "
+            "ceiling only where that ceiling also meters `cpu`. Where a QOS meters `billing` in place of "
+            "`cpu`, the budget still holds the CPUs the declaration names, and the budget fails to track "
+            "the ceiling of that cluster. Measure the QOS of your site before relying on this field, "
+            "following [Verify the site caps before you rely on "
+            "them](../how-to/hpc-profile-setup.md#verify-the-site-caps-before-you-rely-on-them).\n\nHETEROGENEOUS "
+            "PARTITIONS. Declare cpus_per_node as the MAXIMUM across the nodes of the partition and never "
+            "the typical or minimum value. Under --exclusive SLURM charges the ACTUAL node, so a declared "
+            "value below the largest node under-counts on the allocations that hold the most CPU. "
+            "Over-declaring costs concurrency proportional to the size spread and is unable to breach the "
+            "ceiling, and under-declaring breaches the ceiling while reporting compliance. The maximum is "
+            "also the only COMPUTABLE choice, because the weight is written at Snakefile-generation time, "
+            "before SLURM has picked a node."
+        ),
+    )  # EXTENSION (T15(iii)): global in-flight CPU cap. CPU is the right denomination because it
+    #  is the binding resource -- per node at 4 CPU / 16000 MB, CPU admits 10 sims against
+    #  memory's 24 (2.4x), and NO per-user memory ceiling exists on our path at all.
+    halt_sims_below_free_bytes: int | None = Field(
+        None,
+        gt=0,
+        description=(
+            "OPTIONAL disk floor. When free space on the filesystem of the analysis directory falls below "
+            "this many bytes, the driver CANCELS the in-flight SIMULATIONS, leaves every processing job "
+            "running, and exits so a later run resumes via the v2 sentinels. Leave UNSET, the default, and "
+            "no polling happens and no branch is taken.\n\nSIMS ONLY AND NEVER PROCESSING. Processing "
+            "CONVERTS raw output into the summaries the campaign is for and makes reclaim eligible, so "
+            "cancelling processing during a disk squeeze removes the only step draining the disk.\n\nFREE "
+            "BYTES and no free fraction, because the campaign shares the filesystem and the denominator of "
+            "a percentage is a number the toolkit neither controls nor can interpret. VERIFY THE statvfs "
+            "OUTPUT BEFORE RELYING ON THIS FIELD. The guard reports the FILESYSTEM free space, a value "
+            "that equals a quota only where the quota is a GPFS fileset with filesetdf enabled. Otherwise "
+            "a quota-exhausted run gets EDQUOT on write while statvfs still reports free space and the "
+            "guard never fires. The command that decides the question is in [Verify the site caps before "
+            "you rely on "
+            "them](../how-to/hpc-profile-setup.md#verify-the-site-caps-before-you-rely-on-them).\n\nThe "
+            "guard runs ONLY while the supervisor loop of the driver is running, namely when the workflow "
+            "was submitted with wait_for_job_completion=True. A fire-and-forget submission has no guard."
+        ),
+    )  # EXTENSION (T15(iii) Part 2): statvfs TRIGGER, _du.json DIAGNOSTIC. The analysis-scope
+    #  DU sentinel FREEZES when processing stops, so a guard reading it would be reading a value
+    #  frozen by the very failure it guards against -- worse than no guard.
+    partitions: dict[str, PartitionSpec] = Field(
+        ...,
+        description="The partitions a run may select by name, each with the caps preflight "
+        "validates a request against.",
+    )
     executor_profile_extras: dict = Field(
         default_factory=dict,
         description=(
-            "Advanced escape hatch: keys merged VERBATIM into the generated "
+            "Advanced escape hatch. Keys merged VERBATIM into the generated "
             ".snakemake_profile/{mode}/config.yaml. Use ONLY for plugin-level "
-            "snakemake-executor-plugin-slurm settings the toolkit does not model "
-            "(e.g. slurm-init-seconds-before-status-checks, slurm-requeue, "
-            "slurm-reservation, max-jobs-per-second). A reject-guard FORBIDS "
-            "set-resources / default-resources entries that name toolkit-emitted "
-            "resources (tasks, tasks_per_gpu, mpi, gres, slurm_extra, "
-            "slurm_partition, runtime, mem_mb, cpus_per_task, nodes) — those are "
-            "correctness-critical per-rule emissions (see Gotcha 32) and may not "
-            "be overridden via the profile."
+            "snakemake-executor-plugin-slurm settings that the toolkit leaves unmodelled, such as "
+            "slurm-init-seconds-before-status-checks, slurm-requeue, slurm-reservation, and "
+            "max-jobs-per-timespan. A reject-guard FORBIDS set-resources and default-resources entries "
+            "that name toolkit-emitted resources, namely tasks, tasks_per_gpu, mpi, gres, slurm_extra, "
+            "slurm_partition, runtime, mem_mb, cpus_per_task, and nodes. The entries are "
+            "correctness-critical per-rule emissions and may not be overridden via the profile."
         ),
     )
 
-    container: ContainerSpec | None = None  # ADR-1/2/3: the per-cluster Apptainer
+    container: ContainerSpec | None = Field(
+        None,
+        description="Apptainer settings used when a run executes in a container. Leave unset on a native-only cluster.",
+    )  # ADR-1/2/3: the per-cluster Apptainer
     #   exec parameters; None on a cluster with no container support (native-only).
 
     @model_validator(mode="after")
@@ -172,10 +303,7 @@ class hpc_system_config(BaseModel):
         if spec is None:
             raise ConfigurationError(
                 field="partitions",
-                message=(
-                    f"Unknown partition '{partition}'. "
-                    f"Declared partitions: {sorted(self.partitions)}"
-                ),
+                message=(f"Unknown partition '{partition}'. Declared partitions: {sorted(self.partitions)}"),
                 config_path=None,
             )
         if spec.max_runtime is not None and requested_runtime_min > spec.max_runtime:
@@ -263,40 +391,138 @@ class ContainerSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    sif_path: str  # absolute on-cluster path to the TRANSFERRED, signed SIF
-    gpu_flag: Literal["--rocm", "--nv"] | None = None  # None => CPU-only cluster
-    binds: list[str] = Field(default_factory=list)  # APPTAINER_BIND entries
-    #   (e.g. "/opt/cray", "/var/spool/slurmd"); analysis_dir same:same is
-    #   appended by the seam, never hand-authored here (it is experiment-scoped).
-    containlibs: list[str] = Field(default_factory=list)  # APPTAINER_CONTAINLIBS
-    apptainerenv_ld_library_path: str | None = None  # the Frontier Cray-MPICH
-    #   recipe as a SHELL-TEMPLATE string (references ${CRAY_MPICH_DIR} etc. that
+    sif_root: str = Field(
+        ...,
+        description="Directory that `hhemt build-sifs` writes images into, and the only place the toolkit "
+        "looks for an image. An image is addressed by an identity recomputed from this config "
+        "and no path you type, so no image-path field exists to keep in step with the "
+        "identity.",
+    )
+    #   `hhemt build-sifs` writes {sif_root}/{family}/{stem}.sif + .manifest.json, and preflight / the SIM rung /
+    #   the PROCESS prefix resolve the SAME path from the identity they recompute from config
+    #   (hhemt.sif.identity.resolve_sif). There is deliberately no pointer field: a path an operator can type is
+    #   a path an operator can type wrong, and the 2026-09-11 incident was a version wired by a default.
+    builds_containers: bool = Field(
+        False,
+        description="Whether this cluster may RUN `hhemt build-sifs`. Set the field only where a "
+        "fakeroot-capable build partition exists. Leave the field False on a cluster that only "
+        "consumes images built elsewhere.",
+    )
+    gpu_flag: Literal["--rocm", "--nv"] | None = Field(
+        None,
+        description="GPU passthrough flag added to the container exec. Leave unset on a CPU-only cluster.",
+        json_schema_extra=field_meta(
+            options={
+                "--rocm": "AMD GPUs.",
+                "--nv": "NVIDIA GPUs.",
+            }
+        ),
+    )
+    binds: list[str] = Field(
+        default_factory=list,
+        description="Host paths mounted into the container, as APPTAINER_BIND entries. The analysis "
+        "directory is appended by the toolkit and is never hand-authored here, because the "
+        "directory is analysis-scoped and not cluster-scoped.",
+    )
+    #   (e.g. "/opt/cray", "/var/spool/slurmd").
+    containlibs: list[str] = Field(
+        default_factory=list,
+        description="Host library files bound into the container, as APPTAINER_CONTAINLIBS entries. On a "
+        "cluster whose helper modules bind the host MPI and GPU closure for you, leave the "
+        "field empty and name the modules in pre_exec_modules in place of listing libraries "
+        "here.",
+    )
+    apptainerenv_ld_library_path: str | None = Field(
+        None,
+        description="Shell-template string exported as the container's LD_LIBRARY_PATH. The value may "
+        "reference host variables that expand at run time after the modules are loaded, the "
+        "mechanism for expressing a host-MPI bind. Required whenever cray_mpich_abi_module "
+        "is set, and unset on a cluster that uses the container's own MPI.",
+    )
+    #   The Frontier Cray-MPICH recipe as a SHELL-TEMPLATE string (references ${CRAY_MPICH_DIR} etc. that
     #   expand at runtime AFTER `module load cray-mpich-abi`); None on UVA-CUDA.
-    cray_mpich_abi_module: bool = False  # True on Frontier => the seam emits
-    #   `module load cray-mpich-abi` ahead of the APPTAINERENV export so the
-    #   ${CRAY_*} vars exist when the template expands. False on UVA.
-    pre_exec_modules: list[str] = Field(default_factory=list)  # container-only Lmod
-    #   modules emitted as `module load {m} 2>/dev/null` at the TOP of the container
-    #   host-env segment — BEFORE `module load cray-mpich-abi` and the APPTAINERENV
+    cray_mpich_abi_module: bool = Field(
+        False,
+        description="Whether to load the Cray MPICH ABI module before the container environment is "
+        "exported, so the host MPI variables exist when apptainerenv_ld_library_path "
+        "expands. Set the field on a Cray machine that binds host MPI. The field requires "
+        "apptainerenv_ld_library_path, and the field is mutually exclusive with srun_mpi, "
+        "the container-own-MPI alternative.",
+    )
+    pre_exec_modules: list[str] = Field(
+        default_factory=list,
+        description="Modules loaded at the top of the container host-environment segment, ahead of "
+        "everything else. Name the container-helper modules of the cluster here so the host "
+        "MPI, GPU, and compiler-runtime libraries are bound for you and need no manual listing "
+        "in containlibs.",
+    )
+    #   Emitted as `module load {m} 2>/dev/null` BEFORE `module load cray-mpich-abi` and the APPTAINERENV
     #   exports. Frontier production multi-rank: the OLCF helper set
     #   ["olcf-container-tools","apptainer-enable-mpi","apptainer-enable-gpu"], which
     #   bind the open-ended host MPI+ROCm+compiler-runtime closure (libpgmath/libflang/
     #   …) so it need NOT be hand-enumerated into containlibs (validated probe job
     #   4898044: size=16/2 nodes). Empty on UVA and on the single-rank validation fallback.
-    srun_mpi: str | None = None  # UVA: "pmix" => the seam emits `srun --mpi=pmix`
-    #   for the container-own OpenMPI; None on Frontier (Cray-PALS path, never pmix).
-    exe_in_sif: dict[str, str] = Field(default_factory=dict)  # OD-A: per-model
-    #   in-SIF absolute exe path, keyed by model_type ("triton"/"tritonswmm"/
-    #   "swmm"). Empty => fall back to the convention /opt/hhemt/bin/{name}.
-    extra_exec_args: list[str] = Field(default_factory=list)  # shared escape
-    #   hatch for an unforeseen per-cluster `apptainer exec` flag; applied to
-    #   EVERY class. NEVER put `--cleanenv` here for an MPI cluster (NQ-11).
-    apptainer_module: str | None = None  # cluster Lmod module providing the
-    #   `apptainer` binary. REQUIRED where apptainer is module-only (UVA Rivanna:
-    #   "apptainer/1.5.0") — without it `srun … apptainer exec` dies execve
-    #   (apptainer not on PATH). None on clusters where apptainer is on the default
-    #   PATH (Frontier). The seam emits `module load {apptainer_module}` in container
-    #   mode ONLY (native rows never load it -> native byte-identical).
+    srun_mpi: str | None = Field(
+        None,
+        description="MPI flavor passed to the job launcher when the container carries a separate MPI, for "
+        "example pmix for a container-built OpenMPI. Leave unset on a cluster that binds the "
+        "host MPI. The field is mutually exclusive with cray_mpich_abi_module.",
+    )
+    #   UVA: "pmix" => the seam emits `srun --mpi=pmix` for the container-own OpenMPI;
+    #   None on Frontier (Cray-PALS path, never pmix).
+    exe_in_sif: dict[str, str] = Field(
+        default_factory=dict,
+        description="Absolute in-image path of the simulation executable, keyed by model type, namely "
+        "triton, tritonswmm, and swmm. Leave the field empty to use the built-in convention, "
+        "and set the field only for an image that installs the executables elsewhere.",
+    )
+    #   OD-A. Empty => fall back to the convention /opt/hhemt/bin/{name}.
+    python_in_sif: str = Field(
+        "python",
+        description="Interpreter token that the container-prefixed processing steps invoke. The path must "
+        "resolve INSIDE the image, because the interpreter of the driver is a host path and "
+        "fails to start in the container. The default is a bare name that every in-repo recipe "
+        "resolves to the environment of the image. Override the default with an absolute "
+        "in-image path for an image whose PATH omits the environment.",
+    )
+    #   Invoked as `apptainer exec {sif} {python_in_sif} -m hhemt.process_timeseries_runner`. The host
+    #   sys.executable dies `FATAL: stat …: no such file or directory` (Rivanna run 17095105). Every in-repo
+    #   recipe's %environment prepends /opt/hhemt-src/.venv/bin to PATH, so `python` resolves to the in-SIF
+    #   hhemt venv. NEVER hardcode an in-SIF path in src/ (Code Style item 8) — that is what this field is for.
+    extra_exec_args: list[str] = Field(
+        default_factory=list,
+        description="Extra container-exec flags applied to every invocation. The field is an escape hatch "
+        "for a cluster-specific flag that this model leaves unnamed. Never put --cleanenv here "
+        "on an MPI cluster, because the flag strips the host fabric environment the launcher "
+        "needs.",
+    )
+    #   Applied to EVERY class (NQ-11).
+    apptainer_module: str | None = Field(
+        None,
+        description="Cluster module that provides the `apptainer` binary. Required where apptainer is "
+        "module-only, because without the module the container launch fails with apptainer "
+        "not on PATH. Leave the field unset where apptainer is already on the default PATH. "
+        "The module is loaded in container mode only, so native runs are byte-identical "
+        "either way.",
+    )
+    #   REQUIRED where apptainer is module-only (UVA Rivanna: "apptainer/1.5.0"); None on Frontier.
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_pointer_fields(cls, data):
+        # HARD REFUSAL, not a shim: a shim that ignored `sif_path` would let a config load with a
+        # pointer the resolver never reads -- the wrong-wiring class this field retirement closes.
+        if isinstance(data, dict):
+            retired = [k for k in ("sif_path", "sif_paths_by_arch", "sif_sha256") if k in data]
+            if retired:
+                raise ValueError(
+                    f"container.{retired[0]} was RETIRED (hhemt SIF quest, 2026-09): images are resolved by "
+                    "identity under container.sif_root. Delete "
+                    + ", ".join(retired)
+                    + "; set sif_root to the directory `hhemt build-sifs` writes into; run "
+                    "`hhemt build-sifs --dry-run` to see the identities this config resolves."
+                )
+        return data
 
     @model_validator(mode="after")
     def _check_mpi_flavor_exclusive(self):
@@ -329,3 +555,30 @@ def resolve_container_spec(
     if cfg_hpc_system is None:
         return None
     return cfg_hpc_system.container
+
+
+def system_directory_bind(system_directory: Path | str, binds: list[str]) -> list[str]:
+    """Return the APPTAINER_BIND entry mounting ``system_directory`` into the
+    container at the same path, or ``[]`` when an existing ``binds`` entry
+    already covers it (R14 / D11).
+
+    The container bind seam otherwise mounts only ``analysis_dir``; the sim
+    reads the DEM (and Manning's, the compiled ``build/`` executables, and the
+    ``_software/`` tree) from ``system_directory`` — the PARENT of
+    ``analysis_dir`` — by absolute path, so under
+    ``execution_environment == "container"`` those reads fall outside the mount
+    unless the parent is bound.
+
+    Dedup: the host side of a ``"host:container"`` bind is the part before the
+    first ``':'`` (a bare path is its own host side). The append is skipped when
+    ``system_directory`` is at or under any existing host side — e.g. the
+    estate's ``binds: ["/scratch", "/sfs"]`` already mounts a
+    ``/scratch``-resident system directory, so this correctly no-ops there and
+    only adds a bind when the tree is genuinely unmounted.
+    """
+    sd = Path(system_directory)
+    for bind in binds:
+        host = bind.split(":", 1)[0]
+        if sd.is_relative_to(host):
+            return []
+    return [f"{sd}:{sd}"]

@@ -1,0 +1,8 @@
+# A position word points at a place that a reorder or a screen reader moves.
+extends: existence
+message: "Name the target instead of '%s'."
+level: warning
+ignorecase: true
+nonword: true
+raw:
+  - '\b(?:the|these|those|this|that|each|every|all|both)\s+(?:[^\s.,;:!?]+\s+){0,3}(?<!\bor\s)(?:above|below)\b(?!\s+(?:the\s|\d))|(?<!\bor\s)\b(?:above|below)(?=\s*(?:[.,:;)]|$|\s+in\s+order\b|\s+(?:describe|shape|are|is|name|lists?)\b))|\b(?:as|is|are)\s+(?:shown|described|listed|noted|stated|given)\s+(?:above|below)\b'

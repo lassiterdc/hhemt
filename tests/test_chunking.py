@@ -12,12 +12,12 @@ import dask.array as da
 import numpy as np
 import pytest
 import xarray as xr
+
 from hhemt.processing_analysis import (
     TRITONSWMM_analysis_post_processing,
-    prev_power_of_two,
     ds_memory_req_MiB,
 )
-
+from hhemt.utils import prev_power_of_two
 
 # ========== Helper Functions ==========
 
@@ -54,7 +54,13 @@ def create_spatial_dataset_2d(n_events=10, nx=512, ny=512, n_vars=1, dtype=np.fl
     for i in range(n_vars):
         data_vars[f"var_{i}"] = (
             ["event_iloc", "y", "x"],
-            np.random.randn(n_events, ny, nx).astype(dtype),
+            # Zeros, not randn: compute_optimal_chunks reads only shapes and dtypes,
+            # so these values are never inspected. randn's GENERATION was the cost --
+            # measured 1.2500s for randn alone versus 0.0000s for zeros, with the
+            # .astype() cast worth only ~6% -- and it made test_power_of_two_chunking
+            # a load-sensitive flake against the 5-second autouse alarm below.
+            # Measured: identical chunk dict, 1.65s -> under the 0.005s floor.
+            np.zeros((n_events, ny, nx), dtype=dtype),
         )
 
     ds = xr.Dataset(
@@ -69,7 +75,7 @@ def create_spatial_dataset_2d(n_events=10, nx=512, ny=512, n_vars=1, dtype=np.fl
 
 
 def create_sensitivity_dataset(
-    n_sub_analysis=6,
+    n_analysis=6,
     n_run_modes=5,
     n_gpus=3,
     n_mpi=2,
@@ -108,25 +114,25 @@ def create_sensitivity_dataset(
         n_omp,
         n_mpi,
         n_run_modes,
-        n_sub_analysis,
+        n_analysis,
         n_events,
         nx,
         ny,
     )
-    nonspatial_shape = (n_gpus, n_omp, n_mpi, n_run_modes, n_sub_analysis, n_events)
+    nonspatial_shape = (n_gpus, n_omp, n_mpi, n_run_modes, n_analysis, n_events)
     spatial_chunks = (1, 1, 1, 1, 1, 1, nx, ny)
     nonspatial_chunks = (1, 1, 1, 1, 1, 1)
 
     spatial_vars = [
-        "wlevel_m_last_tstep",
-        "max_velocity_mps",
-        "velocity_x_mps_at_time_of_max_velocity",
-        "max_wlevel_m",
-        "time_of_max_velocity_min",
-        "time_of_max_wlevel_min",
-        "velocity_y_mps_at_time_of_max_velocity",
+        "flood_depth_last_tstep",
+        "max_unit_discharge",
+        "unit_discharge_x_at_time_of_max_unit_discharge",
+        "max_flood_depth",
+        "time_of_max_unit_discharge",
+        "time_of_max_flood_depth",
+        "unit_discharge_y_at_time_of_max_unit_discharge",
     ]
-    nonspatial_vars = ["final_surface_flood_volume_m3"]
+    nonspatial_vars = ["final_surface_flood_volume"]
 
     data_vars = {
         name: (
@@ -150,10 +156,10 @@ def create_sensitivity_dataset(
     ds = xr.Dataset(
         data_vars=data_vars,
         coords={
-            "sub_analysis_iloc": np.arange(n_sub_analysis),
+            "sub_analysis_iloc": np.arange(n_analysis),
             "sa_id": (
                 "sub_analysis_iloc",
-                np.array([f"sa{i}" for i in range(n_sub_analysis)]),
+                np.array([f"member{i}" for i in range(n_analysis)]),
             ),
             "run_mode": run_mode_labels,
             "n_gpus": np.arange(n_gpus),
@@ -234,9 +240,7 @@ class TestChunkMemoryConstraint:
         ds = create_spatial_dataset_2d(n_events=10, nx=256, ny=256, n_vars=1)
 
         max_mem = 50  # 50 MiB limit
-        chunks = proc._chunk_for_writing(
-            ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem
-        )
+        chunks = proc._chunk_for_writing(ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem)
 
         # Test actual memory usage
         test_slice = {coord: slice(0, chunks[coord]) for coord in chunks}
@@ -251,9 +255,7 @@ class TestChunkMemoryConstraint:
         ds = create_sensitivity_dataset()
 
         max_mem = 200  # 200 MiB limit
-        chunks = proc._chunk_for_writing(
-            ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem
-        )
+        chunks = proc._chunk_for_writing(ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem)
 
         # Test actual memory usage
         test_slice = {coord: slice(0, chunks[coord]) for coord in chunks}
@@ -302,13 +304,19 @@ class TestChunkingEdgeCases:
         # Use large event count to force chunking
         ds = create_spatial_dataset_2d(n_events=1000, nx=256, ny=256, n_vars=1)
 
-        chunks = proc._chunk_for_writing(
-            ds, spatial_coords=["x", "y"], max_mem_usage_MiB=100
-        )
+        chunks = proc._chunk_for_writing(ds, spatial_coords=["x", "y"], max_mem_usage_MiB=100)
 
         # When a dimension is chunked (not using full length), it should be power of 2
         event_chunk = chunks["event_iloc"]
         event_len = len(ds["event_iloc"])
+
+        # The else-branch below is `assert x == x` and passes VACUOUSLY. Below ~129
+        # events this dataset stops being chunked at all and the test silently
+        # asserts nothing, so require the precondition the test's own name claims.
+        assert event_chunk < event_len, (
+            f"dataset too small to force chunking (event_chunk={event_chunk}, "
+            f"event_len={event_len}); the power-of-2 assertion below would not run"
+        )
 
         if event_chunk < event_len:
             # If chunked, should be a power of 2
@@ -342,9 +350,7 @@ class TestChunkingEdgeCases:
         )
 
         max_mem = 100
-        chunks = proc._chunk_for_writing(
-            ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem
-        )
+        chunks = proc._chunk_for_writing(ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem)
 
         # Verify chunks respect memory limit
         test_slice = {coord: slice(0, chunks[coord]) for coord in chunks}
@@ -357,9 +363,7 @@ class TestChunkingEdgeCases:
 
         # Set unreasonably small memory limit (should still produce valid chunks)
         max_mem = 10  # 10 MiB
-        chunks = proc._chunk_for_writing(
-            ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem
-        )
+        chunks = proc._chunk_for_writing(ds, spatial_coords=["x", "y"], max_mem_usage_MiB=max_mem)
 
         # Verify chunks still respect the limit
         test_slice = {coord: slice(0, chunks[coord]) for coord in chunks}
@@ -367,7 +371,7 @@ class TestChunkingEdgeCases:
         assert chunk_mem <= max_mem
 
         # All chunk sizes should be at least 1
-        for coord, size in chunks.items():
+        for _coord, size in chunks.items():
             assert size >= 1
 
     def test_spatial_chunk_size_target(self, proc):

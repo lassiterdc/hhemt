@@ -5,11 +5,10 @@ Maps to reprocess-report-du-fixes master plan R3/R4/R5/R7:
 - R3/R4 (assertions a-c): ``sum_child_sentinels(analysis_dir)`` reproduces
   ``_walk_root_and_breakdown(analysis_dir)`` total AND ``sub_path_breakdown``
   byte-for-byte on a steady-state tree, and ``Σ breakdown == disk_utilization_bytes``.
-  This is Decision D-A (Option A): each child's OWN top-level ``_status/`` bytes
-  are added back via ``_walk_root_bytes(child/"_status")`` so the hierarchical
-  sum matches the full walk (which counts ``child/_status/**`` under the child's
-  top-level breakdown key). The parity holds recursively — the per-sub sentinels
-  are themselves produced by ``sum_child_sentinels`` over their ``sims/``.
+  Under clause 6 ``_status/`` is never DU-counted at ANY depth: neither the
+  hierarchical sum nor the full walk counts those bytes, at any scope. The parity
+  holds recursively — the per-sub sentinels are themselves produced by
+  ``sum_child_sentinels`` over their ``sims/``.
 - R7 (assertion d): re-summing an unchanged tree does NOT rewrite the analysis
   ``_du.json`` (compare-and-write mtime invariant — the property Snakemake's
   ``--rerun-triggers mtime input`` depends on).
@@ -20,8 +19,12 @@ Maps to reprocess-report-du-fixes master plan R3/R4/R5/R7:
 
 The fixture seeds NON-EMPTY nested ``_status/`` dirs at BOTH scenario and sub
 scope (the ``.flag.json`` sidecars + ``_du.json`` a completed run produces).
-This is load-bearing: on an all-empty-``_status`` tree assertions (a)/(b) would
-pass trivially even WITHOUT the D-A ``_status`` add-back, defeating the test.
+This is load-bearing: the seeding is what makes the clause-6 exclusion
+falsifiable. A scenario's own ``_status/`` is excluded from its OWN sentinel by
+the top-level rule either way, while the analysis-level walk reaches those same
+files under ``top="members"`` — so it is the INTERACTION of the two skip rules
+that non-empty seeding exercises. On an all-empty-``_status`` tree there are no
+bytes to disagree about and the assertions pass regardless.
 
 Run:
     conda run -n hhemt python -m pytest tests/test_synth_du_summation_parity.py -v
@@ -50,10 +53,12 @@ def _seed_status(status_dir: Path, *, n_flags: int) -> None:
     """Populate a scope's ``_status/`` with realistic, non-empty flag + sidecar
     files (the ``c_run`` flags + ``.flag.json`` payloads a completed run writes).
 
-    A non-empty nested ``_status/`` at both scenario and sub scope is required —
-    an all-empty-``_status`` tree would satisfy the parity assertions even
-    without the Decision D-A ``_status`` add-back, so this fixture is what makes
-    the test discriminating.
+    A non-empty nested ``_status/`` at both scenario and sub scope is required,
+    and under clause 6 the reason is the exclusion itself: an
+    all-empty-``_status`` tree would satisfy the parity assertions whether or not
+    those bytes were excluded, so the non-empty seeding is what makes the
+    clause-6 exclusion falsifiable — the same role the ``out/_status/deep.flag``
+    seed plays one level down.
     """
     status_dir.mkdir(parents=True, exist_ok=True)
     for i in range(n_flags):
@@ -69,7 +74,7 @@ def _build_sensitivity_tree(analysis_dir: Path) -> None:
     ::
 
         analysis_dir/
-          subanalyses/sa_{k}/
+          members/member_{k}/
             sims/event_{e}/            scenario: payload + non-empty _status/
             analysis_datatree.zarr     sub-level own file (not under sims/)
             _status/                   sub-scope: non-empty flags
@@ -79,13 +84,19 @@ def _build_sensitivity_tree(analysis_dir: Path) -> None:
           _status/                     master own _status (excluded by walk + sum)
     """
     for k in range(N_SUBS):
-        sub = analysis_dir / "subanalyses" / f"sa_{k}"
+        sub = analysis_dir / "members" / f"member_{k}"
         for e in range(N_EVENTS):
             scen = sub / "sims" / f"event_{e}"
             scen.mkdir(parents=True, exist_ok=True)
             # Vary sizes per (sub, event) so a transposed/wrong breakdown is detectable.
             (scen / "summary.zarr").write_bytes(b"s" * (100 + 10 * k + e))
             _seed_status(scen / "_status", n_flags=2)
+            # Clause 6 discriminator: a `_status` directory BELOW the scenario root. A walker
+            # that skips `_status` only at scope roots counts this file; the summation and
+            # the any-depth walk never do. Present on every scenario so the fixture cannot
+            # pass by accident of which event carries it.
+            (scen / "out" / "_status").mkdir(parents=True, exist_ok=True)
+            (scen / "out" / "_status" / "deep.flag").write_bytes(b"\x00" * 7)
         _seed_status(sub / "_status", n_flags=3)
         (sub / "analysis_datatree.zarr").write_bytes(b"d" * (200 + 5 * k))
     (analysis_dir / "analysis_report.html").write_bytes(b"h" * 500)
@@ -98,15 +109,15 @@ def _build_sensitivity_tree(analysis_dir: Path) -> None:
 
 
 def _seed_child_sentinels(analysis_dir: Path) -> None:
-    """Bring the tree to steady state: each scenario and each sub-analysis carries
+    """Bring the tree to steady state: each scenario and each member carries
     an accurate ``_du.json``, exactly as a completed run's per-scope consolidation
     would have written (scenario via ``compute_and_write_scope_sentinel``; sub via
     ``sum_child_sentinels`` over its ``sims/`` — the production sub rollup)."""
     for k in range(N_SUBS):
-        sub = analysis_dir / "subanalyses" / f"sa_{k}"
+        sub = analysis_dir / "members" / f"member_{k}"
         for e in range(N_EVENTS):
             compute_and_write_scope_sentinel(sub / "sims" / f"event_{e}", scope="scenario")
-        sum_child_sentinels(sub, scope="sub_analysis", child_scope_dirs=["sims"])
+        sum_child_sentinels(sub, scope="member", child_scope_dirs=["sims"])
 
 
 def _make_steady_state(tmp_path: Path) -> Path:
@@ -123,7 +134,7 @@ def test_summation_total_and_breakdown_parity(tmp_path: Path) -> None:
     oracle_total, oracle_breakdown, oracle_errors = du_sentinels._walk_root_and_breakdown(analysis_dir)
     assert oracle_errors == 0
 
-    rewrote = sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["subanalyses", "sims"])
+    rewrote = sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["members", "sims"])
     assert rewrote is True
 
     payload = read_du_sentinel(analysis_dir / "_status" / "_du.json")
@@ -135,8 +146,12 @@ def test_summation_total_and_breakdown_parity(tmp_path: Path) -> None:
     assert payload["sub_path_breakdown"] == oracle_breakdown
     # (c) Σ breakdown.values() == disk_utilization_bytes.
     assert sum(payload["sub_path_breakdown"].values()) == payload["disk_utilization_bytes"]
-    # The subanalyses aggregate must be present and non-trivial (sanity on the fixture).
-    assert payload["sub_path_breakdown"]["subanalyses"] > 0
+    # Clause 6 discriminator, exact on one scenario: event_0 of member_0 holds a 100-byte
+    # summary.zarr, a scope-root _status/ (excluded), and out/_status/deep.flag (7 bytes,
+    # excluded at any depth). Pre-fix the walk returned 107.
+    assert du_sentinels._walk_root_and_breakdown(analysis_dir / "members" / "member_0" / "sims" / "event_0")[0] == 100
+    # The members aggregate must be present and non-trivial (sanity on the fixture).
+    assert payload["sub_path_breakdown"]["members"] > 0
     assert payload["sub_path_breakdown"]["analysis_report.html"] == 500
     assert payload["sub_path_breakdown"]["plots"] == 450
 
@@ -145,11 +160,11 @@ def test_summation_omits_absent_sims_child(tmp_path: Path) -> None:
     """A sensitivity master has no top-level ``sims/``; the summation must skip the
     absent child (not raise, not invent a key) and still match the oracle keys."""
     analysis_dir = _make_steady_state(tmp_path)
-    sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["subanalyses", "sims"])
+    sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["members", "sims"])
     payload = read_du_sentinel(analysis_dir / "_status" / "_du.json")
     assert payload is not None
     assert "sims" not in payload["sub_path_breakdown"]
-    assert "subanalyses" in payload["sub_path_breakdown"]
+    assert "members" in payload["sub_path_breakdown"]
 
 
 def test_summation_mtime_invariant(tmp_path: Path) -> None:
@@ -157,13 +172,13 @@ def test_summation_mtime_invariant(tmp_path: Path) -> None:
     analysis_dir = _make_steady_state(tmp_path)
     sentinel = analysis_dir / "_status" / "_du.json"
 
-    first = sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["subanalyses", "sims"])
+    first = sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["members", "sims"])
     assert first is True
     first_mtime = sentinel.stat().st_mtime
 
     time.sleep(1.1)
 
-    second = sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["subanalyses", "sims"])
+    second = sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["members", "sims"])
     assert second is False, "sum_child_sentinels rewrote an unchanged tree (mtime invariant violated)"
     assert sentinel.stat().st_mtime == first_mtime
 
@@ -178,7 +193,7 @@ def test_decrement_reduces_total_and_child_without_walk(tmp_path: Path, monkeypa
     # Establish the analysis sentinel (carries the analysis_report.html breakdown
     # child) so the decrement produces a DIFFERENT payload and actually rewrites —
     # a 0-delta no-op would return False and the reduction would be unobservable.
-    sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["subanalyses", "sims"])
+    sum_child_sentinels(analysis_dir, scope="analysis", child_scope_dirs=["members", "sims"])
     before = read_du_sentinel(sentinel)
     assert before is not None
     html_bytes = before["sub_path_breakdown"]["analysis_report.html"]

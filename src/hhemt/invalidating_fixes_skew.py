@@ -35,8 +35,12 @@ logger = logging.getLogger(__name__)
 # the maintainer's private username, which is on the ADR-14 anonymization blocklist and
 # must therefore never appear in a tracked file — including in a comment explaining it.
 # Hardcoded (not derived from `git remote get-url`) so the URL is deterministic and
-# wheel-safe. test_invalidating_fixes_skew asserts the constructed URL carries no
-# blocklisted token; scripts/check_anonymization.py asserts this file carries none either.
+# wheel-safe. scripts/check_anonymization.py is the ENFORCEMENT layer: it scans this file
+# against independent ground truth and does not self-exclude it, so a blocklisted token in
+# any literal below is caught there. Because no blocklist token contains "/", none can span
+# a URL component boundary, so the composed URL cannot carry a token these literals do not
+# -- which is why test_invalidating_fixes_skew asserts only the positive property the guard
+# cannot see (that the URL targets the PUBLIC repo) rather than re-deriving the guard.
 _REGISTRY_REMOTE_OWNER = "lassiterdc"
 _REGISTRY_REMOTE_REPO = "hhemt"
 _REGISTRY_REMOTE_BRANCH = "main"

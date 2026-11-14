@@ -1,6 +1,7 @@
 """Phase 5 dispatch tests — static_backend selects Plotly vs matplotlib
 branch in renderers with Plotly branches; non-Plotly-branch renderers warn
 once when user requests plotly."""
+
 import logging
 
 import pytest
@@ -11,6 +12,7 @@ def _reset_warning_state():
     from hhemt.report_renderers._static_backend_warning import (
         _reset_for_tests,
     )
+
     _reset_for_tests()
     yield
     _reset_for_tests()
@@ -24,13 +26,8 @@ def test_warn_no_plotly_branch_fires_once(caplog):
     with caplog.at_level(logging.WARNING):
         warn_no_plotly_branch("per_analysis_summary")
         warn_no_plotly_branch("per_analysis_summary")
-    warnings_for_renderer = [
-        record for record in caplog.records
-        if "per_analysis_summary" in record.message
-    ]
-    assert len(warnings_for_renderer) == 1, (
-        f"Expected 1 warning, got {len(warnings_for_renderer)}"
-    )
+    warnings_for_renderer = [record for record in caplog.records if "per_analysis_summary" in record.message]
+    assert len(warnings_for_renderer) == 1, f"Expected 1 warning, got {len(warnings_for_renderer)}"
 
 
 def test_warn_no_plotly_branch_per_renderer(caplog):
@@ -43,7 +40,8 @@ def test_warn_no_plotly_branch_per_renderer(caplog):
         warn_no_plotly_branch("errors_and_warnings")
         warn_no_plotly_branch("scenario_status_appendix")
     renderer_names_in_warnings = {
-        name for name in (
+        name
+        for name in (
             "per_analysis_summary",
             "errors_and_warnings",
             "scenario_status_appendix",

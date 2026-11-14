@@ -6,17 +6,16 @@ the 1_job_many_srun_tasks execution mode.
 """
 
 import pytest
+
 import tests.fixtures.test_case_catalog as cases
 
 pytestmark = pytest.mark.requires_snakemake_subprocess
 
 
 @pytest.fixture
-def norfolk_1job_analysis():
-    """Norfolk test case configured for 1-job mode."""
-    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False
-    )
+def synth_1job_analysis():
+    """Synthetic test case configured for 1-job mode."""
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
 
     # Configure for 1-job mode
@@ -33,7 +32,7 @@ def norfolk_1job_analysis():
     from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
 
     analysis.cfg_hpc_system = hpc_system_config(
-        system_name="test-cluster",
+        hpc_name="test-cluster",
         default_account="test_account",
         max_concurrent_jobs=10,
         partitions={"test_partition": PartitionSpec(max_runtime=120, cpus_per_node=32)},
@@ -46,7 +45,7 @@ def norfolk_1job_analysis():
     return analysis
 
 
-def test_1job_dry_run_does_not_submit(norfolk_1job_analysis):
+def test_1job_dry_run_does_not_submit(synth_1job_analysis, monkeypatch):
     """
     Test that dry-run with 1_job_many_srun_tasks does NOT submit SBATCH.
 
@@ -57,13 +56,18 @@ def test_1job_dry_run_does_not_submit(norfolk_1job_analysis):
     4. Result indicates success
     5. Result mode is 'single_job'
     """
-    analysis = norfolk_1job_analysis
+    # The node-local config guard refuses a tree under the system temp dir, which is where an exported runs-root
+    # override puts it (a harness chunk's isolation root). A dry run submits nothing, so the
+    # acknowledgement is set here, inside the test, and never in `synth_1job_analysis` or another shared builder:
+    # `tests/test_node_local_config_guard.py` consumes those builders and needs the guard armed.
+    monkeypatch.setenv("HHEMT_ALLOW_NODE_LOCAL_CONFIGS", "1")
+    analysis = synth_1job_analysis
 
     result = analysis.submit_workflow(
         mode="slurm",
         process_system_level_inputs=True,
         overwrite_system_inputs=False,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         recompile_if_already_done_successfully=False,
         prepare_scenarios=True,
         overwrite_scenario_if_already_set_up=True,
@@ -81,30 +85,26 @@ def test_1job_dry_run_does_not_submit(norfolk_1job_analysis):
     assert result.get("success"), f"Dry-run failed: {result.get('message', '')}"
 
     # Verify mode is set correctly (should be 'single_job' indicating 1-job mode)
-    assert (
-        result.get("mode") == "single_job"
-    ), f"Expected mode='single_job' for dry-run, got {result.get('mode')}"
+    assert result.get("mode") == "single_job", f"Expected mode='single_job' for dry-run, got {result.get('mode')}"
 
     # Verify Snakefile was generated
-    snakefile_path = (
-        analysis._workflow_builder.analysis_paths.analysis_dir / "Snakefile"
-    )
+    snakefile_path = analysis._workflow_builder.analysis_paths.analysis_dir / "Snakefile"
     assert snakefile_path.exists(), "Snakefile should be generated even in dry-run"
 
 
-def test_1job_normal_run_workflow_builder(norfolk_1job_analysis):
+def test_1job_normal_run_workflow_builder(synth_1job_analysis):
     """
     Test that workflow builder can generate Snakefile and config.
 
     This test verifies that the fix doesn't break the workflow generation
     pipeline. We don't actually submit, but verify generation succeeds.
     """
-    analysis = norfolk_1job_analysis
+    analysis = synth_1job_analysis
 
     # Generate Snakefile content
     snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
+        run_setup_phase=True,
         prepare_scenarios=True,
         process_timeseries=True,
     )

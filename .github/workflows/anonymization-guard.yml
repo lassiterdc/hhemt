@@ -1,5 +1,8 @@
-# Anonymization guard: fails if any tracked file contains a blocklisted
-# genuinely-private identifier (scripts/anonymization_blocklist.txt).
+# Anonymization guard: fails if any tracked file carries a private identifier.
+# Two layers (scripts/check_anonymization.py): (a) generic pattern classes held in the
+# public script -- an email address, a per-user absolute path -- minus a closed exemption
+# table (scripts/anonymization_exemptions.yaml); (c) a producer-specific token list that is
+# NOT in this repository, reached through $HHEMT_ANONYMIZATION_BLOCKLIST.
 # ADR-14 of public-release-reproducibility. Working-tree scrub enforcement;
 # git HISTORY exposure is a separate concern (git-specialist / ADR-3).
 # This workflow DELIVERS the check; designating it a required status check on
@@ -7,10 +10,20 @@
 name: Anonymization guard
 
 on:
+  # develop only: the release PR (develop -> main) reads this check from the develop push run
+  # on its head SHA, so a trigger on main would run the same check twice for one SHA.
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "develop" ]
+
+# The producer-specific list reaches CI as the repository secret
+# HHEMT_ANONYMIZATION_BLOCKLIST_CONTENT. The developer creates that secret (no agent does).
+# Until it exists, and on a pull request from a fork (GitHub passes no secrets to those),
+# no carrier is configured, so the guard runs the generic pattern classes only and says so in
+# its log. That is why this job carries no `if:` fork guard: the guard degrades to its public
+# layer instead of failing for want of ground truth, and never reports a pass for a layer it
+# did not run. A secret that is present but unusable still fails loudly (the guard refuses).
 
 permissions:
   contents: read
@@ -24,5 +37,34 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Detect the producer-specific list secret
+        id: blocklist_secret
+        env:
+          BLOCKLIST_CONTENT: ${{ secrets.HHEMT_ANONYMIZATION_BLOCKLIST_CONTENT }}
+        run: |
+          if [ -n "$BLOCKLIST_CONTENT" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No producer-specific list secret is available; the guard will run its generic pattern classes only."
+          fi
+      - name: Write the producer-specific list carrier
+        if: steps.blocklist_secret.outputs.present == 'true'
+        env:
+          BLOCKLIST_CONTENT: ${{ secrets.HHEMT_ANONYMIZATION_BLOCKLIST_CONTENT }}
+        run: |
+          umask 077
+          carrier="$RUNNER_TEMP/hhemt_anonymization_blocklist.txt"
+          printf '%s' "$BLOCKLIST_CONTENT" > "$carrier"
+          chmod 600 "$carrier"
+          # Register every entry as a mask BEFORE any guard output, so masking does not
+          # depend on how the runner treats a multi-line secret.
+          while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+              ''|'#'*) ;;
+              *) printf '::add-mask::%s\n' "$line" ;;
+            esac
+          done < "$carrier"
+          printf 'HHEMT_ANONYMIZATION_BLOCKLIST=%s\n' "$carrier" >> "$GITHUB_ENV"
       - name: Run anonymization guard
         run: python scripts/check_anonymization.py

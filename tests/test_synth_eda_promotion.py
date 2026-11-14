@@ -24,10 +24,26 @@ _MPL_SPECIFIC_DEFAULTS = {
 }
 
 
-@pytest.fixture
-def eda_plot_id(synthetic_sensitivity_completed_isolated):
-    """Run .eda() on the synth sensitivity master; return the rendered EDA plot-ID."""
-    analysis = synthetic_sensitivity_completed_isolated.master_analysis
+@pytest.fixture(scope="module")
+def eda_master_clone(synthetic_sensitivity_completed, tmp_path_factory):
+    """One clone of the completed synth sensitivity master for this module, under a `tmp_path_factory` directory.
+
+    Module-scoped because `eda_plot_id` below is: a module-scoped fixture cannot request the function-scoped
+    `synthetic_sensitivity_completed_isolated` (pytest raises ScopeMismatch), so the clone is made here through the
+    same helper that fixture uses. The tests in this module only read the plot ID `eda_plot_id` returns, so none of
+    them mutates the clone."""
+    from tests._failing_fixture_helpers import clone_analysis_to_tmp
+
+    master_clone = clone_analysis_to_tmp(
+        synthetic_sensitivity_completed.experiment, tmp_path_factory.mktemp("eda_master_clone")
+    )
+    return master_clone.sensitivity
+
+
+@pytest.fixture(scope="module")
+def eda_plot_id(eda_master_clone):
+    """Run .eda() once on the synth sensitivity master clone; return the rendered EDA plot-ID."""
+    analysis = eda_master_clone.experiment
     result = analysis.eda()
     assert result.plot_paths, "expected >=1 rendered EDA plot on the sensitivity master"
     return result.plot_paths[0].stem  # the figure stem IS the canonical ADR-2 plot-ID
@@ -69,9 +85,9 @@ def test_default_output_path_is_cwd_relative_not_analysis_dir(eda_plot_id, monke
 
 
 def test_register_in_reporting_set_records_intent():
-    rec = register_eda_plot_in_reporting_set("config_diff_maps", "default")
+    rec = register_eda_plot_in_reporting_set("config_diff_maps", "compute_sensitivity")
     assert rec.plot_id == "config_diff_maps"
-    assert rec.set_name == "default"
+    assert rec.set_name == "compute_sensitivity"
     assert "deferred" in rec.routing  # D-1 option (c): routing deferred to eda-skill
 
 

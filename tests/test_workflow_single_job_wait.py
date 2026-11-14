@@ -5,16 +5,18 @@ This test module verifies that the wait_for_completion parameter
 works correctly for 1_job_many_srun_tasks mode.
 """
 
-import pytest
-from unittest.mock import Mock, patch
 from pathlib import Path
+from unittest.mock import Mock, patch
+
+import pytest
+
 from hhemt.workflow import SnakemakeWorkflowBuilder
 
 pytestmark = pytest.mark.requires_snakemake_subprocess
 
 
 @pytest.fixture
-def mock_analysis():
+def mock_analysis(tmp_path):
     """Create a mock analysis object for testing."""
     analysis = Mock()
     analysis.cfg_analysis = Mock()
@@ -22,12 +24,15 @@ def mock_analysis():
     analysis.cfg_analysis.hpc_cpus_per_node = 32
     analysis.cfg_analysis.hpc_total_nodes = 1
     analysis.cfg_analysis.mem_gb_per_cpu = 2
+    # _pre_snakemake_invocation_guards prints the realised retry ceiling and does
+    # arithmetic on these two fields; a bare Mock attribute raises TypeError, which the
+    # submit catch-all swallows into success=False. Values are the schema defaults.
+    analysis.cfg_analysis.hpc_restart_times_simulate = 2
+    analysis.cfg_analysis.hpc_consecutive_failure_budget_simulate = 3
     analysis.analysis_paths = Mock()
-    analysis.analysis_paths.analysis_dir = Path("/test/analysis")
+    analysis.analysis_paths.analysis_dir = tmp_path / "analysis"
     analysis._resource_manager = Mock()
-    analysis._resource_manager._get_simulation_resource_requirements.return_value = {
-        "n_gpus": 0
-    }
+    analysis._resource_manager._get_simulation_resource_requirements.return_value = {"n_gpus": 0}
     analysis._system = Mock()
     analysis._python_executable = "python"
     analysis._refresh_log = Mock()
@@ -189,9 +194,7 @@ class TestSubmitSingleJobWorkflow:
         )
 
         with (
-            patch.object(
-                workflow_builder, "_generate_single_job_submission_script"
-            ) as mock_gen,
+            patch.object(workflow_builder, "_generate_single_job_submission_script") as mock_gen,
             patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
             patch.object(workflow_builder, "write_snakemake_config"),
         ):
@@ -220,9 +223,7 @@ class TestSubmitSingleJobWorkflow:
         ]
 
         with (
-            patch.object(
-                workflow_builder, "_generate_single_job_submission_script"
-            ) as mock_gen,
+            patch.object(workflow_builder, "_generate_single_job_submission_script") as mock_gen,
             patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
             patch.object(workflow_builder, "write_snakemake_config"),
         ):
@@ -251,9 +252,7 @@ class TestSubmitSingleJobWorkflow:
         ]
 
         with (
-            patch.object(
-                workflow_builder, "_generate_single_job_submission_script"
-            ) as mock_gen,
+            patch.object(workflow_builder, "_generate_single_job_submission_script") as mock_gen,
             patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
             patch.object(workflow_builder, "write_snakemake_config"),
         ):
@@ -280,9 +279,7 @@ class TestSubmitSingleJobWorkflow:
         )
 
         with (
-            patch.object(
-                workflow_builder, "_generate_single_job_submission_script"
-            ) as mock_gen,
+            patch.object(workflow_builder, "_generate_single_job_submission_script") as mock_gen,
             patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
             patch.object(workflow_builder, "write_snakemake_config"),
         ):
@@ -308,9 +305,7 @@ class TestSubmitSingleJobWorkflow:
         )
 
         with (
-            patch.object(
-                workflow_builder, "_generate_single_job_submission_script"
-            ) as mock_gen,
+            patch.object(workflow_builder, "_generate_single_job_submission_script") as mock_gen,
             patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
             patch.object(workflow_builder, "write_snakemake_config"),
         ):
@@ -336,9 +331,7 @@ class TestSubmitSingleJobWorkflow:
         )
 
         with (
-            patch.object(
-                workflow_builder, "_generate_single_job_submission_script"
-            ) as mock_gen,
+            patch.object(workflow_builder, "_generate_single_job_submission_script") as mock_gen,
             patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
             patch.object(workflow_builder, "write_snakemake_config"),
         ):
@@ -376,10 +369,11 @@ class TestSubmitWorkflowIntegration:
         ):
             yield
 
+    # R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+    # completed-tree fixture applies. Evidence:
+    #     patch.object(builder, "run_snakemake_local", return_value={"success": True}),
     @patch.object(SnakemakeWorkflowBuilder, "_submit_single_job_workflow")
-    def test_submit_workflow_passes_wait_parameter(
-        self, mock_submit_single, mock_analysis
-    ):
+    def test_submit_workflow_passes_wait_parameter(self, mock_submit_single, mock_analysis):
         """Test that submit_workflow passes wait_for_completion to _submit_single_job_workflow."""
         mock_analysis.cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
         mock_submit_single.return_value = {
@@ -392,15 +386,13 @@ class TestSubmitWorkflowIntegration:
 
         with (
             patch.object(builder, "generate_snakefile_content") as mock_gen,
-            patch.object(
-                builder, "run_snakemake_local", return_value={"success": True}
-            ),
+            patch.object(builder, "run_snakemake_local", return_value={"success": True}),
             patch("pathlib.Path.write_text"),
         ):
             mock_gen.return_value = "# Snakefile"
 
             # Call with wait_for_completion=True
-            result = builder.submit_workflow(
+            builder.submit_workflow(
                 wait_for_completion=True,
                 verbose=False,
             )
@@ -410,6 +402,9 @@ class TestSubmitWorkflowIntegration:
             call_kwargs = mock_submit_single.call_args[1]
             assert call_kwargs["wait_for_completion"] is True
 
+    # R2 exclusion: retained, not converted — the run is stubbed, so no analysis tree is consumed and no
+    # completed-tree fixture applies. Evidence:
+    #     patch.object(builder, "run_snakemake_local", return_value={"success": True}),
     @patch.object(SnakemakeWorkflowBuilder, "_submit_single_job_workflow")
     def test_submit_workflow_default_no_wait(self, mock_submit_single, mock_analysis):
         """Test that submit_workflow defaults to wait_for_completion=False."""
@@ -424,17 +419,149 @@ class TestSubmitWorkflowIntegration:
 
         with (
             patch.object(builder, "generate_snakefile_content") as mock_gen,
-            patch.object(
-                builder, "run_snakemake_local", return_value={"success": True}
-            ),
+            patch.object(builder, "run_snakemake_local", return_value={"success": True}),
             patch("pathlib.Path.write_text"),
         ):
             mock_gen.return_value = "# Snakefile"
 
             # Call without wait_for_completion parameter
-            result = builder.submit_workflow(verbose=False)
+            builder.submit_workflow(verbose=False)
 
             # Verify default is False
             mock_submit_single.assert_called_once()
             call_kwargs = mock_submit_single.call_args[1]
             assert call_kwargs["wait_for_completion"] is False
+
+
+# ---------------------------------------------------------------------------
+# DEFECT #2 — tmux wait-loop progress watchdog + crash/success disambiguation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _builder_with_status_dir(mock_analysis, tmp_path, monkeypatch):
+    """A builder whose analysis_dir/_status exists (empty) so the wait watchdog's
+    _status_progress_fingerprint has a real subtree to poll. The module-load
+    prefix is stubbed to "" so these watchdog-logic tests do not depend on the
+    unrelated hpc_system_config module-resolution machinery."""
+    (tmp_path / "_status").mkdir()
+    mock_analysis.analysis_paths.analysis_dir = tmp_path
+    mock_analysis.cfg_analysis.hpc_time_min_per_sim = 30
+    # The watchdog reads these two optional fields off cfg_analysis. A bare Mock
+    # auto-creates truthy attributes, so they must be pinned to None to model a real
+    # analysis_config (where both default to None and select the legacy fallbacks).
+    mock_analysis.cfg_analysis.hpc_no_progress_timeout_min = None
+    mock_analysis.cfg_analysis.hpc_max_queue_wait_min = None
+    b = SnakemakeWorkflowBuilder(mock_analysis)
+    monkeypatch.setattr(type(b), "_get_module_load_prefix", lambda self: "")
+    return b
+
+
+def test_wait_watchdog_fails_fast_on_stall(monkeypatch, _builder_with_status_dir):
+    """Session stays alive, _status/ fingerprint never advances -> the watchdog
+    kills the session and returns completed=False in bounded time (no 17.6 h hang)."""
+    b = _builder_with_status_dir
+    # tmux has-session ALWAYS 'alive' (rc 0); kill-session is a no-op capture.
+    monkeypatch.setattr(
+        "hhemt.workflow.subprocess.run",
+        lambda *a, **k: Mock(returncode=0, stdout="", stderr=""),
+    )
+    # frozen fingerprint -> no progress ever
+    monkeypatch.setattr(type(b), "_status_progress_fingerprint", lambda self: (0, 0.0))
+    # SLURM reports NO live work -> the liveness gate does not suspend the timer.
+    # Without this the gate fails OPEN (assume live) and the stall branch is
+    # unreachable, so the test would hang rather than assert.
+    monkeypatch.setattr(type(b), "_workflow_has_live_slurm_jobs", lambda self, **kw: set())
+    # collapse the stall window + poll so the test is instant
+    res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0, no_progress_timeout_min=1e-6)
+    assert res["completed"] is False
+    assert "stall" in res["message"].lower()
+
+
+def test_wait_reports_crash_not_success(monkeypatch, _builder_with_status_dir):
+    """Session gone + a non-zero snakemake exit in the tmux log -> completed=False
+    (session-absence must NOT be blanket-reported as success)."""
+    b = _builder_with_status_dir
+    # session GONE (rc 1); exit code read from the tmux log helper -> 1 (crash)
+    monkeypatch.setattr(
+        "hhemt.workflow.subprocess.run",
+        lambda *a, **k: Mock(returncode=1, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(type(b), "_tmux_snakemake_exit_status", lambda self, s: 1)
+    res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0)
+    assert res["completed"] is False
+    assert "fail" in res["message"].lower()
+
+
+def test_wait_reports_clean_exit_as_success(monkeypatch, _builder_with_status_dir):
+    """Session gone + snakemake exit 0 -> completed=True."""
+    b = _builder_with_status_dir
+    monkeypatch.setattr(
+        "hhemt.workflow.subprocess.run",
+        lambda *a, **k: Mock(returncode=1, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(type(b), "_tmux_snakemake_exit_status", lambda self, s: 0)
+    res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0)
+    assert res["completed"] is True
+
+
+def test_wait_watchdog_does_not_kill_while_slurm_jobs_are_live(monkeypatch, _builder_with_status_dir):
+    """Frozen _status/ fingerprint + a collapsed stall window, but SLURM still reports
+    live work -> the watchdog must NOT kill the session. Pre-fix this returns a stall
+    verdict (the queue-wait false kill of campaign 17639894)."""
+    b = _builder_with_status_dir
+    monkeypatch.setattr(type(b), "_status_progress_fingerprint", lambda self: (0, 0.0))
+    # A RUNNING job: live, and NOT all-pending, so the queue-starvation tracker resets.
+    monkeypatch.setattr(type(b), "_workflow_has_live_slurm_jobs", lambda self, **kw: {"RUNNING"})
+    calls = {"n": 0}
+
+    def _fake_run(*a, **k):
+        # tmux has-session alive for 3 polls, then the session exits cleanly.
+        calls["n"] += 1
+        return Mock(returncode=0 if calls["n"] <= 3 else 1, stdout="", stderr="")
+
+    monkeypatch.setattr("hhemt.workflow.subprocess.run", _fake_run)
+    monkeypatch.setattr(type(b), "_tmux_snakemake_exit_status", lambda self, s: 0)
+    res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0, no_progress_timeout_min=1e-6)
+    assert res["completed"] is True
+    assert "stall" not in res["message"].lower()
+
+
+def test_wait_watchdog_uses_configured_backstop_over_walltime_derivation(monkeypatch, _builder_with_status_dir):
+    """cfg.hpc_no_progress_timeout_min overrides max(30, 6*hpc_time_min_per_sim).
+
+    The clock stub must ADVANCE: a constant monotonic makes now - last_progress_t
+    identically 0, the stall branch is never reached, and the test hangs instead of
+    asserting.
+    """
+    b = _builder_with_status_dir
+    b.cfg_analysis.hpc_no_progress_timeout_min = 45  # derivation would give 180
+    monkeypatch.setattr(type(b), "_status_progress_fingerprint", lambda self: (0, 0.0))
+    monkeypatch.setattr(type(b), "_workflow_has_live_slurm_jobs", lambda self, **kw: set())
+    monkeypatch.setattr(
+        "hhemt.workflow.subprocess.run",
+        lambda *a, **k: Mock(returncode=0, stdout="", stderr=""),
+    )
+    ticks = iter([0.0, 1e6])
+    monkeypatch.setattr("hhemt.workflow.time.monotonic", lambda: next(ticks, 1e6))
+    res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0)
+    assert res["completed"] is False
+    assert "45 min" in res["message"]
+
+
+def test_wait_watchdog_reports_queue_starvation_distinctly(monkeypatch, _builder_with_status_dir):
+    """All jobs PENDING past the queue cap -> a queue-starved verdict, NOT a stall verdict."""
+    b = _builder_with_status_dir
+    b.cfg_analysis.hpc_max_queue_wait_min = 30
+    monkeypatch.setattr(type(b), "_status_progress_fingerprint", lambda self: (0, 0.0))
+    monkeypatch.setattr(type(b), "_workflow_has_live_slurm_jobs", lambda self, **kw: {"PENDING"})
+    monkeypatch.setattr(
+        "hhemt.workflow.subprocess.run",
+        lambda *a, **k: Mock(returncode=0, stdout="", stderr=""),
+    )
+    ticks = iter([0.0, 0.0, 1e6, 1e6, 1e6, 1e6])
+    monkeypatch.setattr("hhemt.workflow.time.monotonic", lambda: next(ticks, 1e6))
+    res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0)
+    assert res["completed"] is False
+    assert "queue-starved" in res["message"]
+    assert "stalled" not in res["message"]
