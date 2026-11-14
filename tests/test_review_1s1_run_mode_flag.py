@@ -95,8 +95,47 @@ def _option_names(command) -> set[str]:
 
 
 def _mode_param(name: str):
-    """Return the Click parameter named `mode` on one verb."""
+    """Return the Click parameter named `mode` on one verb.
+
+    Only the attributes both Typer generations expose are read from it (`default`, `opts`,
+    `help`): Typer 0.29 replaced the Click type object with its own type descriptor, so `.type`
+    exists on 0.26 and not on 0.29. The choice set and the case rule are read through the
+    parser instead (`_closed_choices`, `_is_case_sensitive`), which is the public behaviour.
+    """
     return next(p for p in _verb(name).params if p.name == "mode")
+
+
+_NOT_ONE_OF = re.compile(r"is not one of ((?:'[^']*'(?:, )?)+)")
+
+
+def _refusal_of(verb: str, value: str) -> str | None:
+    """Return the quoted choice list the parser names when it refuses `--mode value`, else None.
+
+    The parser, not an attribute of the option, is what a user meets, so this reads its refusal
+    message: `'x' is not one of 'fresh', 'resume'.`, which Typer 0.26 and 0.29 word the same from
+    that phrase onward (0.29 prefixes `Value error,`). The invocation carries `--dry-run` so it
+    can never start work, and Rich wraps nothing at the 200 columns `_PLAIN_ENV` sets.
+    """
+    result = runner.invoke(app, [verb, "--mode", value, "--dry-run"], env=_PLAIN_ENV)
+    found = _NOT_ONE_OF.search(" ".join(result.output.split()))
+    return found.group(1) if found else None
+
+
+def _closed_choices(verb: str) -> tuple[str, ...]:
+    """Return the choices one verb's `--mode` parser accepts, in the order it names them.
+
+    Read from the refusal of a value no choice set can contain; the must-fire control is that the
+    refusal exists at all, so a verb whose `--mode` became a free string fails here, loudly,
+    instead of reporting an empty set.
+    """
+    quoted = _refusal_of(verb, "not-a-mode")
+    assert quoted is not None, f"{verb} --mode did not refuse a value outside every choice set"
+    return tuple(re.findall(r"'([^']*)'", quoted))
+
+
+def _is_case_sensitive(verb: str) -> bool:
+    """Return whether the verb's `--mode` parser refuses the upper-case spelling of every real member."""
+    return all(_refusal_of(verb, member.value.upper()) is not None for member in RunMode)
 
 
 def test_run_mode_is_the_same_closed_choice_run_experiment_declares():
@@ -108,14 +147,16 @@ def test_run_mode_is_the_same_closed_choice_run_experiment_declares():
     the verbs gives the same word two meanings. What kills it: declaring the option as a free
     string, as a `Literal` missing a member, with a different `case_sensitive`, or with a default
     other than resume. A second correct implementation under which it still passes: a `Literal`
-    annotation or a callback-validated option, since only the Click type's choice tuple, its case
-    rule and the option default are compared, not the Python class that produced them.
+    annotation or a callback-validated option, since only the choices the parser names in its
+    refusal, whether it refuses an upper-case member, and the option default are compared, not the
+    Python class that produced them nor Typer's internal type object, which differs between
+    Typer 0.26 and 0.29.
     """
     run_mode, experiment_mode = _mode_param("run"), _mode_param("run-experiment")
 
-    assert tuple(run_mode.type.choices) == tuple(experiment_mode.type.choices)
-    assert set(run_mode.type.choices) == {member.value for member in RunMode}
-    assert run_mode.type.case_sensitive == experiment_mode.type.case_sensitive
+    assert _closed_choices("run") == _closed_choices("run-experiment")
+    assert set(_closed_choices("run")) == {member.value for member in RunMode}
+    assert _is_case_sensitive("run") == _is_case_sensitive("run-experiment")
     assert str(run_mode.default) == str(experiment_mode.default) == RunMode.resume.value
     assert "--mode" in run_mode.opts
 
@@ -190,12 +231,11 @@ def test_a_mode_value_outside_the_closed_set_is_refused_at_parse(run_calls, base
     wrong word must be refused by the parser rather than reaching the workflow as a mode that
     means nothing. What kills it: a free-string option that converts with `== "fresh"` and treats
     every other word as resume. A second correct implementation under which it still passes: a
-    case-insensitive choice, because the expectation is computed from the option's own
-    `case_sensitive` rule rather than hard-coded.
+    case-insensitive choice, because the expectation is computed from whether the parser itself
+    refuses an upper-case member rather than hard-coded.
     """
-    param = _mode_param("run")
-    members = tuple(param.type.choices)
-    accepted = value in members if param.type.case_sensitive else value.lower() in {m.lower() for m in members}
+    members = {member.value for member in RunMode}
+    accepted = value in members if _is_case_sensitive("run") else value.lower() in members
 
     result = runner.invoke(app, [*base_argv, "--mode", value])
 
@@ -212,9 +252,10 @@ def test_help_names_the_same_mode_choices_on_both_verbs_and_no_retired_option():
     Class: the two verbs' rendered help, and every option the `run` command registers. Why it is
     required: the help is what a user reads to learn the new spelling, and the chunk's Definition
     of Done names it; the order of the bracketed choices is NOT asserted, because the enum
-    declares `fresh` before `resume` and renders `[fresh|resume]`, not the `[resume|fresh]` the
-    Definition of Done sentence writes. What kills it: a help that omits `--mode`, renders a
-    different set than `run-experiment`, or still lists a retired flag as an option. A second
+    declares `fresh` before `resume` and renders `[fresh|resume]` (Typer 0.26) or `<fresh|resume>`
+    (Typer 0.29), not the `[resume|fresh]` the Definition of Done sentence writes. What kills it:
+    a help that omits `--mode`, renders a different set than `run-experiment`, or still lists a
+    retired flag as an option. A second
     correct implementation under which it still passes: any renderer that prints the same set in
     another order, since the set of words between the brackets is compared, not the string.
     """
@@ -222,7 +263,7 @@ def test_help_names_the_same_mode_choices_on_both_verbs_and_no_retired_option():
     def choices_of(verb: str) -> set[str]:
         result = runner.invoke(app, [verb, "--help"], env=_PLAIN_ENV)
         assert result.exit_code == 0, result.output
-        found = re.search(r"--mode\s+\[?([a-z]+(?:\|[a-z]+)+)\]?", result.output)
+        found = re.search(r"--mode\s+[\[<]?([a-z]+(?:\|[a-z]+)+)[\]>]?", result.output)
         assert found, f"{verb} help carries no --mode choice set:\n{result.output}"
         return set(found.group(1).split("|"))
 

@@ -23,6 +23,7 @@ separated from `result.stdout`.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -150,12 +151,15 @@ def test_mode_default_is_resume(definition_dir, monkeypatch):
 def test_help_renders_mode_choice_set():
     """Rendering pin (one-state property): Typer renders the enum as the choice set.
 
+    The set is bracketed `[fresh|resume]` on Typer 0.26 and `<fresh|resume>` on 0.29, so either
+    bracket style is accepted; the set itself is the contract.
+
     Rendered at 200 columns: at Rich's 80-column default a long option name is truncated
     with an ellipsis (`--override-force-re...`), which is a layout artifact, not the contract.
     """
     result = runner.invoke(app, ["run-experiment", "--help"], env={"COLUMNS": "200"})
     assert result.exit_code == 0
-    assert "[fresh|resume]" in result.output
+    assert re.search(r"[\[<]fresh\|resume[\]>]", result.output)
     assert "overwrite" not in result.output
     assert "--override-force-rerun" in result.output
 

@@ -2075,6 +2075,13 @@ include = ["tests/test_review_clean_slate.py"]
 invalid-return-type = "ignore"
 
 [[tool.ty.overrides]]
+include = ["tests/test_review_e1_unicode_email.py"]
+
+[tool.ty.overrides.rules]
+invalid-return-type = "ignore"
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
 include = ["tests/test_review_flood_depth_relabel.py"]
 
 [tool.ty.overrides.rules]

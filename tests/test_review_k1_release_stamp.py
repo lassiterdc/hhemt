@@ -27,14 +27,18 @@ def _recipe_body(name: str) -> str:
     return "\n".join(lines).replace("{{VERSION}}", "0.2.0").replace("python scripts/", f"{sys.executable} scripts/")
 
 
+# A CI runner has no global git identity, so every git process this module starts, including the one
+# inside a recipe body run through bash, takes its identity from the environment.
+_GIT_IDENTITY_ENV = {
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@t",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@t",
+}
+
+
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    env = {
-        **os.environ,
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@t",
-    }
+    env = {**os.environ, **_GIT_IDENTITY_ENV}
     return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, env=env, check=False)
 
 
@@ -56,7 +60,12 @@ def _repo(tmp_path: Path, *, cff_date: str, heading_date: str) -> Path:
 
 def _run(root: Path, script: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["bash", "-c", "set -euo pipefail\n" + script], cwd=root, capture_output=True, text=True, check=False
+        ["bash", "-c", "set -euo pipefail\n" + script],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        env={**os.environ, **_GIT_IDENTITY_ENV},
+        check=False,
     )
 
 

@@ -671,6 +671,7 @@ def test_preflight_validate_checks_the_analysis_request_against_its_partition_ca
     for name in ("validate_system_config", "validate_analysis_config", "validate_data_consistency"):
         monkeypatch.setattr(validation, name, empty)
     for name in (
+        "_validate_sensitivity_file_readable",
         "_validate_per_member_system_configs",
         "_validate_selected_event_forcing_extent",
         "_validate_event_window_columns",

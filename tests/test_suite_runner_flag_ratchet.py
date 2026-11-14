@@ -25,8 +25,9 @@ recorder, so a verb's body executes only as far as the argv it builds.
 
 from __future__ import annotations
 
+import enum
 import inspect
-from typing import Any
+from typing import Annotated, Any, Literal, get_args, get_origin, get_type_hints
 
 import pytest
 import typer
@@ -69,8 +70,6 @@ UNREACHABLE: dict[str, str] = {
     "--n-chunks": "no caller located: a cross-check against the manifest that no script or test passes",
 }
 
-_DUMMY_BY_TYPE = {"integer": "1", "float": "1.0"}
-
 
 def parser_flags() -> set[str]:
     """Return every long option the runner's argparse parser defines, `--help` excluded.
@@ -85,6 +84,7 @@ def parser_flags() -> set[str]:
 def _dummy_argv_for(command: Any) -> list[str]:
     """Return an argv that gives every option of a Click command a value, so each is forwarded."""
     argv: list[str] = []
+    hints = get_type_hints(inspect.unwrap(command.callback))
     for param in command.params:
         opts = list(getattr(param, "opts", []))
         if not opts:
@@ -92,9 +92,29 @@ def _dummy_argv_for(command: Any) -> list[str]:
         if getattr(param, "is_flag", False):
             argv.append(opts[0])
             continue
-        choices = getattr(param.type, "choices", None)
-        argv += [opts[0], list(choices)[0] if choices else _DUMMY_BY_TYPE.get(param.type.name, "x")]
+        argv += [opts[0], _dummy_value(hints.get(param.name))]
     return argv
+
+
+def _dummy_value(annotation: Any) -> str:
+    """Return a value the option's declared Python type accepts: a choice for a closed set, else a typed dummy.
+
+    The type comes from the verb function's own annotation, not from the Click parameter, because
+    Typer 0.29 stopped exposing a `.type` on its option objects (the AttributeError this replaced)
+    while the verb's signature is plain Python under every Typer. An unrecognised annotation gets
+    `"x"`, which a `str` option accepts, and an option that rejects it makes the verb's invocation
+    exit non-zero, which `forwarded_argvs` reports as a failure rather than skipping the verb.
+    Not established: a verb option typed `Path`, `datetime` or a custom parser would need its own
+    branch here.
+    """
+    args = [a for a in get_args(annotation) if a is not type(None)]
+    if get_origin(annotation) is Literal:
+        return str(args[0])
+    if len(args) == 1:  # `T | None`
+        return _dummy_value(args[0])
+    if isinstance(annotation, type) and issubclass(annotation, enum.Enum):
+        return str(next(iter(annotation)).value)
+    return {int: "1", float: "1.0"}.get(annotation, "x")
 
 
 # Verbs that call a different module and would run real work with dummy arguments. A verb named
@@ -322,3 +342,81 @@ def test_classify_reports_each_disagreement_and_is_silent_on_agreement(flags, re
     over one combined structure, since only the report lines are read.
     """
     assert [v.split(":")[0] for v in classify(flags, reachable, unreachable)] == named
+
+
+# --- the dummy argv reads the verb's own annotations, so it does not depend on a Typer version ------
+
+
+class _Tier(enum.Enum):
+    """A closed set of two spellings, to give an Enum-typed option a first member to choose."""
+
+    FAST = "fast"
+    SLOW = "slow"
+
+
+def test_every_declared_option_type_gets_a_value_its_verb_accepts(monkeypatch):
+    """Property: a verb whose options are int, float, Literal, Enum, `T | None` and str runs to its forwarding call.
+
+    Class: the option annotations a Typer verb can carry that a typed dummy must satisfy. Why it is
+    required: the live verbs only declare str, int, float and bool, so without this test the
+    Literal, Enum and Optional branches of `_dummy_value` are unreached and a regression in them
+    (the original defect was a Click-version-specific read of the option's type) would surface only
+    when a verb first declares such an option. What kills it: a `_dummy_value` that returns `"x"`
+    for everything, which Typer refuses for the int, float, Literal and Enum options with exit 2. A
+    second correct implementation under which it still passes: a derivation that reads the closed
+    choices from the Click parameter where the installed Typer exposes them and falls back to the
+    annotation elsewhere, since only the verb's exit status and recorded argv are read.
+    """
+    app = typer.Typer(no_args_is_help=True)
+
+    @app.command("plan")
+    def _plan(
+        count: int = typer.Option(1, "--count"),
+        ratio: float = typer.Option(1.0, "--ratio"),
+        mode: Literal["a", "b"] = typer.Option("a", "--mode"),
+        tier: Annotated[_Tier, typer.Option("--tier")] = _Tier.FAST,
+        maybe: int | None = typer.Option(None, "--maybe"),
+        label: str = typer.Option("", "--label"),
+    ) -> None:
+        """Forward every option to the runner so each lands in the recorded argv."""
+        from hhemt.suite._runner import main
+
+        raise typer.Exit(
+            code=main(_argv(count=count, ratio=ratio, mode=mode, tier=tier.value, maybe=maybe, label=label))
+        )
+
+    @app.command("other")
+    def _other() -> None:
+        """A second verb, so the app is a group whatever the number of commands."""
+        raise typer.Exit(code=0)
+
+    reachable = reachable_flags(app, monkeypatch, non_forwarding={"other"})
+    assert reachable == {"--count", "--ratio", "--mode", "--tier", "--maybe", "--label"}, reachable
+
+
+@pytest.mark.parametrize(
+    ("annotation", "accepts"),
+    [
+        (int, lambda v: int(v) is not None),
+        (float, lambda v: float(v) is not None),
+        (str, lambda v: isinstance(v, str)),
+        (Literal["a", "b"], lambda v: v in {"a", "b"}),
+        (_Tier, lambda v: v in {"fast", "slow"}),
+        (int | None, lambda v: int(v) is not None),
+    ],
+    ids=["int", "float", "str", "literal", "enum", "optional-int"],
+)
+def test_dummy_value_is_accepted_by_the_declared_type(annotation, accepts):
+    """Property: `_dummy_value` returns a string the declared type accepts, whichever spelling it picks.
+
+    Class: each annotation family the helper branches on. Why it is required: a value the type
+    rejects makes the verb exit non-zero and the ratchet's derivation fail, while any accepted
+    spelling (a last closed-set member, another int) derives the same reachable set. What kills
+    it: returning `"x"` for the int row. A second correct implementation under which it still
+    passes: one choosing the last Literal or Enum member, or `"7"` for int, since only
+    acceptance is read. The verb-level test above covers the integrated path, not this per-type
+    contract.
+    """
+    value = _dummy_value(annotation)
+    assert isinstance(value, str)
+    assert accepts(value), value

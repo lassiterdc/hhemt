@@ -18,6 +18,7 @@ Heroicons
 Miniconda
 Miniforge
 Navbar
+PMIx
 Plotly
 Pytest
 ROCm

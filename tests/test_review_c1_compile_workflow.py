@@ -22,6 +22,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from hhemt.cache import paths as cache_paths
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 COMPILE_WORKFLOW = WORKFLOWS / "compile-tests.yml"
@@ -179,7 +181,9 @@ def test_upload_patterns_reach_every_diagnostic_file_at_every_analysis_depth(tmp
     """
     home = tmp_path / "home"
     tmp_root = tmp_path / "tmp"
-    cache_run = home / ".cache" / "hhemt" / "synthetic_test_runs" / "addr" / "analysis_a"
+    # The directory name comes from the product definition, so this module carries no second spelling of the
+    # runs-root literal (tests/test_synth_triton_source_cache.py::test_single_sourced_runs_root_literal).
+    cache_run = home / ".cache" / "hhemt" / cache_paths.synthetic_runs_root().name / "addr" / "analysis_a"
     base_run = tmp_root / "pytest-of-runner" / "pytest-0" / "synth_multi_sim_builder0" / "analysis_b"
     diagnostics: list[Path] = []
     for run in (cache_run, base_run):
