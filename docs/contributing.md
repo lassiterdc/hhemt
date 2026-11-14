@@ -91,8 +91,11 @@ If you do not agree to the terms for a particular contribution, open an issue to
       is not a gate result.
     - **Venue of compile-tier runs.** The venue token names a capability, and no code names a cluster, so a
       machine with the solver's toolchain can run the compile tier. `compile-tests.yml` runs a named subset of the
-      compile tier after a change merges into `develop`, and Gate B runs the whole tier before a release, so you need
-      not run the compile tier yourself. Tests that compile no solver and
+      compile tier after a change merges into `develop`, and reuses the pass of an earlier full run when a push
+      changed only prose or release metadata. Gate B runs the whole tier before a release, so you need
+      not run the compile tier yourself. The
+      [branching page](explanation/branching-and-release-model.md#each-check-runs-once-per-commit) lists the paths
+      that count as prose or release metadata. Tests that compile no solver and
       execute no simulation run on any machine. A suite-level green claim requires `scope=union`.
       The `hhemt test toolkit` CLI produces no `scope=union` result, as the
       [CLI reference](reference/cli.md#hhemt-test-toolkit) records, and

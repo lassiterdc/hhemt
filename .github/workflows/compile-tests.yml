@@ -20,6 +20,17 @@
 # only TRITON-SWMM + SWMM), so running the whole module here would fail.
 # Wireable as a required main status check by the release-gate PIP (ADR-7); no
 # continue-on-error.
+#
+# PASS-RECORD REUSE. The job runs on every push to develop and keeps its name, so the required
+# context `compile-synth-render-gate` always comes from a job that ran. Only STEPS are skipped:
+# `scripts/compile_gate_key.py` keys a one-file record on the compile-relevant content of the
+# commit, and a hit means a full run on a fresh runner already passed over an identical tree
+# (docs, release metadata and prose are outside the key). Every step after the lookup whose
+# condition names no status function carries the miss condition; the failure-diagnostics
+# upload keeps `if: failure()` alone, because a miss condition there would make it
+# success-only. The record is saved only after a full run that succeeded. `force_full_run`
+# skips the lookup. A path filter is NOT used: a path-filtered workflow leaves its required
+# context Pending, and tests/test_review_b1_trigger_dedupe.py refuses a `paths:` filter here.
 name: Compile-bearing synth render-gate tier
 
 on:
@@ -29,6 +40,14 @@ on:
   push:
     branches: [ "develop" ]
   workflow_dispatch:
+    inputs:
+      force_full_run:
+        description: >-
+          Run the whole gate even when a pass record exists for this tree. The record is
+          not replaced: a cache entry cannot be changed once written, so the save step
+          skips with a warning and the existing record stands.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -63,7 +82,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Compute the pass-record key
+        # Exits 2 (failing the job) on a git error or an empty listing; a constant key would
+        # reuse a pass for code that never ran. The key is computed once here so the save step
+        # reuses this exact string even when the run crosses an ISO-week boundary.
+        id: gate_key
+        # The substitution is assigned on its own line: inside an argument of `echo` its exit
+        # status would be discarded and a failed key script would leave this step green with an
+        # empty key. Under `bash -e` the assignment line fails the step on exit 2.
+        run: |
+          key=$(python3 scripts/compile_gate_key.py)
+          echo "key=${key}" >> "$GITHUB_OUTPUT"
+
+      - name: Look up the pass record
+        # No `restore-keys`: only an exact key is a pass for this tree. The step is skipped
+        # when force_full_run is true, which leaves cache-hit empty and so runs the gate.
+        if: ${{ !inputs.force_full_run }}
+        id: pass_record
+        uses: actions/cache/restore@v4
+        with:
+          path: .compile-gate-pass/record.txt
+          key: ${{ steps.gate_key.outputs.key }}
+
+      - name: Reuse pass record
+        if: steps.pass_record.outputs.cache-hit == 'true'
+        run: |
+          {
+            echo "### Compile gate reused a pass record"
+            echo "No compile ran on this commit. The record below was written by a full run on an identical compile-relevant tree."
+            echo '```text'
+            cat .compile-gate-pass/record.txt
+            echo '```'
+            echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/$(sed -n 's/^run_id=//p' .compile-gate-pass/record.txt)"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Provision toolchain-bearing conda env
+        if: steps.pass_record.outputs.cache-hit != 'true'
         uses: conda-incubator/setup-miniconda@v3
         with:
           activate-environment: hhemt
@@ -91,6 +145,7 @@ jobs:
           conda-remove-defaults: "true"
 
       - name: Guard - defaults channel removed (fails in seconds, not after a slow solve)
+        if: steps.pass_record.outputs.cache-hit != 'true'
         # Provisioning above already solved; this still catches a remove-defaults that
         # silently stopped taking effect, the way type-gate.yml's solve step does, so the
         # next solve is not the one that reveals it.
@@ -102,6 +157,7 @@ jobs:
           fi
 
       - name: Install swmmio (--no-deps — preserve conda pyswmm 2.x / numpy 1.x)
+        if: steps.pass_record.outputs.cache-hit != 'true'
         # --no-deps prevents `pip install -U` from touching the conda graph at all.
         # The HISTORICAL hazard was swmmio 0.8.5, whose metadata capped `pyswmm<2.0`
         # and `numpy<2.0`, so a resolving install DOWNGRADED the conda pyswmm
@@ -114,6 +170,7 @@ jobs:
         run: pip install --no-deps "swmm-toolkit==0.15.5" "pyswmm==2.1.0" "swmmio==0.8.2"
 
       - name: Install project (editable, test extras)
+        if: steps.pass_record.outputs.cache-hit != 'true'
         # `--no-deps`: the conda env (environment.yaml) already provides the full
         # pinned dependency graph, including the conda-forge swmm-toolkit 0.15 pin
         # that carries pyswmm 2.0.1 and pytest/pytest-xdist. A bare
@@ -124,6 +181,7 @@ jobs:
         run: pip install -e . --no-deps
 
       - name: Guard — pyswmm 2.x preserved (compile-tier prepare_scenario contract)
+        if: steps.pass_record.outputs.cache-hit != 'true'
         run: |
           python - <<'PY'
           import sys, pyswmm
@@ -138,14 +196,17 @@ jobs:
           PY
 
       - name: Toolchain sanity (cmake + mpic++ reachable)
+        if: steps.pass_record.outputs.cache-hit != 'true'
         run: |
           command -v cmake
           command -v mpic++
 
       - name: Guard — environment-lock.yaml swmm-provenance consistency
+        if: steps.pass_record.outputs.cache-hit != 'true'
         run: python scripts/check_env_lock_consistency.py
 
       - name: Host fingerprint (decides H1 on every run, pass or fail)
+        if: steps.pass_record.outputs.cache-hit != 'true'
         # Diagnosability, not a gate: this step records what the runner offers the MPI
         # solver and NEVER fails the job, because a refused `mpirun` is the finding and
         # a red here would hide the pytest result that follows it. The load-bearing line
@@ -191,6 +252,7 @@ jobs:
           exit 0
 
       - name: Compile-bearing synth render-gate tests (serial, toolchain-required)
+        if: steps.pass_record.outputs.cache-hit != 'true'
         env:
           # The runner IS the toolchain venue; this RELAXES the fail-closed compile
           # guard armed by default in the repo-root conftest.
@@ -240,3 +302,26 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Write the pass record
+        # Reached only when every step above succeeded; HHEMT_REQUIRE_COMPILE_TIER=1 turns a
+        # compile-tier skip into a failure, so a record means the allowlisted tests ran and passed.
+        if: success() && steps.pass_record.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .compile-gate-pass
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "key=${{ steps.gate_key.outputs.key }}"
+          } > .compile-gate-pass/record.txt
+
+      - name: Save the pass record
+        # On an existing key this logs a warning and keeps the old record (a cache entry cannot
+        # be changed once written), which is the intended outcome of a force_full_run.
+        if: success() && steps.pass_record.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .compile-gate-pass/record.txt
+          key: ${{ steps.gate_key.outputs.key }}

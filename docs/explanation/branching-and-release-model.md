@@ -33,6 +33,10 @@ The develop push run certifies the head commit, while the merge lands the merge 
 
 The job compares the merge result that GitHub computed when the PR was opened or last pushed. A later commit to `main` leaves that result stale, because the job runs again only on a new push to the PR.
 
+The compile gate reuses a pass record. The job `compile-synth-render-gate` runs on every push to `develop`, and `scripts/compile_gate_key.py` prints the key of a one-file record for the commit. The key hashes every tracked path except `docs/`, `.vale/`, and 6 root-level files of prose and release metadata. The 6 files are `HISTORY.md`, `CONTRIBUTING.md`, `CITATION.cff`, `.vale.ini`, `mkdocs.yml`, and `.readthedocs.yaml`. The key also carries the runner operating system and the ISO year and week, so a record expires with the calendar week of the run that wrote the record.
+
+A hit skips every step after the lookup. The `Reuse pass record` step prints the commit, run id, attempt, and date of the full run that wrote the record. The step prints to the log and to the job summary. The job then concludes success. A miss runs the gate in full and saves the record after a pass. A push that changes only inert paths reuses a pass. A push that changes `src/`, `tests/`, `README.md`, `environment.yaml`, the workflow, or `pyproject.toml` runs in full, and a version bump is such a change. A manual dispatch with the `force_full_run` input set to true skips the lookup and runs the gate in full.
+
 ### The release gate runs on a cleared cache, in a compiling venue
 
 **Both halves are conditions of the gate.** A cached run reuses analysis trees and
@@ -55,6 +59,8 @@ and leaves the tier with no failure, and a skip is not a pass. The release gate 
 [Contributing](../contributing.md#workflow) lists the effect of each export and the conditions that make a run
 count as a gate result. [`hhemt test toolkit`](../reference/cli.md#hhemt-test-toolkit)
 documents the record that a run leaves of the exports.
+
+**A release head's compile context may be a reuse of an identical compile-relevant tree.** When the commits since the last full run changed only inert paths, the pass record of that earlier run is the gate result for the release head. The earlier run was a full run on a fresh runner with both exports set, over a tree identical in every compile-relevant path, and the `Reuse pass record` step names the earlier run. The release walk cites that run in the release record.
 
 
 ## Tests carrying a structural gate
