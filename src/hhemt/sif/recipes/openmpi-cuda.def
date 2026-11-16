@@ -19,7 +19,7 @@
 #     the container speaks pmix to host slurm's pmix_v5 via the PMIx cross-version
 #     contract -> ContainerSpec.srun_mpi="pmix").
 #   TRITON pin (authoritative, recovered 2026-06-27 from the proven build tree's
-#     git remote+HEAD): https://code.ornl.gov/hydro/triton.git @ 15eb18a5 (PUBLIC;
+#     git remote+HEAD): https://code.ornl.gov/hydro/triton.git @ faba2232 (PUBLIC;
 #     credential-less clone + submodules kokkos/yaml-cpp verified from Rivanna).
 #
 # These PROVEN values REPLACE the amd-gpu-specialist's from-scratch skeleton

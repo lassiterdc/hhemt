@@ -41,6 +41,9 @@ def _preflight_with_sensitivity_file(path: Path, monkeypatch):
     )
     monkeypatch.setattr(vmod, "validate_analysis_config", lambda cfg, **_kw: vmod.ValidationResult())
     monkeypatch.setattr(vmod, "validate_data_consistency", lambda cs, ca, **_kw: vmod.ValidationResult())
+    # The thread-count and external-boundary validators read analysis fields this stub does not carry.
+    for name in ("_validate_swmm_threads", "_validate_external_boundaries"):
+        monkeypatch.setattr(vmod, name, lambda *a, **k: None)
     return vmod.preflight_validate(_master_system_for_test(path.parent), cfg_analysis)
 
 

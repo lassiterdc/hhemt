@@ -46,6 +46,9 @@ class ValidationIssue:
         message: What went wrong
         current_value: Current field value (optional)
         fix_hint: How to fix the issue (actionable guidance)
+        config_line: The YAML to paste into the configuration to fix the issue (optional), rendered last as ``Write:``
+        layer_edit: A fix that edits a boundary layer rather than a configuration (optional), rendered last as
+            ``Edit:``
     """
 
     level: IssueLevel
@@ -53,6 +56,8 @@ class ValidationIssue:
     message: str
     current_value: Any | None = None
     fix_hint: str | None = None
+    config_line: str | None = None
+    layer_edit: str | None = None
 
     def __str__(self) -> str:
         """Format issue for display."""
@@ -64,6 +69,11 @@ class ValidationIssue:
             lines.append(f"  Current value: {self.current_value}")
         if self.fix_hint:
             lines.append(f"  Fix: {self.fix_hint}")
+        if self.config_line:
+            lines.append("  Write:")
+            lines.extend(f"    {line}" for line in self.config_line.splitlines())
+        if self.layer_edit:
+            lines.append(f"  Edit: {self.layer_edit}")
         return "\n".join(lines)
 
 
@@ -102,6 +112,8 @@ class ValidationResult:
         message: str,
         current_value: Any | None = None,
         fix_hint: str | None = None,
+        config_line: str | None = None,
+        layer_edit: str | None = None,
     ):
         """Add an error-level issue."""
         self.errors.append(
@@ -111,6 +123,8 @@ class ValidationResult:
                 message=message,
                 current_value=current_value,
                 fix_hint=fix_hint,
+                config_line=config_line,
+                layer_edit=layer_edit,
             )
         )
 
@@ -120,6 +134,8 @@ class ValidationResult:
         message: str,
         current_value: Any | None = None,
         fix_hint: str | None = None,
+        config_line: str | None = None,
+        layer_edit: str | None = None,
     ):
         """Add a warning-level issue."""
         self.warnings.append(
@@ -129,6 +145,8 @@ class ValidationResult:
                 message=message,
                 current_value=current_value,
                 fix_hint=fix_hint,
+                config_line=config_line,
+                layer_edit=layer_edit,
             )
         )
 
@@ -211,6 +229,9 @@ def validate_system_config(cfg: system_config) -> ValidationResult:
     # Model selection sanity (section 3: Model selection sanity)
     _validate_model_selection(cfg, result)
 
+    # The observation-point file's own format (whether each point lies on the DEM waits for scenario preparation)
+    _validate_observation_points_file(cfg, result)
+
     return result
 
 
@@ -220,9 +241,8 @@ def _validate_system_paths(cfg: system_config, result: ValidationResult):
         "system_directory": cfg.system_directory,
         "watershed_gis_polygon": cfg.watershed_gis_polygon,
         "DEM_fullres": cfg.DEM_fullres,
-        "SWMM_hydraulics": cfg.SWMM_hydraulics,
+        "SWMM_model": cfg.SWMM_model,
         "TRITONSWMM_software_directory": cfg.TRITONSWMM_software_directory,
-        "triton_swmm_configuration_template": cfg.triton_swmm_configuration_template,
     }
 
     for field_name, path_val in required_paths.items():
@@ -341,13 +361,6 @@ def _validate_toggle_dependencies_system(cfg: system_config, result: ValidationR
 
     # Hydrology dependency
     if cfg.toggle_use_swmm_for_hydrology:
-        if cfg.SWMM_hydrology is None:
-            result.add_error(
-                field="system.SWMM_hydrology",
-                message="Required when toggle_use_swmm_for_hydrology=True",
-                current_value=None,
-                fix_hint="Set SWMM_hydrology path or set toggle_use_swmm_for_hydrology=False",
-            )
         if cfg.subcatchment_raingage_mapping is None:
             result.add_error(
                 field="system.subcatchment_raingage_mapping",
@@ -356,15 +369,85 @@ def _validate_toggle_dependencies_system(cfg: system_config, result: ValidationR
                 fix_hint="Set subcatchment_raingage_mapping path",
             )
 
-    # Standalone SWMM dependency
-    if cfg.toggle_swmm_model:
-        if cfg.SWMM_full is None:
-            result.add_error(
-                field="system.SWMM_full",
-                message="Required when toggle_swmm_model=True",
-                current_value=None,
-                fix_hint="Set SWMM_full path or set toggle_swmm_model=False",
-            )
+    # The SWMM model the three roles derive from: no placeholders, listed outfalls usable, gauges mapped.
+    from hhemt.swmm_utils import swmm_model_problems
+
+    for _field, _message, _fix_hint in swmm_model_problems(cfg):
+        result.add_error(field=_field, message=_message, current_value=str(cfg.SWMM_model), fix_hint=_fix_hint)
+
+
+def _validate_observation_points_file(cfg: system_config, result: ValidationResult):
+    """Refuse an observation-point file that is not an ``id,x,y`` CSV of unique ids and finite coordinates."""
+    from hhemt.triton_cfg import observation_point_problems
+
+    for _field, _message, _fix_hint in observation_point_problems(cfg):
+        result.add_error(field=_field, message=_message, current_value=str(cfg.observation_points), fix_hint=_fix_hint)
+
+
+def _validate_swmm_threads(cfg_system: system_config, cfg_analysis: analysis_config, result: ValidationResult):
+    """V24 and V25: ``swmm_threads`` fits the run mode's OpenMP count and the base model's link count.
+
+    V24 refuses ``swmm_threads`` above ``omp_thread_count(cfg_analysis)``, because SWMM never runs more threads
+    than the OpenMP count the run mode sets. V25 refuses ``swmm_threads`` above 1 when the base model's links
+    are fewer than ``4 * swmm_threads``, because SWMM falls back to one thread below four links per thread
+    (``project.c``). With the default of 1 neither fires.
+    """
+    from hhemt.run_simulation import omp_thread_count
+
+    threads = cfg_analysis.swmm_threads
+    if threads <= 1:
+        return
+    available = omp_thread_count(cfg_analysis)
+    if threads > available:
+        result.add_error(
+            field="analysis.swmm_threads",
+            message=(
+                f"swmm_threads={threads} exceeds the {available} OpenMP thread(s) run_mode={cfg_analysis.run_mode!r} "
+                "gives a run, and SWMM never uses more threads than that"
+            ),
+            current_value=threads,
+            fix_hint=(
+                f"Lower swmm_threads to at most {available}, or use run_mode openmp, hybrid or gpu with "
+                f"n_omp_threads >= {threads}"
+            ),
+            config_line=f"swmm_threads: {available}",
+        )
+    swmm_model = getattr(cfg_system, "SWMM_model", None)
+    if swmm_model is None or not Path(swmm_model).exists():
+        return
+    from hhemt.swmm_runnable import link_count
+    from hhemt.swmm_utils import _read_model_text
+
+    n_links = link_count(_read_model_text(Path(swmm_model)))
+    if n_links < 4 * threads:
+        result.add_error(
+            field="analysis.swmm_threads",
+            message=(
+                f"swmm_threads={threads} needs at least {4 * threads} links in SWMM_model and it has {n_links}; "
+                "SWMM runs one thread when a model has fewer than four links per thread"
+            ),
+            current_value=threads,
+            fix_hint="Set swmm_threads to 1, or to at most the model's link count divided by 4",
+            config_line="swmm_threads: 1",
+        )
+
+
+def _validate_observation_interval(cfg_system: system_config, cfg_analysis: analysis_config, result: ValidationResult):
+    """Refuse an observation interval when the system lists no observation points.
+
+    The two live in different configs (the points belong to the system, the cadence to the analysis), so only the
+    pair can be judged. TRITON would write nothing for an interval alone, and silently ignoring it would let a
+    user believe a series was being recorded.
+    """
+    # getattr: stand-in configs of existing tests predate these fields, and the real models always carry them.
+    interval = getattr(cfg_analysis, "TRITON_observation_interval_s", None)
+    if interval is not None and getattr(cfg_system, "observation_points", None) is None:
+        result.add_error(
+            field="analysis.TRITON_observation_interval_s",
+            message="Set without observation_points on the system config, so TRITON records no observation series",
+            current_value=interval,
+            fix_hint="Set observation_points in the system config, or unset TRITON_observation_interval_s",
+        )
 
 
 def _validate_toggle_exclusions_system(cfg: system_config, result: ValidationResult):
@@ -377,26 +460,6 @@ def _validate_toggle_exclusions_system(cfg: system_config, result: ValidationRes
                 message="Landuse-derived manning's inputs are ignored when constant mannings is enabled",
                 current_value=str(cfg.landuse_lookup_file),
                 fix_hint="Remove landuse_lookup_file or set toggle_use_constant_mannings=False",
-            )
-
-    # If SWMM hydrology disabled, hydrology fields should not be set
-    if not cfg.toggle_use_swmm_for_hydrology:
-        if cfg.SWMM_hydrology is not None:
-            result.add_warning(
-                field="system.SWMM_hydrology",
-                message="Hydrology-specific inputs are ignored when toggle_use_swmm_for_hydrology=False",
-                current_value=str(cfg.SWMM_hydrology),
-                fix_hint="Remove SWMM_hydrology or set toggle_use_swmm_for_hydrology=True",
-            )
-
-    # If SWMM model disabled, SWMM full model should not be set
-    if not cfg.toggle_swmm_model:
-        if cfg.SWMM_full is not None:
-            result.add_warning(
-                field="system.SWMM_full",
-                message="Standalone SWMM inputs are ignored when toggle_swmm_model=False",
-                current_value=str(cfg.SWMM_full),
-                fix_hint="Remove SWMM_full or set toggle_swmm_model=True",
             )
 
 
@@ -448,6 +511,18 @@ def validate_analysis_config(cfg: analysis_config, cfg_hpc_system: Any | None = 
 
     # HPC sanity checks (section 5)
     _validate_hpc_configuration(cfg, result, cfg_hpc_system=cfg_hpc_system)
+
+    # A GPU-aware MPI is a property of a GPU run: on any other run mode the setting would be ignored.
+    if cfg_hpc_system is not None and cfg_hpc_system.gpu_aware_mpi and cfg.run_mode != "gpu":
+        result.add_error(
+            field="hpc_system.gpu_aware_mpi",
+            message=(
+                f"gpu_aware_mpi is true in the HPC system config but analysis run_mode is {cfg.run_mode!r}; "
+                "it would be ignored"
+            ),
+            current_value=True,
+            fix_hint="Set gpu_aware_mpi: false in the HPC system config, or run_mode: gpu in the analysis config",
+        )
 
     return result
 
@@ -637,14 +712,14 @@ def _validate_toggle_dependencies_analysis(cfg: analysis_config, result: Validat
                 fix_hint="Set sensitivity_analysis path or set toggle_sensitivity_analysis=False",
             )
 
-    # Storm tide boundary requires boundary data
-    if cfg.toggle_storm_tide_boundary:
-        if cfg.storm_tide_boundary_line_gis is None:
+    # External boundaries require the boundary layer
+    if cfg.toggle_external_boundaries:
+        if cfg.external_boundary_gis is None:
             result.add_error(
-                field="analysis.storm_tide_boundary_line_gis",
-                message="Required when toggle_storm_tide_boundary=True",
+                field="analysis.external_boundary_gis",
+                message="Required when toggle_external_boundaries=True",
                 current_value=None,
-                fix_hint="Set storm_tide_boundary_line_gis path or set toggle_storm_tide_boundary=False",
+                fix_hint="Set external_boundary_gis path or set toggle_external_boundaries=False",
             )
 
 
@@ -1201,8 +1276,8 @@ def validate_data_consistency(
 
     Checks:
     - Event identifier alignment (weather timeseries vs event summary)
-    - Storm tide variable existence when toggle enabled
-    - Units validation (rainfall_units, storm tide units)
+    - Rainfall variable existence in the weather file
+    - Units validation (rainfall_units)
     - CSV column existence
 
     Args:
@@ -1217,8 +1292,8 @@ def validate_data_consistency(
     # Event alignment checks
     _validate_event_alignment(cfg_analysis, result)
 
-    # Storm tide data checks
-    _validate_storm_tide_data(cfg_analysis, result)
+    # Water-level boundary data checks
+    _validate_water_level_boundary_data(cfg_analysis, result)
 
     # Units validation
     _validate_units(cfg_analysis, result)
@@ -1298,10 +1373,10 @@ def _validate_selected_event_forcing_extent(
     the window they declared.
 
     Takes BOTH configs and is called from `preflight_validate`, not from
-    `_validate_storm_tide_data`. It lived inside the latter only because that is where
+    `_validate_water_level_boundary_data`. It lived inside the latter only because that is where
     the NetCDF happened to already be open, which is a coincidence of implementation
     rather than a statement about what the check IS; threading `cfg_system` through a
-    storm-tide validator to reach a whole-analysis check would preserve that
+    water-level boundary validator to reach a whole-analysis check would preserve that
     coincidence in the type signature.
 
     Checks RULE (1) -- the variables the forcing WRITERS consume -- via the same
@@ -1440,17 +1515,11 @@ def _validate_selected_event_forcing_extent(
         )
 
 
-def _validate_storm_tide_data(cfg: analysis_config, result: ValidationResult):
-    """Validate storm tide configuration when toggle enabled.
+def _validate_water_level_boundary_data(cfg: analysis_config, result: ValidationResult):
+    """Validate that the rainfall variable the report panels read exists in the weather NetCDF.
 
-    When toggle_storm_tide_boundary=True, validates:
-    - Boundary line GIS file exists
-    - Storm tide data variable name is specified
-    - Storm tide units are specified
-
-    Note: Checking if the variable actually exists in the dataset requires
-    loading the NetCDF, which is expensive. That verification happens at
-    runtime in the Analysis class.
+    The water-level boundary has its own pass, ``_validate_external_boundaries``, because its checks need the system
+    config, the boundary layer and the SWMM model as well as the weather file.
     """
     # Check spatial-mean rainfall datavar exists in the weather NetCDF.
     # Renderers (per_sim_peak_flood_depth / per_sim_conduit_flow event-hydrology
@@ -1475,63 +1544,129 @@ def _validate_storm_tide_data(cfg: analysis_config, result: ValidationResult):
                         current_value=rain_name,
                         fix_hint=(f"Set weather_time_series_spatial_mean_rainfall_datavar to one of: {avail}"),
                     )
-                if (
-                    cfg.toggle_storm_tide_boundary
-                    and cfg.weather_time_series_storm_tide_datavar is not None
-                    and cfg.weather_time_series_storm_tide_datavar not in ds.data_vars
-                ):
-                    result.add_error(
-                        field="analysis.weather_time_series_storm_tide_datavar",
-                        message=(
-                            f"Storm tide data variable "
-                            f"'{cfg.weather_time_series_storm_tide_datavar}' "
-                            f"not found in weather_timeseries NetCDF. Available: {avail}"
-                        ),
-                        current_value=cfg.weather_time_series_storm_tide_datavar,
-                        fix_hint=f"Set weather_time_series_storm_tide_datavar to one of: {avail}",
-                    )
         except Exception:
             # NetCDF open failures are caught by other checks; don't surface here.
             pass
 
-    if cfg.toggle_storm_tide_boundary:
-        # Boundary GIS file already checked in toggle dependencies
-        # Check storm tide data variable name
-        if (
-            cfg.weather_time_series_storm_tide_datavar is None
-            or cfg.weather_time_series_storm_tide_datavar.strip() == ""
-        ):
-            result.add_error(
-                field="analysis.weather_time_series_storm_tide_datavar",
-                message="Storm tide data variable name required when toggle_storm_tide_boundary=True",
-                current_value=cfg.weather_time_series_storm_tide_datavar,
-                fix_hint="Set weather_time_series_storm_tide_datavar (e.g., 'surge_height', 'water_level')",
-            )
 
-        # Check storm tide units
-        if cfg.storm_tide_units is None or cfg.storm_tide_units.strip() == "":
-            result.add_error(
-                field="analysis.storm_tide_units",
-                message="Storm tide units required when toggle_storm_tide_boundary=True",
-                current_value=cfg.storm_tide_units,
-                fix_hint="Set storm_tide_units (e.g., 'meters', 'feet')",
-            )
+def _add_boundary_problems(result: ValidationResult, problems, *, warnings: bool = False) -> None:
+    """Turn each boundary ``Problem`` into one issue carrying its ``Write:`` and ``Edit:`` blocks."""
+    add = result.add_warning if warnings else result.add_error
+    for p in problems:
+        add(
+            field=p.field,
+            message=p.message,
+            current_value=p.current_value,
+            fix_hint=p.fix_hint,
+            config_line=p.config_line,
+            layer_edit=p.layer_edit,
+        )
 
+
+def _validate_external_boundaries(
+    cfg_system: system_config, cfg_analysis: analysis_config, result: ValidationResult
+) -> None:
+    """V1 to V23: the external-boundary layer, the outfall decisions, the per-outfall water level and the DEM depths.
+
+    One pass, every offender of each kind in one issue. The pass reads the layer, the SWMM model, the weather file
+    and the DEM; a missing input becomes its own issue and the checks that do not need it still run. It prints the
+    distance of each matched outfall to its record's line, the snapped endpoints of each record, and the notice of
+    ``dem_rim_resolution: full``.
+    """
+    from hhemt import water_level_boundary as wlb
+    from hhemt.swmm_utils import converted_outfalls, node_depth_problems
+
+    report = wlb.preflight_problems(cfg_system, cfg_analysis)
+    _add_boundary_problems(result, report.problems)
+    _add_boundary_problems(result, report.warnings, warnings=True)
+    for line in report.lines:
+        print(f"[external boundaries] {line}", flush=True)
+
+    converted = converted_outfalls(cfg_system, cfg_analysis)
+    if not converted or not Path(cfg_system.SWMM_model).is_file():
+        return
+    if cfg_system.toggle_tritonswmm_model:
+        _validate_converted_outfalls_are_coupled(cfg_system, cfg_analysis, converted, result)
+    if cfg_analysis.dem_rim_resolution is not None and Path(cfg_system.DEM_fullres).is_file():
+        problems, provisional = node_depth_problems(cfg_system, cfg_analysis)
+        if provisional:
+            problems = [
+                wlb.Problem(
+                    p.code,
+                    p.field,
+                    p.message + " (provisional: judged on the grid setup will write, built in memory)",
+                    p.current_value,
+                    p.fix_hint,
+                    p.config_line,
+                    p.layer_edit,
+                )
+                for p in problems
+            ]
+        _add_boundary_problems(result, problems)
+
+
+def _validate_converted_outfalls_are_coupled(
+    cfg_system: system_config, cfg_analysis: analysis_config, converted: tuple[str, ...], result: ValidationResult
+) -> None:
+    """V8: each converted outfall is a coupling candidate under ``swmm_coupling_mode`` and inside the TRITON grid."""
+    from hhemt import water_level_boundary as wlb
+    from hhemt.exceptions import ConfigurationError, ProcessingError
+    from hhemt.scenario import (
+        _swmm_fold,
+        coupling_candidate_junction_coordinates,
+        coupling_candidates,
+        nodes_outside_triton_grid,
+    )
+    from hhemt.swmm_utils import processed_dem_grid
+
+    mode = cfg_system.swmm_coupling_mode
+    matched = set(wlb.matched_outfall_names(wlb.boundary_records_for(cfg_analysis, cfg_system)[0]))
+    try:
+        candidates = {_swmm_fold(n) for n in coupling_candidates(cfg_system, cfg_analysis=cfg_analysis)}
+        junctions = coupling_candidate_junction_coordinates(cfg_system, cfg_analysis)
+    except (ConfigurationError, ProcessingError, OSError):
+        return  # the checks that name the cause (V4, V9, V13) report it
+    if mode == "legacy":
+        refused = [n for n in converted if n in matched]
+        how = "swmm_coupling_mode is legacy, which couples the nodes that carry a FLOW inflow, and a matched outfall carries none"  # noqa: E501
+        fix = "Set swmm_coupling_mode to all_junctions, or list the outfall in swmm_outfalls_to_keep"
     else:
-        # If toggle disabled, warn if storm tide fields are set
-        if cfg.weather_time_series_storm_tide_datavar is not None:
-            result.add_warning(
-                field="analysis.weather_time_series_storm_tide_datavar",
-                message="Storm tide variable specified but toggle_storm_tide_boundary=False",
-                current_value=cfg.weather_time_series_storm_tide_datavar,
-                fix_hint="Remove weather_time_series_storm_tide_datavar or set toggle_storm_tide_boundary=True",
-            )
+        refused = [n for n in converted if _swmm_fold(n) not in candidates]
+        how = (
+            "it is not named in swmm_coupling_nodes_file"
+            if mode == "list"
+            else "it has no [COORDINATES] row in SWMM_model, so it is not a junction with a coordinate"
+        )
+        fix = "Name it in swmm_coupling_nodes_file" if mode == "list" else "Give it a [COORDINATES] row"
+    if refused:
+        result.add_error(
+            field="system.swmm_coupling_mode",
+            message=f"converted outfall(s) {refused} are not coupling candidates: {how}",
+            current_value=mode,
+            fix_hint=fix,
+        )
+    if not junctions:
+        return
+    grid, _provisional = processed_dem_grid(cfg_system)
+    from hhemt.system import triton_grid_header
+
+    outside = nodes_outside_triton_grid(
+        [(name, x, y) for name, x, y in junctions if name in converted], triton_grid_header(grid)
+    )
+    if outside:
+        result.add_error(
+            field="system.swmm_outfalls_to_couple",
+            message="converted outfall(s) "
+            + "; ".join(f"{name} ({x}, {y})" for name, x, y in outside)
+            + " lie outside the TRITON grid",
+            fix_hint="Move the node into the DEM extent, or keep the outfall in swmm_outfalls_to_keep",
+        )
 
 
 def _validate_units(cfg: analysis_config, result: ValidationResult):
     """Validate unit specifications are explicit and valid.
 
-    Checks rainfall_units and storm tide units when applicable.
+    Checks rainfall_units and water-level boundary units when applicable.
     """
     # Rainfall units validation
     if cfg.rainfall_units is None or cfg.rainfall_units.strip() == "":
@@ -1559,7 +1694,7 @@ def _validate_units(cfg: analysis_config, result: ValidationResult):
                 fix_hint=f"Consider using one of: {', '.join(valid_rainfall_units)}",
             )
 
-    # Storm tide units already checked in _validate_storm_tide_data()
+    # The water-level units of the external boundary are checked in _validate_external_boundaries.
 
 
 # ============================================================================
@@ -2377,7 +2512,7 @@ def preflight_validate(
     # _validate_toggle_dependencies_analysis (which lacks cfg_system).
     _validate_sensitivity_file_readable(cfg_analysis, result)
     _validate_per_member_system_configs(cfg_system, cfg_analysis, result)
-    # Re-parented here from _validate_storm_tide_data: this is a whole-analysis
+    # Re-parented here from _validate_water_level_boundary_data: this is a whole-analysis
     # check and needs BOTH configs to resolve the rule-(1) forcing variable set.
     _validate_selected_event_forcing_extent(cfg_analysis, cfg_system, result)
     # Same placement rationale: a whole-analysis config check that must be reachable
@@ -2419,6 +2554,9 @@ def preflight_validate(
     _validate_coupling_exchange_flow(cfg_system, cfg_analysis, result)
     _validate_clear_scenario_timeseries(cfg_analysis, result)
     _validate_timeseries_keep(cfg_system, cfg_analysis, result)
+    _validate_observation_interval(cfg_system, cfg_analysis, result)
+    _validate_swmm_threads(cfg_system, cfg_analysis, result)
+    _validate_external_boundaries(cfg_system, cfg_analysis, result)
 
     return result
 

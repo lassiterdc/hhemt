@@ -93,6 +93,43 @@ def records_summary_clearing(analysis_dir: Path) -> bool:
     return False
 
 
+def records_observation_clearing(analysis_dir: Path) -> bool:
+    """Whether any scenario records its observation-point series as cleared (``consolidated_observation_*_cleared``).
+
+    The observation ``summary`` group is derived from the per-scenario gridded store in the same pass that appends its
+    series group. Once that store is deleted after the read-back, the group is the only copy and no rebuild can
+    reproduce it, so the reprocess delete must keep it. Read path-only from the scenario model logs of the analysis and
+    of its members, and from the removed-scenario records, as ``records_summary_clearing`` does.
+    """
+
+    def _cleared(payload) -> bool:
+        return isinstance(payload, dict) and any(
+            key.startswith("consolidated_observation_") and key.endswith("_cleared") and value is True
+            for key, value in payload.items()
+        )
+
+    for pattern in (
+        "_status/scenario_records/*.json",
+        "_status/member_records/member_*/scenario_records/*.json",
+        "members/*/_status/scenario_records/*.json",
+    ):
+        for rec_file in Path(analysis_dir).glob(pattern):
+            try:
+                rec = json.loads(rec_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(rec, dict) and any(_cleared(m) for m in (rec.get("model_logs") or {}).values()):
+                return True
+    for pattern in ("sims/*/log_*.json", "members/*/sims/*/log_*.json"):
+        for log_file in Path(analysis_dir).glob(pattern):
+            try:
+                if _cleared(json.loads(log_file.read_text(encoding="utf-8"))):
+                    return True
+            except (OSError, ValueError):
+                continue
+    return False
+
+
 def delete_summary_branches(
     tree: Path, analysis_dir: Path, *, pattern: str = "*/*/summary", scope: str = "analysis"
 ) -> list[Path]:
@@ -110,7 +147,8 @@ def delete_summary_branches(
     The stamp goes first (inside one ``deferred_consolidation`` block, so the zarr index is rebuilt once at the end),
     which is what makes an interruption recognisable: a tree without its stamp is read as incomplete. A branch is
     deleted whether or not its group document survives, because a kill inside an earlier delete can leave a directory
-    whose ``zarr.json`` is gone. Returns the deleted paths, sorted.
+    whose ``zarr.json`` is gone. An observation ``summary`` group is kept when any scenario records its observation
+    series as cleared (``records_observation_clearing``). Returns the deleted paths, sorted.
     """
     removed: list[Path] = []
     keep_summaries = records_summary_clearing(analysis_dir)
@@ -118,7 +156,10 @@ def delete_summary_branches(
         update_zarr_root_attrs(tree, remove=CONSOLIDATION_STAMP_ATTRS)
         if keep_summaries:
             return removed
+        keep_observation = records_observation_clearing(analysis_dir)
         for summary in sorted(p for p in tree.glob(pattern) if p.is_dir()):
+            if keep_observation and summary.parent.name == "triton_observation":
+                continue
             print(f"[delete-reprocess-zarr] removing {summary}", flush=True)
             delete_and_account([summary], scope_dir=analysis_dir, scope=scope)  # type: ignore[arg-type]
             removed.append(summary)

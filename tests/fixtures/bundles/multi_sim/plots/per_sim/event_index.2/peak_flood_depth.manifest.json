@@ -272,7 +272,7 @@
             "variable": "water_level",
             "attrs": {
               "units": "m",
-              "long_name": "storm tide water level"
+              "long_name": "boundary water level"
             },
             "selection": {
               "event_iloc": 2
@@ -290,7 +290,7 @@
             "variable": "water_level",
             "attrs": {
               "units": "m",
-              "long_name": "storm tide water level"
+              "long_name": "boundary water level"
             },
             "selection": {
               "event_iloc": 2

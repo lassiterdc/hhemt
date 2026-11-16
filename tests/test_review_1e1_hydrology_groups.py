@@ -150,7 +150,7 @@ def test_full_consolidation_writes_the_hydrology_groups_stamps_version_4_and_upg
     a.process.consolidate_to_datatree()
     for group in (_TS, _NODE, _SUB):
         assert (store / group).is_dir(), f"{group} is not reached from the public consolidation"
-    assert zarr_root_attrs(store).get("consolidation_version") == 4
+    assert zarr_root_attrs(store).get("consolidation_version") == 5
     shutil.rmtree(store / _FAMILY / "swmm_node_hydro")
     shutil.rmtree(store / _FAMILY / "swmm_subcatchment_hydro")
     with deferred_consolidation(store):
@@ -158,7 +158,7 @@ def test_full_consolidation_writes_the_hydrology_groups_stamps_version_4_and_upg
     a.process.consolidate_to_datatree()
     for group in (_TS, _NODE, _SUB):
         assert (store / group).is_dir(), f"{group} is not appended again on a tree stamped 3"
-    assert zarr_root_attrs(store).get("consolidation_version") == 4
+    assert zarr_root_attrs(store).get("consolidation_version") == 5
     assert _group(a, _TS)["event_iloc"].values.tolist() == [0, 1, 2]
 
 

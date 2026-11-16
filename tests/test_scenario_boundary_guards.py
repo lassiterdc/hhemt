@@ -569,7 +569,10 @@ def _generator(tmp_path, inp, *, one_per_cell, mode="legacy", nodes=None):
         _system=SimpleNamespace(
             sys_paths=SimpleNamespace(dem_processed=_dem(tmp_path / "dem.tif")),
             cfg_system=SimpleNamespace(
-                SWMM_hydraulics=inp, swmm_coupling_mode=mode, swmm_coupling_nodes_file=nodes_file
+                SWMM_model=inp,
+                swmm_outfalls_to_couple=[],
+                swmm_coupling_mode=mode,
+                swmm_coupling_nodes_file=nodes_file,
             ),
         ),
         log=SimpleNamespace(),
@@ -648,8 +651,8 @@ def _fake_system(hydraulics=None, full=None, *, coupled=False, standalone=False)
         cfg_system=SimpleNamespace(
             toggle_tritonswmm_model=coupled,
             toggle_swmm_model=standalone,
-            SWMM_hydraulics=hydraulics,
-            SWMM_full=full,
+            SWMM_model=hydraulics if hydraulics is not None else full,
+            swmm_outfalls_to_couple=[],
         )
     )
 
@@ -662,7 +665,7 @@ def _fake_analysis(master, targets=None):
         _system=master,
         sensitivity=SimpleNamespace(unique_system_targets=[SimpleNamespace(system=s) for s in (targets or [])]),
     )
-    fake._inflow_check_templates = lambda: TRITONSWMM_analysis._inflow_check_templates(fake)
+    fake._inflow_check_models = lambda: TRITONSWMM_analysis._inflow_check_models(fake)
     return fake
 
 
@@ -697,7 +700,7 @@ def test_a_target_that_switches_the_coupled_model_on_is_checked(tmp_path):
 
     bad = _inp(tmp_path / "bad.inp", _NODES_INP.format(inflows='NOSUCH FLOW "" FLOW 1 1 0'))
     fake = _fake_analysis(_fake_system(), targets=[_fake_system(bad, coupled=True)])
-    assert bad in TRITONSWMM_analysis._inflow_check_templates(fake)
+    assert bad in [label for label, _text in TRITONSWMM_analysis._inflow_check_models(fake)]
     with pytest.raises(ConfigurationError, match="NOSUCH"):
         TRITONSWMM_analysis._refuse_undefined_inflow_nodes(fake)
 
@@ -715,7 +718,7 @@ def test_the_masters_template_is_not_checked_when_no_target_uses_it(tmp_path):
     bad = _inp(tmp_path / "bad.inp", _NODES_INP.format(inflows='NOSUCH FLOW "" FLOW 1 1 0'))
     good = _inp(tmp_path / "good.inp", _NODES_INP.format(inflows='J1 FLOW "" FLOW 1 1 0'))
     fake = _fake_analysis(_fake_system(bad, coupled=True), targets=[_fake_system(good, coupled=True)])
-    assert TRITONSWMM_analysis._inflow_check_templates(fake) == [good]
+    assert [label for label, _text in TRITONSWMM_analysis._inflow_check_models(fake)] == [good]
     TRITONSWMM_analysis._refuse_undefined_inflow_nodes(fake)
 
 
@@ -889,11 +892,10 @@ def _system_config_with_template(tmp_path, field: str, template_text: str):
         "system_directory": str(system_dir),
         "watershed_gis_polygon": stub("watershed.shp"),
         "DEM_fullres": stub("dem.tif"),
-        "SWMM_hydraulics": stub("hydraulics.inp"),
+        "SWMM_model": stub("model.inp"),
         "TRITONSWMM_software_directory": str(tmp_path / "triton"),
         "TRITONSWMM_git_URL": "https://example.com/triton.git",
         "SWMM_git_URL": "https://example.com/swmm.git",
-        "triton_swmm_configuration_template": stub("TRITONSWMM.cfg"),
         "toggle_use_swmm_for_hydrology": False,
         "toggle_use_constant_mannings": True,
         "toggle_triton_model": False,
@@ -903,23 +905,20 @@ def _system_config_with_template(tmp_path, field: str, template_text: str):
         "constant_mannings": 0.05,
         "crs": {"horizontal_epsg": 4326},
     }
-    cfg[field] = stub(f"{field}.inp", template_text)
-    if field == "SWMM_full":
-        cfg["toggle_swmm_model"] = True
+    cfg["SWMM_model"] = stub("model.inp", template_text)
     return system_config.model_validate(cfg)
 
 
 @pytest.mark.parametrize(
-    ("field", "options", "refused"),
+    ("options", "refused"),
     [
-        ("SWMM_hydraulics", "[OPTIONS]\nFLOW_UNITS LPS\n", True),
-        ("SWMM_full", "[OPTIONS]\nFLOW_UNITS MLD\n", True),
-        ("SWMM_hydrology", "[OPTIONS]\nFLOW_UNITS LPS\n", False),
-        ("SWMM_hydraulics", "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_UNITS CMS\n", False),
-        ("SWMM_hydraulics", "[JUNCTIONS]\nJ1 1 2 0 0 0\n", False),
+        ("[OPTIONS]\nFLOW_UNITS LPS\n", True),
+        ("[OPTIONS]\nFLOW_UNITS MLD\n", True),
+        ("[OPTIONS]\nFLOW_UNITS CFS\nFLOW_UNITS CMS\n", False),
+        ("[JUNCTIONS]\nJ1 1 2 0 0 0\n", False),
     ],
 )
-def test_the_config_load_unit_check_admits_exactly_what_preparation_admits(tmp_path, field, options, refused):
+def test_the_config_load_unit_check_admits_exactly_what_preparation_admits(tmp_path, options, refused):
     """Property: at config load each SWMM template is judged by preparation's unit rule and set.
 
     Class: templates for each of the three SWMM fields, in a unit the field does or does not
@@ -935,11 +934,11 @@ def test_the_config_load_unit_check_admits_exactly_what_preparation_admits(tmp_p
     from pydantic import ValidationError
 
     if refused:
-        with pytest.raises(ValidationError, match=field) as excinfo:
-            _system_config_with_template(tmp_path, field, options)
-        assert "accepts CMS" in str(excinfo.value)
+        with pytest.raises(ValidationError, match="SWMM_model") as excinfo:
+            _system_config_with_template(tmp_path, "SWMM_model", options)
+        assert "must use CMS" in str(excinfo.value)
     else:
-        _system_config_with_template(tmp_path, field, options)
+        _system_config_with_template(tmp_path, "SWMM_model", options)
 
 
 @pytest.mark.parametrize(
@@ -1012,15 +1011,14 @@ def _scenario_for_preparation(tmp_path, full_options: str):
     templates = tmp_path / "templates"
     templates.mkdir()
     hydraulics = _inp(templates / "hydraulics.inp", cms)
-    hydrology = _inp(templates / "hydrology.inp", cms)
-    full = _inp(templates / "full.inp", f"[OPTIONS]\n{full_options}\n\n[JUNCTIONS]\nJ1 1 2 0 0 0\n")
+    full_text = f"[OPTIONS]\n{full_options}\n\n[JUNCTIONS]\nJ1 1 2 0 0 0\n"
     sim = tmp_path / "sim"
     sim.mkdir()
     calls: list[str] = []
 
-    def copy(source, dest):
-        """Stand in for a template-to-scenario model builder: the file is copied unchanged."""
-        Path(dest).write_text(Path(source).read_text())
+    def writer(text):
+        """Stand in for a role-model builder: the scenario's model file is written with ``text``."""
+        return lambda dest: Path(dest).write_text(text)
 
     def stop():
         """End preparation at the first step after the unit checks."""
@@ -1039,9 +1037,8 @@ def _scenario_for_preparation(tmp_path, full_options: str):
     )
     scen._system = SimpleNamespace(
         cfg_system=SimpleNamespace(
-            SWMM_hydraulics=hydraulics,
-            SWMM_full=full,
-            SWMM_hydrology=hydrology,
+            SWMM_model=hydraulics,
+            swmm_outfalls_to_couple=[],
             toggle_swmm_model=True,
             toggle_use_swmm_for_hydrology=True,
         )
@@ -1049,15 +1046,14 @@ def _scenario_for_preparation(tmp_path, full_options: str):
     scen._runoff_modeler = SimpleNamespace(
         write_swmm_rainfall_dat_files=lambda: None,
         write_swmm_waterlevel_dat_files=lambda: None,
-        create_hydrology_model_from_template=copy,
+        create_hydrology_model=writer(cms),
         run_swmm_hydro_model=lambda **kwargs: calls.append("hydrology run"),
     )
     scen._input_generator = SimpleNamespace(
-        create_hydraulics_model_from_template=copy,
-        update_swmm_threads_in_inp_file=lambda path: None,
+        create_hydraulics_model=writer(cms),
         create_external_boundary_condition_files=stop,
     )
-    scen._full_model_builder = SimpleNamespace(create_full_model_from_template=copy)
+    scen._full_model_builder = SimpleNamespace(create_full_model=writer(full_text))
     return scen, calls
 
 
@@ -1439,6 +1435,12 @@ def _scenario_for_coupled_cfg(
         manhole_loss_coefficient=0.1,
         TRITON_raw_output_type="bin",
         hydraulic_timestep_s=1.0,
+        TRITON_courant_number=0.5,
+        TRITON_hextra_m=0.001,
+        TRITON_fixed_timestep=False,
+        TRITON_domain_decomposition="static",
+        TRITON_domain_decomposition_check_factor=None,
+        TRITON_progress_print_iterations=10000,
         TRITON_reporting_timestep_s=60,
         open_boundaries=1,
         swmm_snapshot_disable=False,
@@ -1450,12 +1452,11 @@ def _scenario_for_coupled_cfg(
     cfg_system = SimpleNamespace(
         toggle_use_constant_mannings=True,
         constant_mannings=0.05,
-        triton_swmm_configuration_template=template,
         TRITONSWMM_software_directory=software_dir,
         TRITONSWMM_branch_key=branch_key,
     )
     scen = TRITONSWMM_scenario.__new__(TRITONSWMM_scenario)
-    scen._analysis = SimpleNamespace(cfg_analysis=cfg_analysis)
+    scen._analysis = SimpleNamespace(cfg_analysis=cfg_analysis, cfg_hpc_system=SimpleNamespace(gpu_aware_mpi=False))
     scen._system = SimpleNamespace(
         cfg_system=cfg_system,
         sys_paths=SimpleNamespace(dem_processed=tmp_path / "dem.dem", mannings_processed=tmp_path / "man.dem"),
@@ -1674,9 +1675,8 @@ def _coupling_system(tmp_path, inp, *, mode="legacy", nodes=None, cfg_text="dem_
         cfg_system=SimpleNamespace(
             toggle_tritonswmm_model=coupled,
             toggle_swmm_model=not coupled,
-            SWMM_hydraulics=inp,
-            SWMM_full=None if coupled else inp,
-            triton_swmm_configuration_template=cfg_template,
+            SWMM_model=inp,
+            swmm_outfalls_to_couple=[],
             swmm_coupling_mode=mode,
             swmm_coupling_nodes_file=nodes_file,
         ),
@@ -1801,36 +1801,6 @@ def test_every_failing_case_is_reported_and_a_valid_file_passes(tmp_path):
     assert "NOSUCH" in str(excinfo.value) and "Outfall O1 is named" in str(excinfo.value)
     good = _coupling_analysis(_coupling_system(tmp_path, inp, mode="list", nodes="  J1  \n"))
     TRITONSWMM_analysis._refuse_invalid_coupling_declaration(good)
-
-
-@pytest.mark.parametrize(
-    ("cfg_text", "refused"),
-    [
-        ("dem_filename=x.dem\nswmm_coupling_nodes=list.txt\n", True),
-        ("dem_filename=x.dem\n  swmm_coupling_nodes = list.txt\n", True),
-        ("dem_filename=x.dem\n# swmm_coupling_nodes=list.txt\n", False),
-    ],
-)
-def test_a_cfg_template_that_sets_the_coupling_key_is_refused(tmp_path, cfg_text, refused):
-    """The TRITON cfg key: a template already setting ``swmm_coupling_nodes`` is refused.
-
-    Class: TRITON cfg templates carrying an active ``swmm_coupling_nodes`` line, indented or
-    not, against one carrying it only as a ``#`` comment. Why: the toolkit writes that key for
-    every coupled scenario, so a second source of the declaration would disagree with it
-    silently. What kills it: a substring test that also refuses the comment, or matching only
-    at column 0. Second correct implementation: a regex over the whole text anchored per line.
-    """
-    from hhemt.analysis import TRITONSWMM_analysis
-    from hhemt.exceptions import ConfigurationError
-
-    inp = _coupling_inp(tmp_path)
-    fake = _coupling_analysis(_coupling_system(tmp_path, inp, cfg_text=cfg_text))
-    if refused:
-        with pytest.raises(ConfigurationError, match="sets swmm_coupling_nodes") as excinfo:
-            TRITONSWMM_analysis._refuse_invalid_coupling_declaration(fake)
-        assert excinfo.value.field == "swmm_coupling_mode"
-    else:
-        TRITONSWMM_analysis._refuse_invalid_coupling_declaration(fake)
 
 
 def test_legacy_candidates_are_flow_lines_by_swmms_rule_and_only_legacy_reads_them(tmp_path):
@@ -2038,10 +2008,9 @@ def _coupling_system_config(tmp_path, **fields):
         "system_directory": str(tmp_path),
         "watershed_gis_polygon": stub("watershed.shp"),
         "DEM_fullres": stub("dem.tif"),
-        "SWMM_hydraulics": stub("hydraulics.inp", "[OPTIONS]\nFLOW_UNITS CMS\n"),
+        "SWMM_model": stub("model.inp", "[OPTIONS]\nFLOW_UNITS CMS\n"),
         "TRITONSWMM_software_directory": str(tmp_path / "triton"),
         "TRITONSWMM_git_URL": "https://example.com/triton.git",
-        "triton_swmm_configuration_template": stub("TRITONSWMM.cfg"),
         "toggle_use_swmm_for_hydrology": False,
         "toggle_use_constant_mannings": True,
         "toggle_triton_model": False,
@@ -2157,9 +2126,8 @@ def _review_analysis(
         cfg_system=SimpleNamespace(
             toggle_tritonswmm_model=True,
             toggle_swmm_model=False,
-            SWMM_hydraulics=inp,
-            SWMM_full=None,
-            triton_swmm_configuration_template=cfg_template,
+            SWMM_model=inp,
+            swmm_outfalls_to_couple=[],
             swmm_coupling_mode=mode,
             swmm_coupling_nodes_file=nodes_file,
         ),
@@ -2246,16 +2214,6 @@ def test_review_each_refusal_names_the_setting_its_remedy_changes(
     ("case", "mode", "inflows", "nodes", "coordinates", "cfg_text", "expected", "not_expected"),
     [
         (
-            "the cfg-key refusal before the empty-candidate refusal",
-            "legacy",
-            "",
-            None,
-            "J1 5 5\nJ2 15 5\nO1 25 15",
-            "dem_filename=x.dem\nswmm_coupling_nodes=list.txt\n",
-            "sets swmm_coupling_nodes",
-            "declares no coupling node",
-        ),
-        (
             "the file check before the grid check",
             "list",
             _REVIEW_FLOW_J1,
@@ -2272,9 +2230,8 @@ def test_review_the_declaration_check_runs_before_section_15_and_the_grid_check(
 ):
     """Property: at both run-entry sites the declaration check runs first, then section 15, then the grid check.
 
-    Class: configurations that two of the three run-entry refusals would each refuse, reached
-    through ``run()`` and ``submit_workflow()``: a TRITON cfg template that sets the coupling key
-    on a template with no FLOW inflow, and a coupling-node file that names an undefined node
+    Class: configurations that two of the run-entry refusals would each refuse, reached
+    through ``run()`` and ``submit_workflow()``: a coupling-node file that names an undefined node
     and an out-of-grid junction. Why it is required: the user sees only the first refusal, and
     the stated order is what fixes which one; the order is also what makes section 15's removed
     ``list`` cause unreachable for an empty file. What kills it: calling section 15 or the grid
@@ -2448,32 +2405,20 @@ def test_the_one_per_cell_option_is_applied_under_legacy_only_at_preparation(tmp
         assert len((folder / "coupling_nodes.txt").read_text().splitlines()) == expected
 
 
-@pytest.mark.parametrize(
-    ("template", "expected_active"),
-    [
-        ("sim_start_time=0\ndem_filename=dem.dem\n", 1),
-        ('sim_start_time=0\ndem_filename=dem.dem\nswmm_coupling_nodes="stale.txt"\n', 1),
-        ("sim_start_time=0\ndem_filename=dem.dem\n# swmm_coupling_nodes=x\n", 1),
-    ],
-)
-def test_the_coupled_cfg_names_the_written_list_exactly_once(tmp_path, monkeypatch, template, expected_active):
+def test_the_coupled_cfg_names_the_written_list_exactly_once(tmp_path, monkeypatch):
     """Property: the coupled TRITON cfg carries one active ``swmm_coupling_nodes`` line naming the scenario's list.
 
-    Class: cfg templates with no such line, with a stale active one, and with a commented one.
-    Why: without the key TRITON-SWMM derives the coupled set from ``[INFLOWS]`` itself and
-    ignores the list; with a template value it would read a file the toolkit did not write.
-    What kills it: not writing the key, keeping the template's value, or writing it twice.
-    Second correct implementation: substituting a placeholder in the template; the assertions
-    read the cfg's lines only.
+    Class: the cfg the toolkit renders, which has no such line of its own. Why: without the key
+    TRITON-SWMM derives the coupled set from ``[INFLOWS]`` itself and ignores the list. What
+    kills it: not writing the key, or writing it twice. Second correct implementation: a
+    placeholder in the rendered text; the assertions read the cfg's lines only.
     """
     scen, cfg = _scenario_for_coupled_cfg(tmp_path, monkeypatch, rim_from_dem=False)
-    scen._system.cfg_system.triton_swmm_configuration_template.write_text(template)
     scen._generate_TRITON_SWMM_cfg()
     lines = cfg.read_text().splitlines()
     active = [line for line in lines if line.lstrip().startswith("swmm_coupling_nodes")]
-    assert len(active) == expected_active
+    assert len(active) == 1
     assert active[0] == f'swmm_coupling_nodes="{tmp_path / "coupling_nodes.txt"}"'
-    assert ("# swmm_coupling_nodes=x" in lines) == ("# swmm_coupling_nodes=x" in template)
 
 
 def test_review_a_junction_ranked_out_of_its_cell_keeps_its_inflow_line(tmp_path):
@@ -2577,39 +2522,18 @@ def test_an_uncoupled_system_neither_selects_nor_writes_a_coupling_list_at_prepa
 # hhemt owns output_folder in every TRITON and TRITON-SWMM cfg it builds
 # ---------------------------------------------------------------------------
 
-_OUTPUT_FOLDER_CASES = [
-    # (template body, the value a notice must name, or None for no notice)
-    ('sim_start_time=0\noutput_folder="/abs/path"\ndem_filename=dem.dem\n', "/abs/path"),
-    ("sim_start_time=0\noutput_folder=results\ndem_filename=dem.dem\n", "results"),
-    ('sim_start_time=0\noutput_folder="{folder}"\ndem_filename=dem.dem\n', None),
-    ("sim_start_time=0\ndem_filename=dem.dem\n", None),
-    ("sim_start_time=0\n", None),
-    ("sim_start_time=0\n#output_folder=x\ndem_filename=dem.dem\n", None),
-]
-
 
 @pytest.mark.parametrize(("model", "folder"), [("coupled", "out_tritonswmm"), ("triton_only", "out_triton")])
-@pytest.mark.parametrize(("template", "noticed"), _OUTPUT_FOLDER_CASES)
-def test_hhemt_writes_its_own_output_folder_into_every_cfg(
-    tmp_path, monkeypatch, capsys, model, folder, template, noticed
-):
-    """Property: each cfg the toolkit builds carries exactly one active ``output_folder`` naming hhemt's folder.
+def test_hhemt_writes_its_own_output_folder_into_every_cfg(tmp_path, monkeypatch, model, folder):
+    """Property: each cfg the toolkit renders carries exactly one active ``output_folder`` naming hhemt's folder.
 
-    Class: TRITON-SWMM and TRITON-only cfg templates whose ``output_folder`` is an absolute
-    path, another relative folder, hhemt's own folder, absent, absent along with any
-    ``dem_filename=`` line, or present only as a ``#`` comment. Why: the container bind and the
-    resume step-back look for outputs only under ``out_tritonswmm`` or ``out_triton``, so a
-    template's own value sends outputs where neither looks, and the earlier insertion added
-    nothing to a template without a ``dem_filename=`` line. What kills it: keeping a template's
-    value, inserting a second line, dropping the comment, or inserting nothing without a
-    ``dem_filename=`` line. Second correct implementation: rebuilding the cfg from a parsed
-    key table and writing the folder line first; the assertions read only the active lines,
-    the line after hhemt's, the comment, and whether a notice names the replaced value.
+    Class: the TRITON-SWMM and the TRITON-only cfg. Why: the container bind and the resume
+    step-back look for outputs only under ``out_tritonswmm`` or ``out_triton``. What kills it:
+    inserting no line, a second line, or the other model's folder. Second correct
+    implementation: a placeholder in the rendered text; the assertions read only the active
+    lines and the line after hhemt's.
     """
     scen, cfg = _scenario_for_coupled_cfg(tmp_path, monkeypatch, rim_from_dem=False)
-    scen.event_iloc = 3
-    body = template.replace("{folder}", folder)
-    scen._system.cfg_system.triton_swmm_configuration_template.write_text(body)
     if model == "coupled":
         scen._generate_TRITON_SWMM_cfg()
     else:
@@ -2620,19 +2544,8 @@ def test_hhemt_writes_its_own_output_folder_into_every_cfg(
         scen._generate_TRITON_cfg()
     lines = cfg.read_text().splitlines()
     active = [i for i, line in enumerate(lines) if line.lstrip().startswith("output_folder")]
-    assert len(active) == 1
-    assert lines[active[0]] == f'output_folder="{folder}"'
-    if "dem_filename=" in body:
-        assert lines[active[0] + 1].startswith("dem_filename=")
-    else:
-        assert active[0] == len([line for line in lines if not line.startswith("swmm_coupling_nodes")]) - 1
-    assert ("#output_folder=x" in lines) == ("#output_folder=x" in body)
-    out = capsys.readouterr().out
-    if noticed is None:
-        assert "output_folder is managed by hhemt" not in out
-    else:
-        assert out.count("output_folder is managed by hhemt") == 1
-        assert noticed in out and f'replaced it with "{folder}"' in out and "[Scenario 3]" in out
+    assert [lines[i] for i in active] == [f'output_folder="{folder}"']
+    assert lines[active[0] + 1].startswith("dem_filename=")
 
 
 @pytest.mark.parametrize(
@@ -2642,36 +2555,29 @@ def test_hhemt_writes_its_own_output_folder_into_every_cfg(
         ('sim_start_time=0\n  output_folder = "x"\ndem_filename=dem.dem\n', ["x"]),
         ('dem_filename=dem.dem\nsim_start_time=0\noutput_folder="y"\n', ["y"]),
         ("sim_start_time=0\n  dem_filename=dem.dem\n", []),
+        ("sim_start_time=0\n#output_folder=x\ndem_filename=dem.dem\n", []),
     ],
 )
-def test_review_every_active_output_folder_line_goes_and_one_lands_before_the_first_dem_line(
-    tmp_path, monkeypatch, capsys, template, removed_values
-):
-    """Property: a coupled cfg built from a template keeps no template ``output_folder`` line at all.
+def test_review_every_active_output_folder_line_goes_and_one_lands_before_the_first_dem_line(template, removed_values):
+    """Property: ``set_hhemt_output_folder`` keeps no earlier ``output_folder`` line and inserts one.
 
-    Class: templates whose ``output_folder`` lines are positioned unlike a single line just
-    above ``dem_filename=``: two active lines, one indented with spaces around ``=``, and a
-    template whose ``dem_filename=`` line is the FIRST line or is indented. Why: TRITON keeps
-    the first value it parses for a key and trims each line before parsing, so a second
-    template line that survives would still be read as the output folder, and an indented
-    ``dem_filename=`` is an active line to TRITON. What kills it: removing only the first
-    active line, or anchoring the insertion on a newline before ``dem_filename=`` so a
-    first-line or indented one is missed. Second correct implementation: rebuilding the cfg
-    from a parsed key table with hhemt's folder written first; the assertions read only the
-    active lines, the line after hhemt's, and which values the notice names.
+    Class: cfg text whose ``output_folder`` lines are positioned unlike a single line just above
+    ``dem_filename=``: two active lines, one indented with spaces around ``=``, a text whose
+    ``dem_filename=`` line is the FIRST line or is indented, and one with only a ``#`` comment.
+    Why: TRITON keeps the first value it parses for a key and trims each line before parsing.
+    What kills it: removing only the first active line, or anchoring the insertion on a newline
+    before ``dem_filename=``. Second correct implementation: rebuilding the cfg from a parsed key
+    table; the assertions read only the active lines, the line after hhemt's, and the removed values.
     """
-    scen, cfg = _scenario_for_coupled_cfg(tmp_path, monkeypatch, rim_from_dem=False)
-    scen.event_iloc = 7
-    scen._system.cfg_system.triton_swmm_configuration_template.write_text(template)
-    scen._generate_TRITON_SWMM_cfg()
-    lines = cfg.read_text().splitlines()
+    from hhemt.scenario import set_hhemt_output_folder
+
+    text, removed = set_hhemt_output_folder(template, "out_tritonswmm")
+    lines = text.splitlines()
     active = [i for i, line in enumerate(lines) if line.lstrip().startswith("output_folder")]
     assert [lines[i] for i in active] == ['output_folder="out_tritonswmm"'], lines
     assert lines[active[0] + 1].lstrip().startswith("dem_filename="), lines
-    out = capsys.readouterr().out
-    assert ("output_folder is managed by hhemt" in out) == bool(removed_values), out
-    for value in removed_values:
-        assert repr(value) in out, out
+    assert removed == removed_values
+    assert ("#output_folder=x" in lines) == ("#output_folder=x" in template)
 
 
 # ---------------------------------------------------------------------------

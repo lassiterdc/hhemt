@@ -46,9 +46,16 @@ The template carries the names of the Norfolk weather file. Replace the values w
 weather_timeseries: /path/to/events.nc
 weather_events_to_simulate: /path/to/events_to_simulate.csv
 weather_event_indices: [year, event_type, event_id]
-weather_time_series_storm_tide_datavar: waterlevel_m
 weather_time_series_timestep_dimension_name: timestep
 weather_time_series_spatial_mean_rainfall_datavar: mm_per_hr
+```
+
+The water level of each external-boundary record comes from a weather variable that `water_level_boundary_outfall_variables` names for each outfall the record replaces. `water_level_boundary_variable_units` and `water_level_boundary_variable_datum_offsets` state the unit and the datum offset of each such variable.
+
+```yaml
+water_level_boundary_outfall_variables: {E143250: waterlevel_m, E147007: waterlevel_m}
+water_level_boundary_variable_units: {waterlevel_m: m}
+water_level_boundary_variable_datum_offsets: {waterlevel_m: 0}
 ```
 
 Set `hhemt_sha` to the full 40-hex commit of hhemt that you run. `git rev-parse HEAD` in your clone prints the hash. The template carries a placeholder. The field has no default, and every process that constructs the analysis refuses to start when the running toolkit is at a different commit.

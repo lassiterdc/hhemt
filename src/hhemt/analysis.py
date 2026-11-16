@@ -322,11 +322,7 @@ def _systems_run_by(analysis) -> list:
 
 def _coupled_system_configs(analysis) -> list:
     """The ``cfg_system`` of every system of ``analysis`` that runs the coupled model on a template."""
-    return [
-        system.cfg_system
-        for system in _systems_run_by(analysis)
-        if system.cfg_system.toggle_tritonswmm_model and system.cfg_system.SWMM_hydraulics is not None
-    ]
+    return [system.cfg_system for system in _systems_run_by(analysis) if system.cfg_system.toggle_tritonswmm_model]
 
 
 #: How many incomplete sim names the resume banner prints before it collapses the rest into a count.
@@ -1026,7 +1022,7 @@ class TRITONSWMM_analysis:
 
         - System config covers paths, toggle dependencies, and model selection
         - Analysis config covers weather data, run-mode consistency, and HPC settings
-        - Data consistency covers event alignment, storm tide data, and units
+        - Data consistency covers event alignment, water-level boundary data, and units
 
         Returns
         -------
@@ -2802,27 +2798,27 @@ class TRITONSWMM_analysis:
             "This is a launch RECEIPT, not an execution verdict (Gotcha 69): read the log.",
         )
 
-    def _inflow_check_templates(self) -> list[Path]:
-        """Every distinct SWMM template a SWMM run of this invocation will read, and no other.
+    def _inflow_check_models(self) -> list:
+        """Every distinct SWMM model a SWMM run of this invocation will read, as ``(label, text)`` pairs, and no other.
 
-        A system's ``SWMM_hydraulics`` is read when its coupled model is on, and its
-        ``SWMM_full`` when its standalone SWMM model is on. A sensitivity analysis reads the
-        systems of ``self.sensitivity.unique_system_targets`` rather than the primary's alone,
-        because a ``system.*`` overlay column can switch either model on, or name another
-        template, for one row; the primary's templates are included exactly when some target
-        resolves to the primary system.
+        A system's hydraulics role (derived from ``SWMM_model``) is read when its coupled model is on, and its
+        full role when its standalone SWMM model is on. A sensitivity analysis reads the systems of
+        ``self.sensitivity.unique_system_targets`` rather than the primary's alone, because a ``system.*``
+        overlay column can switch either model on, or name another model, for one row; the primary's models
+        are included exactly when some target resolves to the primary system.
         """
-        templates: list[Path] = []
+        from .scenario import swmm_role_inp
+
+        models: list = []
         for system in _systems_run_by(self):
             cfg = system.cfg_system
-            if cfg.toggle_tritonswmm_model and cfg.SWMM_hydraulics is not None:
-                templates.append(Path(cfg.SWMM_hydraulics))
-            if cfg.toggle_swmm_model and cfg.SWMM_full is not None:
-                templates.append(Path(cfg.SWMM_full))
-        distinct: list[Path] = []
-        for path in templates:
-            if path not in distinct:
-                distinct.append(path)
+            for on, role in ((cfg.toggle_tritonswmm_model, "hydraulics"), (cfg.toggle_swmm_model, "full")):
+                if on:
+                    models.append((Path(cfg.SWMM_model), swmm_role_inp(cfg, role, self.cfg_analysis)))
+        distinct: list = []
+        for label, text in models:
+            if not any(label == lab and text == tx for lab, tx in distinct):
+                distinct.append((label, text))
         return distinct
 
     def _refuse_undefined_inflow_nodes(self) -> None:
@@ -2834,47 +2830,33 @@ class TRITONSWMM_analysis:
         """
         from .scenario import undefined_inflow_nodes
 
-        for template in self._inflow_check_templates():
-            undefined = undefined_inflow_nodes(template)
+        for label, text in self._inflow_check_models():
+            undefined = undefined_inflow_nodes(text)
             if undefined:
                 raise ConfigurationError(
-                    field="SWMM_hydraulics / SWMM_full",
+                    field="SWMM_model",
                     message=(
-                        f"SWMM template {template} has inflow lines naming node(s) that no "
+                        f"SWMM model {label} has inflow lines naming node(s) that no "
                         f"[JUNCTIONS], [OUTFALLS], [STORAGE] or [DIVIDERS] line defines: {undefined}. "
                         "SWMM would stop on this line with ERROR 209 (undefined object); SWMM's "
                         "report labels this section [INFLOW]."
                     ),
-                    config_path=template,
+                    config_path=label,
                 )
 
     def _refuse_invalid_coupling_declaration(self) -> None:
         """Refuse, before any job is submitted, a coupled system whose coupling declaration is invalid.
 
-        Three refusals, checked per coupled system in this order: a TRITON cfg template that
-        already sets ``swmm_coupling_nodes``, which the toolkit writes itself, so two sources
-        of one declaration would disagree silently; the one-node-per-DEM-cell option under a
+        Two refusals, checked per coupled system in this order: the one-node-per-DEM-cell option under a
         declared mode, where the option would silently remove declared nodes; and a
         coupling-node file whose names are undefined, repeated, uncoordinated, absent or not
         junctions. The solver repeats the file checks at startup, but only after the job has
         queued. Runs before the empty-candidate and grid checks, so an empty file is refused
         here and named as an empty file.
         """
-        from .scenario import coupling_node_file_problems, triton_cfg_sets_coupling_nodes
+        from .scenario import coupling_node_file_problems
 
         for cfg in _coupled_system_configs(self):
-            cfg_template = Path(cfg.triton_swmm_configuration_template)
-            if triton_cfg_sets_coupling_nodes(cfg_template):
-                raise ConfigurationError(
-                    field="swmm_coupling_mode",
-                    message=(
-                        f"TRITON cfg template {cfg_template} sets swmm_coupling_nodes, which the toolkit "
-                        "writes itself for every coupled scenario. Remove that line from the template and "
-                        "declare coupling nodes with system_config.swmm_coupling_mode (and "
-                        "swmm_coupling_nodes_file for a list)."
-                    ),
-                    config_path=cfg_template,
-                )
             mode = cfg.swmm_coupling_mode
             if mode != "legacy" and self.cfg_analysis.one_coupled_inflow_node_per_dem_cell:
                 raise ConfigurationError(
@@ -2888,7 +2870,7 @@ class TRITONSWMM_analysis:
                     ),
                     config_path=getattr(self, "analysis_config_yaml", None),
                 )
-            causes = coupling_node_file_problems(cfg)
+            causes = coupling_node_file_problems(cfg, self.cfg_analysis)
             if causes:
                 path = cfg.swmm_coupling_nodes_file
                 raise ConfigurationError(
@@ -2915,12 +2897,13 @@ class TRITONSWMM_analysis:
             coupling_candidate_junction_coordinates,
             keyless_inflows_read,
             require_triton_couples_the_listed_nodes,
+            swmm_role_inp,
         )
 
         environment = self.cfg_analysis.execution_environment
         for cfg in _coupled_system_configs(self):
-            template = Path(cfg.SWMM_hydraulics)
-            listed = [name for name, _x, _y in coupling_candidate_junction_coordinates(cfg)]
+            template = swmm_role_inp(cfg, "hydraulics", self.cfg_analysis)
+            listed = [name for name, _x, _y in coupling_candidate_junction_coordinates(cfg, self.cfg_analysis)]
             if any("$" in n for n in listed) or any("$" in n for n in keyless_inflows_read(template)):
                 continue
             require_triton_couples_the_listed_nodes(
@@ -2950,13 +2933,13 @@ class TRITONSWMM_analysis:
         }
         for cfg in _coupled_system_configs(self):
             mode = cfg.swmm_coupling_mode
-            if mode not in causes or coupling_candidates(cfg):
+            if mode not in causes or coupling_candidates(cfg, cfg_analysis=self.cfg_analysis):
                 continue
-            template = Path(cfg.SWMM_hydraulics)
+            template = Path(cfg.SWMM_model)
             raise ConfigurationError(
                 field="swmm_coupling_mode",
                 message=(
-                    f"SWMM template {template} declares no coupling node: {causes[mode]}. For a "
+                    f"SWMM model {template} declares no coupling node: {causes[mode]}. For a "
                     "surface-only run, turn off toggle_tritonswmm_model and run the TRITON-only "
                     "model (toggle_triton_model)."
                 ),
@@ -2981,9 +2964,9 @@ class TRITONSWMM_analysis:
 
         for system in _systems_run_by(self):
             cfg = system.cfg_system
-            if not (cfg.toggle_tritonswmm_model and cfg.SWMM_hydraulics is not None):
+            if not cfg.toggle_tritonswmm_model:
                 continue
-            nodes = coupling_candidate_junction_coordinates(cfg)
+            nodes = coupling_candidate_junction_coordinates(cfg, self.cfg_analysis)
             if not nodes:
                 continue
             header = None
@@ -3000,13 +2983,13 @@ class TRITONSWMM_analysis:
             if not outside:
                 continue
             xll, yll, cell = header["xllcorner"], header["yllcorner"], header["cellsize"]
-            template = Path(cfg.SWMM_hydraulics)
+            template = Path(cfg.SWMM_model)
             listed = "; ".join(f"{name} ({x}, {y})" for name, x, y in outside)
             field = "swmm_coupling_nodes_file" if cfg.swmm_coupling_mode == "list" else "swmm_coupling_mode"
             raise ConfigurationError(
                 field=field,
                 message=(
-                    f"SWMM template {template}: {len(outside)} coupling node(s) lie outside the TRITON grid "
+                    f"SWMM model {template}: {len(outside)} coupling node(s) lie outside the TRITON grid "
                     f"(x {xll} to {xll + header['ncols'] * cell}, y {yll} to {yll + header['nrows'] * cell}): "
                     f"{listed}. TRITON-SWMM would stop on each at startup "
                     f'("Node_swmm {outside[0][0]} is out of bounds"). List only the nodes inside the domain in a '
@@ -3723,7 +3706,7 @@ class TRITONSWMM_analysis:
         # points at the short weather. An in-memory
         # setattr would be discarded at that reload. Scenario-prep
         # regenerates the SWMM .inp window from the sliced weather automatically
-        # (swmm_utils.create_swmm_inp_from_template), so no separate .inp-edit pass is needed.
+        # (swmm_utils._swmm_fill_values), so no separate .inp-edit pass is needed.
         test_subs = self._build_test_analyses(
             reps,
             n_reporting_timesteps=n_reporting_timesteps,
@@ -3846,7 +3829,7 @@ class TRITONSWMM_analysis:
         prepare-scenario runner reloads points at the short weather (an
         in-memory setattr would be silently discarded at that reload).
         Scenario-prep regenerates the SWMM .inp window from the sliced weather
-        (``swmm_utils.create_swmm_inp_from_template``), so no .inp-edit pass is needed.
+        (``swmm_utils._swmm_fill_values``), so no .inp-edit pass is needed.
         ``analysis_dir`` and ``experiment_cfg_yaml`` are ALSO carried through the overlay:
         ``analysis_config.validate_analysis_requirements`` requires both when
         ``is_experiment_member`` is True,

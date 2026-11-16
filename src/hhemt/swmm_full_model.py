@@ -40,23 +40,14 @@ class SWMMFullModelBuilder:
         self.cfg_analysis = scenario._analysis.cfg_analysis
         self.system = scenario._system
 
-    def create_full_model_from_template(self, swmm_model_template, destination: Path) -> None:
+    def create_full_model(self, destination: Path) -> None:
         """
-        Create full SWMM model from template file.
+        Write the full SWMM role model of this scenario to ``destination``.
 
-        The template is filled with scenario-specific values including time series data,
-        rain gauges, simulation timing, and reporting intervals, and the result is written
-        to ``destination`` as an .inp file.
-
-        Parameters
-        ----------
-        swmm_model_template : Path
-            Path to the full SWMM template file
-        destination : Path
-            Path where the filled template should be written (typically full.inp)
-
+        The role is derived from ``system_config.SWMM_model`` and only the forcing the toolkit owns
+        (simulation window, rain gauges, rain and water-level series) is rewritten for this scenario.
         """
-        from .swmm_utils import create_swmm_inp_from_template
+        from .swmm_utils import write_swmm_role_model
 
-        create_swmm_inp_from_template(self.scenario, swmm_model_template, destination)
+        write_swmm_role_model(self.scenario, "full", destination)
         return

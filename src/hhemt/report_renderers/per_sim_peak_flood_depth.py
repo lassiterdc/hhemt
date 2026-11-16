@@ -1599,11 +1599,7 @@ def _build_peak_flood_depth_figure(
 
     # ---- Hydrology panel: rainfall (row 1, col 3) -----------------------
     rain_units = units.rainfall_provenance_units(analysis.cfg_analysis.rainfall_units)
-    bc_units = (
-        units.bc_provenance_units(analysis.cfg_analysis.storm_tide_units)
-        if analysis.cfg_analysis.storm_tide_units
-        else ""
-    )
+    bc_units = units.BC_WATER_LEVEL_UNITS
     rain_ref = ProvenanceRef(
         source_path=weather_rel,
         variable=rain_var,
@@ -1616,8 +1612,8 @@ def _build_peak_flood_depth_figure(
     times_hr = np.asarray(times_min, dtype=float) / units.MINUTES_PER_HOUR
     bc_ref = ProvenanceRef(
         source_path=weather_rel,
-        variable=bc_var if bc_var is not None else "",
-        attrs=bc_attrs,
+        variable=", ".join(bc_var),
+        attrs=bc_attrs[0] if bc_attrs else {},
         selection={"event_iloc": int(event_iloc)},
     )
     # Both Flood Drivers traces and both wrapped y titles come from ONE shared helper,
@@ -1646,7 +1642,6 @@ def _build_peak_flood_depth_figure(
         bc_water_level=bc_water_level,
         panel_cfg=panel_cfg,
         rainfall_units=analysis.cfg_analysis.rainfall_units,
-        storm_tide_units=analysis.cfg_analysis.storm_tide_units,
         axis_extent_px=_col3_panel_h_px,
         time_axis_title=units.TIME_AXIS_FROM_EVENT_START_HOURS,
     )

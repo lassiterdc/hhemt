@@ -62,12 +62,12 @@ def _prepare(tmp_path, monkeypatch, *, coupled, written_list=None, one_per_cell=
     cfg_system.toggle_tritonswmm_model = coupled
     cfg_system.toggle_swmm_model = False
     cfg_system.toggle_use_swmm_for_hydrology = False
-    cfg_system.SWMM_hydraulics = template
+    cfg_system.SWMM_model = template
     scen._analysis.cfg_analysis.one_coupled_inflow_node_per_dem_cell = one_per_cell
 
-    def create_hydraulics(source, dest):
-        """Stand in for the template step: the model is copied unchanged."""
-        Path(dest).write_text(Path(source).read_text())
+    def create_hydraulics(dest):
+        """Stand in for the role-model step: the model is written unchanged."""
+        Path(dest).write_text(template.read_text())
 
     def select_coupling_nodes(verbose=False):
         """Stand in for the coupled selection step, which is what writes the list."""
@@ -83,7 +83,7 @@ def _prepare(tmp_path, monkeypatch, *, coupled, written_list=None, one_per_cell=
         write_swmm_waterlevel_dat_files=lambda: None,
     )
     scen._input_generator = SimpleNamespace(
-        create_hydraulics_model_from_template=create_hydraulics,
+        create_hydraulics_model=create_hydraulics,
         create_external_boundary_condition_files=lambda: None,
         update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell=select_coupling_nodes,
     )

@@ -1137,9 +1137,9 @@ def assert_hydraulic_components_exercised(analysis) -> None:
                         failures.append(f"event {event_iloc} swmm: link flow variance is zero")
 
     weather_ds = xr.open_dataset(analysis.cfg_analysis.weather_timeseries)
-    bc_var = analysis.cfg_analysis.weather_time_series_storm_tide_datavar
-    if bc_var in weather_ds and float(weather_ds[bc_var].std()) <= 0:
-        failures.append("storm-tide boundary variance is zero")
+    for bc_var in dict.fromkeys((analysis.cfg_analysis.water_level_boundary_outfall_variables or {}).values()):
+        if bc_var in weather_ds and float(weather_ds[bc_var].std()) <= 0:
+            failures.append(f"water-level boundary variance is zero for {bc_var}")
 
     if failures:
         raise AssertionError("assert_hydraulic_components_exercised failed:\n  - " + "\n  - ".join(failures))

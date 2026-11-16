@@ -47,6 +47,10 @@ class SysPaths(MainDataClass):
 
     system_datatree_zarr: Path | None = None
 
+    # The directory holding one file per series of the base SWMM model: every series the model defines inline is
+    # written there once, keyed by the model's content hash, so no SWMM model the toolkit writes holds series data.
+    swmm_model_series_dir: Path | None = None
+
 
 @dataclass
 class AnalysisPaths(MainDataClass):
@@ -84,7 +88,7 @@ class ScenarioPaths(MainDataClass):
     swmm_full_inp: Path
     swmm_full_rpt_file: Path | None
     swmm_full_out_file: Path | None
-    extbc_tseries: Path
+    extbc_dir: Path
     extbc_loc: Path
     hyg_timeseries: Path
     hyg_locs: Path
@@ -140,3 +144,11 @@ class ScenarioPaths(MainDataClass):
     # The six system series of the standalone SWMM binary output (flood and water-balance quantities, D19). The coupled
     # model has no such store, so there is no coupled counterpart of this path.
     output_swmm_only_system_time_series: Path | None = None
+
+    def extbc_tseries(self, record_index: int) -> Path:
+        """The TRITON level-versus-time file of one ``water_level`` record, ``extbc/tseries_{k}.txt``."""
+        return self.extbc_dir / f"tseries_{record_index:03d}.txt"
+
+    def water_level_dat(self, record_index: int) -> Path:
+        """The SWMM level file of one ``water_level`` record, ``dats/water_level_{k}.dat``."""
+        return self.dir_weather_datfiles / f"water_level_{record_index:03d}.dat"

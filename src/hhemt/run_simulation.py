@@ -34,6 +34,7 @@ from hhemt.swmm_markers import (
     SWMM_ERROR_MARKER,
     producer_check,
 )
+from hhemt.triton_cfg import triton_cfg_settings
 from hhemt.utils import read_text_file_as_list_of_strings
 
 if TYPE_CHECKING:
@@ -452,6 +453,64 @@ def failed_write_resume_message(f_step: int, n_step: int, failed_replay: bool) -
 #: why the toolkit matches on it rather than on a return code: a failed MPI launch exits
 #: with a generic nonzero status that says nothing about which component failed.
 PMIX_GDS_FAILURE_TEXT = "Disabling gds/shmem2 via PMIX_MCA_gds=hash"
+
+
+def omp_thread_count(cfg_analysis) -> int:
+    """The OpenMP thread count a run launches with, by run mode (1.h.2, DR-36).
+
+    ``openmp``, ``hybrid`` and ``gpu`` runs use ``n_omp_threads``; ``serial`` and ``mpi`` runs use 1. The launch
+    environment (``OMP_NUM_THREADS``) and the ``swmm_threads`` check (V24) both call this one function, so the
+    two cannot disagree about what a run mode allows.
+    """
+    if cfg_analysis.run_mode in ("openmp", "hybrid", "gpu"):
+        return int(cfg_analysis.n_omp_threads or 1)
+    return 1
+
+
+def triton_launch_env(cfg_analysis, cfg_hpc_system, run_mode: str, *, cray: bool = False) -> tuple[dict, dict]:
+    """The environment the TRITON launch adds for the TRITON settings that are config fields.
+
+    Returns ``(env, settings)``: ``env`` maps each exported variable to its value (a field left at its default
+    exports nothing, except the MPI NIC policy, which keeps the toolkit's BLOCK for MPI and hybrid runs), and
+    ``settings`` is the cfg-side record. A GPU-aware MPI on a run that uses no GPU is refused earlier, when the two
+    configs are validated (``validation.validate_analysis_config``). A run with no HPC system config (a local run)
+    launches as one whose HPC config holds its defaults: no machine variable is exported.
+    """
+    env: dict[str, str] = {}
+    if cfg_hpc_system is None:
+        gpu_aware_mpi, nic, hsa_xnack, cuda_managed_force_device_alloc = False, None, None, None
+    else:
+        gpu_aware_mpi = cfg_hpc_system.gpu_aware_mpi
+        nic = cfg_hpc_system.mpich_ofi_nic_policy
+        hsa_xnack = cfg_hpc_system.hsa_xnack
+        cuda_managed_force_device_alloc = cfg_hpc_system.cuda_managed_force_device_alloc
+    if gpu_aware_mpi and cray:
+        env["MPICH_GPU_SUPPORT_ENABLED"] = "1"
+    if nic is not None:
+        env["MPICH_OFI_NIC_POLICY"] = nic
+    elif run_mode in ("mpi", "hybrid"):
+        env["MPICH_OFI_NIC_POLICY"] = "BLOCK"
+    for name, value in (
+        ("HSA_XNACK", hsa_xnack),
+        ("CUDA_MANAGED_FORCE_DEVICE_ALLOC", cuda_managed_force_device_alloc),
+    ):
+        if value is not None:
+            env[name] = "1" if value else "0"
+    for name, flag in (
+        ("KOKKOS_PRINT_CONFIGURATION", cfg_analysis.TRITON_kokkos_print_configuration),
+        ("KOKKOS_DISABLE_WARNINGS", cfg_analysis.TRITON_kokkos_disable_warnings),
+        ("KOKKOS_TUNE_INTERNALS", cfg_analysis.TRITON_kokkos_tune_internals),
+    ):
+        if flag:
+            env[name] = "1"
+    for name, value in (
+        ("KOKKOS_TOOLS_LIBS", cfg_analysis.TRITON_kokkos_tools_libs),
+        ("KOKKOS_TOOLS_ARGS", cfg_analysis.TRITON_kokkos_tools_args),
+    ):
+        if value is not None:
+            env[name] = value
+    env.update(cfg_analysis.TRITON_extra_env)
+    return env, triton_cfg_settings(cfg_analysis, cfg_hpc_system)
 
 
 class PMIxSharedMemoryError(SimulationError):
@@ -1602,7 +1661,7 @@ class TRITONSWMM_run:
         # OpenMP configuration
         # ----------------------------
         if run_mode in ("openmp", "hybrid"):
-            env["OMP_NUM_THREADS"] = str(n_omp_threads)
+            env["OMP_NUM_THREADS"] = str(omp_thread_count(self._analysis.cfg_analysis))
             env["OMP_PROC_BIND"] = "true"
             env["OMP_PLACES"] = "cores"
         else:
@@ -1649,9 +1708,24 @@ class TRITONSWMM_run:
                 gpu_list = ",".join(str(i) for i in range(n_gpus))  # type: ignore
                 env["HIP_VISIBLE_DEVICES"] = gpu_list
                 env["CUDA_VISIBLE_DEVICES"] = gpu_list
-            env["OMP_NUM_THREADS"] = str(n_omp_threads)  # optional: threads per GPU
+            env["OMP_NUM_THREADS"] = str(omp_thread_count(self._analysis.cfg_analysis))  # threads per GPU
             env["OMP_PROC_BIND"] = "true"
             env["OMP_PLACES"] = "cores"
+        # ----------------------------
+        # TRITON settings that are config fields
+        # ----------------------------
+        if model_type != "swmm":
+            _triton_env, _launch_settings = triton_launch_env(
+                self._analysis.cfg_analysis,
+                self._analysis.cfg_hpc_system,
+                run_mode,
+                cray=bool(cspec is not None and cspec.cray_mpich_abi_module),
+            )
+            env.update(_triton_env)
+            self._scenario.get_log(model_type).triton_launch_settings.set(
+                {"cfg": _launch_settings, "env": dict(_triton_env)}
+            )
+
         # ----------------------------
         # Build command
         # ----------------------------

@@ -31,8 +31,9 @@ from .raw import NODE_JUNCTION, NODE_OUTFALL, Dimensions, Network
 TOKEN = "@GOLDEN_ROOT@"
 # SPEC.md 3: the value at the commit that regenerates the golden (29 at the commit that adds V0029, after V0028 and the
 # consolidated-metadata index of V0027; 30 at the commit that adds V0030; 31 at V0031, which moves each summary group
-# under a `summary` branch). A literal, because this module imports nothing from hhemt.
-LAYOUT_VERSION = 31
+# under a `summary` branch; 32 at V0032, which retires the SWMM and TRITON cfg templates; 33 at V0033, which gives
+# the boundary names no coastal term). A literal, because this module imports nothing from hhemt.
+LAYOUT_VERSION = 34
 CELL_SIZE_M = 10.0  # SPEC.md 2 (cell size); the config field target_dem_resolution is in the SPEC.md 5.1 table
 FIXED_TIME = "2000-01-01T00:00:00+00:00"
 MODELS = ("triton", "tritonswmm", "swmm")  # model_type values of the flag and log names
@@ -286,15 +287,9 @@ def write_system_inputs(root: Path, network: Network, dims: Dimensions, *, event
     }
     write_json(inputs / "watershed.geojson", poly)
     write_json(inputs / "boundary.geojson", line)
-    for name in ("swmm_hydraulics", "swmm_hydrology", "swmm_full"):
-        write_text(inputs / f"{name}.inp", inp_text(network, dims, template=True))
+    write_text(inputs / "swmm_model.inp", inp_text(network, dims, template=False))
     rows = "".join(f"{s.id},RG_synth\n" for s in network.subcatchments)
     write_text(inputs / "subcatchment_raingage_mapping.csv", "subcatchment_id,raingage_id\n" + rows)
-    write_text(
-        inputs / "tritonswmm.cfg",
-        "# TRITON-SWMM config file template - ${CASE_DESC}\nprint_option=huv\nmax_value_print_option=h\n"
-        "time_step=1.0\ncourant=0.5\nhextra=0.001\n",
-    )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         _weather_dataset(event_indices, dims).to_netcdf(inputs / "weather.nc")
@@ -315,11 +310,10 @@ def system_config_dict(arms: tuple[str, ...] = MODELS) -> dict[str, Any]:
         "system_directory": TOKEN,
         "watershed_gis_polygon": tok("inputs", "watershed.geojson"),
         "DEM_fullres": tok("inputs", "dem_fullres.asc"),
-        "SWMM_hydraulics": tok("inputs", "swmm_hydraulics.inp"),
+        "SWMM_model": tok("inputs", "swmm_model.inp"),
         "TRITONSWMM_software_directory": tok("_software", "triton"),
         "TRITONSWMM_git_URL": "https://github.com/lassiterdc/triton.git",
         "SWMM_software_directory": tok("_software", "swmm"),
-        "triton_swmm_configuration_template": tok("inputs", "tritonswmm.cfg"),
         "toggle_tritonswmm_model": "tritonswmm" in arms,
         "toggle_triton_model": "triton" in arms,
         "toggle_swmm_model": "swmm" in arms,
@@ -328,10 +322,8 @@ def system_config_dict(arms: tuple[str, ...] = MODELS) -> dict[str, Any]:
         "constant_mannings": 0.035,
         "target_dem_resolution": 10.0,
         "crs": {"horizontal_epsg": 3857, "vertical_epsg": 5703},
-        "SWMM_hydrology": tok("inputs", "swmm_hydrology.inp"),
         "subcatchment_raingage_mapping": tok("inputs", "subcatchment_raingage_mapping.csv"),
         "subcatchment_raingage_mapping_gage_id_colname": "raingage_id",
-        "SWMM_full": tok("inputs", "swmm_full.inp"),
     }
 
 
@@ -345,17 +337,25 @@ def analysis_config_dict(analysis_id: str, *, sensitivity: bool) -> dict[str, An
         "rainfall_units": "mm/hr",
         "run_mode": "serial",
         "toggle_sensitivity_analysis": sensitivity,
-        "toggle_storm_tide_boundary": True,
+        "toggle_external_boundaries": True,
         "weather_events_to_simulate": tok("weather_events_to_simulate.csv"),
         "manhole_diameter": 1.2,
         "manhole_loss_coefficient": 0.1,
         "hydraulic_timestep_s": 1.0,
+        "TRITON_courant_number": 0.5,
+        "TRITON_hextra_m": 0.001,
         "TRITON_reporting_timestep_s": 10.0,
         "open_boundaries": 1,
-        "storm_tide_boundary_line_gis": tok("inputs", "boundary.geojson"),
-        "weather_time_series_storm_tide_datavar": "water_level",
+        "external_boundary_gis": tok("inputs", "boundary.geojson"),
+        "external_boundary_type_attribute": "type",
+        "water_level_boundary_outfall_attribute": "outfall",
+        "water_level_boundary_series_source": "weather_time_series",
+        "water_level_boundary_outfall_variables": {"SYNTH_OUTFALL": "water_level"},
+        "water_level_boundary_variable_units": {"water_level": "m"},
+        "water_level_boundary_variable_datum_offsets": {"water_level": 0},
+        "dem_rim_resolution": "processed",
+        "swmm_outfalls_to_keep": ["dummy_outfall"],
         "weather_time_series_spatial_mean_rainfall_datavar": "RG_synth",
-        "storm_tide_units": "m",
         "multi_sim_run_method": "local",
         "target_processed_output_type": "zarr",
         "local_cpu_cores_for_workflow": 2,
@@ -431,7 +431,7 @@ def scenario_log(event_rel: str, event_iloc: int, event_id: str) -> dict[str, An
         "event_idx": {"event_index": event_iloc},
         "simulation_folder": folder,
         "swmm_rainfall_dat_files": {"RG_synth": f"{folder}/dats/grid-indRG_synth.dat"},
-        "storm_tide_for_swmm": f"{folder}/dats/waterlevel.dat",
+        "water_level_boundary_dats": {"0": f"{folder}/dats/water_level_000.dat"},
         "scenario_creation_complete": True,
         "inp_hydraulics_model_created_successfully": True,
         "inp_full_model_created_successfully": True,
@@ -759,12 +759,12 @@ def write_event_records(
             event_dir / "swmm" / "coupling_nodes.txt",
             "".join(f"{n.id}\n" for n in network.nodes if n.type_code == NODE_JUNCTION),
         )
-    write_text(event_dir / "extbc" / "tseries.txt", "0.0 0.0\n")
+    write_text(event_dir / "extbc" / "tseries_000.txt", "0.0 0.0\n")
     write_text(event_dir / "extbc" / "loc.extbc", "0.0 0.0\n")
     write_text(event_dir / "strmflow" / "tseries.hyg", "0.0 0.0\n")
     write_text(event_dir / "strmflow" / "loc.txt", "0.0 0.0\n")
     write_text(event_dir / "dats" / "grid-indRG_synth.dat", "RG_synth 2000 1 1 0 0 0.0\n")
-    write_text(event_dir / "dats" / "waterlevel.dat", "2000 1 1 0 0 0.0\n")
+    write_text(event_dir / "dats" / "water_level_000.dat", "2000 1 1 0 0 0.0\n")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         wx = _weather_dataset([event_iloc], dims).isel(event_index=0, drop=True)

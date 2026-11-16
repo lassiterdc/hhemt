@@ -25,6 +25,7 @@ from hhemt.scenario_records import ScenarioRemovedError
 from hhemt.subprocess_utils import run_subprocess_with_tee
 from hhemt.swmm_full_model import SWMMFullModelBuilder
 from hhemt.swmm_runoff_modeling import SWMMRunoffModeler, refuse_non_cms_flow_units, refuse_us_flow_units
+from hhemt.triton_cfg import OBSERVATION_FILE_NAME, render_triton_cfg, triton_cfg_settings, triton_input_settings
 
 lock = threading.Lock()
 
@@ -34,7 +35,7 @@ def _assert_scenario_forcing_window_agreement(scenario) -> None:
 
     Raises ProcessingError naming the disagreeing pair. Skips silently when an
     artifact a given toggle never produces is absent (SWMM-only runs have no
-    TRITON cfg; toggle_storm_tide_boundary=False produces no extbc file).
+    TRITON cfg; toggle_external_boundaries=False produces no extbc file).
     """
 
     def _data_rows(path) -> int:
@@ -48,9 +49,17 @@ def _assert_scenario_forcing_window_agreement(scenario) -> None:
 
     observed: dict[str, int] = {}
 
-    extbc = scenario.scen_paths.extbc_tseries
-    if extbc is not None and Path(extbc).exists():
-        observed["extbc/tseries.txt"] = _data_rows(extbc)
+    # A weather-sourced level file has one row per weather step, so it agrees with the rain files and the window.
+    # A level file read from the SWMM model has the model series' own steps and is held to the window by the
+    # coverage check that wrote it, so it takes no part in the row-count agreement.
+    extbc_dir = scenario.scen_paths.extbc_dir
+    if (
+        scenario._analysis.cfg_analysis.water_level_boundary_series_source == "weather_time_series"
+        and extbc_dir is not None
+        and Path(extbc_dir).exists()
+    ):
+        for extbc in sorted(Path(extbc_dir).glob("tseries_*.txt")):
+            observed[f"extbc/{extbc.name}"] = _data_rows(extbc)
 
     dat_dir = scenario.scen_paths.dir_weather_datfiles
     if dat_dir is not None and Path(dat_dir).exists():
@@ -120,11 +129,11 @@ def _assert_scenario_forcing_window_agreement(scenario) -> None:
 def _forcing_variables(cfg_analysis, cfg_system) -> list[str]:
     """The variables whose completeness the solvers actually require -- RULE (1).
 
-    The gage columns resolved through subcatchment_raingage_mapping, plus the storm-tide
-    datavar. NOT weather_time_series_spatial_mean_rainfall_datavar: no forcing writer
+    The gage columns resolved through subcatchment_raingage_mapping, plus the weather variables the
+    water-level boundary maps its outfalls to. NOT weather_time_series_spatial_mean_rainfall_datavar: no forcing writer
     reads it (its only consumer is the hydrology panel), so checking it would fail a
     simulation because a figure's input is short. NOT every timestep-carrying variable:
-    tide_m / surge_m are read by nothing and would false-fail a valid run.
+    the other weather variables are read by nothing and would false-fail a valid run.
 
     Toggle-derived, because the set must match which writers actually run.
     """
@@ -135,8 +144,11 @@ def _forcing_variables(cfg_analysis, cfg_system) -> list[str]:
         col = cfg_system.subcatchment_raingage_mapping_gage_id_colname
         df = pd.read_csv(cfg_system.subcatchment_raingage_mapping)
         out.extend(str(g) for g in df[col].unique())
-    if cfg_analysis.toggle_storm_tide_boundary and cfg_analysis.weather_time_series_storm_tide_datavar:
-        out.append(cfg_analysis.weather_time_series_storm_tide_datavar)
+    if (
+        cfg_analysis.toggle_external_boundaries
+        and cfg_analysis.water_level_boundary_series_source == "weather_time_series"
+    ):
+        out.extend(dict.fromkeys((cfg_analysis.water_level_boundary_outfall_variables or {}).values()))
     return out
 
 
@@ -189,7 +201,7 @@ def _assert_forcing_complete(ds, time_dim, event_indexers, weather_path, forcing
 def _weather_step_seconds(ds, time_dim) -> float:
     """The weather axis interval, with a UNIFORMITY ASSERTION rather than a mode.
 
-    swmm_utils.create_swmm_inp_from_template takes `.mode()` of the coordinate diff, which
+    swmm_utils._swmm_fill_values takes `.mode()` of the coordinate diff, which
     silently tolerates a non-uniform axis and misdescribes the interval to SWMM while the
     .dat rows carry true stamps. The equality guard in
     `_assert_scenario_forcing_window_agreement` consumes this quantity, so taking a mode
@@ -537,6 +549,17 @@ SWMM_QUALITY_SNAPSHOT_SHAS = frozenset(
 )
 
 
+def swmm_node_rim_key_is_written(cfg_analysis) -> bool:
+    """Whether the TRITON cfg carries ``swmm_node_rim_from_dem=1``.
+
+    True when ``swmm_node_rim_from_dem`` is on and the processed DEM is the one chosen: TRITON then sets every coupled
+    node's rim from the grid it loads. With ``dem_rim_resolution: full`` the toolkit writes every coupling node's SWMM
+    depth from the full-resolution DEM and writes no key, because TRITON would overwrite those rims from the
+    processed grid.
+    """
+    return bool(cfg_analysis.swmm_node_rim_from_dem) and getattr(cfg_analysis, "dem_rim_resolution", None) != "full"
+
+
 def append_swmm_node_rim_from_dem(cfg_content: str, enabled: bool) -> str:
     """Append the line ``swmm_node_rim_from_dem=1`` when ``enabled``, else return the text UNCHANGED.
 
@@ -595,6 +618,9 @@ SWMM_COUPLING_NODES_CONTAINER_SHAS = frozenset(
         "a146fb6ed7c22790fb9a15ff854c446db4519ad2",
         "bd18215972c348020d53b3a8a1a64ee6266cae28",
         "bb13ea28603d50879f8d85cd041c17f440fbdb2b",
+        # The head of ORNL's ``triton-swmm`` branch (measured with ``git ls-remote``), whose ``src/config_utils.h``
+        # carries ``argsd("swmm_coupling_nodes"``.
+        "faba223212408f04b7a3dbf6580adedf4a4e6b13",
     }
 )
 
@@ -602,7 +628,8 @@ SWMM_COUPLING_NODES_CONTAINER_SHAS = frozenset(
 #: ``src/swmm_triton.h`` from the one carrying ``line.find("INFLOWS")`` through the next one
 #: carrying ``infile.close()``, each ending in a newline, carriage returns kept (the file's lines
 #: end in CRLF). Byte-identical at 15eb18a5, b3820a44,
-#: a38338b0, 031ea42b and the head of ORNL's ``triton-swmm`` branch, a57ce39.
+#: a38338b0, 031ea42b and a57ce39, a head ORNL's ``triton-swmm`` branch carried earlier (the current head,
+#: faba2232, reads the key).
 #: ``keyless_inflows_read`` re-implements that block, so a key-less build whose block hashes
 #: otherwise is refused as unrecognized rather than compared against a rule it does not follow.
 KEYLESS_INFLOWS_READ_SHA256 = "e86ed6c13b7813b0e82c0133007f18418a76f4c09fb8d0bd3fe205c5c44324aa"
@@ -659,25 +686,6 @@ def set_hhemt_output_folder(cfg_text: str, folder: str) -> tuple[str, list[str]]
             kept[-1] += "\n"
         kept.append(new_line)
     return "".join(kept), removed
-
-
-def print_output_folder_notice(event_iloc, template, folder: str, removed: list[str]) -> None:
-    """Print, once per cfg built, that a template's ``output_folder`` was replaced, when it differed.
-
-    Nothing is printed when no line was removed or every removed value already named
-    ``folder``. The first differing value is named; when several lines were removed, all
-    their values are listed.
-    """
-    differing = [value for value in removed if value != folder]
-    if not differing:
-        return
-    value = repr(differing[0]) if len(removed) == 1 else repr(removed)
-    print(
-        f"[Scenario {event_iloc}] TRITON cfg template {template} sets output_folder={value}; "
-        f'hhemt replaced it with "{folder}". output_folder is managed by hhemt (out_tritonswmm for '
-        "TRITON-SWMM, out_triton for TRITON-only) and is not a user setting.",
-        flush=True,
-    )
 
 
 def require_dem_rim_capable_triton(
@@ -837,6 +845,38 @@ def triton_coupling_read(*, execution_environment, software_directory, branch_ke
 _C_SPACE = " \t\n\v\f\r"
 
 
+class InpText(str):
+    """SWMM model TEXT, passed where a reader takes the path of a model.
+
+    The runnable-model design derives the role models in memory from ``SWMM_model``, so the
+    run-entry readers below take either a path or this type. Its ``str`` value is the model text.
+    """
+
+
+def _inp_label(source) -> str:
+    """How a message names ``source``: the path, or a note that the text is a derived role model."""
+    return "SWMM_model (derived role model)" if isinstance(source, InpText) else str(source)
+
+
+def _inp_text(source, *, errors: str = "strict") -> str:
+    """The text of ``source`` as bytes decode, line endings untouched."""
+    if isinstance(source, InpText):
+        return str(source)
+    with open(source, encoding="utf-8", errors=errors, newline="") as fh:
+        return fh.read()
+
+
+def swmm_role_inp(cfg_system, role: str, cfg_analysis=None) -> InpText:
+    """The derived ``role`` model of ``cfg_system.SWMM_model`` as readable text.
+
+    ``cfg_analysis`` adds the outfalls an external-boundary water_level record converts to the converted set. The
+    series rows stay inline: this text is read for its nodes and links and is written nowhere.
+    """
+    from hhemt.swmm_utils import swmm_role_text
+
+    return InpText(swmm_role_text(cfg_system, role, cfg_analysis, externalize=False))
+
+
 def keyless_inflows_read(inp_path) -> list[str]:
     """The node names a TRITON build that does not read ``swmm_coupling_nodes`` couples, in order.
 
@@ -847,8 +887,7 @@ def keyless_inflows_read(inp_path) -> list[str]:
     a node with a FLOW line and a pollutant line is read twice. Lines are split on newline only,
     as ``std::getline`` does, and a final newline opens no empty line.
     """
-    with open(inp_path, encoding="utf-8", errors="replace", newline="") as fh:
-        text = fh.read()
+    text = _inp_text(inp_path, errors="replace")
     lines = text.split("\n")
     if text.endswith("\n"):
         lines.pop()
@@ -917,7 +956,8 @@ def require_triton_couples_the_listed_nodes(
         field="TRITONSWMM_branch_key",
         message=(
             f"The TRITON build ({branch_key}) does not read swmm_coupling_nodes, so it couples the nodes "
-            f"named in the [INFLOWS] section of {hydraulics_inp}, reading each once per line, instead of the "
+            f"named in the [INFLOWS] section of {_inp_label(hydraulics_inp)}, reading each once per line, instead "
+            f"of the "
             f"toolkit's coupling list. Listed by the toolkit and not read that many times by the build: "
             f"{toolkit_only}. Read by the build and not listed that many times: {solver_only}. Move "
             "TRITONSWMM_branch_key to a commit that reads swmm_coupling_nodes, or make the two agree."
@@ -1048,7 +1088,7 @@ class TRITONSWMM_scenario:
             swmm_full_rpt_file=(out_swmm / "full.rpt" if out_swmm else None),  # full swmm RPT
             swmm_full_out_file=(out_swmm / "full.out" if out_swmm else None),  # full swmm binary output file
             # external boundary conditions
-            extbc_tseries=sim_folder / "extbc" / "tseries.txt",
+            extbc_dir=sim_folder / "extbc",
             extbc_loc=sim_folder / "extbc" / "loc.extbc",
             # inflow hydrographs
             hyg_timeseries=sim_folder / "strmflow" / "tseries.hyg",
@@ -1309,7 +1349,7 @@ class TRITONSWMM_scenario:
             raise ScenarioRemovedError(self.event_id, "_create_directories")
         """Create all required directories for the scenario."""
         self.scen_paths.dir_weather_datfiles.mkdir(parents=True, exist_ok=True)
-        self.scen_paths.extbc_tseries.parent.mkdir(parents=True, exist_ok=True)
+        self.scen_paths.extbc_dir.mkdir(parents=True, exist_ok=True)
         self.scen_paths.hyg_timeseries.parent.mkdir(parents=True, exist_ok=True)
 
         # Centralized logs directory
@@ -1376,7 +1416,7 @@ class TRITONSWMM_scenario:
         skipped the hydrograph build.
 
         The fallback is the SAME NUMBER, not a substitute for it. Every
-        per-scenario `.inp` is filled by `swmm_utils.create_swmm_inp_from_template`,
+        per-scenario `.inp` is filled by `swmm_utils._swmm_fill_values`,
         which sets START_DATE/START_TIME/END_DATE/END_TIME once
         from one `first_tstep`/`last_tstep` pair, so `hydraulics.inp` -- written
         unconditionally -- carries an identical simulation window by construction.
@@ -1400,7 +1440,6 @@ class TRITONSWMM_scenario:
         hydraulic_timestep_s = self._analysis.cfg_analysis.hydraulic_timestep_s
         TRITON_reporting_timestep_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         open_boundaries = self._analysis.cfg_analysis.open_boundaries
-        triton_swmm_configuration_template = self._system.cfg_system.triton_swmm_configuration_template
 
         if use_constant_mannings:
             const_man_toggle = ""
@@ -1424,6 +1463,15 @@ class TRITONSWMM_scenario:
 
         sim_id_str = self.sim_id_str
 
+        # Observation points and initial-condition rasters, checked against the processed DEM. The location file
+        # goes beside the cfg, which is the scenario's sim_folder (`triton_swmm_cfg=sim_folder / "TRITONSWMM.cfg"`).
+        input_settings = triton_input_settings(
+            self._system.cfg_system,
+            self._analysis.cfg_analysis,
+            dem_path=dem_processed,
+            observation_file=self.scen_paths.triton_swmm_cfg.parent / OBSERVATION_FILE_NAME,
+        )
+
         mapping = dict(
             CASE_DESC=sim_id_str,
             DEM=dem_processed,
@@ -1445,17 +1493,21 @@ class TRITONSWMM_scenario:
             TSTEP_S=hydraulic_timestep_s,
             REPORTING_TSTEP_S=TRITON_reporting_timestep_s,
             OPEN_BOUNDARIES=open_boundaries,
+            TIME_SERIES_FLAG=input_settings["TIME_SERIES_FLAG"],
+            OBSERVATION_LOC_FILE=input_settings["OBSERVATION_LOC_FILE"],
+            **triton_cfg_settings(self._analysis.cfg_analysis, self._analysis.cfg_hpc_system),
+            PRINT_OBSERVATION=input_settings["PRINT_OBSERVATION"],
+            H_INFILE=input_settings["H_INFILE"],
+            QX_INFILE=input_settings["QX_INFILE"],
+            QY_INFILE=input_settings["QY_INFILE"],
         )
-        utils.create_from_template(triton_swmm_configuration_template, mapping, self.scen_paths.triton_swmm_cfg)
+        self.scen_paths.triton_swmm_cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg_content = render_triton_cfg(mapping, coupled=True)
+        self.scen_paths.triton_swmm_cfg.write_text(cfg_content)
 
-        # Post-process: hhemt owns the coupled output folder, whatever the template sets.
-        cfg_content = self.scen_paths.triton_swmm_cfg.read_text()
+        # Post-process: hhemt owns the coupled output folder.
         cfg_as_written = cfg_content
-        cfg_content, removed_folders = set_hhemt_output_folder(cfg_content, "out_tritonswmm")
-        if removed_folders:
-            print_output_folder_notice(
-                self.event_iloc, triton_swmm_configuration_template, "out_tritonswmm", removed_folders
-            )
+        cfg_content, _removed_folders = set_hhemt_output_folder(cfg_content, "out_tritonswmm")
         # The coupled set, declared to TRITON by naming the list preparation wrote. Always
         # written, so TRITON never derives the set from [INFLOWS] itself. Placed before the
         # optional arm-selector lines below, so each of those stays a pure suffix of the cfg.
@@ -1490,9 +1542,8 @@ class TRITONSWMM_scenario:
         # system has none of, so refusing it over the option would stop a run the option does
         # not touch. The line is still appended below whatever the system, so the cfg bytes do
         # not depend on this check; a system that does not say it is uncoupled keeps the check.
-        if self._analysis.cfg_analysis.swmm_node_rim_from_dem and getattr(
-            self._system.cfg_system, "toggle_tritonswmm_model", True
-        ):
+        rim_key = swmm_node_rim_key_is_written(self._analysis.cfg_analysis)
+        if rim_key and getattr(self._system.cfg_system, "toggle_tritonswmm_model", True):
             cfg_system = self._system.cfg_system
             require_dem_rim_capable_triton(
                 execution_environment=self._analysis.cfg_analysis.execution_environment,
@@ -1500,7 +1551,7 @@ class TRITONSWMM_scenario:
                 branch_key=cfg_system.TRITONSWMM_branch_key,
                 recorded_sha=self._system.log.triton_head_sha.get(),
             )
-        cfg_content = append_swmm_node_rim_from_dem(cfg_content, self._analysis.cfg_analysis.swmm_node_rim_from_dem)
+        cfg_content = append_swmm_node_rim_from_dem(cfg_content, rim_key)
         # The coupling-node list this scenario wrote, judged against the filled hydraulics.inp
         # the solver reads: run entry judged the template, which a placeholder can leave open.
         # Judged only for a coupled system, because only prepare_scenario's coupled branch writes
@@ -1546,7 +1597,6 @@ class TRITONSWMM_scenario:
         hydraulic_timestep_s = self._analysis.cfg_analysis.hydraulic_timestep_s
         TRITON_reporting_timestep_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         open_boundaries = self._analysis.cfg_analysis.open_boundaries
-        triton_swmm_configuration_template = self._system.cfg_system.triton_swmm_configuration_template
 
         if use_constant_mannings:
             const_man_toggle = ""
@@ -1571,6 +1621,15 @@ class TRITONSWMM_scenario:
 
         sim_id_str = self.sim_id_str
 
+        # Observation points and initial-condition rasters: the same inputs, checks and location file as the
+        # coupled cfg (both cfgs sit in the scenario's sim_folder, so the file is written to one path).
+        input_settings = triton_input_settings(
+            self._system.cfg_system,
+            self._analysis.cfg_analysis,
+            dem_path=dem_processed,
+            observation_file=self.scen_paths.triton_cfg.parent / OBSERVATION_FILE_NAME,
+        )
+
         # TRITON-only mapping - SWMM is commented out
         mapping = dict(
             CASE_DESC=f"{sim_id_str}_triton_only",
@@ -1593,24 +1652,21 @@ class TRITONSWMM_scenario:
             TSTEP_S=hydraulic_timestep_s,
             REPORTING_TSTEP_S=TRITON_reporting_timestep_s,
             OPEN_BOUNDARIES=open_boundaries,
+            TIME_SERIES_FLAG=input_settings["TIME_SERIES_FLAG"],
+            OBSERVATION_LOC_FILE=input_settings["OBSERVATION_LOC_FILE"],
+            **triton_cfg_settings(self._analysis.cfg_analysis, self._analysis.cfg_hpc_system),
+            PRINT_OBSERVATION=input_settings["PRINT_OBSERVATION"],
+            H_INFILE=input_settings["H_INFILE"],
+            QX_INFILE=input_settings["QX_INFILE"],
+            QY_INFILE=input_settings["QY_INFILE"],
         )
 
-        # Create CFG from template
-        utils.create_from_template(triton_swmm_configuration_template, mapping, self.scen_paths.triton_cfg)
+        # Render the cfg (inp_filename commented out for TRITON-only), then add output_folder
+        self.scen_paths.triton_cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg_content = render_triton_cfg(mapping, coupled=False)
 
-        # Post-process to comment out inp_filename line and add output_folder
-        cfg_content = self.scen_paths.triton_cfg.read_text()
-        cfg_content = cfg_content.replace(
-            'inp_filename="#DISABLED_FOR_TRITON_ONLY"',
-            '#inp_filename=""  # TRITON-only mode (no SWMM coupling)',
-        )
-
-        # hhemt owns the TRITON-only output folder, whatever the template sets.
-        cfg_content, removed_folders = set_hhemt_output_folder(cfg_content, "out_triton")
-        if removed_folders:
-            print_output_folder_notice(
-                self.event_iloc, triton_swmm_configuration_template, "out_triton", removed_folders
-            )
+        # hhemt owns the TRITON-only output folder.
+        cfg_content, _removed_folders = set_hhemt_output_folder(cfg_content, "out_triton")
 
         self.scen_paths.triton_cfg.write_text(cfg_content)
 
@@ -1918,34 +1974,21 @@ class TRITONSWMM_scenario:
         self._runoff_modeler.write_swmm_waterlevel_dat_files()
 
         # Create SWMM hydraulics model - direct TRITON-SWMM input
-        self._input_generator.create_hydraulics_model_from_template(
-            self._system.cfg_system.SWMM_hydraulics,
-            self.scen_paths.swmm_hydraulics_inp,
-        )
+        self._input_generator.create_hydraulics_model(self.scen_paths.swmm_hydraulics_inp)
         self.log.inp_hydraulics_model_created_successfully.set(True)
         refuse_non_cms_flow_units([self.scen_paths.swmm_hydraulics_inp])
 
         # Optional: Full SWMM model (standalone SWMM execution)
         if self._system.cfg_system.toggle_swmm_model:
-            self._full_model_builder.create_full_model_from_template(
-                self._system.cfg_system.SWMM_full,
-                self.scen_paths.swmm_full_inp,
-            )
+            self._full_model_builder.create_full_model(self.scen_paths.swmm_full_inp)
             # Checked here, before the hydrology model runs below, so a standalone model in
             # the wrong unit fails at preparation rather than after its own SWMM run.
             refuse_non_cms_flow_units([self.scen_paths.swmm_full_inp])
-            # Update THREADS parameter to match n_omp_threads configuration
-            self._input_generator.update_swmm_threads_in_inp_file(self.scen_paths.swmm_full_inp)
             self.log.inp_full_model_created_successfully.set(True)
 
         # SWMM hydrology for runoff generation
         if self._system.cfg_system.toggle_use_swmm_for_hydrology:
-            self._runoff_modeler.create_hydrology_model_from_template(
-                self._system.cfg_system.SWMM_hydrology,
-                self.scen_paths.swmm_hydro_inp,
-            )
-            # Update THREADS parameter to match n_omp_threads configuration
-            self._input_generator.update_swmm_threads_in_inp_file(self.scen_paths.swmm_hydro_inp)
+            self._runoff_modeler.create_hydrology_model(self.scen_paths.swmm_hydro_inp)
             # The hydrographs come from this model, so its unit is checked too.
             refuse_us_flow_units([self.scen_paths.swmm_hydro_inp])
             self._runoff_modeler.run_swmm_hydro_model(
@@ -2428,7 +2471,7 @@ def undefined_inflow_nodes(inp_path) -> list[str]:
     ``$`` is an unfilled template placeholder whose value is not known until preparation: it is
     skipped and named in one warning. Names are returned in file order, one per undefined line.
     """
-    lines = Path(inp_path).read_text().splitlines()
+    lines = _inp_text(inp_path).splitlines()
     parsed = _swmm_inp_section_lines(lines)
     defined = {_swmm_fold(tokens[0]) for _idx, section, tokens in parsed if section != "INFLOW"}
     undefined: list[str] = []
@@ -2444,7 +2487,7 @@ def undefined_inflow_nodes(inp_path) -> list[str]:
             undefined.append(name)
     if placeholders:
         warnings.warn(
-            f"{inp_path}: inflow lines naming an unfilled template placeholder were not checked "
+            f"{_inp_label(inp_path)}: inflow lines naming an unfilled template placeholder were not checked "
             f"for an undefined node: {placeholders}",
             stacklevel=2,
         )
@@ -2625,7 +2668,7 @@ def _read_coupling_sections(inp_path) -> _CouplingSections:
     pollutants: set = set()
     elevations: dict = {}
     current: str | None = None
-    for line in Path(inp_path).read_text().splitlines():
+    for line in (_inp_text(inp_path) if isinstance(inp_path, InpText) else Path(inp_path).read_text()).splitlines():
         tokens = _swmm_tokens(line)
         if not tokens:
             continue
@@ -2694,14 +2737,14 @@ def read_coupling_node_file(path) -> list[str]:
     return names
 
 
-def coupling_candidates(cfg_system, inp_path=None) -> list[str]:
+def coupling_candidates(cfg_system, inp_path=None, cfg_analysis=None) -> list[str]:
     """The coupling candidates ``cfg_system`` declares for its hydraulics model.
 
     ``list``: the names in ``swmm_coupling_nodes_file``, in file order. ``all_junctions``:
     every ``[JUNCTIONS]`` node with a ``[COORDINATES]`` row, in file order. ``legacy``: the
     nodes carrying a FLOW ``[INFLOWS]`` line by SWMM's rule.
 
-    The model read is ``inp_path`` when given, else the ``SWMM_hydraulics`` template: run
+    The model read is ``inp_path`` when given, else the hydraulics role derived from ``SWMM_model``: run
     entry judges the template, and scenario preparation passes the scenario's filled
     ``hydraulics.inp``, whose placeholders have been replaced by real values.
 
@@ -2712,7 +2755,9 @@ def coupling_candidates(cfg_system, inp_path=None) -> list[str]:
     mode = cfg_system.swmm_coupling_mode
     if mode == "list":
         return read_coupling_node_file(cfg_system.swmm_coupling_nodes_file)
-    sections = _read_coupling_sections(cfg_system.SWMM_hydraulics if inp_path is None else inp_path)
+    sections = _read_coupling_sections(
+        swmm_role_inp(cfg_system, "hydraulics", cfg_analysis) if inp_path is None else inp_path
+    )
     if mode == "all_junctions":
         return [
             name
@@ -2722,7 +2767,7 @@ def coupling_candidates(cfg_system, inp_path=None) -> list[str]:
     return _legacy_flow_inflow_nodes(sections)
 
 
-def coupling_node_file_problems(cfg_system) -> list[str]:
+def coupling_node_file_problems(cfg_system, cfg_analysis=None) -> list[str]:
     """Every reason ``cfg_system``'s coupling-node file is refused, one cause per failing case.
 
     Returns ``[]`` when the file is valid or the mode is not ``list``. The causes, in order:
@@ -2733,7 +2778,7 @@ def coupling_node_file_problems(cfg_system) -> list[str]:
     """
     if cfg_system.swmm_coupling_mode != "list":
         return []
-    template = cfg_system.SWMM_hydraulics
+    template = swmm_role_inp(cfg_system, "hydraulics", cfg_analysis)
     names = read_coupling_node_file(cfg_system.swmm_coupling_nodes_file)
     if not names:
         return [
@@ -2744,7 +2789,7 @@ def coupling_node_file_problems(cfg_system) -> list[str]:
     causes: list[str] = []
     undefined = [n for n in names if _swmm_fold(n) not in sections.folded_names]
     if undefined:
-        causes.append(f"it names nodes that no node section of {template} defines: {', '.join(undefined)}")
+        causes.append(f"it names nodes that no node section of {_inp_label(template)} defines: {', '.join(undefined)}")
     by_fold: dict = {}
     for n in names:
         by_fold.setdefault(_swmm_fold(n), []).append(n)
@@ -2754,7 +2799,7 @@ def coupling_node_file_problems(cfg_system) -> list[str]:
     defined = [n for n in dict.fromkeys(names) if _swmm_fold(n) in sections.folded_names]
     uncoordinated = [n for n in defined if _swmm_fold(n) not in sections.coordinates]
     if uncoordinated:
-        causes.append(f"it names nodes with no [COORDINATES] row in {template}: {', '.join(uncoordinated)}")
+        causes.append(f"it names nodes with no [COORDINATES] row in {_inp_label(template)}: {', '.join(uncoordinated)}")
     seen_folds: set = set()
     for n in defined:
         folded = _swmm_fold(n)
@@ -2767,7 +2812,7 @@ def coupling_node_file_problems(cfg_system) -> list[str]:
     return causes
 
 
-def coupling_candidate_junction_coordinates(cfg_system) -> list[tuple[str, str, str]]:
+def coupling_candidate_junction_coordinates(cfg_system, cfg_analysis=None) -> list[tuple[str, str, str]]:
     """``(name, x, y)`` for every candidate the toolkit could write to the coupling list.
 
     The candidates of `coupling_candidates` that are junctions with a ``[COORDINATES]`` row,
@@ -2775,9 +2820,9 @@ def coupling_candidate_junction_coordinates(cfg_system) -> list[tuple[str, str, 
     list, so it is not returned; a ``legacy`` placeholder name defines no junction and is not
     returned either.
     """
-    sections = _read_coupling_sections(cfg_system.SWMM_hydraulics)
+    sections = _read_coupling_sections(swmm_role_inp(cfg_system, "hydraulics", cfg_analysis))
     out = []
-    for name in coupling_candidates(cfg_system):
+    for name in coupling_candidates(cfg_system, cfg_analysis=cfg_analysis):
         folded = _swmm_fold(name)
         spelled = sections.folded_names.get(folded)
         if spelled is None or sections.node_types[spelled] != "JUNCTION" or folded not in sections.coordinates:
@@ -2809,18 +2854,6 @@ def nodes_outside_triton_grid(nodes, header: dict) -> list[tuple[str, str, str]]
         if not (0 <= col < ncols and 0 <= row < nrows):
             outside.append((name, x, y))
     return outside
-
-
-def triton_cfg_sets_coupling_nodes(cfg_template) -> bool:
-    """Whether a TRITON cfg template already sets ``swmm_coupling_nodes``.
-
-    A template sets the key when a line's first non-blank text matches
-    ``swmm_coupling_nodes\\s*=``; a line starting ``#`` is a comment and does not count.
-    """
-    import re
-
-    pattern = re.compile(r"swmm_coupling_nodes\s*=")
-    return any(pattern.match(line.lstrip()) for line in Path(cfg_template).read_text().splitlines())
 
 
 #: The node section of every SWMM node type, and the column swmmio names its elevation.
@@ -2908,6 +2941,8 @@ def inp_link_table(model) -> pd.DataFrame:
 def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=False):
     """One row per SWMM node with the DEM cell nearest it, plus the outfall names.
 
+    Nodes named ``hhemt_dummy_*`` (the dummy chain) are skipped.
+
     Returns ``(df_node_locs, lst_outfalls)``: ``df_node_locs`` has ``node_key``,
     ``dem_x_coord`` and ``dem_y_coord``, so a caller groups nodes by cell; ``lst_outfalls`` is
     the ``[OUTFALLS]`` names. Nodes come from all four node sections and coordinates from
@@ -2930,7 +2965,13 @@ def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=Fal
     d_node_locs = dict(node_key=[], dem_x_coord=[], dem_y_coord=[])
     lst_outfalls = list(nodes.index[nodes["NodeType"] == "OUTFALL"])
     lst_out_of_bounds_nodes = []
+    from hhemt.swmm_runnable import DUMMY_NODE_PREFIX
+
     for node_id, node_type in nodes["NodeType"].items():
+        # The dummy chain the toolkit adds when no outfall remains has no [COORDINATES] rows by design, and
+        # carries no runoff, so it takes no part in the grouping.
+        if str(node_id).startswith(DUMMY_NODE_PREFIX):
+            continue
         if node_id not in coords.index:
             section = {"JUNCTION": "[JUNCTIONS]", "OUTFALL": "[OUTFALLS]", "STORAGE": "[STORAGE]"}.get(
                 node_type, "[DIVIDERS]"

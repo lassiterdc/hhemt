@@ -85,7 +85,7 @@
           300.0
         ],
         "legend_labels": [
-          "Storm tide BC"
+          "Water-level BC"
         ]
       }
     ]
@@ -553,13 +553,13 @@
     {
       "axes_id": "ax_dem",
       "kind": "line2d",
-      "note": "storm tide boundary line",
+      "note": "water-level boundary line",
       "channels": [
         {
           "channel": "x",
           "ref": {
             "source_path": "../../../synthetic_test_models/23e859ea50fa19b1/boundary.geojson",
-            "variable": "storm_tide_boundary",
+            "variable": "water_level_boundary",
             "attrs": {},
             "selection": null,
             "transform": "reproject to EPSG:3857"
@@ -570,7 +570,7 @@
           "channel": "y",
           "ref": {
             "source_path": "../../../synthetic_test_models/23e859ea50fa19b1/boundary.geojson",
-            "variable": "storm_tide_boundary",
+            "variable": "water_level_boundary",
             "attrs": {},
             "selection": null,
             "transform": "reproject to EPSG:3857"

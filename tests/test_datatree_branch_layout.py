@@ -356,16 +356,17 @@ def test_a_reprocess_delete_killed_part_way_is_followed_by_a_full_summary_rewrit
     assert _series_hashes(store) == series
 
 
-def test_consolidation_version_4_rebuilds_a_tree_stamped_3_once_and_a_tree_stamped_4_not_at_all(
+def test_consolidation_version_5_rebuilds_a_tree_stamped_4_once_and_a_tree_stamped_5_not_at_all(
     consolidated, monkeypatch
 ):
-    """Property: CONSOLIDATION_VERSION is 4; a tree whose root stamp reads 3 rewrites its summaries once and its series
-    not at all, and a tree stamped 4 with matching inputs is not rewritten.
+    """Property: CONSOLIDATION_VERSION is 5; a tree whose root stamp reads 4 rewrites its summaries once and its series
+    not at all, and a tree stamped 5 with matching inputs is not rewritten.
     Class: NEW CAPABILITY. Plausible wrong implementation: a gate that never reads the root stamp, or one that
         rewrites every call. The unchanged-tree arm is the control for the second.
-    Why required: version 4 is the signal that every tree consolidated before the hydrology groups rebuilds its
-        summaries.
-    Killed by: leaving the version at 3; a gate that rebuilds always.
+    Why required: version 5 is the signal that the group set changed (the observation-point groups), so every tree
+        consolidated before it rebuilds its summaries; a version-4 tree holds no observation group because none of its
+        scenarios had observation points.
+    Killed by: leaving the version at 4; a gate that rebuilds always.
     Passes under a second correct implementation: a gate that compares the stamp through the log field instead of
         the root attribute, provided a stale root stamp still forces the rewrite.
     Not established: the red-on-the-pre-change-tree output was not captured this round; the in-test control is the
@@ -374,7 +375,7 @@ def test_consolidation_version_4_rebuilds_a_tree_stamped_3_once_and_a_tree_stamp
     from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing as pp
     from hhemt.utils import deferred_consolidation, update_zarr_root_attrs
 
-    assert pp.CONSOLIDATION_VERSION == 4
+    assert pp.CONSOLIDATION_VERSION == 5
     store = _tree_path(consolidated)
     series = _series_hashes(store)
     rebuilt = []
@@ -383,9 +384,9 @@ def test_consolidation_version_4_rebuilds_a_tree_stamped_3_once_and_a_tree_stamp
         pp, "_write_summary_branches", lambda self, *a, **k: (rebuilt.append(1), real(self, *a, **k))[1]
     )
     consolidated.process.consolidate_to_datatree()
-    assert rebuilt == [], "control: a tree stamped 4 with matching inputs is not rebuilt"
+    assert rebuilt == [], "control: a tree stamped 5 with matching inputs is not rebuilt"
     with deferred_consolidation(store):
-        update_zarr_root_attrs(store, {"consolidation_version": 3})
+        update_zarr_root_attrs(store, {"consolidation_version": 4})
     consolidated.process.consolidate_to_datatree()
     assert rebuilt == [1]
     assert _series_hashes(store) == series
@@ -447,7 +448,7 @@ def _master(members: dict):
 def test_the_sensitivity_master_holds_member_summaries_and_series_in_one_store(consolidated, tmp_path):
     """Property: `build_sensitivity_datatree` returns members' `summary` branches only, the master's in-place write
     puts both the `summary` and the `timeseries` branches of each member into the one master store, and a member tree
-    holding a layout-30 summary is refused naming layout 31.
+    holding a layout-30 summary is refused naming the live layout number.
     Class: NEW CAPABILITY. Plausible wrong implementation: grafting every node into the in-memory tree, or leaving the
         series out of the store. Control: the layout-30 member tree is refused.
     Why required: the master's summaries and series live in one store, `experiment_datatree.zarr`.
@@ -476,7 +477,9 @@ def test_the_sensitivity_master_holds_member_summaries_and_series_in_one_store(c
     flat = tmp_path / "flat.zarr"
     ds = xr.Dataset({"v": (("event_iloc",), [1.0])}, coords={"event_iloc": [0]})
     xr.DataTree.from_dict({"/": xr.Dataset(), "/tritonswmm/swmm_node": ds}).to_zarr(flat, consolidated=True)
-    with pytest.raises(ProcessingError, match="layout 31"):
+    from hhemt.version_migration.constants import LAYOUT_VERSION
+
+    with pytest.raises(ProcessingError, match=f"layout {LAYOUT_VERSION}"):
         sens.build_sensitivity_datatree(_master({"0": _member(flat)}))
 
 

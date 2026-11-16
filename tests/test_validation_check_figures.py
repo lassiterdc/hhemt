@@ -166,7 +166,7 @@ def _status_frame(run_mode, n_gpus, backend, verdict, distinct):
 def _resource_summary(run_mode, n_gpus, backend, verdict, distinct):
     from types import SimpleNamespace
 
-    cfg = SimpleNamespace(run_mode=run_mode, n_mpi_procs=1, n_omp_threads=1, n_gpus=n_gpus)
+    cfg = SimpleNamespace(run_mode=run_mode, n_mpi_procs=1, n_omp_threads=1, n_gpus=n_gpus, swmm_threads=1)
     analysis = SimpleNamespace(cfg_analysis=cfg)
     return av.check_resource_usage(analysis, df_status=_status_frame(run_mode, n_gpus, backend, verdict, distinct))
 
@@ -195,7 +195,9 @@ def test_an_analysis_with_no_log_out_does_not_claim_it_has_no_gpu_model_runs() -
     frame = _status_frame("gpu", 1, "HIP", "pass", 1).assign(actual_nTasks=np.nan)
     from types import SimpleNamespace
 
-    analysis = SimpleNamespace(cfg_analysis=SimpleNamespace(run_mode="gpu", n_mpi_procs=1, n_omp_threads=1, n_gpus=1))
+    analysis = SimpleNamespace(
+        cfg_analysis=SimpleNamespace(run_mode="gpu", n_mpi_procs=1, n_omp_threads=1, n_gpus=1, swmm_threads=1)
+    )
     res = av.check_resource_usage(analysis, df_status=frame)
     assert "no GPU model runs" not in res.summary
     assert isinstance(frame, pd.DataFrame)
@@ -233,7 +235,9 @@ def test_the_gpu_row_count_agrees_with_the_validators_own_count_on_a_mixed_sweep
             }
         )
     frame = pd.DataFrame(rows)
-    analysis = SimpleNamespace(cfg_analysis=SimpleNamespace(run_mode="cpu", n_mpi_procs=1, n_omp_threads=1, n_gpus=0))
+    analysis = SimpleNamespace(
+        cfg_analysis=SimpleNamespace(run_mode="cpu", n_mpi_procs=1, n_omp_threads=1, n_gpus=0, swmm_threads=1)
+    )
     validate_resource_usage(analysis, df_status=frame)
     printed = int(re.search(r"GPU rows examined: (\d+)", capsys.readouterr().out).group(1))
     assert count_examined_gpu_rows(analysis, df_status=frame) == printed == 2

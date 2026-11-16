@@ -49,12 +49,12 @@ class _FakeScenario:
     SimpleNamespace either -- the attribute set is the contract, so naming it here makes a
     future signature change fail at construction instead of inside the function.
 
-    `extbc_tseries` is a real Path rather than None, and that is not cosmetic:
+    `extbc_dir` is a real Path rather than None, and that is not cosmetic:
     `reclaim_scenario_scoped_classes` builds its prep_inputs tuple containing
-    `scen.scen_paths.extbc_tseries.parent`, so `.parent` is dereferenced while the tuple is
-    CONSTRUCTED -- before the `if _p is not None` guard one line below ever runs. With None
-    there, `classes=("prep_inputs",)` raises AttributeError, which is a trap for the next
-    test that reuses this stand-in for a different reclaim class.
+    `scen.scen_paths.extbc_dir`, which is read while the tuple is CONSTRUCTED -- before the
+    `if _p is not None` guard one line below ever runs. With None there, the tuple holds a
+    None the guard skips, but the stand-in stays a real Path so the next test that reuses it
+    for a different reclaim class meets the attribute the production code reads.
     """
 
     def __init__(self, root, hydro_inp):
@@ -68,7 +68,7 @@ class _FakeScenario:
             hyg_timeseries=None,
             hyg_locs=None,
             dir_weather_datfiles=None,
-            extbc_tseries=Path(root) / "extbc" / "tseries.csv",
+            extbc_dir=Path(root) / "extbc",
             weather_timeseries=None,
         )
 

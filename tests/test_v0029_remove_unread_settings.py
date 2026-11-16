@@ -162,7 +162,7 @@ def _snapshot(root: Path) -> dict[str, bytes]:
 
 def test_v0029_is_registered_and_takes_layout_28_to_29():
     """Property: the registry holds exactly one migration whose target is layout 29, the module starts at 28, and the
-    constant reads 31, the layout the latest migration (V0031) reaches.
+    constant reads the layout the highest migration reaches.
 
     Class: the discovered migration modules, filtered to those with version_to 29.
 
@@ -173,7 +173,7 @@ def test_v0029_is_registered_and_takes_layout_28_to_29():
 
     Passes under: any module layout with the same two numbers and the same stem.
     """
-    assert LAYOUT_VERSION == 31
+    assert LAYOUT_VERSION == max(m.version_to for m in registry.discover_migrations())
     (module,) = [m for m in registry.discover_migrations() if m.version_to == 29]
     assert (module.version_from, module.version_to) == (28, 29)
     assert module.module_name.endswith("V0029__remove_unread_settings")

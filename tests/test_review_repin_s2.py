@@ -1,5 +1,9 @@
 """Independent tests for the T2 re-pin of the synthetic tier to fork `main` `bb13ea28`.
 
+Package 1j moved the live pin on to ORNL's `triton-swmm` head `faba2232` (a solver-source-identical commit); every
+test below reads the live pin from the fixture file, so the four agreements it pins hold for `faba2232` too, and
+`bb13ea28` stays in `_CARRYING` because recorded runs name it.
+
 Problem under test. Moving the synthetic tier's `TRITON_PIN` from `bd18215` to `bb13ea28` touches four
 places that agree only by hand: the defect registry (every entry must list the live pin, which
 `scripts/check_live_pin_registered.py` checks), the separate `SWMM_QUALITY_SNAPSHOT_SHAS` set that decides

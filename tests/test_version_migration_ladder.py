@@ -104,6 +104,9 @@ EXPECTED_LADDER: list[str] = [
     "V0029__remove_unread_settings",
     "V0030__swmm_run_attributes_to_variables",
     "V0031__datatree_summary_and_timeseries_branches",
+    "V0032__retire_swmm_and_triton_templates",
+    "V0033__neutral_water_level_boundary_names",
+    "V0034__per_record_water_level_series",
 ]
 
 

@@ -1055,11 +1055,7 @@ def _build_conduit_flow_figure(
 
     # ---- Hydrology panel (rainfall row 1 + BC water level row 2) --------
     rain_units = units.rainfall_provenance_units(analysis.cfg_analysis.rainfall_units)
-    bc_units = (
-        units.bc_provenance_units(analysis.cfg_analysis.storm_tide_units)
-        if analysis.cfg_analysis.storm_tide_units
-        else ""
-    )
+    bc_units = units.BC_WATER_LEVEL_UNITS
     rain_ref = ProvenanceRef(
         source_path=weather_rel,
         variable=rain_var,
@@ -1069,8 +1065,8 @@ def _build_conduit_flow_figure(
     panel_cfg = report_cfg.per_sim.hydrology_panel
     bc_ref = ProvenanceRef(
         source_path=weather_rel,
-        variable=bc_var if bc_var is not None else "",
-        attrs=bc_attrs,
+        variable=", ".join(bc_var),
+        attrs=bc_attrs[0] if bc_attrs else {},
         selection={"event_iloc": int(event_iloc)},
     )
     # Both Flood Drivers traces and both wrapped y titles now come from the SAME shared
@@ -1101,7 +1097,6 @@ def _build_conduit_flow_figure(
         bc_water_level=bc_water_level,
         panel_cfg=panel_cfg,
         rainfall_units=analysis.cfg_analysis.rainfall_units,
-        storm_tide_units=analysis.cfg_analysis.storm_tide_units,
         axis_extent_px=_col3_panel_h_px,
         time_axis_title=units.TIME_AXIS_FROM_EVENT_START_HOURS,
     )

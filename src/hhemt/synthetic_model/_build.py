@@ -16,8 +16,7 @@ from pathlib import Path
 from . import (
     geometry,
     landuse,
-    swmm_template,
-    triton_cfg,
+    swmm_model,
     vectors,
     weather,
 )
@@ -54,15 +53,17 @@ class SyntheticModelParams:
     # as a constant value (no triangular shape).
     rainfall_peak_min: int = 10  # minutes from start to PEAK rainfall (the triangle's
     # time-to-peak when rainfall_duration_min is set; ignored under constant rain)
-    stormtide_mean_m: float = 2.0
-    stormtide_amplitude_m: float = 0.8
-    stormtide_period_h: float = 12.0
+    bc_level_mean_m: float = 2.0
+    bc_level_amplitude_m: float = 0.8
+    bc_level_period_h: float = 12.0
     # Compound coastal-pluvial event shaping (2026-06-15). When set, the synth weather
-    # becomes a realistic storm: a triangular rain burst + a base tide sinusoid with a
-    # triangular surge co-peaking with the rain, then recession/drainage.
+    # becomes a realistic storm: a triangular rain burst + a base boundary-level sinusoid with a
+    # triangular pulse co-peaking with the rain, then recession/drainage.
     rainfall_duration_min: int | None = None  # None=constant rain; else triangular window, peak at rainfall_peak_min
-    stormsurge_peak_m: float = 0.0  # triangular surge added to base tide (0=none), peaks at rainfall_peak_min
-    compound_event: bool = False  # True: event 0 = rain + tide+surge; False: legacy (0 hydro/1 BC/2 both)
+    bc_level_peak_m: float = 0.0  # triangular pulse added to the base level (0=none), peaks at rainfall_peak_min
+    compound_event: bool = (
+        False  # True: event 0 = rain + boundary level + pulse; False: three events (0 hydro/1 BC/2 both)
+    )
     manhole_diameter_m: float = 1.2  # iter-18 (2026-04-29): reverted from
     # iter-14's 2.0 m back to the toolkit
     # default 1.2 m per user request.
@@ -74,7 +75,7 @@ class SyntheticModelParams:
     # green b4b verdict from this model is therefore silent about that defect class
     # rather than evidence against it. Setting this name emits a one-row
     # `[POLLUTANTS]` section, which makes the guard true; the model's single outfall
-    # already carries no `RouteTo` (see `swmm_template._outfalls_df`), so the two
+    # already carries no `RouteTo` (see `swmm_model._outfalls_df`), so the two
     # conjuncts of the defect's trigger are then both satisfied and the fast
     # synthetic tier can exercise it without an HPC round-trip.
     #
@@ -107,12 +108,9 @@ class SyntheticCaseArtifacts:
     landuse_lookup: Path
     watershed: Path
     boundary: Path
-    swmm_hydraulics: Path
-    swmm_hydrology: Path
-    swmm_full: Path
+    swmm_model: Path
     subcatchment_raingage_mapping: Path
     weather: Path
-    tritonswmm_cfg: Path
 
 
 def _assert_rim_matches_dem(params, dem_path: Path, swmm_full_path: Path) -> None:
@@ -122,7 +120,7 @@ def _assert_rim_matches_dem(params, dem_path: Path, swmm_full_path: Path) -> Non
     import rioxarray as rxr  # local import — avoids GDAL-import-order crash
     import swmmio
 
-    from . import swmm_template as _t
+    from . import swmm_model as _t
 
     dem = rxr.open_rasterio(dem_path).squeeze()
     m = swmmio.Model(str(swmm_full_path))
@@ -161,11 +159,10 @@ def build_synthetic_case(params: SyntheticModelParams, dest_dir: Path) -> Synthe
     landuse.build_lookup(params, dest_dir / "landuse_lookup.csv")
     vectors.build_watershed(params, dest_dir / "watershed.geojson")
     vectors.build_boundary(params, dest_dir / "boundary.geojson")
-    _hydraulics, _hydrology, full = swmm_template.build_templates(params, dest_dir)
-    swmm_template.build_subcatchment_raingage_mapping(params, dest_dir / "subcatchment_raingage_mapping.csv")
+    model = swmm_model.build_model(params, dest_dir)
+    swmm_model.build_subcatchment_raingage_mapping(params, dest_dir / "subcatchment_raingage_mapping.csv")
     weather.build_weather(params, dest_dir / "weather.nc")
-    triton_cfg.build_cfg(params, dest_dir / "tritonswmm.cfg")
-    _assert_rim_matches_dem(params, dem, full)
+    _assert_rim_matches_dem(params, dem, model)
     return SyntheticCaseArtifacts(
         cache_dir=dest_dir,
         dem=dest_dir / "dem.tif",
@@ -173,10 +170,7 @@ def build_synthetic_case(params: SyntheticModelParams, dest_dir: Path) -> Synthe
         landuse_lookup=dest_dir / "landuse_lookup.csv",
         watershed=dest_dir / "watershed.geojson",
         boundary=dest_dir / "boundary.geojson",
-        swmm_hydraulics=dest_dir / "swmm_hydraulics.inp",
-        swmm_hydrology=dest_dir / "swmm_hydrology.inp",
-        swmm_full=dest_dir / "swmm_full.inp",
+        swmm_model=dest_dir / "swmm_model.inp",
         subcatchment_raingage_mapping=dest_dir / "subcatchment_raingage_mapping.csv",
         weather=dest_dir / "weather.nc",
-        tritonswmm_cfg=dest_dir / "tritonswmm.cfg",
     )

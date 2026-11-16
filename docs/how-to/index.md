@@ -5,6 +5,8 @@
 | [Installation](installation.md) | The conda and pip routes to a local or HPC install |
 | [HPC-profile setup](hpc-profile-setup.md) | The `hpc_system_config` file that describes one cluster |
 | [Config filling](config-filling.md) | The order for filling the system and analysis config YAMLs |
+| [Use a runnable SWMM model](using-a-runnable-swmm-model.md) | The single SWMM model that the toolkit splits into the role models, the outfalls to couple, and the TRITON build to pin |
+| [Set observation points and initial conditions](triton-inputs.md) | The points file, the observation interval, the consolidated groups, the labels of a resumed run, and the initial-condition rasters |
 | [Compile the solver](compiling-the-solver.md) | The one-time TRITON-SWMM build for each machine and GPU target, and the cases that call for a rebuild |
 | [Building container images](building-container-images.md) | The Apptainer images for container mode, built with `hhemt build-sifs` |
 | [Running an experiment definition](running-an-experiment-definition.md) | The `hhemt run-experiment` command and the `experiment.yaml` definition that the command executes |

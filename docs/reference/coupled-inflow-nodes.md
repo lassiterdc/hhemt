@@ -2,7 +2,7 @@
 
 TRITON-SWMM exchanges water between the 2D surface and the SWMM pipe network only at the nodes named for coupling. The toolkit always names the nodes explicitly. Scenario preparation writes a coupling-node list, `coupling_nodes.txt`, beside the `hydraulics.inp` of the scenario. The coupled TRITON cfg names the file with a single `swmm_coupling_nodes="{path}"` line.
 
-The `[INFLOWS]` section of the hydraulics model carries inflows only. Preparation leaves the section with every line unchanged from the filled template. Every inflow that the model declares reaches SWMM. The baseflow of a sewer is an example. Coupling of the node makes no difference.
+The `[INFLOWS]` section of the hydraulics model carries inflows only. Preparation leaves the section with every line unchanged from the model derived from `SWMM_model`. Every inflow that the model declares reaches SWMM. The baseflow of a sewer is an example. Coupling of the node makes no difference.
 
 Every rule here assumes SWMM dynamic wave routing, the routing of all simulations in the toolkit. Under dynamic wave SWMM solves a head at every node except an outfall, and a pipe can carry flow in either direction. A coupled manhole therefore drains surface water and surcharges back onto the surface.
 
@@ -12,9 +12,9 @@ The `swmm_coupling_mode` field of the system config chooses the candidates that 
 
 | `swmm_coupling_mode` | Candidates |
 |---|---|
-| `all_junctions`, the default | Every `[JUNCTIONS]` node of `SWMM_hydraulics` with a `[COORDINATES]` row. |
+| `all_junctions`, the default | Every `[JUNCTIONS]` node of the hydraulics model derived from `SWMM_model` with a `[COORDINATES]` row. |
 | `list` | The nodes named in `swmm_coupling_nodes_file`. Each node must be a junction with a `[COORDINATES]` row. |
-| `legacy`, an explicit opt-in | Every node of `SWMM_hydraulics` with an `[INFLOWS]` line with constituent `FLOW`, as SWMM reads the line. |
+| `legacy`, an explicit opt-in | Every node of the hydraulics model derived from `SWMM_model` with an `[INFLOWS]` line with constituent `FLOW`, as SWMM reads the line. |
 
 `swmm_coupling_nodes_file` is required with `list` and refused with any other mode, because the toolkit would ignore the file. The file holds a node name per line. Surrounding whitespace is stripped. Blank lines and lines starting with a semicolon are skipped. The file has no header.
 
@@ -27,7 +27,7 @@ swmm_coupling_nodes_file: swmm_coupling_nodes.txt
 
 **The candidates of the opt-in mode** follow the SWMM reading of an inflow line. A line names a FLOW inflow when the line holds at least a node, a constituent, and a time series, and the constituent is no name in `[POLLUTANTS]` and begins with `FLOW`, ignoring the case of ASCII letters. A node with only a pollutant inflow line is therefore no candidate, because SWMM gives the node no water inflow. Under `list` or `all_junctions` the toolkit reads `[INFLOWS]` for the undefined-node check and for no other purpose, so no inflow line adds, removes, or reorders a candidate.
 
-Only the coupled model reads the list. A system with the coupled model off, `toggle_tritonswmm_model: false`, selects no coupling nodes and writes no list. The coupling checks made before submission skip that system. The undefined-inflow-node check still reads the standalone `SWMM_full` model when that model is on. Of the declaration, only the config-load rule on `swmm_coupling_nodes_file` above still applies.
+Only the coupled model reads the list. A system with the coupled model off, `toggle_tritonswmm_model: false`, selects no coupling nodes and writes no list. The coupling checks made before submission skip that system. The undefined-inflow-node check still reads the standalone model derived from `SWMM_model` when that model is on. Of the declaration, only the config-load rule on `swmm_coupling_nodes_file` above still applies.
 
 ## Coupled node types
 
@@ -38,11 +38,26 @@ The list is written in SWMM node order, the order that the model defines the nod
 | Node type | Coupled | Reason |
 |---|---|---|
 | Junction, with any links | yes | An ordinary manhole, or an inlet box that drains through an orifice, a weir, or a pump. SWMM solves the head like the head of any junction, and a junction with only incoming pipes still drains by reverse flow. |
-| Outfall | no | SWMM sets the water level of an outfall as a boundary condition, so the manhole exchange of TRITON-SWMM is inapplicable. Coupling an outfall with receiving water in the surface model would need a solver change that this build lacks. |
+| Outfall absent from `swmm_outfalls_to_couple` | no | SWMM sets the water level of an outfall as a boundary condition, so the manhole exchange of TRITON-SWMM is inapplicable. The outfall keeps the boundary condition of the model. |
+| Outfall named in `swmm_outfalls_to_couple` | yes, as a junction | The toolkit converts the outfall into a junction in the hydraulics and hydrology models, and the junction takes the water level of the surface. The conversion rule is in [Converting outfalls](#converting-outfalls). |
 | Storage node | no | A solver limitation and no judgement about the node. TRITON-SWMM couples no storage node. For a pond with the basin in the DEM, couple the junction of the outlet structure. |
 | Divider | no | A solver limitation. TRITON-SWMM couples no divider, although under dynamic wave a divider acts as a junction. |
 
 A candidate of an uncoupled type keeps the place in the pipe network and the inflow lines. The candidate is left off the coupling list. One warning per scenario names every such node and the type.
+
+## Converting outfalls
+
+The `swmm_outfalls_to_couple` field of the system config names rows of the `[OUTFALLS]` section in `SWMM_model`. The default is an empty list, and every outfall then keeps the boundary condition of the model.
+
+```yaml
+swmm_outfalls_to_couple: [E143250, E147007]
+```
+
+Each listed outfall becomes a junction with the invert of the outfall and a maximum depth of 0. The conversion applies to the hydraulics and hydrology models only, and the standalone model keeps every outfall. A model with no outfall left after the conversion gets a junction, a conduit, and an outfall, all named with the prefix `hhemt_dummy_`, so SWMM still has an outlet. The coupling list never names the chain.
+
+The toolkit checks the listed names before any job is submitted. Each name must match an outfall row. Each listed outfall needs a conduit at an end. The check names every offender.
+
+SWMM raises a maximum depth of 0 to the crown of the highest connecting conduit, and the solver takes the rim of a coupled node from that depth. A converted junction is therefore rimmed at the crown. The Norfolk example section of [Use a runnable SWMM model](../how-to/using-a-runnable-swmm-model.md#the-norfolk-example) names the consequence for published results.
 
 ## One node per DEM cell with the opt-in mode
 

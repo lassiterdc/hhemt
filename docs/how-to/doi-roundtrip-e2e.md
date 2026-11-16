@@ -80,7 +80,7 @@ exclusions:
     identifier: "10.5281/zenodo.7654321"
     url: "https://doi.org/10.5281/zenodo.7654321"
 
-  SWMM_hydraulics:
+  SWMM_model:
     # No contentUrl: this network is licensed and may not be redistributed.
     citation: >-
       Licensed municipal sewer network. Not redistributable. Request from the County GIS

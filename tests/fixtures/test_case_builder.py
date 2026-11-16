@@ -264,14 +264,14 @@ class retrieve_TRITON_SWMM_test_case:
         n_events,
         event_index_name,
         rain_intensity=50,
-        storm_tide=3,
+        water_level_boundary_m=3,
     ):
         """
         Generate synthetic weather timeseries for testing.
 
         Creates a NetCDF file with:
         - Constant rainfall intensity across all rain gages
-        - Constant storm tide water level
+        - Constant boundary water level
         - Multiple events with identical weather patterns
 
         Args:
@@ -280,9 +280,9 @@ class retrieve_TRITON_SWMM_test_case:
             n_events: Number of weather events to generate
             event_index_name: Name of event index dimension
             rain_intensity: Rainfall rate (mm/hr) - default 50 mm/hr
-            storm_tide: Water level (m) - default 3m
+            water_level_boundary_m: Water level (m) - default 3m
         """
-        wlevel_name = self.analysis.cfg_analysis.weather_time_series_storm_tide_datavar
+        wlevel_name = "water_level"
         tstep_coord_name = self.analysis.cfg_analysis.weather_time_series_timestep_dimension_name
         rain_spatial_mean_name = self.analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
         df_raingage_mapping = pd.read_csv(self.system.cfg_system.subcatchment_raingage_mapping)  # type: ignore
@@ -298,7 +298,7 @@ class retrieve_TRITON_SWMM_test_case:
         )
         columns = list(gages) + [wlevel_name, rain_spatial_mean_name]
         df_tseries = pd.DataFrame(index=timesteps, columns=columns)
-        df_tseries.loc[:, wlevel_name] = storm_tide  # type: ignore
+        df_tseries.loc[:, wlevel_name] = water_level_boundary_m  # type: ignore
         df_tseries.loc[:, gages] = rain_intensity
         # Spatial-mean rainfall variable matches the per-gauge intensity (constant
         # across gauges in this synthetic fixture).
@@ -657,7 +657,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "system_directory": str(self.system_directory),
             "watershed_gis_polygon": str(self.artifacts.watershed),
             "DEM_fullres": str(self.artifacts.dem),
-            "SWMM_hydraulics": str(self.artifacts.swmm_hydraulics),
+            "SWMM_model": str(self.artifacts.swmm_model),
             "TRITONSWMM_software_directory": str(self._software_root / "triton"),
             # SINGLE-SOURCED with the provisioner. A literal here and a different literal
             # in `_triton_source_cache.py` lets a re-point half-land: the provisioner
@@ -667,7 +667,6 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "TRITONSWMM_git_URL": TRITON_GIT_URL,
             "TRITONSWMM_branch_key": TRITON_PIN,
             "SWMM_software_directory": str(self._software_root / "swmm"),
-            "triton_swmm_configuration_template": str(self.artifacts.tritonswmm_cfg),
             "toggle_tritonswmm_model": kwargs["toggle_tritonswmm_model"],
             "toggle_triton_model": kwargs["toggle_triton_model"],
             "toggle_swmm_model": kwargs["toggle_swmm_model"],
@@ -688,13 +687,10 @@ class retrieve_synth_TRITON_SWMM_test_case:
         if kwargs["toggle_use_swmm_for_hydrology"]:
             system_cfg.update(
                 {
-                    "SWMM_hydrology": str(self.artifacts.swmm_hydrology),
                     "subcatchment_raingage_mapping": str(self.artifacts.subcatchment_raingage_mapping),
                     "subcatchment_raingage_mapping_gage_id_colname": "raingage_id",
                 }
             )
-        if kwargs["toggle_swmm_model"]:
-            system_cfg["SWMM_full"] = str(self.artifacts.swmm_full)
         system_cfg.update(kwargs["additional_system_configs"])
 
         analysis_cfg = {
@@ -706,17 +702,25 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "rainfall_units": "mm/hr",
             "run_mode": "serial",
             "toggle_sensitivity_analysis": kwargs["sensitivity_csv"] is not None,
-            "toggle_storm_tide_boundary": True,
+            "toggle_external_boundaries": True,
             "weather_events_to_simulate": str(events_csv),
             "manhole_diameter": float(params.manhole_diameter_m),
             "manhole_loss_coefficient": float(params.manhole_loss_coefficient),
             "hydraulic_timestep_s": float(params.triton_timestep_s),
+            "TRITON_courant_number": 0.5,
+            "TRITON_hextra_m": 0.001,
             "TRITON_reporting_timestep_s": float(params.reporting_timestep_s),
             "open_boundaries": 1,
-            "storm_tide_boundary_line_gis": str(self.artifacts.boundary),
-            "weather_time_series_storm_tide_datavar": "water_level",
+            "external_boundary_gis": str(self.artifacts.boundary),
+            "external_boundary_type_attribute": "type",
+            "water_level_boundary_outfall_attribute": "outfall",
+            "water_level_boundary_series_source": "weather_time_series",
+            "water_level_boundary_outfall_variables": {"SYNTH_OUTFALL": "water_level"},
+            "water_level_boundary_variable_units": {"water_level": "m"},
+            "water_level_boundary_variable_datum_offsets": {"water_level": 0},
+            "dem_rim_resolution": "processed",
+            "swmm_outfalls_to_keep": ["dummy_outfall"],
             "weather_time_series_spatial_mean_rainfall_datavar": "RG_synth",
-            "storm_tide_units": "m",
             "multi_sim_run_method": "local",
             "target_processed_output_type": "zarr",
             "local_cpu_cores_for_workflow": 2,

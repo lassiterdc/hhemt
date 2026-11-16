@@ -94,29 +94,33 @@ class system_config(cfgBaseModel):
     )
     watershed_gis_polygon: Path = Field(..., description="Watershed or subcatchment gis used for plotting.")
     DEM_fullres: Path = Field(..., description="DEM to be formatted and, if desired, coarsened, for TRITON")
+    observation_points: Path | None = Field(
+        None,
+        description="CSV of points where TRITON records depth and unit discharge through time. The header is "
+        "`id,x,y`. Each row holds a unique string `id` and the point's `x` and `y` in the system's horizontal "
+        "CRS, the same coordinates as the DEM. Every point must lie inside the processed DEM and on a cell that "
+        "TRITON computes on, so not on the outside-watershed or building fill height. A point that fails is "
+        "refused by the `id` of that point. The row order identifies the points in the results. Unset, TRITON "
+        "records no observation series. The series are consolidated into the analysis zarr and into no separate "
+        "store.",
+    )
     landuse_lookup_file: Path | None = Field(
         None,
         description="CSV file containing lookup table relating landuse categories to manning's roughness coefficients",
         json_schema_extra=field_meta(required_when=[when("toggle_use_constant_mannings", False)]),
     )
-    SWMM_hydraulics: Path = Field(
+    SWMM_model: Path = Field(
         ...,
-        description="Hydraulics-only SWMM model template, a .inp file, with fillable fields based on input "
-        "weather data. An event-specific scenario of the model will be input to TRITON-SWMM.",
+        description="A plain runnable SWMM 5.2 model, a .inp file, in CMS flow units, with no placeholders. The "
+        "toolkit derives the coupled hydraulics model, the hydrology model, and the standalone SWMM model from "
+        "the file. For each event the toolkit rewrites the simulation window and the rain gauges. The toolkit "
+        "also rewrites the rain time series and the water-level time series.",
     )
-    SWMM_hydrology: Path | None = Field(
-        None,
-        description="Hydrology-only SWMM model template, a .inp file, with fillable fields based on input "
-        "weather data. The model will be run prior to TRITON-SWMM to generate runoff time "
-        "series in grid cells that overlap with subcatchment outlet nodes.",
-        json_schema_extra=field_meta(required_when=[when("toggle_use_swmm_for_hydrology", True)]),
-    )
-    SWMM_full: Path | None = Field(
-        None,
-        description="Full SWMM model template, a .inp file, with fillable fields based on input weather "
-        "data. Scenarios based on the template can be run in addition to TRITON-SWMM to "
-        "compare SWMM hydraulics results.",
-        json_schema_extra=field_meta(required_when=[when("toggle_swmm_model", True)]),
+    swmm_outfalls_to_couple: list[str] = Field(
+        default_factory=list,
+        description="Names of [OUTFALLS] rows of SWMM_model to convert into junctions that exchange water with the "
+        "TRITON surface, for free, normal, or fixed outfalls that no external-boundary water-level record names. "
+        "An outfall a water-level record names is converted by that record and must not be listed here.",
     )
     swmm_coupling_mode: Literal["all_junctions", "list", "legacy"] = Field(
         "all_junctions",
@@ -132,14 +136,14 @@ class system_config(cfgBaseModel):
             applies_when=[when("toggle_tritonswmm_model", True)],
             options={
                 "all_junctions": (
-                    "The default. Every [JUNCTIONS] node of SWMM_hydraulics that has a [COORDINATES] row."
+                    "The default. Every [JUNCTIONS] node of the hydraulics role of SWMM_model with a [COORDINATES] row."
                 ),
                 "list": (
                     "The nodes named in swmm_coupling_nodes_file. Each node must be a junction with a "
                     "[COORDINATES] row."
                 ),
                 "legacy": (
-                    "An explicit opt-in that selects every node of SWMM_hydraulics that carries an "
+                    "An explicit opt-in that selects every node of the hydraulics role of SWMM_model that carries an "
                     "[INFLOWS] line with constituent FLOW, read by SWMM's own rule."
                 ),
             },
@@ -217,10 +221,6 @@ class system_config(cfgBaseModel):
         None,
         description="Lookup table relating spatially indexed rainfall time series to SWMM subcatchment IDs.",
         json_schema_extra=field_meta(required_when=[when("toggle_use_swmm_for_hydrology", True)]),
-    )
-    triton_swmm_configuration_template: Path = Field(
-        ...,
-        description="Path to the template TRITON-SWMM cfg file that defines the variables and inputs per simulation.",
     )
     # ATTRIBUTES
     landuse_lookup_class_id_colname: str | None = Field(
@@ -361,6 +361,20 @@ class system_config(cfgBaseModel):
                         DeprecationWarning,
                         stacklevel=2,
                     )
+        _retired_template_keys = {
+            "SWMM_hydraulics": "SWMM_model",
+            "SWMM_hydrology": "SWMM_model",
+            "SWMM_full": "SWMM_model",
+            "triton_swmm_configuration_template": "no config field: the toolkit renders the TRITON cfg itself",
+        }
+        if isinstance(values, dict):
+            for _k, _use in _retired_template_keys.items():
+                if _k in values:
+                    raise ValueError(
+                        f"'{_k}' is not a system config field: SWMM and TRITON templates are no longer used. "
+                        f"Replacement: {_use}. For the SWMM models set SWMM_model to one plain runnable .inp and "
+                        f"list the outfalls to convert in swmm_outfalls_to_couple."
+                    )
         errors = []
 
         # Conditional requiredness for these ten fields is DECLARED on the fields
@@ -407,87 +421,35 @@ class system_config(cfgBaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_swmm_templates_are_si(self):
-        """Refuse, at config load, a SWMM template whose FLOW_UNITS the toolkit cannot read correctly.
+    def validate_swmm_model_is_si(self):
+        """Refuse, at config load, a SWMM_model whose FLOW_UNITS the toolkit cannot read correctly.
 
-        PER-FIELD ACCEPTED UNITS. SWMM_hydraulics and SWMM_full must use CMS, because the
-        toolkit reads the coupled report's and the standalone output's flows as m3/s with no
-        conversion, so an LPS model would be read 1000 times too large and an MLD model 86.4
-        times. SWMM_hydrology may use CMS, LPS or MLD, because its hydrographs are converted to
-        m3/s. Scenario preparation refuses the same units, so this check admits exactly what
-        preparation admits.
-
-        ONE READING RULE, SHARED. The unit is read by
-        `swmm_runoff_modeling.flow_units_from_inp_text`, the same rule preparation applies --
-        the LAST FLOW_UNITS line with a value across every [OPTION... section, key and value
-        matched by prefix as SWMM matches them. Deliberately NOT a local regex over the first
-        matching line, which is what this check did before: a template declaring CFS and then
-        CMS runs as CMS in SWMM and passes preparation, and was refused here. The import is
-        function-local; loading this package already imports that module through
-        `hhemt/__init__.py`, so it adds no module to a config load.
-
-        WHY THIS IS REACHABLE AT LOAD, stated because the .inp looks like a runtime
-        artifact. The three fields below are Path fields that `_check_paths_exist`
-        already validated, so the TEMPLATES are on disk here; the per-scenario .inp
-        inherits FLOW_UNITS from its template because `utils.fill_template` is a
-        `string.Template.safe_substitute` placeholder pass that cannot alter a
-        literal line. So the template's value predicts the runtime unit system.
-
-        ABSENT IS A FAILURE *within a real model*, not a neutral state: SWMM defaults
-        FLOW_UNITS to CFS, which is US, so an omitted line produces exactly the run
-        this refuses. But absence is only EVIDENCE of that in a file that is a SWMM
-        model at all, so a file carrying no [OPTION... SECTION is skipped rather than
-        judged -- the check's premise is "this .inp's OPTIONS declare its units", and
-        a file with no OPTIONS section does not meet the premise. That is what keeps
-        placeholder templates (an empty `_touch`ed stub, a partial fragment) out of
-        the finding set without weakening the rule for a real model, which always
-        carries [OPTIONS]. Measured: without this gate, two existing tests in
-        tests/test_config_validation.py go red on empty stub .inp files.
-
-        UNREADABLE IS NOT A FAILURE. A template this cannot decode is SKIPPED rather
-        than rejected -- manufacturing a config-load refusal out of an encoding quirk
-        would block routine work to catch a case the runtime guard still backstops.
-        Both encodings are tried for the reason the .rpt reader tries both.
+        The toolkit reads the coupled report's and the standalone output's flows as m3/s with no conversion,
+        so SWMM_model must use CMS. The unit is read by `swmm_runoff_modeling.flow_units_from_inp_text` (the
+        last FLOW_UNITS line, matched by prefix as SWMM matches it). A file with no [OPTION... section is
+        skipped rather than judged, and an unreadable file is skipped: the runtime guard backstops both.
         """
         import re as _re
 
         from hhemt.swmm_runoff_modeling import flow_units_from_inp_text
 
-        # LOCAL, not a class attribute. A bare underscore-prefixed class attribute on a
-        # pydantic v2 model is private-attribute territory and its instance-time
-        # readability is a question this check does not need to answer.
-        _accepted_by_field = {
-            "SWMM_hydraulics": ("CMS",),
-            "SWMM_hydrology": ("CMS", "LPS", "MLD"),
-            "SWMM_full": ("CMS",),
-        }
-        _bad = []
-        for _field in ("SWMM_hydraulics", "SWMM_hydrology", "SWMM_full"):
-            _p = getattr(self, _field, None)
-            if _p is None:
+        _text = None
+        for _enc in ("utf-8", "latin-1"):
+            try:
+                _text = Path(self.SWMM_model).read_text(encoding=_enc)
+                break
+            except (OSError, UnicodeDecodeError):
                 continue
-            _text = None
-            for _enc in ("utf-8", "latin-1"):
-                try:
-                    _text = Path(_p).read_text(encoding=_enc)
-                    break
-                except (OSError, UnicodeDecodeError):
-                    continue
-            if _text is None:
-                continue
-            if not _re.search(r"^\s*\[OPTION", _text, _re.IGNORECASE | _re.MULTILINE):
-                continue  # not a SWMM model file -- premise unmet, see docstring
-            _found = flow_units_from_inp_text(_text, default=None)
-            _units = _accepted_by_field[_field]
-            _accepted = "CMS" if _units == ("CMS",) else "CMS, LPS or MLD"
-            if _found is None:
-                _bad.append(f"{_field} ({_p}) declares no FLOW_UNITS; SWMM defaults to CFS (US)")
-            elif _found not in _units:
-                _bad.append(f"{_field} ({_p}) declares FLOW_UNITS {_found}; {_field} accepts {_accepted}")
-        if _bad:
-            raise ValueError(
-                "SWMM templates must declare their flow units: SWMM_hydraulics and SWMM_full must use "
-                "CMS, because the toolkit reads their flows as m3/s without conversion; SWMM_hydrology "
-                "must use an SI unit (CMS, LPS or MLD), because its flows are converted. Offending: " + "; ".join(_bad)
-            )
-        return self
+        if _text is None or not _re.search(r"^\s*\[OPTION", _text, _re.IGNORECASE | _re.MULTILINE):
+            return self
+        _found = flow_units_from_inp_text(_text, default=None)
+        if _found is None:
+            _why = "declares no FLOW_UNITS; SWMM defaults to CFS (US)"
+        elif _found != "CMS":
+            _why = f"declares FLOW_UNITS {_found}"
+        else:
+            return self
+        raise ValueError(
+            f"SWMM_model ({self.SWMM_model}) {_why}; it must use CMS, because the toolkit reads its flows as "
+            "m3/s without conversion."
+        )

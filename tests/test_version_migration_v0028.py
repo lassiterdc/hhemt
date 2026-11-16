@@ -280,9 +280,10 @@ def _open(path: Path, group: str | None = None) -> xr.Dataset:
 
 def test_the_layout_version_is_27_and_the_tree_is_stamped(migrated):
     work, _paths, _before = migrated
+    from hhemt.version_migration import registry
     from hhemt.version_migration.constants import LAYOUT_VERSION
 
-    assert LAYOUT_VERSION == 31
+    assert LAYOUT_VERSION == max(m.version_to for m in registry.discover_migrations())
     assert json.loads((work / "_version.json").read_text())["layout_version"] == 28
 
 

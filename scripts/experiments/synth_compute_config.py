@@ -53,7 +53,7 @@ _GENERATED = Path(__file__).parent / "_generated"  # gitignored (D3)
 
 # 3.5 m native (identity, no resample); enlarged grid for non-degenerate 2-3 GPU decomp (D4).
 # Compound coastal-pluvial event + longer runtime (2026-06-15): a triangular rain burst +
-# a base tide sinusoid with a co-peaking triangular surge, then a long drainage tail. Shared
+# a base boundary-level sinusoid with a co-peaking triangular pulse, then a long drainage tail. Shared
 # by clean AND resume (via _params_for_resolution) so the two cases are forcing-identical;
 # only their per-sim WALLTIME differs (clean = full alloc; resume = 1-min floor -> kills ->
 # hotstart-resume). sim_duration is sized so the per-sim wallclock crosses the 1-min floor so
@@ -66,10 +66,10 @@ _EXPERIMENT_PARAMS = dataclasses.replace(
     sim_duration_min=1440,  # 24 h event — TUNE: smallest sim_duration whose FASTEST
     # GPU config's clean SLURM Elapsed is ~2-4 min (> the 1-min
     # walltime floor so resume kills fire), measured in step C4.
-    rainfall_peak_min=120,  # rain + surge peak at 2 h
+    rainfall_peak_min=120,  # rain + boundary pulse peak at 2 h
     rainfall_duration_min=720,  # rain over 0..12 h (rise to 2 h, fall to 12 h), then dry
     rainfall_peak_mm_per_hr=100.0,
-    stormsurge_peak_m=1.0,  # +1 m surge on the base tide, co-peaking with the rain
+    bc_level_peak_m=1.0,  # +1 m pulse on the base boundary level, co-peaking with the rain
     reporting_timestep_s=600.0,  # 10-min dumps -> ~288 over 48 h (manageable output)
     compound_event=True,
 )

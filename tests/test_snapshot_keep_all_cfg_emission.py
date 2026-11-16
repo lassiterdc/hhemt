@@ -37,14 +37,13 @@ from pathlib import Path
 
 import pytest
 
-from hhemt import utils
+from hhemt import triton_cfg, utils
 from hhemt.scenario import (
     SWMM_SNAPSHOT_DISABLE_KEY,
     SWMM_SNAPSHOT_KEEP_ALL_KEY,
     append_swmm_snapshot_disable,
     append_swmm_snapshot_keep_all,
 )
-from hhemt.synthetic_model import triton_cfg
 
 _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _SCENARIO_SRC = Path(utils.__file__).parent / "scenario.py"

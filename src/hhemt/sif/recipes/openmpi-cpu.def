@@ -11,7 +11,7 @@
 #
 # Backend flags transcribed from the PROVEN native CPU build
 # (_software/triton/build_tritonswmm_cpu/CMakeCache.txt): Kokkos_ENABLE_OPENMP=ON,
-# Kokkos_ENABLE_SERIAL=ON, no CUDA. TRITON pin matches uva-cuda.def (15eb18a5).
+# Kokkos_ENABLE_SERIAL=ON, no CUDA. TRITON pin matches uva-cuda.def (faba2232).
 # =============================================================================
 
 Bootstrap: docker
@@ -92,7 +92,7 @@ From: ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc709
     rm -rf /opt/hhemt-src/test_data
     export PATH=/opt/hhemt-src/.venv/bin:/opt/openmpi/bin:${PATH}
 
-    # --- (3) TRITON-SWMM at the SAME pinned commit as uva-cuda.def (15eb18a5), but
+    # --- (3) TRITON-SWMM at the SAME pinned commit as uva-cuda.def (faba2232), but
     #     Kokkos-CPU: ENABLE_OPENMP + ENABLE_SERIAL, NO CUDA backend / arch. The
     #     dev-test exercises run_mode serial (SERIAL), openmp/hybrid (OPENMP), and
     #     mpi (OpenMPI x SERIAL/OPENMP). Absolute mpic++/mpicc per the uva fix.

@@ -68,7 +68,7 @@ def _system_cfg_dict(tmp_path, system_directory, software_directory, target_dem_
     ``target_dem_resolution`` is a parameter because it is the dedup key's first element: a
     row that differs from the master in it cannot take the reuse branch.
     """
-    for rel in ("wshed.shp", "dem.tif", "template.cfg", "swmm/hydraulics.inp"):
+    for rel in ("wshed.shp", "dem.tif", "swmm/model.inp"):
         fp = tmp_path / rel
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_bytes(b"")
@@ -79,8 +79,7 @@ def _system_cfg_dict(tmp_path, system_directory, software_directory, target_dem_
         "DEM_fullres": str(tmp_path / "dem.tif"),
         "TRITONSWMM_software_directory": None if software_directory is None else str(software_directory),
         "TRITONSWMM_git_URL": "https://example.invalid/triton.git",
-        "triton_swmm_configuration_template": str(tmp_path / "template.cfg"),
-        "SWMM_hydraulics": str(tmp_path / "swmm" / "hydraulics.inp"),
+        "SWMM_model": str(tmp_path / "swmm" / "model.inp"),
         "toggle_use_swmm_for_hydrology": False,
         "toggle_use_constant_mannings": True,
         "constant_mannings": 0.03,

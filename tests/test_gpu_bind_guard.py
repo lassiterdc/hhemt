@@ -320,6 +320,8 @@ def test_check_resource_usage_summary_discloses_counts(monkeypatch):
             ],
         ),
     )
+    # This test is about the GPU-binding disclosure; the SWMM-thread arm reads a real analysis and is silenced.
+    monkeypatch.setattr(av, "swmm_thread_issues", lambda analysis, df_status=None: [])
     r = av.check_resource_usage(analysis=None)
     assert r.passed is True and "1 row not measured, 1 classified by negative signature" in r.summary
     monkeypatch.setattr(

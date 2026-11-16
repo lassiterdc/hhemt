@@ -366,20 +366,31 @@ def test_the_clean_start_stale_snapshot_entry_resolves_by_content_at_every_regis
 
 
 def test_every_registered_defect_is_absent_at_the_live_pin():
-    """Property: ALL THREE solver pins resolve ABSENT on every defect from the explicit sets.
+    """Property: ALL FOUR solver pins resolve ABSENT on every defect from the explicit sets.
 
-    Class: every REGISTRY entry at `bb13ea28` (`SHA_MAIN_SWMM_PATH_REFUSAL_PIN`, the synthetic tier's live
-    pin), at `bd18215` (`SHA_MAIN_QUALITY_SNAPSHOT_PIN`, the previous pin, which recorded runs still name)
+    Class: every REGISTRY entry at `faba2232` (`SHA_ORNL_COUPLING_DECLARATION_PIN`, the synthetic tier's live
+    pin since package 1j), at `bb13ea28` (`SHA_MAIN_SWMM_PATH_REFUSAL_PIN`, the pin before it), at `bd18215`
+    (`SHA_MAIN_QUALITY_SNAPSHOT_PIN`, an earlier pin, which recorded runs still name)
     and at `a146fb6` (`SHA_CURATED_MAIN_PIN`, which stays the estate's family-C pin, so
     dropping its assertion would lose the only all-entries check at a pin a production run uses).
     Why: an entry missing a pin reads `ancestry_unresolvable` on the read path, which never fails a
-    check and so hides a regression. What kills it: dropping any of the three pins from one entry's
+    check and so hides a regression. What kills it: dropping any of the four pins from one entry's
     `known_absent_in`. Second correct implementation: deriving the membership from the pin file at
     import; the assertion reads the verdicts only.
     """
-    from hhemt.model_defects import SHA_CURATED_MAIN_PIN, SHA_MAIN_QUALITY_SNAPSHOT_PIN, SHA_MAIN_SWMM_PATH_REFUSAL_PIN
+    from hhemt.model_defects import (
+        SHA_CURATED_MAIN_PIN,
+        SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+        SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
+        SHA_ORNL_COUPLING_DECLARATION_PIN,
+    )
 
-    for pin in (SHA_MAIN_SWMM_PATH_REFUSAL_PIN, SHA_MAIN_QUALITY_SNAPSHOT_PIN, SHA_CURATED_MAIN_PIN):
+    for pin in (
+        SHA_ORNL_COUPLING_DECLARATION_PIN,
+        SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
+        SHA_MAIN_QUALITY_SNAPSHOT_PIN,
+        SHA_CURATED_MAIN_PIN,
+    ):
         for did, d in REGISTRY_BY_ID.items():
             v = resolve(d, pin)
             assert (v.status, v.rule) == ("absent", "known_absent_set"), (pin[:12], did, v)

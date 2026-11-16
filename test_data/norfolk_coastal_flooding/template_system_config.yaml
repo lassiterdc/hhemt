@@ -10,15 +10,11 @@ landuse_raster: '${DATA_DIR}/external/landuse_clipped_to_triton_extent.tif'
 TRITONSWMM_software_directory: '${PACKAGE_DIR}/triton'
 SWMM_software_directory: '${PACKAGE_DIR}/swmm'
 TRITONSWMM_git_URL: 'https://code.ornl.gov/hydro/triton.git'
-TRITONSWMM_branch_key: '15eb18a5d25afe5da295cb4b559a62669dbe5bc3' # latest is output file location fix # '1642a7d47b1460253c9ad7626004453c633ce846' # '84c367f727946be38df2ec3383a1a2a9adfa7780' # '4119d51d7e6a9e410859a37fce1631e20de931f3' # 'c7288a354c9a042fe441d8d9f0216415e1576c32' # 'be56b7c0f2816a0bd7bc99ae42b290f3b993c066'
+TRITONSWMM_branch_key: 'faba223212408f04b7a3dbf6580adedf4a4e6b13'  # the head of the triton-swmm branch at ORNL (git ls-remote, 2026-11-15); its src/config_utils.h reads swmm_coupling_nodes
 SWMM_git_URL: 'https://github.com/USEPA/Stormwater-Management-Model.git'
 SWMM_tag_key: 'v5.2.4' 
-# GPU backend: set to 'HIP' for AMD/ROCm or 'CUDA' for NVIDIA; leave unset for CPU-only compilation
-gpu_compilation_backend: null
-triton_swmm_configuration_template: '${DATA_DIR}/external/TRITON_SWMM_definition_template.cfg'
-SWMM_hydraulics: '${DATA_DIR}/external/hague_hydraulics_model_template.inp'
-SWMM_hydrology: '${DATA_DIR}/external/hague_hydrology_model_template.inp'
-SWMM_full: '${DATA_DIR}/external/hague_full_model_template.inp'
+SWMM_model: '${DATA_DIR}/external/hague_model.inp'  # one runnable SWMM model; the toolkit derives the coupled, hydrology and standalone models from it
+swmm_outfalls_to_couple: []  # free, normal or fixed outfalls to turn into nodes that exchange water with the TRITON surface; Norfolk's two coupled outfalls, E143250 and E147007, are named by the water-level record of the external-boundary layer in the analysis config
 subcatchment_raingage_mapping: '${DATA_DIR}/external/b_sub_ids_and_mrms_rain_col.csv'
 subcatchment_raingage_mapping_gage_id_colname: 'raingage_id'
 # ATTRIBUTE NAMES

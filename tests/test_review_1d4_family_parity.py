@@ -138,6 +138,9 @@ def test_every_series_mode_names_one_family_one_kind_and_one_clearing_record_con
             kind, expected_group_kind = "performance", "performance"
         elif mode.endswith("_swmm_node_ts"):
             kind, expected_group_kind = "node", "swmm_node"
+        elif mode.endswith("_observation_ts"):
+            # The observation series of the points rides in the gridded store and has its own group kind.
+            kind, expected_group_kind = "observation", "triton_observation"
         elif mode.endswith("_system_ts"):
             kind, expected_group_kind = "system", "system"
         else:

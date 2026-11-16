@@ -215,6 +215,11 @@ def _create_logfielddict_validator(expected_type: type | None = None):
     return validator
 
 
+def _record_path_map(value: Any) -> dict[int, Path]:
+    """A ``{record index: path}`` mapping from a stored value, whose keys JSON wrote as strings."""
+    return {int(k): Path(v) for k, v in dict(value).items()}
+
+
 def _logfield_serializer(v):
     """Serializer for LogField and LogFieldDict."""
     if isinstance(v, LogField | LogFieldDict):
@@ -640,7 +645,14 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     # ----------------------------
     # SWMM stuff
     swmm_rainfall_dat_files: LogFieldDict[Path] = Field(default_factory=LogFieldDict)
-    storm_tide_for_swmm: LogField[Path] = Field(default_factory=LogField)
+    # One SWMM level file per water_level record of the external-boundary layer, keyed by the record's index.
+    water_level_boundary_dats: LogField[dict[int, Path]] = Field(default_factory=LogField)
+    # Per record of the external-boundary layer: its type, reprojected endpoints, snapped cells and the distance of
+    # each matched outfall to its line. Empty on an older scenario log, which loads unchanged.
+    external_boundary_segments: LogField[list] = Field(default_factory=LogField)
+    # The SWMM thread count written into each role model of this scenario, by role. Hydrology is absent: no count is
+    # written there. Empty on an older scenario log, which loads unchanged.
+    swmm_threads_written: LogFieldDict[int] = Field(default_factory=LogFieldDict)
     # scenario creation
     scenario_creation_complete: LogField[bool] = Field(default_factory=LogField)
     inp_hydraulics_model_created_successfully: LogField[bool] = Field(default_factory=LogField)
@@ -696,17 +708,28 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         mode="before",
     )(_create_logfield_validator(str))
 
-    # Path LogFields
-    _validate_path_field = field_validator(
-        "storm_tide_for_swmm",
+    # Record index to path (the SWMM level file of each water_level record)
+    _validate_record_path_field = field_validator(
+        "water_level_boundary_dats",
         mode="before",
-    )(_create_logfield_validator(Path))
+    )(_create_logfield_validator(_record_path_map))
+
+    # The per-record boundary description
+    _validate_segment_field = field_validator(
+        "external_boundary_segments",
+        mode="before",
+    )(_create_logfield_validator(list))
 
     # LogFieldDict
     _validate_dict_field = field_validator(
         "swmm_rainfall_dat_files",
         mode="before",
     )(_create_logfielddict_validator(Path))
+
+    _validate_thread_dict_field = field_validator(
+        "swmm_threads_written",
+        mode="before",
+    )(_create_logfielddict_validator(int))
 
     # Plain dict LogField (the hydrology clearing record)
     _validate_record_field = field_validator(
@@ -719,7 +742,9 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     # ----------------------------
     _serialize_logfields = field_serializer(
         "swmm_rainfall_dat_files",
-        "storm_tide_for_swmm",
+        "swmm_threads_written",
+        "water_level_boundary_dats",
+        "external_boundary_segments",
         "scenario_creation_complete",
         "inp_hydraulics_model_created_successfully",
         "inp_full_model_created_successfully",
@@ -769,10 +794,12 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     - Optional, created by the analysis-level time-series consolidation and not by scenario.get_log:
       consolidated_node_timeseries_cleared, consolidated_link_timeseries_cleared,
       consolidated_triton_timeseries_cleared, consolidated_system_timeseries_cleared,
-      consolidated_performance_timeseries_cleared, the five matching ``*_clearing_pending`` lists and the
+      consolidated_performance_timeseries_cleared, consolidated_observation_timeseries_cleared, the six matching
+      ``*_clearing_pending`` lists and the
       ``consolidated_summaries_cleared`` record. Each series field lands in the log of the model whose series store
-      was consolidated: tritonswmm (node, link, triton, performance), swmm (node, link, system) and triton (triton,
-      performance). The summary record lands in the log of the model that wrote the summary stores.
+      was consolidated: tritonswmm (node, link, triton, performance, observation), swmm (node, link, system) and triton
+      (triton, performance, observation). The summary record lands in the log of the model that wrote the summary
+      stores.
     - Optional, with NO model applicability assigned: prep_inputs_reclaimed,
       hydrographs_reclaimed, standalone_rpt_reclaimed. Nothing in src/ writes them and
       scenario.get_log does not initialise them; the one reader,
@@ -803,6 +830,9 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     # Unset on legacy logs; consumers MUST coalesce None -> 0 (LogField.get() returns
     # None when unset).
     n_resumes: LogField[int] = Field(default_factory=LogField)
+    # The TRITON settings and extra environment this scenario's launch resolved, recorded when the command is
+    # prepared: {"cfg": {...}, "env": {...}}. Unset on a log written before layout 32 and on a SWMM-only model.
+    triton_launch_settings: LogField[dict] = Field(default_factory=LogField)
     # force_rerun_pending is the POSITIVE force-rerun marker. SET True by
     # analysis._invalidate_processing_log_for_force_rerun for every (scenario, model) a
     # stage="simulate" force names; CONSULTED by run_simulation.prepare_simulation_command
@@ -884,6 +914,12 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     # `triton_only/performance/timeseries` before the store is deleted. Each of the two TRITON models records it in
     # its own log.
     consolidated_performance_timeseries_cleared: LogField[bool] | None = None
+    # The same record for the observation-point groups, which are cut from the gridded series store of the model (the
+    # point variables ride in it): `{family}/triton_observation/timeseries` and `{family}/triton_observation/summary`.
+    # Each group has its own pair, because each group's pending record names its own variables. They land in the log of
+    # the model that wrote the store, tritonswmm or triton, and are set in the same pass that sets
+    # `consolidated_triton_timeseries_cleared`, since one deletion clears the store behind all three groups.
+    consolidated_observation_timeseries_cleared: LogField[bool] | None = None
     # The `pending` state of each clearing above: the data-variable names the scenario's slice was verified
     # against, written BEFORE the store is deleted and cleared (set to None) once the `*_cleared` bool above is True.
     # A bool cannot carry the names, and the resume needs them because it can no longer read them from the source:
@@ -895,6 +931,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     consolidated_triton_timeseries_clearing_pending: LogField[list] | None = None
     consolidated_system_timeseries_clearing_pending: LogField[list] | None = None
     consolidated_performance_timeseries_clearing_pending: LogField[list] | None = None
+    consolidated_observation_timeseries_clearing_pending: LogField[list] | None = None
     # The model's per-scenario summary stores were deleted after every `summary` slice of the scenario was read back
     # from analysis_datatree.zarr (toggle_clear_scenario_timeseries_after_consolidation). One record per model log,
     # because the model owns the stems: {"state": "pending" | "done", "stems": {stem: {group: [variable names]}}}.
@@ -949,6 +986,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "consolidated_triton_timeseries_cleared",
         "consolidated_system_timeseries_cleared",
         "consolidated_performance_timeseries_cleared",
+        "consolidated_observation_timeseries_cleared",
         "raw_SWMM_binaries_reclaimed",
         "coupled_rpt_truncated",
         "hydro_out_reclaimed",
@@ -974,6 +1012,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     # gets its own validator group rather than the scalar-int coercion above.
     _validate_dict_fields = field_validator(
         "consolidated_summaries_cleared",
+        "triton_launch_settings",
         mode="before",
     )(_create_logfield_validator(dict))
 
@@ -984,6 +1023,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "consolidated_triton_timeseries_clearing_pending",
         "consolidated_system_timeseries_clearing_pending",
         "consolidated_performance_timeseries_clearing_pending",
+        "consolidated_observation_timeseries_clearing_pending",
         mode="before",
     )(_create_logfield_validator(list))
 
@@ -1007,6 +1047,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "consolidated_triton_timeseries_cleared",
         "consolidated_system_timeseries_cleared",
         "consolidated_performance_timeseries_cleared",
+        "consolidated_observation_timeseries_cleared",
         "raw_SWMM_binaries_reclaimed",
         "coupled_rpt_truncated",
         "hydro_out_reclaimed",
@@ -1030,6 +1071,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
 
     _serialize_dict_fields = field_serializer(
         "consolidated_summaries_cleared",
+        "triton_launch_settings",
         when_used="json",
     )(lambda self, v: v.get() if v is not None else None)
 
@@ -1040,6 +1082,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         "consolidated_triton_timeseries_clearing_pending",
         "consolidated_system_timeseries_clearing_pending",
         "consolidated_performance_timeseries_clearing_pending",
+        "consolidated_observation_timeseries_clearing_pending",
         when_used="json",
     )(lambda self, v: v.get() if v is not None else None)
 

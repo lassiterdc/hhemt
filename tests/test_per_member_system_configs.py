@@ -57,7 +57,7 @@ def _write_row_system_yaml(tmp_path: Path, dst: Path, *, target_dem_resolution: 
     and ``TRITONSWMM_software_directory`` is ``toolkit_owned_output``, so its absence on disk
     is not checked and no build directory has to exist.
     """
-    for rel in ("row_wshed.shp", "row_dem.tif", "row_template.cfg", "row_swmm/hydraulics.inp"):
+    for rel in ("row_wshed.shp", "row_dem.tif", "row_swmm/model.inp"):
         fp = tmp_path / rel
         fp.parent.mkdir(parents=True, exist_ok=True)
         if not fp.exists():
@@ -69,8 +69,7 @@ def _write_row_system_yaml(tmp_path: Path, dst: Path, *, target_dem_resolution: 
         "DEM_fullres": str(tmp_path / "row_dem.tif"),
         "TRITONSWMM_software_directory": str(tmp_path / "software"),
         "TRITONSWMM_git_URL": "https://example.invalid/triton.git",
-        "triton_swmm_configuration_template": str(tmp_path / "row_template.cfg"),
-        "SWMM_hydraulics": str(tmp_path / "row_swmm" / "hydraulics.inp"),
+        "SWMM_model": str(tmp_path / "row_swmm" / "model.inp"),
         "toggle_use_swmm_for_hydrology": False,
         "toggle_use_constant_mannings": True,
         "constant_mannings": 0.03,
@@ -480,9 +479,7 @@ def _minimal_system_dict(tmp_path: Path) -> dict:
         "system_directory": "/tmp/triton_swmm_test/system",
         "watershed_gis_polygon": str(_touch(tmp_path / "inputs" / "watershed.geojson")),
         "DEM_fullres": str(_touch(tmp_path / "inputs" / "dem.tif")),
-        "SWMM_hydraulics": str(_touch(tmp_path / "inputs" / "swmm_hydraulics.inp")),
-        "SWMM_hydrology": str(_touch(tmp_path / "inputs" / "swmm_hydrology.inp")),
-        "SWMM_full": str(_touch(tmp_path / "inputs" / "swmm_full.inp")),
+        "SWMM_model": str(_touch(tmp_path / "inputs" / "swmm_model.inp")),
         "landuse_lookup_file": str(_touch(tmp_path / "inputs" / "landuse_lookup.csv")),
         "landuse_raster": str(_touch(tmp_path / "inputs" / "landuse.tif")),
         "landuse_lookup_class_id_colname": "landuse_class_id",
@@ -492,7 +489,6 @@ def _minimal_system_dict(tmp_path: Path) -> dict:
         "TRITONSWMM_software_directory": "/tmp/triton_swmm_test/tritonswmm_software",
         "TRITONSWMM_git_URL": "https://code.ornl.gov/hydro/triton.git",
         "TRITONSWMM_branch_key": "15eb18a5d25afe5da295cb4b559a62669dbe5bc3",
-        "triton_swmm_configuration_template": str(_touch(tmp_path / "inputs" / "tritonswmm.cfg")),
         "toggle_use_swmm_for_hydrology": True,
         "toggle_use_constant_mannings": False,
         "toggle_triton_model": True,
@@ -704,6 +700,10 @@ def test_preflight_invokes_per_member_validator(tmp_path, monkeypatch):
     # absorb new kwargs so the monkeypatched stubs stay forward-compatible.
     monkeypatch.setattr(vmod, "validate_analysis_config", lambda cfg, **_kw: ValidationResult())
     monkeypatch.setattr(vmod, "validate_data_consistency", lambda cs, ca, **_kw: ValidationResult())
+    # The thread-count and external-boundary validators read analysis fields this stub does not carry and have no
+    # part in the per-member wiring point, so they are silenced the way the two validators above are.
+    for name in ("_validate_swmm_threads", "_validate_external_boundaries"):
+        monkeypatch.setattr(vmod, name, lambda *a, **k: None)
     result = vmod.preflight_validate(cfg_system, cfg_analysis_stub)
     assert not result.is_valid
     assert any(

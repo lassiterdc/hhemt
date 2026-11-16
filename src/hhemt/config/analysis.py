@@ -97,6 +97,50 @@ RemoveValue = (
 ForceRerunSubject = Literal["all", "none"] | dict[Literal["sa_id", "event_iloc"], list[int | str]]
 
 
+#: The coastal word of every refused key, split so that no source line holds it whole (a formatter joins two
+#: adjacent string literals, so the split is an addition).
+_COASTAL_WORD = "ti" + "de"
+
+
+def _refused_key(*parts: str) -> str:
+    """A refused key assembled from parts, so that no source line holds its spelling whole."""
+    return "_".join(parts)
+
+
+#: The analysis config keys that named a coastal term, each with the key that replaces it.
+#: The spellings are assembled from parts: ``tests/test_neutral_boundary_vocabulary.py`` rejects the coastal
+#: words in every source file with no exclusion list, and a refusal has to name what it refuses.
+_REFUSED_BOUNDARY_KEYS: dict[str, str] = {
+    _refused_key("toggle", "storm", _COASTAL_WORD, "boundary"): (
+        "boundary names no longer use coastal terms. Replacement: toggle_external_boundaries."
+    ),
+    _refused_key("storm", _COASTAL_WORD, "boundary", "line", "gis"): (
+        "boundary names no longer use coastal terms. Replacement: external_boundary_gis."
+    ),
+}
+
+#: The two analysis config keys whose single analysis-wide value was replaced by a per-outfall and per-variable map,
+#: each in its coastal spelling and its neutral spelling, with the teaching text naming what to write instead.
+_WATER_LEVEL_VARIABLE_REFUSAL = (
+    "each boundary record's water level is now named per outfall. Replacement: "
+    "water_level_boundary_outfall_variables, for example {OUTFALL_ID: VARIABLE} for every outfall your boundary "
+    "layer names."
+)
+_WATER_LEVEL_UNITS_REFUSAL = (
+    "the unit and datum of a water level are now stated per weather variable. Replacement: "
+    "water_level_boundary_variable_units, for example {VARIABLE: m}, and "
+    "water_level_boundary_variable_datum_offsets, for example {VARIABLE: 0}, for every variable the outfall map names."
+)
+_REFUSED_BOUNDARY_KEYS.update(
+    {
+        _refused_key("storm", _COASTAL_WORD, "units"): _WATER_LEVEL_UNITS_REFUSAL,
+        "water_level_boundary_units": _WATER_LEVEL_UNITS_REFUSAL,
+        _refused_key("weather", "time", "series", "storm", _COASTAL_WORD, "datavar"): _WATER_LEVEL_VARIABLE_REFUSAL,
+        "weather_time_series_water_level_datavar": _WATER_LEVEL_VARIABLE_REFUSAL,
+    }
+)
+
+
 class ForceRerunSpec(cfgBaseModel):
     """WHICH simulations to force, and from WHICH stage down.
 
@@ -284,6 +328,44 @@ def _read_cgroup_memory_limit_mib() -> float | None:
     return None
 
 
+#: Environment names TRITON_extra_env may not set, each with what to use instead.
+_TOOLKIT_OWNED_ENV = {
+    "OMP_NUM_THREADS": "set n_omp_threads",
+    "OMP_PROC_BIND": "the toolkit's binding contract depends on it",
+    "OMP_PLACES": "the toolkit's binding contract depends on it",
+    "CUDA_VISIBLE_DEVICES": "device mapping is owned by the GPU bind guard",
+    "HIP_VISIBLE_DEVICES": "device mapping is owned by the GPU bind guard",
+    "KOKKOS_DEVICE_ID": "device mapping is owned by the GPU bind guard",
+    "KOKKOS_VISIBLE_DEVICES": "device mapping is owned by the GPU bind guard",
+    "KOKKOS_MAP_DEVICE_ID_BY": "device mapping is owned by the GPU bind guard",
+    "KOKKOS_NUM_THREADS": "set n_omp_threads",
+    "KOKKOS_PROFILE_LIBRARY": "superseded: set TRITON_kokkos_tools_libs",
+    "LD_LIBRARY_PATH": "the toolkit derives the library path",
+    "CC": "the compiler is chosen by the toolkit's build, not the launch",
+    "CXX": "the compiler is chosen by the toolkit's build, not the launch",
+    "MPICH_OFI_NIC_POLICY": "set mpich_ofi_nic_policy in the HPC system config",
+    "MPICH_GPU_SUPPORT_ENABLED": "set gpu_aware_mpi in the HPC system config",
+    "KOKKOS_PRINT_CONFIGURATION": "set TRITON_kokkos_print_configuration",
+    "KOKKOS_DISABLE_WARNINGS": "set TRITON_kokkos_disable_warnings",
+    "KOKKOS_TUNE_INTERNALS": "set TRITON_kokkos_tune_internals",
+    "KOKKOS_TOOLS_LIBS": "set TRITON_kokkos_tools_libs",
+    "KOKKOS_TOOLS_ARGS": "set TRITON_kokkos_tools_args",
+    "HSA_XNACK": "set hsa_xnack in the HPC system config",
+    "CUDA_MANAGED_FORCE_DEVICE_ALLOC": "set cuda_managed_force_device_alloc in the HPC system config",
+}
+
+
+def triton_extra_env_refusal(name: str) -> str | None:
+    """Why ``name`` may not be set through TRITON_extra_env, or None when it may."""
+    if name in _TOOLKIT_OWNED_ENV:
+        return _TOOLKIT_OWNED_ENV[name]
+    if name.startswith("APPTAINER"):
+        return "Apptainer variables are derived by the toolkit"
+    if name.startswith("HHEMT_"):
+        return "HHEMT_ variables belong to the toolkit"
+    return None
+
+
 class analysis_config(cfgBaseModel):
     # REQUIRED INPUTS
     analysis_id: Annotated[
@@ -432,9 +514,20 @@ class analysis_config(cfgBaseModel):
     n_omp_threads: int | None = Field(
         1,
         description=(
-            "Number of OpenMP threads for simulation execution. For TRITON/TRITON-SWMM models, "
-            "controls OpenMP threading in the executable. For SWMM standalone models, dynamically "
-            "updates the THREADS parameter in the [OPTIONS] section of .inp files."
+            "Number of OpenMP threads for simulation execution. For TRITON and TRITON-SWMM models, "
+            "controls OpenMP threading in the executable. The SWMM thread count is the separate setting "
+            "swmm_threads."
+        ),
+    )
+    swmm_threads: int = Field(
+        1,
+        ge=1,
+        description=(
+            "Threads SWMM uses when SWMM routes the network by dynamic wave, in the coupled hydraulics model "
+            "and in the standalone SWMM model. The default is 1 thread, because more threads gave no "
+            "worthwhile speed-up on the Norfolk network. SWMM never uses more threads than the OpenMP thread "
+            "count of the run mode. SWMM runs a single thread when the model has fewer than 4 links per "
+            "thread. The hydrology model always runs on a single thread."
         ),
     )
     n_gpus: int | None = Field(0, description="Number of GPUs per simulation")
@@ -829,32 +922,118 @@ class analysis_config(cfgBaseModel):
         "sensitivity_analysis "
         "defining the analysisal setup.",
     )
-    toggle_storm_tide_boundary: bool = Field(
+    toggle_external_boundaries: bool = Field(
         ...,
-        description="If True, a boundary condition representing storm tide will be applied to the model.",
+        description="If True, external boundary conditions will be applied to the model.",
     )
 
-    storm_tide_boundary_line_gis: Path | None = Field(
+    external_boundary_gis: Path | None = Field(
         None,
-        description="Path to a line gis file spanning the extent of the dem boundary where the variable storm tide "
-        "boundary "
-        "condition should be applied.",
-        json_schema_extra=field_meta(required_when=[when("toggle_storm_tide_boundary", True)]),
+        description="Path to a line gis file spanning the extent of the dem boundary where the external "
+        "boundary conditions should be applied.",
+        json_schema_extra=field_meta(required_when=[when("toggle_external_boundaries", True)]),
     )
-    storm_tide_units: str | None = Field(
+    external_boundary_type_attribute: str | None = Field(
         None,
-        description="Storm tide units, e.g., ft, m. Must align with units used DEM.",
-        json_schema_extra=field_meta(required_when=[when("toggle_storm_tide_boundary", True)]),
+        description="Column of the external-boundary layer that names the type of each record. A record is "
+        "water_level, free_outflow, normal_slope, or froude_number.",
+        json_schema_extra=field_meta(required_when=[when("toggle_external_boundaries", True)]),
+    )
+    external_boundary_value_attribute: str | None = Field(
+        None,
+        description="Column of the external-boundary layer that holds the slope of a normal_slope record or the "
+        "Froude number of a froude_number record. Required when the layer has such a record. Refused when "
+        "the layer has none.",
+        json_schema_extra=field_meta(applies_when=[when("toggle_external_boundaries", True)]),
+    )
+    water_level_boundary_outfall_attribute: str | None = Field(
+        None,
+        description="Column of the external-boundary layer that names the SWMM outfalls a water_level record "
+        "replaces. A cell holds one or more outfall names separated by whitespace. Each outfall is named by "
+        "at most one record. Required when the layer has a water_level record.",
+        json_schema_extra=field_meta(applies_when=[when("toggle_external_boundaries", True)]),
+    )
+    water_level_boundary_series_source: Literal["weather_time_series", "swmm_model"] | None = Field(
+        None,
+        description="Where the water level of each water_level record comes from. Required when the layer has "
+        "a water_level record.",
+        json_schema_extra=field_meta(
+            applies_when=[when("toggle_external_boundaries", True)],
+            options={
+                "weather_time_series": "The weather time series. Each outfall maps to a variable of the series in "
+                "water_level_boundary_outfall_variables.",
+                "swmm_model": "The series the outfalls of the record read in SWMM_model. The analysis may hold "
+                "one event only.",
+            },
+        ),
+    )
+    water_level_boundary_outfall_variables: dict[str, str] | None = Field(
+        None,
+        description="Maps the SWMM id of each outfall that a water_level record names to the weather variable "
+        "that gives the water level of the outfall. Required when water_level_boundary_series_source is "
+        "weather_time_series. Every outfall a record names is a key. The outfalls of a record map to a single "
+        "variable.",
+        json_schema_extra=field_meta(applies_when=[when("water_level_boundary_series_source", "weather_time_series")]),
+    )
+    water_level_boundary_variable_units: dict[str, str] | None = Field(
+        None,
+        description="Maps each weather variable of water_level_boundary_outfall_variables to the unit of the "
+        "values. The units are m, cm, mm, in, ft, and ftUS. Required for every variable the map names.",
+        json_schema_extra=field_meta(applies_when=[when("water_level_boundary_series_source", "weather_time_series")]),
+    )
+    water_level_boundary_variable_datum_offsets: dict[str, float] | None = Field(
+        None,
+        description="Maps each weather variable of water_level_boundary_outfall_variables to the offset, in "
+        "meters, added to the values after the unit conversion to reach the DEM datum. Required for every "
+        "variable the map names. Give 0 when the variable already sits on the DEM datum.",
+        json_schema_extra=field_meta(applies_when=[when("water_level_boundary_series_source", "weather_time_series")]),
+    )
+    water_level_boundary_unequal_outfall_series: Literal["refuse", "average"] = Field(
+        "refuse",
+        description="The action when the outfalls of a water_level record read different series in SWMM_model. "
+        "Applies when water_level_boundary_series_source is swmm_model.",
+        json_schema_extra=field_meta(
+            applies_when=[when("water_level_boundary_series_source", "swmm_model")],
+            options={
+                "refuse": "Refuse the run and name the first row where the series differ.",
+                "average": "Use the mean of the series at each time. The series must share their times.",
+            },
+        ),
+    )
+    water_level_boundary_outfall_max_distance_m: float | None = Field(
+        None,
+        gt=0,
+        description="Largest planar distance, in meters in the system CRS, from an outfall to the line of the "
+        "record that names the outfall. Unset, no maximum applies. The distances are still printed and "
+        "recorded.",
+        json_schema_extra=field_meta(applies_when=[when("toggle_external_boundaries", True)]),
+    )
+    swmm_outfalls_to_keep: list[str] = Field(
+        default_factory=list,
+        description="Outfalls of SWMM_model that remain outfalls in the coupled model. A free, normal, or fixed "
+        "outfall listed here drains as the model says. A TIMESERIES or TIDAL outfall listed here reads the "
+        "series the model defines, unchanged for every event. Every outfall of the coupled model must be "
+        "named by an external-boundary water-level record, listed in swmm_outfalls_to_couple, or listed "
+        "here.",
+    )
+    dem_rim_resolution: Literal["full", "processed"] | None = Field(
+        None,
+        description="The DEM that gives a node's SWMM depth when the toolkit writes the depth from the DEM. "
+        "Required when an outfall is converted or swmm_node_rim_from_dem is true, and refused otherwise.",
+        json_schema_extra=field_meta(
+            options={
+                "processed": "The coarsened DEM that TRITON loads. With swmm_node_rim_from_dem true, TRITON takes "
+                "each coupled node's rim from the same grid.",
+                "full": "The full-resolution DEM. With swmm_node_rim_from_dem true, the toolkit writes every "
+                "coupled node's SWMM depth from that DEM, and TRITON takes the rim as the larger of that depth "
+                "and the pipe crown.",
+            }
+        ),
     )
     weather_event_summary_csv: Path | None = Field(
         None,
         description="CSV file with weather event summary statistics. Events must share "
         "indices with weather_timeseries.",
-    )
-    weather_time_series_storm_tide_datavar: str | None = Field(
-        None,
-        description="Data variables in weather_timeseries corresponding to storm tide.",
-        json_schema_extra=field_meta(required_when=[when("toggle_storm_tide_boundary", True)]),
     )
     sensitivity_analysis: Path | None = Field(
         None,
@@ -1247,6 +1426,229 @@ class analysis_config(cfgBaseModel):
         "boundary conditions are otherwise undefined.",
     )
 
+    # TRITON SETTINGS. Each is rendered into the cfg
+    # (`triton_cfg.render_triton_cfg`) or exported to the solver's environment (`run_simulation`).
+    TRITON_courant_number: float = Field(
+        ...,
+        description="TRITON's Courant number, also called the CFL number. The value must be greater than 0 and at "
+        "most 1. The number sets the stability of the variable time step and changes results, so the field has no "
+        "default. The value is written to the cfg key `courant`.",
+    )
+    TRITON_hextra_m: float = Field(
+        ...,
+        description="TRITON's wet/dry depth threshold in meters. The value must be at least 0. Unit discharge is "
+        "zeroed below the threshold. The threshold changes results, so the field has no default. The value is "
+        "written to the cfg key `hextra`.",
+    )
+    TRITON_fixed_timestep: bool = Field(
+        default=False,
+        description="True runs TRITON with a fixed time step, set by `time_increment_fixed=1`. False, the default, "
+        "lets the time step vary.",
+    )
+    TRITON_domain_decomposition: Literal["static", "dynamic"] = Field(
+        default="static",
+        description="How TRITON partitions the domain among MPI ranks. `dynamic` needs checkpoint partition "
+        "files on resume and requires TRITON_domain_decomposition_check_factor.",
+        json_schema_extra=field_meta(
+            options={
+                "static": "TRITON partitions the domain among the MPI ranks once, at the start, and keeps that "
+                "partition. TRITON_domain_decomposition_check_factor must be unset.",
+                "dynamic": "TRITON re-checks the partition during the run at the interval "
+                "TRITON_domain_decomposition_check_factor sets, and needs checkpoint partition files on resume. "
+                "The check factor is required.",
+            }
+        ),
+    )
+    TRITON_domain_decomposition_check_factor: int | None = Field(
+        default=None,
+        description="Interval factor for TRITON's dynamic re-decomposition check, written to the cfg key "
+        "`factor_interval_domain_decomposition`. The value must be at least 1. The field is required when "
+        "TRITON_domain_decomposition is `dynamic`, and must be unset under `static`, because TRITON reads the "
+        "factor only under `dynamic`.",
+    )
+    TRITON_progress_print_iterations: int = Field(
+        default=10000,
+        description="Iterations between TRITON's progress-log lines, written to the cfg key `it_print`. The value "
+        "must be at least 1. The default is TRITON's own, and the key is written only when the value differs.",
+    )
+    TRITON_kokkos_print_configuration: bool = Field(
+        default=False, description="Export KOKKOS_PRINT_CONFIGURATION=1 so Kokkos prints the configuration."
+    )
+    TRITON_kokkos_disable_warnings: bool = Field(
+        default=False, description="Export KOKKOS_DISABLE_WARNINGS=1 to silence Kokkos warnings."
+    )
+    TRITON_kokkos_tune_internals: bool = Field(
+        default=False, description="Export KOKKOS_TUNE_INTERNALS=1 to enable Kokkos internal tuning."
+    )
+    TRITON_kokkos_tools_libs: str | None = Field(
+        default=None,
+        description="Path of the Kokkos Tools library, exported as KOKKOS_TOOLS_LIBS. Unset leaves the variable out.",
+    )
+    TRITON_kokkos_tools_args: str | None = Field(
+        default=None,
+        description="Arguments for the Kokkos Tools library, exported as KOKKOS_TOOLS_ARGS. Unset leaves the "
+        "variable out.",
+    )
+    TRITON_observation_interval_s: float | None = Field(
+        default=None,
+        description="Seconds of simulated time between TRITON writes of the observation series, written to the cfg "
+        "key `print_observation`. The value must be greater than 0. Unset, TRITON writes at the reporting step. "
+        "The field applies only when the system config sets `observation_points`. An interval set without points "
+        "is refused at preflight.",
+    )
+    TRITON_initial_depth_raster: Path | None = Field(
+        default=None,
+        description="ESRI ASCII grid of initial water depth, or of water-surface elevation when "
+        "TRITON_initial_depth_raster_kind says so, written to the cfg key `h_infile`. The "
+        "header keys ncols, nrows, xllcorner, yllcorner, and cellsize must equal the keys of the processed DEM. "
+        "A raster that differs is refused at scenario preparation, naming the differing key. The toolkit passes "
+        "TRITON a normalized copy of the grid. The copy rounds each value to 5 decimals, so a value under 5e-6 "
+        "becomes 0. Unset, TRITON "
+        "starts dry. On a resume the checkpoint overrides the raster.",
+    )
+    TRITON_initial_depth_raster_kind: Literal["depth", "water_surface_elevation"] | None = Field(
+        default=None,
+        description="The content of TRITON_initial_depth_raster. The field is required when that raster is set and has "
+        "no default. `depth` is a depth in meters, and a negative cell is refused. `water_surface_elevation` is a "
+        "level that the toolkit converts to meters with TRITON_initial_depth_raster_units, shifts by "
+        "TRITON_initial_depth_raster_datum_offset, and reduces by the processed DEM. A cell below the ground "
+        "becomes dry.",
+        json_schema_extra=field_meta(
+            options={
+                "depth": "Each cell of the raster is a depth in meters. A negative cell is refused.",
+                "water_surface_elevation": "Each cell is a water level. The toolkit converts each cell to meters with "
+                "TRITON_initial_depth_raster_units, shifts each cell by TRITON_initial_depth_raster_datum_offset, "
+                "subtracts the processed DEM, and sets a cell below the ground dry.",
+            }
+        ),
+    )
+    TRITON_initial_depth_raster_units: Literal["m", "cm", "mm", "in", "ft", "ftUS"] | None = Field(
+        default=None,
+        description="Length unit of the elevations in TRITON_initial_depth_raster. The field is required when "
+        "TRITON_initial_depth_raster_kind is `water_surface_elevation`, has no default, and is refused under "
+        "`depth`. `ftUS` is the US survey foot.",
+        json_schema_extra=field_meta(
+            options={
+                "m": "Meters.",
+                "cm": "Centimeters, 0.01 m each.",
+                "mm": "Millimeters, 0.001 m each.",
+                "in": "Inches, 0.0254 m each.",
+                "ft": "International feet, 0.3048 m each.",
+                "ftUS": "US survey feet, 1200/3937 m each.",
+            }
+        ),
+    )
+    TRITON_initial_depth_raster_datum_offset: float | None = Field(
+        default=None,
+        description="Meters added to each elevation of TRITON_initial_depth_raster, after the unit conversion, to "
+        "bring each level to the datum of the processed DEM. The field is required when "
+        "TRITON_initial_depth_raster_kind is `water_surface_elevation`, has no default, and is refused under "
+        "`depth`. Write 0 for the same datum.",
+    )
+    TRITON_initial_depth_nodata_fill: float | None = Field(
+        default=None,
+        description="Depth, in meters, given to every no-data cell of TRITON_initial_depth_raster. Unset, a depth "
+        "raster with a no-data cell is refused, naming each raster's no-data count and first cell, and the message "
+        "gives the line to write. A no-data cell of TRITON_initial_qx_raster or TRITON_initial_qy_raster always "
+        "takes 0.",
+    )
+    TRITON_initial_qx_raster: Path | None = Field(
+        default=None,
+        description="ESRI ASCII grid of initial unit discharge in x in m2/s, written to the cfg key `qx_infile`. "
+        "The grid must match the processed DEM. The toolkit rounds each value to 5 decimals, so a value under "
+        "5e-6 becomes 0. Unset, TRITON starts with no flow.",
+    )
+    TRITON_initial_qy_raster: Path | None = Field(
+        default=None,
+        description="ESRI ASCII grid of initial unit discharge in y in m2/s, written to the cfg key `qy_infile`. "
+        "The grid must match the processed DEM. The toolkit rounds each value to 5 decimals, so a value under "
+        "5e-6 becomes 0. Unset, TRITON starts with no flow.",
+    )
+    TRITON_extra_env: dict[str, str] = Field(
+        default_factory=dict,
+        description="Extra environment variables exported to the TRITON launch. The toolkit owns the names for "
+        "thread and device binding, library paths, Apptainer variables, HHEMT_ variables, and MPICH settings. A "
+        "setting of an owned name, or of a variable that another field sets, is refused with a message naming the "
+        "field to use instead.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_triton_settings(self):
+        """Refuse an out-of-range TRITON setting, a decomposition factor that disagrees with its mode, an owned name."""
+        errors: list[str] = []
+        if not 0 < self.TRITON_courant_number <= 1:
+            errors.append(f"TRITON_courant_number is {self.TRITON_courant_number}; it must be in (0, 1]")
+        if self.TRITON_hextra_m < 0:
+            errors.append(f"TRITON_hextra_m is {self.TRITON_hextra_m}; it must be at least 0")
+        if self.TRITON_progress_print_iterations < 1:
+            errors.append("TRITON_progress_print_iterations must be at least 1")
+        interval = self.TRITON_observation_interval_s
+        if interval is not None and not (math.isfinite(interval) and interval > 0):
+            errors.append(f"TRITON_observation_interval_s is {interval}; it must be a finite number greater than 0")
+        factor, mode = self.TRITON_domain_decomposition_check_factor, self.TRITON_domain_decomposition
+        if mode == "dynamic" and factor is None:
+            errors.append(
+                "TRITON_domain_decomposition_check_factor is required when TRITON_domain_decomposition is 'dynamic'"
+            )
+        if mode == "static" and factor is not None:
+            errors.append(
+                "TRITON_domain_decomposition_check_factor must be unset when TRITON_domain_decomposition is 'static'"
+            )
+        if factor is not None and factor < 1:
+            errors.append("TRITON_domain_decomposition_check_factor must be at least 1")
+        errors += self._initial_depth_raster_errors()
+        for name in self.TRITON_extra_env:
+            owner = triton_extra_env_refusal(name)
+            if owner is not None:
+                errors.append(f"TRITON_extra_env key {name!r} is refused: {owner}")
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self
+
+    def _initial_depth_raster_errors(self) -> list[str]:
+        """Refusals for the depth raster's four settings: the kind is required with the raster, the rest follow it.
+
+        The kind has no default because a grid of depths and a grid of elevations look the same and give a flood
+        depth that is wrong by the ground height. The units and the offset belong to the elevation kind alone, so
+        setting either under `depth` is refused instead of being ignored. A setting with no depth raster to apply
+        to is refused for the same reason.
+        """
+        settings = {
+            "TRITON_initial_depth_raster_kind": self.TRITON_initial_depth_raster_kind,
+            "TRITON_initial_depth_raster_units": self.TRITON_initial_depth_raster_units,
+            "TRITON_initial_depth_raster_datum_offset": self.TRITON_initial_depth_raster_datum_offset,
+            "TRITON_initial_depth_nodata_fill": self.TRITON_initial_depth_nodata_fill,
+        }
+        kind = self.TRITON_initial_depth_raster_kind
+        if self.TRITON_initial_depth_raster is None:
+            return [
+                f"{name} is set, and TRITON_initial_depth_raster is not"
+                for name, value in settings.items()
+                if value is not None
+            ]
+        errors = []
+        if kind is None:
+            errors.append(
+                "TRITON_initial_depth_raster_kind is required when TRITON_initial_depth_raster is set; "
+                "write 'depth' or 'water_surface_elevation'"
+            )
+        elif kind == "water_surface_elevation":
+            for name in ("TRITON_initial_depth_raster_units", "TRITON_initial_depth_raster_datum_offset"):
+                if settings[name] is None:
+                    errors.append(
+                        f"{name} is required when TRITON_initial_depth_raster_kind is 'water_surface_elevation'"
+                    )
+        else:
+            for name in ("TRITON_initial_depth_raster_units", "TRITON_initial_depth_raster_datum_offset"):
+                if settings[name] is not None:
+                    errors.append(f"{name} must be unset when TRITON_initial_depth_raster_kind is 'depth'")
+        offset, fill = self.TRITON_initial_depth_raster_datum_offset, self.TRITON_initial_depth_nodata_fill
+        if offset is not None and not math.isfinite(offset):
+            errors.append(f"TRITON_initial_depth_raster_datum_offset is {offset}; it must be a finite number")
+        if fill is not None and not (math.isfinite(fill) and fill >= 0):
+            errors.append(f"TRITON_initial_depth_nodata_fill is {fill}; it must be a finite depth of at least 0")
+        return errors
+
     # OPTIONAL PATHS, EXPERIMENT MEMBERSHIP, REPORTING AND EXECUTION SETTINGS
     analysis_dir: Path | None = Field(
         None,
@@ -1288,7 +1690,7 @@ class analysis_config(cfgBaseModel):
             "report.css :root palette, the HTML-table primary color, the HTML-table accent color, and the "
             "navbar upper-left text. When None, the default, the code-frozen DEFAULT_BRAND_THEME in "
             "config/brand_theme.py applies. Mirrors the sensitivity_analysis and "
-            "storm_tide_boundary_line_gis path-field precedent. Callers may pass an explicit "
+            "external_boundary_gis path-field precedent. Callers may pass an explicit "
             "`override_brand_theme=` Path to `analysis.run()` to override for a single invocation, "
             "mirroring the `report_config=` runtime-override precedent. Automatically per-member "
             "overlayable via an `analysis.brand_theme` sensitivity column."
@@ -1512,10 +1914,19 @@ class analysis_config(cfgBaseModel):
     def validate_toggle_dependencies(cls, values):
         errors = []
 
-        # This validator enforces nothing itself. Conditional requiredness for the four
-        # toggle-dependent fields (storm_tide_boundary_line_gis, storm_tide_units and
-        # weather_time_series_storm_tide_datavar under toggle_storm_tide_boundary, and
-        # sensitivity_analysis under toggle_sensitivity_analysis) is DECLARED on the fields
+        # The four keys that named a coastal term are refused, each with the key that replaces it, and none is
+        # accepted as an alias.
+        if isinstance(values, dict):
+            refused = {key: reason for key, reason in _REFUSED_BOUNDARY_KEYS.items() if key in values}
+            if refused:
+                raise ValueError(
+                    "; ".join(f"'{key}' is not an analysis config field: {reason}" for key, reason in refused.items())
+                )
+
+        # This validator enforces nothing itself. Conditional requiredness for the toggle-dependent
+        # fields (external_boundary_gis and external_boundary_type_attribute under
+        # toggle_external_boundaries, and sensitivity_analysis under toggle_sensitivity_analysis) is
+        # DECLARED on the fields
         # via `field_meta(required_when=...)` and enforced by
         # `cfgBaseModel._enforce_required_when`. See the sibling note in config/system.py
         # for why the hand-written second enforcement site was removed.

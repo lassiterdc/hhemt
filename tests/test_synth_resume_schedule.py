@@ -330,7 +330,7 @@ def _prune_fake_self(cfg_dir, analysis_dir):
         swmm_full_inp=out_dir / "full.inp",
         swmm_full_rpt_file=out_dir / "full.rpt",
         swmm_full_out_file=out_dir / "full.out",
-        extbc_tseries=out_dir / "extbc_tseries.csv",
+        extbc_dir=out_dir / "extbc",
         extbc_loc=out_dir / "extbc_loc.csv",
         hyg_timeseries=out_dir / "hyg_tseries.csv",
         hyg_locs=out_dir / "hyg_locs.csv",

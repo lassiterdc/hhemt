@@ -27,6 +27,10 @@ Variables WITHOUT the kind's time dimension are static (``is_coupling_node``, th
 variables) and are outside the selection: never pruned, whatever a keep-list says. The property, not a list, defines
 them, so a static variable a later change adds is covered without an edit here.
 
+The observation-point variables (``point_flood_depth``, ``point_unit_discharge_x``, ``point_unit_discharge_y``) ride in
+the gridded store on their own ``point_elapsed_s`` dimension, not on ``timestep``, so they are outside the
+``triton_gridded`` kind by the same property and ``timeseries_keep_triton_gridded`` never selects or prunes them.
+
 The prune is applied after the scenario's summary store is written, because the summaries need every series, and it
 never removes a variable outside this table. It is restartable: the pruned names are recorded in the store's
 ``timeseries_pruned_variables`` attribute BEFORE any array is deleted, so an interrupted prune is recognisable and a

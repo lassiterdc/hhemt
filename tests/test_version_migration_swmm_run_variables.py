@@ -259,9 +259,10 @@ def test_a_dry_run_changes_nothing(fixture_tree: Path):
 def test_the_layout_version_is_30_and_the_v30_fixture_is_a_byte_copy_of_v29():
     import filecmp
 
+    from hhemt.version_migration import registry
     from hhemt.version_migration.constants import LAYOUT_VERSION
 
-    assert LAYOUT_VERSION == 31
+    assert LAYOUT_VERSION == max(m.version_to for m in registry.discover_migrations())
     cmp = filecmp.dircmp(FIXTURE_ROOT / "v29", FIXTURE_ROOT / "v30")
 
     def walk(c: filecmp.dircmp) -> list[str]:

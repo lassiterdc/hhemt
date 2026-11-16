@@ -4,10 +4,10 @@ SWMM copies each file name it is handed into a fixed buffer of 259 characters an
 truncates a longer one. A truncated time-series FILE name is opened as a different
 path, so SWMM fails with "ERROR 361: could not open external file used for Time
 Series", which names no length; a truncated binary output name is written somewhere
-other than where the toolkit reads it back. ``create_swmm_inp_from_template`` refuses
-both before it writes the input, naming the path, its byte length and the limit.
+other than where the toolkit reads it back. ``_swmm_fill_values`` refuses
+both before the input is written, naming the path, its byte length and the limit.
 
-Every test here drives that function on a stub scenario: a two-placeholder template, a
+Every test here drives the role write on a stub scenario: a minimal runnable model, a
 two-step event dataset, and FILE paths that need not exist. Lengths are bytes, the
 count SWMM's ``strlen`` sees, so a path holding a two-byte character is one byte longer
 than its character count. No test runs a solver.
@@ -24,7 +24,7 @@ import pytest
 import xarray as xr
 
 from hhemt.exceptions import ProcessingError
-from hhemt.swmm_utils import create_swmm_inp_from_template
+from hhemt.swmm_utils import write_swmm_role_model
 
 LIMIT = 259
 TWO_BYTE = "é"
@@ -41,12 +41,16 @@ def _path_of(root: Path, n_bytes: int, *, suffix: str = "", two_byte: bool = Fal
 
 
 def _scenario(tmp_path: Path, *, rain=None, storm=None, scen_paths=None, env="native"):
-    """The attributes ``create_swmm_inp_from_template`` reads, and nothing else."""
+    """The attributes the role write reads, and nothing else (the model path is attached by ``_write``)."""
     times = pd.date_range("2020-01-01", periods=2, freq="5min")
     cfg = SimpleNamespace(
         weather_time_series_timestep_dimension_name="date_time",
         rainfall_units="mm/hr",
-        toggle_storm_tide_boundary=storm is not None,
+        toggle_external_boundaries=storm is not None,
+        external_boundary_gis=None,
+        water_level_boundary_series_source=None,
+        dem_rim_resolution=None,
+        swmm_threads=1,
         TRITON_reporting_timestep_s=60,
         execution_environment=env,
     )
@@ -69,7 +73,8 @@ def _scenario(tmp_path: Path, *, rain=None, storm=None, scen_paths=None, env="na
         ds_event_ts=xr.Dataset(coords={"date_time": times}),
         log=SimpleNamespace(
             swmm_rainfall_dat_files=SimpleNamespace(get=lambda: rain_files),
-            storm_tide_for_swmm=SimpleNamespace(get=lambda: storm),
+            swmm_threads_written=SimpleNamespace(set=lambda written: None),
+            water_level_boundary_dats=SimpleNamespace(get=lambda: None if storm is None else {0: storm}),
         ),
         scen_paths=scen_paths,
         seconds_to_hhmmss=seconds_to_hhmmss,
@@ -80,14 +85,24 @@ def _scenario(tmp_path: Path, *, rain=None, storm=None, scen_paths=None, env="na
 @pytest.fixture
 def template(tmp_path: Path) -> Path:
     t = tmp_path / "template.inp"
-    t.write_text("[TIMESERIES]\n${TIMESERIES}\n\n[RAINGAGES]\n${RAINGAGES}\n")
+    t.write_text("[OPTIONS]\nFLOW_UNITS CMS\n\n[RAINGAGES]\n\n[TIMESERIES]\n")
     return t
+
+
+def _write(scenario, template: Path, destination: Path) -> None:
+    """Write the full role of the model ``template`` into ``destination`` for ``scenario``."""
+    scenario._system = SimpleNamespace(
+        cfg_system=SimpleNamespace(
+            SWMM_model=template, swmm_outfalls_to_couple=[], system_directory=template.parent / "system"
+        )
+    )
+    write_swmm_role_model(scenario, "full", destination)
 
 
 def _assert_refused(scenario, template: Path, destination: Path, path: str) -> None:
     """The call raises ProcessingError naming the path, its byte length and 259, and writes nothing."""
     with pytest.raises(ProcessingError) as excinfo:
-        create_swmm_inp_from_template(scenario, template, destination)
+        _write(scenario, template, destination)
     message = str(excinfo.value)
     assert path in message, message
     assert str(len(os.fsencode(path))) in message, message
@@ -102,13 +117,13 @@ def _assert_refused(scenario, template: Path, destination: Path, path: str) -> N
 
 @pytest.mark.parametrize(
     ("which", "two_byte"),
-    [("rain", False), ("storm_tide", False), ("rain", True)],
-    ids=["rain_260_bytes", "storm_tide_260_bytes_beside_short_rain", "rain_259_chars_260_bytes"],
+    [("rain", False), ("water_level", False), ("rain", True)],
+    ids=["rain_260_bytes", "water_level_260_bytes_beside_short_rain", "rain_259_chars_260_bytes"],
 )
 def test_an_over_long_file_path_is_refused_before_the_input_is_written(tmp_path, template, which, two_byte):
     """Property: a FILE path over 259 bytes raises ProcessingError and leaves no input.
 
-    Class: every FILE line the function writes -- a rain-gauge line and the storm-tide
+    Class: every FILE line the function writes -- a rain-gauge line and the water-level
     line -- with the over-long path measured in bytes, so a path of 259 characters
     holding one two-byte character is refused.
 
@@ -146,7 +161,7 @@ def test_control_a_file_path_of_exactly_259_bytes_is_written(tmp_path, template,
     """
     path = _path_of(tmp_path, LIMIT, suffix=".dat", two_byte=two_byte)
     destination = tmp_path / "out" / "model.inp"
-    create_swmm_inp_from_template(_scenario(tmp_path, rain=path), template, destination)
+    _write(_scenario(tmp_path, rain=path), template, destination)
     assert f'rg1 FILE "{path}"' in destination.read_text(encoding="utf-8")
 
 
@@ -225,7 +240,7 @@ def test_control_an_output_name_of_exactly_259_bytes_is_accepted(tmp_path, templ
     byte length with ``>= 260``.
     """
     scen_paths, destination, _ = _out_case(tmp_path, case, LIMIT)
-    create_swmm_inp_from_template(_scenario(tmp_path, scen_paths=scen_paths), template, destination)
+    _write(_scenario(tmp_path, scen_paths=scen_paths), template, destination)
     assert destination.exists()
 
 
@@ -243,7 +258,7 @@ def test_control_a_coupled_output_name_in_a_container_run_is_not_measured(tmp_pa
     monkeypatch.setattr("hhemt.config.hpc_system.resolve_container_spec", lambda cfg: SimpleNamespace())
     scen_paths, destination, _ = _out_case(tmp_path, "coupled", LIMIT + 1)
     scenario = _scenario(tmp_path, scen_paths=scen_paths, env="container")
-    create_swmm_inp_from_template(scenario, template, destination)
+    _write(scenario, template, destination)
     assert destination.exists()
 
 
@@ -259,7 +274,7 @@ def test_control_a_coupled_output_name_is_not_measured_when_the_coupled_model_is
     """
     scen_paths, destination, _ = _out_case(tmp_path, "coupled", LIMIT + 1)
     scen_paths.swmm_hydraulics_rpt = None
-    create_swmm_inp_from_template(_scenario(tmp_path, scen_paths=scen_paths), template, destination)
+    _write(_scenario(tmp_path, scen_paths=scen_paths), template, destination)
     assert destination.exists()
 
 
@@ -276,5 +291,5 @@ def test_control_an_over_long_input_name_is_not_measured(tmp_path, template):
     """
     destination = Path(_path_of(tmp_path, LIMIT + 1, suffix=".inp"))
     scen_paths = _paths(tmp_path, swmm_full_inp=destination, swmm_full_out_file=tmp_path / "full.out")
-    create_swmm_inp_from_template(_scenario(tmp_path, scen_paths=scen_paths), template, destination)
+    _write(_scenario(tmp_path, scen_paths=scen_paths), template, destination)
     assert destination.exists()

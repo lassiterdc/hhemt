@@ -1,4 +1,4 @@
-"""Synthesize weather NetCDF with triangular rainfall and sinusoidal storm tide."""
+"""Synthesize weather NetCDF with triangular rainfall and sinusoidal boundary water level."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import xarray as xr
 def _triangle(t: np.ndarray, t_peak: float, t_end: float, peak_val: float) -> np.ndarray:
     """Triangular pulse on the minute axis `t`: 0 at t=0, linear up to `peak_val`
     at `t_peak`, linear down to 0 at `t_end`, then 0. Used for both the rain burst
-    and the storm surge so they share a peak time and recede together."""
+    and the boundary-level pulse so they share a peak time and recede together."""
     out = np.zeros_like(t, dtype=np.float32)
     rise = (t > 0) & (t <= t_peak)
     out[rise] = peak_val * (t[rise] / max(float(t_peak), 1.0))
@@ -37,41 +37,41 @@ def _triangular_hyetograph(params) -> np.ndarray:
     return _triangle(t, params.rainfall_peak_min, params.rainfall_duration_min, peak)
 
 
-def _storm_surge(params) -> np.ndarray:
-    """Triangular storm surge (m) added to the base tide. Peaks `stormsurge_peak_m`
+def _bc_level_pulse(params) -> np.ndarray:
+    """Triangular pulse (m) added to the base boundary level. Peaks `bc_level_peak_m`
     at `rainfall_peak_min` (co-peaking with the rain) and recedes to 0 by
-    `rainfall_duration_min`. Zeros when no surge / no rain window is configured."""
+    `rainfall_duration_min`. Zeros when no pulse / no rain window is configured."""
     dur = params.sim_duration_min
-    if params.stormsurge_peak_m <= 0 or params.rainfall_duration_min is None:
+    if params.bc_level_peak_m <= 0 or params.rainfall_duration_min is None:
         return np.zeros(dur + 1, dtype=np.float32)
     t = np.arange(dur + 1, dtype=np.float32)
-    return _triangle(t, params.rainfall_peak_min, params.rainfall_duration_min, params.stormsurge_peak_m)
+    return _triangle(t, params.rainfall_peak_min, params.rainfall_duration_min, params.bc_level_peak_m)
 
 
-def _sinusoidal_stormtide(params) -> np.ndarray:
+def _sinusoidal_bc_level(params) -> np.ndarray:
     dur = params.sim_duration_min
     t = np.arange(dur + 1, dtype=np.float32)
-    omega = 2 * np.pi / (params.stormtide_period_h * 60.0)
-    return params.stormtide_mean_m + params.stormtide_amplitude_m * np.sin(omega * t)
+    omega = 2 * np.pi / (params.bc_level_period_h * 60.0)
+    return params.bc_level_mean_m + params.bc_level_amplitude_m * np.sin(omega * t)
 
 
 _N_SYNTH_EVENTS = 4
 """Number of synthetic events packed into weather.nc. Must be >= the largest
 ``n_events`` any catalog test case uses; sensitivity variants currently use
 1, multi_sim uses 2, so 4 is a safe upper bound. All events carry the same
-rainfall and storm-tide series — the test tier exercises workflow plumbing,
+rainfall and boundary water-level series — the test tier exercises workflow plumbing,
 not weather variability."""
 
 
 def build_weather(params, dest: Path) -> Path:
     rain = _triangular_hyetograph(params)
-    tide = _sinusoidal_stormtide(params)
+    base_level = _sinusoidal_bc_level(params)
     times = pd.date_range("2000-01-01", periods=len(rain), freq="1min")
 
     # Each variable gets shape (n_events, n_time) so toolkit's
     # ds.sel(event_index=K) indexing picks one event's timeseries cleanly.
     rain_events = np.broadcast_to(rain, (_N_SYNTH_EVENTS, len(rain))).copy()
-    tide_events = np.broadcast_to(tide, (_N_SYNTH_EVENTS, len(tide))).copy()
+    bc_level_events = np.broadcast_to(base_level, (_N_SYNTH_EVENTS, len(base_level))).copy()
 
     # RAGGED MODE. Every event above is the same length and fully finite, so the
     # union-of-finite trim is the identity on this fixture and trimmed and
@@ -89,15 +89,15 @@ def build_weather(params, dest: Path) -> Path:
                 break
             n_finite = max(int(round(n_time * float(frac))), 0)
             rain_events[idx, n_finite:] = np.nan
-            tide_events[idx, n_finite:] = np.nan
+            bc_level_events[idx, n_finite:] = np.nan
 
     if params.compound_event:
         # 2026-06-15 compound coastal-pluvial event (the experiment runs only
         # event 0): rain_events[0] already carries the triangular rain burst;
-        # event 0's water level = base tide sinusoid + triangular storm surge
-        # (co-peaking with the rain at rainfall_peak_min), receding to base-tide
+        # event 0's water level = base level sinusoid + triangular pulse
+        # (co-peaking with the rain at rainfall_peak_min), receding to the base level
         # for the drainage tail. Other events keep the base broadcast (unused).
-        tide_events[0, :] = tide + _storm_surge(params)
+        bc_level_events[0, :] = base_level + _bc_level_pulse(params)
     else:
         # Legacy event structure (other catalog cases):
         #   event 0 (hydro only) : water_level = 0.0 (no BC); rain on
@@ -105,12 +105,12 @@ def build_weather(params, dest: Path) -> Path:
         #   event 2 (both)       : water_level = 2.0 m constant; rain on
         bc_active_level_m = 2.0
         if _N_SYNTH_EVENTS >= 1:
-            tide_events[0, :] = np.zeros_like(tide, dtype=tide.dtype)
+            bc_level_events[0, :] = np.zeros_like(base_level, dtype=base_level.dtype)
         if _N_SYNTH_EVENTS >= 2:
             rain_events[1, :] = np.zeros_like(rain, dtype=rain.dtype)
-            tide_events[1, :] = np.full_like(tide, bc_active_level_m, dtype=tide.dtype)
+            bc_level_events[1, :] = np.full_like(base_level, bc_active_level_m, dtype=base_level.dtype)
         if _N_SYNTH_EVENTS >= 3:
-            tide_events[2, :] = np.full_like(tide, bc_active_level_m, dtype=tide.dtype)
+            bc_level_events[2, :] = np.full_like(base_level, bc_active_level_m, dtype=base_level.dtype)
 
     ds = xr.Dataset(
         data_vars={
@@ -121,8 +121,8 @@ def build_weather(params, dest: Path) -> Path:
             ),
             "water_level": (
                 ("event_index", "time"),
-                tide_events,
-                {"units": "m", "long_name": "storm tide water level"},
+                bc_level_events,
+                {"units": "m", "long_name": "boundary water level"},
             ),
         },
         coords={

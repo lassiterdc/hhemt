@@ -2,9 +2,7 @@ system_directory: .
 watershed_gis_polygon: external/watershed.geojson
 DEM_fullres: external/dem.tif
 landuse_lookup_file: external/landuse_lookup.csv
-SWMM_hydraulics: external/swmm_hydraulics.inp
-SWMM_hydrology: external/swmm_hydrology.inp
-SWMM_full: external/swmm_full.inp
+SWMM_model: external/swmm_model.inp
 landuse_raster: external/landuse.tif
 SWMM_software_directory: null
 TRITONSWMM_software_directory: null
@@ -17,7 +15,6 @@ gpu_hardware: null
 preferred_slurm_option_for_allocating_gpus: gpus
 additional_modules_needed_to_run_TRITON_SWMM_on_hpc: null
 subcatchment_raingage_mapping: external/subcatchment_raingage_mapping.csv
-triton_swmm_configuration_template: external/tritonswmm.cfg
 landuse_lookup_class_id_colname: landuse_class_id
 landuse_lookup_mannings_colname: mannings
 subcatchment_raingage_mapping_gage_id_colname: raingage_id

@@ -196,6 +196,12 @@ def test_no_phantom_swmm_keys_in_cf_variable_map() -> None:
         "unit_discharge_y_at_time_of_max_unit_discharge",
         "time_of_max_unit_discharge",
         "final_surface_flood_volume",
+        # Observation-point variables: TRITON text files, not SWMM report columns.
+        "point_flood_depth",
+        "point_unit_discharge_x",
+        "point_unit_discharge_y",
+        "max_point_flood_depth",
+        "time_of_max_point_flood_depth",
         # The coupled node store's coupling outputs, computed from the solver's exchange side-file rather than read
         # from any report column.
         "is_coupling_node",

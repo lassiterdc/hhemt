@@ -21,15 +21,27 @@ Two invariants are load-bearing beyond this arm:
 import ast
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from hhemt import utils
+from hhemt import triton_cfg, utils
 from hhemt.scenario import SWMM_SNAPSHOT_DISABLE_KEY, append_swmm_snapshot_disable
-from hhemt.synthetic_model import triton_cfg
+from hhemt.triton_cfg import triton_cfg_settings
 
 _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _SCENARIO_SRC = Path(utils.__file__).parent / "scenario.py"
+
+
+class _SettingsProbe:
+    """A stand-in analysis config carrying the TRITON settings, so `triton_cfg_settings` can be asked its keys."""
+
+    TRITON_courant_number = 0.5
+    TRITON_hextra_m = 0.001
+    TRITON_fixed_timestep = False
+    TRITON_domain_decomposition = "static"
+    TRITON_domain_decomposition_check_factor = None
+    TRITON_progress_print_iterations = 10000
 
 
 def _template_placeholders() -> set[str]:
@@ -86,6 +98,9 @@ def test_both_mapping_dicts_cover_every_template_placeholder():
                 and node.keywords
             ):
                 found[fn.name] = {kw.arg for kw in node.keywords if kw.arg}
+                # `**triton_cfg_settings(...)` spreads the config-field placeholders: count the keys it returns.
+                if any(kw.arg is None for kw in node.keywords):
+                    found[fn.name] |= set(triton_cfg_settings(_SettingsProbe(), SimpleNamespace(gpu_aware_mpi=False)))
     assert found.keys() == wanted, f"could not locate both mapping dicts; found {sorted(found)}"
     placeholders = _template_placeholders()
     for name, keys in found.items():

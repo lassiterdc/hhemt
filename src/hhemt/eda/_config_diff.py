@@ -1187,7 +1187,7 @@ def build_config_diff_figure(root: Path, *, cfg_system=None) -> go.Figure:
         return (d0 + d1) / 2.0
 
     # Watershed (north of the sea wall): mask displayed flood depth + depth colorbar range
-    # to the drainage area (excludes the coastal storm-tide extreme), and overlay its
+    # to the drainage area (excludes the coastal boundary-level extreme), and overlay its
     # boundary on every map labeled 'watershed extent (bbox)'.
     wpoly = _watershed_polygon(root, cfg_system)
     wmask = _watershed_mask(wpoly, xd, yd)
@@ -1295,7 +1295,7 @@ def build_config_diff_figure(root: Path, *, cfg_system=None) -> go.Figure:
     # ---- Panel A: serial-CPU reference (absolute magnitudes, report palettes) ----
     fmax = _abs_ref_range(np.nanmax(np.abs(base_f))) if has_flow else None
     # Serial depth reference: displayed flood depth AND the colorbar vmax are restricted to
-    # the watershed mask (north of the sea wall) — the coastal storm-tide extreme south of
+    # the watershed mask (north of the sea wall) — the coastal boundary-level extreme south of
     # the wall is excluded, so the inland floodplain signal is visible (item: vmax based on
     # the region NORTH of the sea wall, via the geodataframe polygon mask).
     base_w_disp = _apply_mask(base_w, wmask)

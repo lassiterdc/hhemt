@@ -241,7 +241,7 @@ def test_every_template_data_dir_path_resolves_to_a_declared_manifest_key():
                 continue
             checked += 1
             assert f"data/contents/{rel}" in keys, f"{name}:{field} -> data/contents/{rel} is not a manifest key"
-    assert checked >= 11, f"matcher read {checked} paths; the two templates carry 11 dataset paths"
+    assert checked >= 9, f"matcher read {checked} paths; the two templates carry 9 dataset paths"
 
 
 @pytest.mark.parametrize("loader", [NorfolkIreneExperiment, NorfolkObservedExperiment], ids=["irene", "observed"])

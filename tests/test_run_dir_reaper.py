@@ -1,7 +1,9 @@
 """Phase 4 — liveness-gated run-directory reaper tests."""
 
 import hashlib
+import os
 import subprocess
+import time
 
 import pytest
 
@@ -58,6 +60,21 @@ def test_is_reapable_truth_table():
 
     # All-negative and old enough: reaps.
     assert is_reapable("s", **base) == (True, "reapable")
+
+    # A gone origin reaps whatever the age, naming its own arm: a young dir is the row
+    # that separates it from the TTL arm.
+    gone = {**base, "gone_origin_slugs": frozenset({"s"}), "mtime": now - 1 * day}
+    assert is_reapable("s", **gone) == (True, "origin-gone")
+
+    # Every liveness arm still wins over a gone origin.
+    for arm, reason in (
+        ("live_worktree_slugs", "live-worktree"),
+        ("live_branch_slugs", "live-branch"),
+        ("locked_slugs", "compile-lock"),
+        ("live_path_slugs", "live-path"),
+    ):
+        assert is_reapable("s", **{**gone, arm: frozenset({"s"})}) == (False, reason)
+    assert is_reapable("main", **{**gone, "gone_origin_slugs": frozenset({"main"})}) == (False, "never-reap")
 
     # Liveness-first ordering: a live slug that is ALSO young returns the liveness
     # arm, never "ttl-not-elapsed" — order is checked FIRST.
@@ -222,3 +239,47 @@ def test_the_path_arm_keeps_the_digest_tier_of_a_live_long_named_worktree(tmp_pa
     (runs_root / digest_slug / ".origin").unlink()
     signals = collect_live_signals(repo, runs_root=runs_root, candidate_slugs=frozenset({digest_slug}))
     assert digest_slug in signals.live_path_slugs
+
+
+def test_a_gone_origin_tier_is_reaped_inside_the_ttl_and_a_live_origin_tier_is_not(tmp_path):
+    """Property: a tier whose `.origin` names a path that is not a directory is reaped under a
+    7-day TTL even though its mtime is now, whether the recorded path's parent exists or not,
+    and a tier whose origin is a directory is kept.
+
+    Class: NEW CAPABILITY -- the `origin-gone` arm of `is_reapable`, fed by `collect_live_signals`.
+    Why required: a tier whose owning checkout was deleted is dead the moment the checkout goes,
+    so a 7-day wait only keeps disk the developer is short of.
+    What kills it: an arm that is never filled (the first tier stays `ttl-not-elapsed`); a guard
+    that also demands the recorded path's parent exist (the second tier is kept); an arm placed
+    before the liveness arms or applied to every tier (the live-origin tier is reaped).
+    Second correct implementation: collecting the gone-origin set from a separate pass over the
+    breadcrumbs instead of the path-arm loop; the verdicts are the same.
+    The empty and missing breadcrumbs are the must-not-reap controls: they say nothing about the
+    checkout, so they keep the TTL behaviour.
+    """
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    live_origin = tmp_path / "checkout"
+    live_origin.mkdir()
+    origins = {
+        "path_gone_leaf": tmp_path / "removed",
+        "path_gone_parent": tmp_path / "gone" / "tree",
+        "path_live": live_origin,
+        "path_empty": None,
+    }
+    runs_root = tmp_path / "runs"
+    for slug, origin in origins.items():
+        (runs_root / slug).mkdir(parents=True)
+        (runs_root / slug / ".origin").write_text("" if origin is None else f"{origin}\n", encoding="utf-8")
+    (runs_root / "path_unwritten").mkdir()  # no breadcrumb at all
+    old = time.time() - 30 * 86400
+    os.utime(runs_root / "path_live", (old, old))  # past the TTL: only a liveness arm can keep it
+
+    signals = collect_live_signals(repo, runs_root=runs_root, candidate_slugs=frozenset(origins) | {"path_unwritten"})
+    assert signals.gone_origin_slugs == frozenset({"path_gone_leaf", "path_gone_parent"})
+
+    report = sweep(runs_root, signals=signals, ttl_days=7, dry_run=True)
+    assert sorted(report.reaped) == ["path_gone_leaf", "path_gone_parent"]
+    assert report.kept["path_live"] == "live-path"
+    assert report.kept["path_empty"] == "ttl-not-elapsed"
+    assert report.kept["path_unwritten"] == "live-path"

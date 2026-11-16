@@ -14,6 +14,7 @@ layout_relevant:
     - src/hhemt/sensitivity_analysis.py
     - src/hhemt/report_plot_ids.py  # reporting-system_canonical-plot-id (ADR-2): the canonical plot-ID grammar + per-renderer extension map. Figure stems ARE the plot IDs; a change here changes on-disk figure filenames (C-LAYOUT) and must bump LAYOUT_VERSION + ship a V{NNNN} migration. workflow.py consumes this module but is intentionally NOT layout-relevant (highest-churn file; would flood Check-B with false positives).
     - src/hhemt/constants.py  # S8a stage-4: constants.py MINTS every _status flag filename (sim_run_flag_per_member / process_timeseries_flag_per_member / consolidate_analysis_flag / member_inputs_fingerprint_flag), so a change to any of those builders renames on-disk artifacts. It was absent from this list and reached by neither glob, so Check B could not see it. Same C-LAYOUT rationale as report_plot_ids.py. Churn measured at the refute round: 4 commits, versus 11 for report_plot_ids.py (already listed) and 70 for workflow.py (deliberately refused above), so the false-positive-flood objection does not reach it.
+    - src/hhemt/water_level_boundary.py  # names the on-disk extraction directory of the base model's series ({system_dir}/swmm_model_series/{sha12}/, its COMPLETE marker and the {index}.dat files), so a change to those names changes system-directory state.
   globs:
     - "src/hhemt/config/**/*.py"
     - "src/hhemt/version_migration/versions/*.py"
@@ -409,7 +410,7 @@ non_breaking_allowlist:
       change class as this file's already-allowlisted additive eda and dataset_license fields.
   - path: src/hhemt/scenario_inputs.py
     justification: >-
-      synthetic-event-window-padding [Q85] scrub — removes the .dropna() from the storm-tide
+      synthetic-event-window-padding [Q85] scrub — removes the .dropna() from the water-level boundary
       extbc writer. The toolkit must not modify input weather; after the rule-(1)
       forcing-completeness fail-fast the clipped slice is complete by contract, so the call
       was either a no-op or a silent modification with no third case. Provably non-breaking:
@@ -5219,3 +5220,159 @@ non_breaking_allowlist:
     layout_signature: 2d9604113efdb4206e6b347730b925ceb6f4a5714b1bbb090d6da36f85f95449
     justification: |-
       chunk 1q.2: the nine mentions of the AnalysisPaths attribute sensitivity_datatree_zarr follow its rename to experiment_datatree_zarr (seven code reads, one docstring line and one error-message line); the path they read was already experiment_datatree.zarr, so no stored group, path, filename, key or column moved and nothing on disk changes name. No LAYOUT_VERSION bump.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: cdb946e6fb09fda0b4748b10a377daabe95edef7fa96bdcdc7321655e8595d00
+    justification: |-
+      The bump to layout 32 landed in 81d8fd13; this edit belongs to the same cut-over (fields, units and message wording for the removed templates) and writes nothing on disk that an existing analysis reads differently.
+  - path: src/hhemt/log.py
+    layout_signature: 7ec022eda7d6168a8e177534bc02c05c91712020ea0e8eaef86991e02c7d7f07
+    justification: |-
+      The bump to layout 32 landed in 81d8fd13; this edit belongs to the same cut-over (fields, units and message wording for the removed templates) and writes nothing on disk that an existing analysis reads differently.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: a9a7611289446f44b98e2cb2ab1ae2d09eb002ada0527c6021e20628fc5d4e40
+    justification: |-
+      The bump to layout 32 landed in 81d8fd13; this edit belongs to the same cut-over (fields, units and message wording for the removed templates) and writes nothing on disk that an existing analysis reads differently.
+  - path: src/hhemt/config/system.py
+    layout_signature: 2419864a2fdba403d23c6d8494747c4d55c9474351c4104e7770b8c3b6815ef4
+    justification: |-
+      The bump to layout 32 landed in 81d8fd13; this edit belongs to the same cut-over (fields, units and message wording for the removed templates) and writes nothing on disk that an existing analysis reads differently.
+  - path: src/hhemt/scenario.py
+    layout_signature: 00a0474f46e91b7cec50525b1a72494116746b8f78a2d07b332970de3cf0306e
+    justification: |-
+      The bump to layout 32 landed in 81d8fd13; this edit belongs to the same cut-over (fields, units and message wording for the removed templates) and writes nothing on disk that an existing analysis reads differently.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: e99a92f91ace9f63b73b1dbd55f74bad4b4dbc07c6e2fe597b4b31939476bcdb
+    justification: |-
+      Part of the layout 32 cut-over (bump in 81d8fd13): wording, the two compiler names added to the refused environment names, and the removal of stand-in adaptations; no on-disk state an existing analysis reads changes.
+  - path: src/hhemt/scenario.py
+    layout_signature: c1ba3af58cf722bc9fa41d8523f5f2d39577080d221ec732efcc5a94cae1c92c
+    justification: |-
+      Part of the layout 32 cut-over (bump in 81d8fd13): wording, the two compiler names added to the refused environment names, and the removal of stand-in adaptations; no on-disk state an existing analysis reads changes.
+  - path: src/hhemt/version_migration/versions/V0032__retire_swmm_and_triton_templates.py
+    layout_signature: 62bb0b0357541fb2285d66725567b9a537376b00787ea22a2ed28d08b393906d
+    justification: |-
+      Part of the layout 32 cut-over (bump in 81d8fd13): wording, the two compiler names added to the refused environment names, and the removal of stand-in adaptations; no on-disk state an existing analysis reads changes.
+  - path: src/hhemt/config/system.py
+    layout_signature: 5df0b4ce2da03755a4fa7821de86b3a916125590201f4b6489efc7e854f9afa7
+    justification: |-
+      Observation points and initial-condition rasters: adds optional fields that default to unset (observation_points, TRITON_observation_interval_s, the three TRITON_initial_*_raster fields) and their cfg rendering. An older config simply lacks them and loads unchanged; no existing path, key or variable changes, so no on-disk state an existing analysis reads changes (the shape's non_breaking_allowlist ground for this change).
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 83aeaf4cc41d48a923c9d62d99678e0e7403ea34be85d81e71c46ae760da424b
+    justification: |-
+      Observation points and initial-condition rasters: adds optional fields that default to unset (observation_points, TRITON_observation_interval_s, the three TRITON_initial_*_raster fields) and their cfg rendering. An older config simply lacks them and loads unchanged; no existing path, key or variable changes, so no on-disk state an existing analysis reads changes (the shape's non_breaking_allowlist ground for this change).
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 9aaa0443b91f8bcb7cec75693d6ce69a8b36fe3b2594b1b2e8d62d61f69ae8ad
+    justification: |-
+      Observation points and initial-condition rasters: adds optional fields that default to unset (observation_points, TRITON_observation_interval_s, the three TRITON_initial_*_raster fields) and their cfg rendering. An older config simply lacks them and loads unchanged; no existing path, key or variable changes, so no on-disk state an existing analysis reads changes (the shape's non_breaking_allowlist ground for this change).
+  - path: src/hhemt/scenario.py
+    layout_signature: c7dc250f6212cbf97f1d71eb866ab246f83e65ad282e2d9be6e88cd4c90dec07
+    justification: |-
+      Observation points and initial-condition rasters: adds optional fields that default to unset (observation_points, TRITON_observation_interval_s, the three TRITON_initial_*_raster fields) and their cfg rendering. An older config simply lacks them and loads unchanged; no existing path, key or variable changes, so no on-disk state an existing analysis reads changes (the shape's non_breaking_allowlist ground for this change).
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 11817c3b5591f7449110d7c0c25c07e87035f190fc26f931071f2aded5526bb7
+    justification: |-
+      Observation points and initial-condition rasters: a unit-table entry, an optional-field description or a field description rewrite for a new optional field changes no on-disk path, key or variable, so no on-disk state an existing analysis reads changes.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 8d55d54fd28554eaabe91426454f81a17f4fc971d9ea138d72c71e37d3c0537f
+    justification: |-
+      Observation points and initial-condition rasters: a unit-table entry, an optional-field description or a field description rewrite for a new optional field changes no on-disk path, key or variable, so no on-disk state an existing analysis reads changes.
+  - path: src/hhemt/config/system.py
+    layout_signature: d62958f840da5faffd6391c285c828053d1318fb717bdf97feecbb5b0fb0f1ec
+    justification: |-
+      Observation points and initial-condition rasters: a unit-table entry, an optional-field description or a field description rewrite for a new optional field changes no on-disk path, key or variable, so no on-disk state an existing analysis reads changes.
+  - path: src/hhemt/config/system.py
+    layout_signature: ea44441b251bc1a1c08848f14cc8374fbbb3c156e72dadfccefa16a4a94d4776
+    justification: |-
+      Observation points: restores a field description block removed by mistake in the preceding commit, so system.py again matches its earlier content apart from the observation_points description. No on-disk path, key or variable changes.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: e7d0eb2170ee4fd017ffb70871b872d6fc2fddabbc539438245d2fff1dab8f48
+    justification: |-
+      Observation-point series, processing and consolidation: reads TRITON's observation text files into three more variables of the existing per-scenario gridded store (new dimensions, no existing variable changes) and adds the series/ directory to the clear_raw reclaim allowlist. An older tree has no such variables and no series directory, so no on-disk state an existing analysis reads changes.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 1df08fb5740c60295760f0b84e052d807237350ab877de3e54d5a300475b9a81
+    justification: |-
+      Observation-point series, processing and consolidation: appends optional triton_observation timeseries and summary groups to the analysis tree when the system config sets observation_points, with CONSOLIDATION_VERSION 4 to 5 recording the changed group set. No existing group, variable or key changes; a version-4 tree is rebuilt once and gains no group because none of its scenarios had observation points.
+  - path: src/hhemt/log.py
+    layout_signature: 335309d70389299b9a257a73e13b6a695aca94b6710fce355f6cba0f8412cc09
+    justification: |-
+      Observation-point series, processing and consolidation: adds four optional log fields (consolidated_observation_series_cleared and _summary_cleared with their clearing_pending lists), defaulted None. Every existing log_{model}.json deserialises unchanged and no existing key changes.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 6f196c84544a9f5dced18f7b90d7824ef1e12f238e648ff4b2ed5628bff22010
+    justification: |-
+      Observation-point series, processing and consolidation: adds CF and provenance entries for the five observation variables and the observation coordinates. A table entry for a variable an older tree does not hold changes no on-disk path, key or variable.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: ab74cca01ee0e252c68c4d032b464e548fb1be4a278b93df512aba40cfecd0ed
+    justification: |-
+      Observation-point series, RO-Crate sidecar: adds a stamped stand-in dataset naming the observation variables to the RO-Crate's emitted-variable set when observation_points is set. The crate sidecar gains descriptors for optional variables; no existing path, key or variable changes.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: ca3e9f2128179b89c3204abc5d1e7880122e48520b9e5c86cc827aed79ec64ce
+    justification: |-
+      Observation-point series, resumed files: reader and consolidation of observation series read a resumed file (restart rows, restart-time labels), the summary group written with its series group, one pair of optional log fields, an optional extra axis label. Optional new content only; no existing path, key or variable changes.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 0080d0267b869de38f78b85a82e518977a9eb5ef2f52d56d6117d6e9ae581eab
+    justification: |-
+      Observation-point series, resumed files: reader and consolidation of observation series read a resumed file (restart rows, restart-time labels), the summary group written with its series group, one pair of optional log fields, an optional extra axis label. Optional new content only; no existing path, key or variable changes.
+  - path: src/hhemt/log.py
+    layout_signature: 25a3533115949f5ec767860bf2825ea84689e3cd6f3913c5c136c6f7b4d509b8
+    justification: |-
+      Observation-point series, resumed files: reader and consolidation of observation series read a resumed file (restart rows, restart-time labels), the summary group written with its series group, one pair of optional log fields, an optional extra axis label. Optional new content only; no existing path, key or variable changes.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 0dda3e78c4fb1cd84c66d0698210f88c41b53dac8bdba663ed9943a171634544
+    justification: |-
+      Observation-point series, resumed files: reader and consolidation of observation series read a resumed file (restart rows, restart-time labels), the summary group written with its series group, one pair of optional log fields, an optional extra axis label. Optional new content only; no existing path, key or variable changes.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 1601b4d0ca33871e15b6905c3fbe7ed501e7ffd3e8095e44b419f3fa98d6f779
+    justification: |-
+      Field descriptions: rewrites the Field description strings of the TRITON settings and the HPC environment fields into short sentences for the published style gate. FieldInfo description metadata is never serialized, so no on-disk path, key, variable, default or validator changes.
+  - path: src/hhemt/config/hpc_system.py
+    layout_signature: 042ecca824f3a894cb232085f12d5ce5d340ec5da40ad1769a41ed738d97ad4d
+    justification: |-
+      Field descriptions: rewrites the Field description strings of the TRITON settings and the HPC environment fields into short sentences for the published style gate. FieldInfo description metadata is never serialized, so no on-disk path, key, variable, default or validator changes.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 20f99d2ef394eab3a290cbf833d6aafb4228ae1774736660fd5fa858b78277a8
+    justification: |-
+      Initial-condition rasters reach TRITON in the form it reads: adds four optional analysis-config fields of the depth raster, each defaulting to None, and one validator method that refuses an inconsistent combination at load. No existing field, default or key changes, and the new fields are never written into an analysis tree, so no on-disk path, key or variable that an existing analysis reads changes.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: ecbd86abbda1cecf60cbfab5065f9dfe8adec1b3dfb8f07aa0314bbdb98ba4d6
+    justification: |-
+      Initial-condition rasters: four bucket rows for the four new optional analysis-config fields of the depth raster, each bucketed experiment. A table row for a field that an older tree does not carry changes no on-disk path, key or variable.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 63c4cfe54e4be0999ee89d2947dae92378dbf94cd154907648bff545c6ace813
+    justification: |-
+      Initial-condition rasters: two unit-table entries for two new optional analysis-config fields. A table entry for a field that an older tree does not carry changes no on-disk path, key or variable.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: e073da95f23ad8991b3655c093c7eca851a5129a9d8ebc15a7730b43239c9f10
+    justification: |-
+      Initial-condition rasters, rounding: three Field description sentences state the rounding of the written values. FieldInfo description metadata is never serialized, so no on-disk path, key, variable, default or validator changes.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 7296dec2d7d7e48f70b0006600f57ed205a06b9d7bf6ade2662036635623e2a6
+    justification: |-
+      Per-record water-level series and outfall decision fields on the analysis config change no on-disk layout beyond the V0033 and V0034 migrations.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 4465a70ede939aff8ae6168bb2f3f4b875d286b0305f72b1c83c424489858649
+    justification: |-
+      Re-records the digest of a file an earlier chunk of this run changed; no on-disk path, key, variable or default changes in this chunk.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 69de4419601ddcd3c6c45e887ad2db9094889fcc9ccead18845e75e58a96fd66
+    justification: |-
+      Re-records the digest of a file an earlier chunk of this run changed; no on-disk path, key, variable or default changes in this chunk.
+  - path: src/hhemt/water_level_boundary.py
+    layout_signature: cad6785654f23acc6eb4ebe372008ca3bbb58783cf67ee218694f090a5874408
+    justification: |-
+      A docstring example of the printed distance line changes; no on-disk path, key or value changes.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 6f420760b3d5b4630e0d762f9d3e04d4230afddea884709ba958f43a74024f6b
+    justification: |-
+      Comment wording only: one comment line no longer names an internal work item; no on-disk path, key or variable changes.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 46ac5468ba099cd44ea1e77fa8fcf235b64794141640bc4a71007400a1417436
+    justification: |-
+      The observation-summary appends of one function sit in their own deferred_consolidation block; no on-disk path, key, variable or default changes.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: b268bd0bb279e11acd62e19adab5be162dbc6da729f0fc9cf9c49d34ffc4e982
+    justification: |-
+      Three Field declarations gain an options glossary, which is rendering metadata; no on-disk path, key, variable or default changes.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 0e890b4035272c830eaf8af12fc708ac47943ae3a6bfe5eb3da51ec88b264448
+    justification: |-
+      The water_surface_elevation option text of TRITON_initial_depth_raster_kind is rendering metadata; no on-disk path, key, variable or default changes.

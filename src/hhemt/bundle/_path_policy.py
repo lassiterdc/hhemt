@@ -71,23 +71,24 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "watershed_gis_polygon": PathPolicy.BUNDLE_RELATIVE,
     "DEM_fullres": PathPolicy.BUNDLE_RELATIVE,
     "landuse_lookup_file": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
-    "SWMM_hydraulics": PathPolicy.BUNDLE_RELATIVE,
-    "SWMM_hydrology": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
-    "SWMM_full": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "SWMM_model": PathPolicy.BUNDLE_RELATIVE,
     "swmm_coupling_nodes_file": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "landuse_raster": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "observation_points": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "SWMM_software_directory": PathPolicy.IS_NONE_ACCEPTABLE,
     "TRITONSWMM_software_directory": PathPolicy.IS_NONE_ACCEPTABLE,
     "subcatchment_raingage_mapping": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
-    "triton_swmm_configuration_template": PathPolicy.BUNDLE_RELATIVE,
     # ---- analysis_config (Path fields) --------------------------------
     # Phase-4 (4d): python_path retired off analysis_config (no longer a Path field).
     "weather_timeseries": PathPolicy.BUNDLE_RELATIVE,
-    "storm_tide_boundary_line_gis": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "external_boundary_gis": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "weather_event_summary_csv": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "sensitivity_analysis": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "weather_event_windows_csv": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "weather_events_to_simulate": PathPolicy.BUNDLE_RELATIVE,
+    "TRITON_initial_depth_raster": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "TRITON_initial_qx_raster": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "TRITON_initial_qy_raster": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "analysis_dir": PathPolicy.FORCED_DOT,
     "experiment_cfg_yaml": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "brand_theme": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
@@ -155,21 +156,13 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
         description="Landuse-code -> Manning's n lookup table.",
         reproducibility_cost="Tiny; excluding it buys no space. Almost never worth a fetch dependency.",
     ),
-    "SWMM_hydraulics": ExcludableInput(
-        description="SWMM hydraulics .inp model (the drainage network).",
+    "SWMM_model": ExcludableInput(
+        description="The plain runnable SWMM .inp model the coupled, hydrology and standalone models derive from.",
         reproducibility_cost=(
-            "Modest in size but load-bearing: the coupled run cannot execute without it. "
+            "Modest in size but load-bearing: no SWMM model can be derived without it. "
             "This is the field to exclude for a LICENSED or proprietary municipal network — "
             "omit contentUrl and supply a citation naming how to obtain it."
         ),
-    ),
-    "SWMM_hydrology": ExcludableInput(
-        description="SWMM hydrology .inp model (subcatchment runoff).",
-        reproducibility_cost="Modest; excluding it blocks the hydrology leg of the coupling.",
-    ),
-    "SWMM_full": ExcludableInput(
-        description="Combined SWMM .inp model (hydrology + hydraulics in one file).",
-        reproducibility_cost="Modest; excluding it blocks the coupled run.",
     ),
     "swmm_coupling_nodes_file": ExcludableInput(
         description=(
@@ -177,18 +170,18 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
         ),
         reproducibility_cost=(
             "Tiny, and it DEFINES the coupled set; excluding it blocks the coupled run. Exclude "
-            "it only together with the SWMM_hydraulics network it names (for example a licensed network)."
+            "it only together with the SWMM_model network it names (for example a licensed network)."
         ),
     ),
     "subcatchment_raingage_mapping": ExcludableInput(
         description="Subcatchment -> raingage mapping table.",
         reproducibility_cost="Tiny; excluding it buys no space.",
     ),
-    "triton_swmm_configuration_template": ExcludableInput(
-        description="TRITON-SWMM run-configuration template the per-sim configs are filled from.",
+    "observation_points": ExcludableInput(
+        description="Observation-point CSV (id,x,y): where TRITON records depth and unit discharge through time.",
         reproducibility_cost=(
-            "Tiny, and it is the reprex template the reconstituted run fills. Excluding it is "
-            "almost always wrong — the bundle carries it as part of the runnable template set."
+            "Tiny; excluding it buys no space and drops the observation series from a reproduced run. Without "
+            "it the points cannot be re-derived, because the file's row order is the points' identity."
         ),
     ),
     # ---- analysis_config ----
@@ -199,6 +192,27 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
             "candidate for an oversized bundle. The run cannot start without it."
         ),
     ),
+    "TRITON_initial_depth_raster": ExcludableInput(
+        description="Initial water-depth raster (ESRI ASCII grid) TRITON starts from.",
+        reproducibility_cost=(
+            "As large as the processed DEM. Excluding it makes a reproduced run start dry, which is a different "
+            "experiment; exclude it only with a fetch route for the file."
+        ),
+    ),
+    "TRITON_initial_qx_raster": ExcludableInput(
+        description="Initial unit-discharge raster in x (ESRI ASCII grid) TRITON starts from.",
+        reproducibility_cost=(
+            "As large as the processed DEM. Excluding it makes a reproduced run start with no flow, which is a "
+            "different experiment; exclude it only with a fetch route for the file."
+        ),
+    ),
+    "TRITON_initial_qy_raster": ExcludableInput(
+        description="Initial unit-discharge raster in y (ESRI ASCII grid) TRITON starts from.",
+        reproducibility_cost=(
+            "As large as the processed DEM. Excluding it makes a reproduced run start with no flow, which is a "
+            "different experiment; exclude it only with a fetch route for the file."
+        ),
+    ),
     "weather_events_to_simulate": ExcludableInput(
         description="The event list (which storms/windows to simulate).",
         reproducibility_cost="Tiny, and it defines the ensemble. Excluding it buys no space.",
@@ -207,8 +221,8 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
         description="Per-event summary table used by reporting.",
         reproducibility_cost="Small; excluding it degrades reporting rather than the run.",
     ),
-    "storm_tide_boundary_line_gis": ExcludableInput(
-        description="Coastal boundary line the storm-tide forcing is applied along.",
+    "external_boundary_gis": ExcludableInput(
+        description="Boundary line the water-level forcing is applied along.",
         reproducibility_cost="Small; excluding it blocks the coastal boundary condition.",
     ),
     "sensitivity_analysis": ExcludableInput(

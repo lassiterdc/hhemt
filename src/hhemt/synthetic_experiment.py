@@ -211,7 +211,7 @@ def assert_coupling_nodes_distinct(
 
     The retained in-line count MUST stay >= the largest MPI rank in the experiment.
     A rung that drops the retained count below the rank count is unrunnable, and the
-    _N_COUPLING_NODES def in swmm_template.py explains WHY node_count caps
+    _N_COUPLING_NODES def in swmm_model.py explains WHY node_count caps
     rank_count. The precheck is the ladder-time enforcement of that cap.
 
     Returns ``{cell_size_m -> retained_coupling_node_count}`` for every rung in
@@ -220,7 +220,7 @@ def assert_coupling_nodes_distinct(
     computation. Monotone non-increasing as the rung coarsens.
 
     The node set is the ``_N_COUPLING_NODES`` in-line rank-coverage junctions --
-    ``swmm_template._node_matrix_rows`` placed on the conduit centerline column
+    ``swmm_model._node_matrix_rows`` placed on the conduit centerline column
     ``_centerline_col`` -- the same set that ``config.synthetic_experiment.
     _validate_coupling_invariant`` guarantees covers every TRITON row-strip rank at
     native resolution. The OTHER SWMM nodes ``_nodes`` returns are DELIBERATELY
@@ -243,7 +243,7 @@ def assert_coupling_nodes_distinct(
     groups SWMM nodes by the containing cell in the PROCESSED DEM after coarsening and
     retains the inflow assignment of only the most downstream node per cell. Fewer
     retained in-line nodes than MPI ranks => a node-free top rank => coupling-collective
-    deadlock. The ``_N_COUPLING_NODES`` definition in ``swmm_template`` explains the deadlock in a
+    deadlock. The ``_N_COUPLING_NODES`` definition in ``swmm_model`` explains the deadlock in a
     comment block that states that every rank must own at least one coupling node or the rank never
     enters the TRITON-SWMM ``ENSIFY_COMM_WORLD`` coupling collective, so every rank
     blocks forever. A deadlock is a HANG and gives no error, the worst failure shape on
@@ -253,7 +253,7 @@ def assert_coupling_nodes_distinct(
     """
     from hhemt.exceptions import ProcessingError
     from hhemt.synthetic_model import SyntheticModelParams
-    from hhemt.synthetic_model.swmm_template import (
+    from hhemt.synthetic_model.swmm_model import (
         _N_COUPLING_NODES,
         _centerline_col,
         _node_matrix_rows,
@@ -263,7 +263,7 @@ def assert_coupling_nodes_distinct(
     col = _centerline_col(params)
     mrs = _node_matrix_rows(params)
     # Reconstruct the in-line chain names + row_from_bottom exactly as ``_nodes`` does
-    # (`swmm_template.py::_nodes`): J1..J(n-1) then ``collector`` (southernmost).
+    # (`swmm_model.py::_nodes`): J1..J(n-1) then ``collector`` (southernmost).
     names = [f"J{i + 1}" for i in range(len(mrs) - 1)] + ["collector"]
     inline_nodes = [(names[i], col, params.n_rows - 1 - mrs[i]) for i in range(len(mrs))]
 
@@ -367,7 +367,8 @@ def generate_synthetic_experiment(cfg: synthetic_experiment_config, dest_dir: Pa
     ``SyntheticModelParams`` and delegates to the lifted
     ``hhemt.synthetic_model.build_synthetic_case``. The remaining
     ``SyntheticModelParams`` fields cover event shaping, namely sim duration, compound
-    surge, and reporting cadence, and retain their generic defaults. The shaping of the production experiment lives in
+    boundary pulse, and reporting cadence, and retain their generic defaults. The shaping of the production
+    experiment lives in
     ``scripts/experiments/synth_compute_config.py::_EXPERIMENT_PARAMS`` and not in the config model.
     """
     from hhemt.synthetic_model import SyntheticModelParams, build_synthetic_case

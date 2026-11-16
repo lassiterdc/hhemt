@@ -1,6 +1,6 @@
 """Which file a SWMM path-length refusal blames, and which operation it names.
 
-``create_swmm_inp_from_template`` refuses an over-long FILE path and an over-long
+``_swmm_fill_values`` (reached through the role write) refuses an over-long FILE path and an over-long
 binary output name. The refusal's message already contains the offending path in its
 reason, so a test that searches the message for the path cannot tell whether the
 exception's ``filepath`` attribute -- printed as the message's "File:" line -- names
@@ -15,22 +15,21 @@ from pathlib import Path
 import pytest
 
 from hhemt.exceptions import ProcessingError
-from hhemt.swmm_utils import create_swmm_inp_from_template
-from tests.test_swmm_inp_file_path_length import LIMIT, _out_case, _path_of, _scenario
+from tests.test_swmm_inp_file_path_length import LIMIT, _out_case, _path_of, _scenario, _write
 
 
 @pytest.fixture
 def template(tmp_path: Path) -> Path:
-    """A SWMM template holding only the two placeholders the function always fills."""
+    """A minimal runnable SWMM model holding the sections the forcing rewrite owns."""
     t = tmp_path / "template.inp"
-    t.write_text("[TIMESERIES]\n${TIMESERIES}\n\n[RAINGAGES]\n${RAINGAGES}\n")
+    t.write_text("[OPTIONS]\nFLOW_UNITS CMS\n\n[RAINGAGES]\n\n[TIMESERIES]\n")
     return t
 
 
 @pytest.mark.parametrize("kind", ["file_path", "output_name"])
 def test_a_path_length_refusal_names_the_offending_path_as_its_file(tmp_path, template, kind):
     """Property: the refusal's ``filepath`` is the over-long path and its ``operation``
-    is ``create_swmm_inp_from_template``.
+    is ``_swmm_fill_values``.
 
     Class: both refusal kinds -- a FILE path written into the input (here a rain gauge)
     and the binary output name SWMM is handed (here the full model's ``.out``) -- each
@@ -60,7 +59,7 @@ def test_a_path_length_refusal_names_the_offending_path_as_its_file(tmp_path, te
         scenario = _scenario(tmp_path, scen_paths=scen_paths)
 
     with pytest.raises(ProcessingError) as excinfo:
-        create_swmm_inp_from_template(scenario, template, destination)
+        _write(scenario, template, destination)
 
     assert excinfo.value.filepath == Path(offending), (excinfo.value.filepath, offending)
-    assert excinfo.value.operation == "create_swmm_inp_from_template", excinfo.value.operation
+    assert excinfo.value.operation == "_swmm_fill_values", excinfo.value.operation

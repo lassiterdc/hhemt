@@ -15,12 +15,9 @@ Cache layout:
         landuse_lookup.csv
         watershed.geojson
         boundary.geojson
-        swmm_hydraulics.inp
-        swmm_hydrology.inp
-        swmm_full.inp
+        swmm_model.inp
         subcatchment_raingage_mapping.csv
         weather.nc
-        tritonswmm.cfg
         build.lock (filelock)
         build.complete (sentinel written after all artifacts exist)
 """
@@ -66,8 +63,8 @@ def _toolkit_version() -> str:
 # bytes (every ``*.py`` under ``src/hhemt/synthetic_model/``) is baked into the
 # cache key so ANY topology / DEM-geometry / weather / forcing edit — none of which
 # changes ``SyntheticModelParams`` — auto-invalidates every existing synthetic-model
-# cache directory. Hashing ONLY ``swmm_template.py`` (the prior behavior) left
-# geometry.py, weather.py, landuse.py, vectors.py, triton_cfg.py and _build.py
+# cache directory. Hashing ONLY ``swmm_model.py`` (the prior behavior) left
+# geometry.py, weather.py, landuse.py, vectors.py and _build.py
 # cache-blind, so a DEM/node-placement or rainfall/surge edit silently served stale
 # artifacts. Computing at import time raises an observable ImportError if any source
 # is unreadable (far more diagnosable than an opaque cache-miss inside _cache_key).
@@ -197,10 +194,7 @@ def get_or_build_synthetic_case(
         landuse_lookup=cache_dir / "landuse_lookup.csv",
         watershed=cache_dir / "watershed.geojson",
         boundary=cache_dir / "boundary.geojson",
-        swmm_hydraulics=cache_dir / "swmm_hydraulics.inp",
-        swmm_hydrology=cache_dir / "swmm_hydrology.inp",
-        swmm_full=cache_dir / "swmm_full.inp",
+        swmm_model=cache_dir / "swmm_model.inp",
         subcatchment_raingage_mapping=cache_dir / "subcatchment_raingage_mapping.csv",
         weather=cache_dir / "weather.nc",
-        tritonswmm_cfg=cache_dir / "tritonswmm.cfg",
     )

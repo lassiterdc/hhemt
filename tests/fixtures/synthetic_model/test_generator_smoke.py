@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 import rioxarray  # noqa: F401  (registers .rio accessor)
 import swmmio
 import xarray as xr
@@ -29,20 +28,16 @@ def test_all_artifacts_exist():
         arts.landuse_lookup,
         arts.watershed,
         arts.boundary,
-        arts.swmm_hydraulics,
-        arts.swmm_hydrology,
-        arts.swmm_full,
+        arts.swmm_model,
         arts.subcatchment_raingage_mapping,
         arts.weather,
-        arts.tritonswmm_cfg,
     ]:
         assert field_path.exists(), f"missing artifact {field_path}"
 
 
-@pytest.mark.parametrize("variant", ["swmm_hydraulics", "swmm_hydrology", "swmm_full"])
-def test_swmm_template_parses(variant):
+def test_swmm_model_parses():
     arts = get_or_build_synthetic_case(DEFAULT_PARAMS)
-    path = getattr(arts, variant)
+    path = arts.swmm_model
     model = swmmio.Model(str(path))
     assert model.inp is not None
 
@@ -81,7 +76,7 @@ def test_every_junction_rim_is_on_the_dem_under_swmms_crown_rule(tmp_path):
     from hhemt.synthetic_model._build import SyntheticModelParams, build_synthetic_case
 
     build_synthetic_case(SyntheticModelParams(), tmp_path)
-    model = swmmio.Model(str(tmp_path / "swmm_hydraulics.inp"))
+    model = swmmio.Model(str(tmp_path / "swmm_model.inp"))
     junctions = model.inp.junctions
     conduits = model.inp.conduits.join(model.inp.xsections[["Geom1"]])
     assert set(model.inp.options.loc["LINK_OFFSETS"].values) == {"DEPTH"}

@@ -26,8 +26,8 @@ import pytest
 import hhemt
 import hhemt.scenario as scenario_mod
 from hhemt import resume_events as re_mod
+from hhemt import triton_cfg
 from hhemt.run_simulation import TRITONSWMM_run
-from hhemt.synthetic_model import triton_cfg
 
 # --------------------------------------------------------------------------------------
 # Fixture builders
@@ -84,7 +84,6 @@ def _generated_cfg_text(tmp_path: Path, monkeypatch) -> str:
             cfg_system=SimpleNamespace(
                 toggle_use_constant_mannings=True,
                 constant_mannings=0.03,
-                triton_swmm_configuration_template=template,
                 TRITONSWMM_software_directory=None,
                 TRITONSWMM_branch_key=None,
             ),
@@ -92,11 +91,18 @@ def _generated_cfg_text(tmp_path: Path, monkeypatch) -> str:
             log=SimpleNamespace(triton_head_sha=SimpleNamespace(get=lambda: None)),
         ),
         _analysis=SimpleNamespace(
+            cfg_hpc_system=SimpleNamespace(gpu_aware_mpi=False),
             cfg_analysis=SimpleNamespace(
                 manhole_diameter=1.0,
                 manhole_loss_coefficient=0.5,
                 TRITON_raw_output_type="bin",
                 hydraulic_timestep_s=1,
+                TRITON_courant_number=0.5,
+                TRITON_hextra_m=0.001,
+                TRITON_fixed_timestep=False,
+                TRITON_domain_decomposition="static",
+                TRITON_domain_decomposition_check_factor=None,
+                TRITON_progress_print_iterations=10000,
                 TRITON_reporting_timestep_s=60,
                 open_boundaries=0,
                 swmm_snapshot_disable=False,
@@ -104,7 +110,7 @@ def _generated_cfg_text(tmp_path: Path, monkeypatch) -> str:
                 swmm_node_rim_from_dem=False,
                 one_coupled_inflow_node_per_dem_cell=False,
                 execution_environment="native",
-            )
+            ),
         ),
         _swmm_inp_for_sim_duration=lambda: work / "hydraulics.inp",
         scen_paths=SimpleNamespace(

@@ -321,6 +321,7 @@ class TRITONSWMM_system:
             compilation_logfile=tritonswmm_dir / "build_tritonswmm_cpu" / "compilation.log",
             compilation_script=system_dir / "compile_cpu.sh",
             system_datatree_zarr=system_dir / "system_datatree.zarr",
+            swmm_model_series_dir=system_dir / "swmm_model_series",
         )
 
         # Initialize system log
@@ -578,24 +579,12 @@ class TRITONSWMM_system:
     def _write_raster(self, fpath_raster, rds, raster_metadata=None):
         """Stream-write a rioxarray DataArray to an ESRI ASCII raster file.
 
-        Row-streamed implementation: iterates the DataArray in row-blocks,
-        formats each block via vectorized numpy string ops, and appends
-        directly to the file handle. Avoids the prior to_dataframe -> pivot
-        -> to_csv pipeline that materialized the full grid ~13x in memory
-        and was vulnerable to a pivot-induced row-doubling failure when
-        coarsen_georaster produced near-identity y-coordinates.
-
-        Output format (preserved from prior implementation):
-          - 6 header lines (when raster_metadata provided) of "key value\n"
-          - nrows data rows, each ncols space-separated fixed-point floats
-          - target_decimal_places = 5
-          - field width = len(str(int(max_abs))) + target_decimal_places + 1
-          - line terminator = single "\n"; no trailing blank line
-          - NODATA value rendered through the same numeric formatter
+        Orders the rows north to south and the columns west to east, then hands the array to
+        `write_triton_ascii_grid`, the one writer of the header-less form TRITON reads. The DEM
+        takes the six-line header and the Manning's raster takes none.
         """
         # Squeeze band dim if present (rxr.open_rasterio yields (1, ny, nx)).
         arr = rds.values[0] if rds.ndim == 3 else rds.values
-        nrows, ncols = arr.shape
 
         # Sort row order: y DESCENDING (north -> south, ESRI ASCII convention).
         y_vals = np.asarray(rds.y.values)
@@ -603,46 +592,7 @@ class TRITONSWMM_system:
         row_order = np.argsort(y_vals)[::-1]
         col_order = np.argsort(x_vals)
         arr = arr[row_order][:, col_order]
-
-        # Compute field width from the full array (matches prior longest_num).
-        target_decimal_places = 5
-        max_abs = float(np.nanmax(np.abs(arr))) if arr.size else 0.0
-        longest_num = len(str(int(max_abs))) + target_decimal_places + 1
-
-        # Write to a temp file in the same directory, then atomically replace the
-        # target via Path.replace() (POSIX rename — atomic on GPFS/NFS).  This
-        # eliminates the doubled-row corruption that occurred when two setup_target_*
-        # jobs sharing a DEM resolution ran concurrently: the old two-phase open
-        # (header in "w", data in "a") meant both jobs appended their data rows to
-        # the same file, producing 2× the expected row count.
-        row_block_size = _ROW_BLOCK_SIZE
-        fmt = f"{{:.{target_decimal_places}f}}"
-        fpath_raster = Path(fpath_raster)
-        tmp_fd, tmp_path_str = tempfile.mkstemp(dir=fpath_raster.parent, suffix=".dem.tmp")
-        try:
-            with open(tmp_fd, "w") as f:
-                if raster_metadata is not None:
-                    for key in raster_metadata:
-                        f.write(key + str(raster_metadata[key]) + "\n")
-                for start in range(0, nrows, row_block_size):
-                    stop = min(start + row_block_size, nrows)
-                    block = arr[start:stop]
-                    # Vectorized format-and-pad: per cell, "{:.5f}".format(v).ljust(longest_num, "0").
-                    # Preserve prior right-pad-with-"0" convention for byte-stability with the
-                    # existing 1.1m ground-truth artifact; see follow-up idea for cleanup.
-                    lines = []
-                    for row in block:
-                        cells = [fmt.format(v).ljust(longest_num, "0") for v in row]
-                        lines.append(" ".join(cells))
-                    f.write("\n".join(lines) + "\n")
-            Path(tmp_path_str).replace(fpath_raster)
-        except Exception:
-            try:
-                # EXEMPT-DU: system-dir
-                Path(tmp_path_str).unlink(missing_ok=True)
-            except Exception:
-                pass
-            raise
+        write_triton_ascii_grid(fpath_raster, arr, raster_metadata)
 
     def _sync_compilation_log_field(
         self,
@@ -2556,6 +2506,74 @@ def triton_grid_header(rds) -> dict:
         "yllcorner": rds.y.values.min() - og_avg_gridsize / 2,  # adjusted from center to corner
         "cellsize": og_avg_gridsize,
     }
+
+
+def write_triton_ascii_grid(fpath_raster, arr, raster_metadata=None) -> None:
+    """Stream-write a 2-D array, north row first, as the ESRI ASCII text TRITON reads.
+
+    TRITON reads its grids with a reader that takes no header: the column count is the number of single-space
+    tokens on the first line and the row count is the number of lines, and a token with no decimal point is read
+    as an integer. So every value is written fixed-point with a decimal point, single spaces between values and a
+    newline after each row. `_write_raster` (the DEM and the Manning's raster) and the initial-condition rasters
+    of `triton_cfg` both call this function, so the three files cannot drift into different forms.
+
+    Row-streamed: formats each block of rows via vectorized numpy string ops and appends it to the file handle.
+    This avoids the prior to_dataframe -> pivot -> to_csv pipeline that materialized the full grid ~13x in
+    memory and was vulnerable to a pivot-induced row-doubling failure when coarsen_georaster produced
+    near-identity y-coordinates.
+
+    Output format (preserved from prior implementation):
+      - 6 header lines (when raster_metadata provided) of "key value\n"
+      - nrows data rows, each ncols space-separated fixed-point floats
+      - target_decimal_places = 5
+      - field width = len(str(int(max_abs))) + target_decimal_places + 1
+      - line terminator = single "\n"; no trailing blank line
+      - NODATA value rendered through the same numeric formatter
+
+    `arr` is already ordered north to south and west to east, and holds no NaN. Values are written to five
+    decimal places, so a finer value is rounded.
+    """
+    nrows, ncols = arr.shape
+
+    # Compute field width from the full array (matches prior longest_num).
+    target_decimal_places = 5
+    max_abs = float(np.nanmax(np.abs(arr))) if arr.size else 0.0
+    longest_num = len(str(int(max_abs))) + target_decimal_places + 1
+
+    # Write to a temp file in the same directory, then atomically replace the
+    # target via Path.replace() (POSIX rename — atomic on GPFS/NFS).  This
+    # eliminates the doubled-row corruption that occurred when two setup_target_*
+    # jobs sharing a DEM resolution ran concurrently: the old two-phase open
+    # (header in "w", data in "a") meant both jobs appended their data rows to
+    # the same file, producing 2× the expected row count.
+    row_block_size = _ROW_BLOCK_SIZE
+    fmt = f"{{:.{target_decimal_places}f}}"
+    fpath_raster = Path(fpath_raster)
+    tmp_fd, tmp_path_str = tempfile.mkstemp(dir=fpath_raster.parent, suffix=".dem.tmp")
+    try:
+        with open(tmp_fd, "w") as f:
+            if raster_metadata is not None:
+                for key in raster_metadata:
+                    f.write(key + str(raster_metadata[key]) + "\n")
+            for start in range(0, nrows, row_block_size):
+                stop = min(start + row_block_size, nrows)
+                block = arr[start:stop]
+                # Vectorized format-and-pad: per cell, "{:.5f}".format(v).ljust(longest_num, "0").
+                # Preserve prior right-pad-with-"0" convention for byte-stability with the
+                # existing 1.1m ground-truth artifact; see follow-up idea for cleanup.
+                lines = []
+                for row in block:
+                    cells = [fmt.format(v).ljust(longest_num, "0") for v in row]
+                    lines.append(" ".join(cells))
+                f.write("\n".join(lines) + "\n")
+        Path(tmp_path_str).replace(fpath_raster)
+    except Exception:
+        try:
+            # EXEMPT-DU: system-dir
+            Path(tmp_path_str).unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
 
 
 def read_triton_grid_header(fpath_raster) -> dict:

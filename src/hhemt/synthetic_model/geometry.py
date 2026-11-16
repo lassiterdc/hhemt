@@ -11,10 +11,10 @@ absolute footprint):
     FULL-WIDTH sea-wall row as the rectangle's southern edge.
   * **Downstream BC shelf.** The ``_BC_ZONE_ROWS`` rows south of the sea wall
     are a flat low shelf (``_BC_FLOOR_ELEV``) open to the variable-water-level
-    (storm-tide) boundary condition. The sea wall blocks the BC from the
+    water-level boundary condition. The sea wall blocks the BC from the
     upstream area; the ONLY hydraulic connection is the SWMM culvert from the
     ``collector`` junction (just upstream of the wall) to the ``sewer_outflow``
-    interaction junction in this shelf — so tide backwater enters SWMM at the
+    interaction junction in this shelf — so boundary backwater enters SWMM at the
     interaction node and surcharges up the chain, flooding every upstream node's
     rim (BC 2.0 m > all rims).
   * **Floodplain + river.** The upstream interior is a floodplain whose base
@@ -43,9 +43,9 @@ _WALL_ELEV = 50.0  # bathtub rim + sea wall; artificially high — excluded
 # from the DEM colorbar's dynamic range (renderer R10).
 _WALL_THICKNESS = 2  # cells of top + left/right border (vectors.py mirrors this).
 
-# --- Downstream storm-tide BC shelf (south of the sea wall) -----------------
+# --- Downstream water-level BC shelf (south of the sea wall) -----------------
 _BC_ZONE_ROWS = 4  # rows of open low shelf below the full-width sea wall.
-_BC_FLOOR_ELEV = 0.0  # flat shelf elevation — well below the 2.0 m tide BC so
+_BC_FLOOR_ELEV = 0.0  # flat shelf elevation — well below the 2.0 m water-level BC so
 # the BC floods the interaction node's cell.
 
 # --- Upstream floodplain base surface (gentle N->S slope) -------------------
@@ -63,7 +63,7 @@ _INTERIOR_TOP_MR = _WALL_THICKNESS  # first interior matrix-row below the top wa
 
 def _sea_wall_mr(params) -> int:
     """Full-width sea-wall matrix-row = southern edge of the upstream bathtub.
-    The ``_BC_ZONE_ROWS`` rows below it are the open storm-tide BC shelf."""
+    The ``_BC_ZONE_ROWS`` rows below it are the open water-level BC shelf."""
     return params.n_rows - 1 - _BC_ZONE_ROWS
 
 
@@ -72,12 +72,12 @@ def _conduit_network(params):
     """Lazy-built (and cached) shapely union of all conduit centerlines, used by
     the floodplain river-depression. Cached because `build_dem` queries the
     network distance once per cell (n_rows*n_cols times). Node centers match
-    `swmm_template._nodes` coordinate convention so a node point lies exactly on
+    `swmm_model._nodes` coordinate convention so a node point lies exactly on
     the line (distance 0 -> full centerline depression)."""
     from shapely.geometry import LineString
     from shapely.ops import unary_union
 
-    from .swmm_template import _conduits, _nodes
+    from .swmm_model import _conduits, _nodes
 
     cs = params.cell_size_m
     node_xy = {name: (cs * (col + 0.5), cs * (row_from_bottom + 0.5)) for name, col, row_from_bottom in _nodes(params)}
@@ -129,7 +129,7 @@ def dem_elev_at(params, col: int, row_from_bottom: int) -> float:
     matrix_row = n_rows - 1 - row_from_bottom
     sea_wall = _sea_wall_mr(params)
 
-    # Downstream storm-tide BC shelf (south of the sea wall): open, flat, low.
+    # Downstream water-level BC shelf (south of the sea wall): open, flat, low.
     if matrix_row > sea_wall:
         return float(_BC_FLOOR_ELEV)
     # Top wall (bathtub north edge).

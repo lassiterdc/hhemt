@@ -1,4 +1,4 @@
-"""Synthesize watershed polygon and storm-tide boundary line as GeoJSON."""
+"""Synthesize watershed polygon and water-level boundary line as GeoJSON."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ def build_watershed(params, dest: Path) -> Path:
     """Polygon covering the UPSTREAM drainage area (north of the sea wall).
 
     Inset one cell from the DEM extent on the north/east/west, but the SOUTHERN edge
-    is raised above the storm-tide BC shelf + the full-width sea-wall row, so the
-    polygon excludes the tidal/coastal zone where the deep (3 m+) storm-tide levels
+    is raised above the water-level BC shelf + the full-width sea-wall row, so the
+    polygon excludes the coastal zone where the deep (3 m+) boundary levels
     sit. This matches a real drainage watershed (which excludes the coastal boundary
     zone) and is the mask a depth renderer uses to set its colorbar range from the
     inland floodplain rather than the coastal extreme.
@@ -47,11 +47,17 @@ def build_watershed(params, dest: Path) -> Path:
 
 
 def build_boundary(params, dest: Path) -> Path:
-    """Storm-tide boundary along the interior (non-wall) portion of the DEM's
+    """Water-level boundary along the interior (non-wall) portion of the DEM's
     southern edge. Walls occupy the outer `_WALL_THICKNESS` columns on each
     side, so the BC line spans x from `xllcorner + 2*cs` to `x1 - 2*cs` —
     matching the low-elevation interior where the bathtub drains.
+
+    The one record is a `water_level` record (column `type`) that names the SWMM outfall beside its line (column
+    `outfall`), so the toolkit converts that outfall into a coupled junction and applies the boundary's water level
+    on the surface along the line.
     """
+    from .swmm_model import MATCHED_OUTFALL
+
     x0, y0, x1, _ = _extent(params)
     cs = params.cell_size_m
     wall_thickness = 2  # matches geometry.py::_WALL_THICKNESS
@@ -62,6 +68,10 @@ def build_boundary(params, dest: Path) -> Path:
             (x1 - wall_thickness * cs, y_bc),
         ]
     )
-    gdf = gpd.GeoDataFrame({"bc_id": [1]}, geometry=[line], crs=f"EPSG:{params.epsg}")
+    gdf = gpd.GeoDataFrame(
+        {"bc_id": [1], "type": ["water_level"], "outfall": [MATCHED_OUTFALL]},
+        geometry=[line],
+        crs=f"EPSG:{params.epsg}",
+    )
     gdf.to_file(dest, driver="GeoJSON", engine="pyogrio")
     return dest

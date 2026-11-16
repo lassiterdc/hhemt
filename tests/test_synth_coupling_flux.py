@@ -2,7 +2,7 @@
 flux decoded from the solver's side-file, and the order in which the side-file is read and reclaimed.
 
 SIMULATION-BEARING: each test compiles and runs TRITON-SWMM. Run it on Rivanna scratch only, serialized against the
-worktree's build cache; it is never run on a laptop. The synthetic pin (`bb13ea28`) writes the V2 side-file
+worktree's build cache; it is never run on a laptop. The synthetic pin (`faba2232`) writes the V2 side-file
 (`EXCHANGE_LOG_MAGIC_V2` occurs 4 times in its `swmm_triton.h`), so no pin override is applied.
 
 Three arms, one scenario each:

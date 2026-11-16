@@ -43,7 +43,7 @@ def _system_yaml(tmp_path: Path) -> Path:
     for no gain. ``toggle_use_swmm_for_hydrology`` and the landuse path are off, so their
     conditional fields stay unrequired.
     """
-    for rel in ("wshed.shp", "dem.tif", "template.cfg", "swmm/hydraulics.inp"):
+    for rel in ("wshed.shp", "dem.tif", "swmm/model.inp"):
         fp = tmp_path / rel
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_bytes(b"")
@@ -54,8 +54,7 @@ def _system_yaml(tmp_path: Path) -> Path:
         "DEM_fullres": str(tmp_path / "dem.tif"),
         "TRITONSWMM_software_directory": str(tmp_path / "software"),
         "TRITONSWMM_git_URL": "https://example.invalid/triton.git",
-        "triton_swmm_configuration_template": str(tmp_path / "template.cfg"),
-        "SWMM_hydraulics": str(tmp_path / "swmm" / "hydraulics.inp"),
+        "SWMM_model": str(tmp_path / "swmm" / "model.inp"),
         "toggle_use_swmm_for_hydrology": False,
         "toggle_use_constant_mannings": True,
         "constant_mannings": 0.03,

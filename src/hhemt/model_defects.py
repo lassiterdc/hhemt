@@ -422,18 +422,22 @@ SHA_CURATED_MAIN_PIN = "a146fb6ed7c22790fb9a15ff854c446db4519ad2"
 #: keyed in `scenario.SWMM_QUALITY_SNAPSHOT_SHAS`, not in this registry.
 SHA_MAIN_QUALITY_SNAPSHOT_PIN = "bd18215972c348020d53b3a8a1a64ee6266cae28"
 
-#: The fork's `main` as the synthetic tier's pin from the move that bounds SWMM's file-path
+#: The fork's `main` as the synthetic tier's pin, until package 1j moved the tier to
+#: `SHA_ORNL_COUPLING_DECLARATION_PIN`, from the move that bounds SWMM's file-path
 #: handling: "fix(swmm): refuse SWMM file paths longer than MAXFNAME before swmm_open" (`bb13ea28`),
 #: two commits past `SHA_MAIN_QUALITY_SNAPSHOT_PIN` (`git merge-base --is-ancestor bd18215 bb13ea28`
 #: -> rc 0; `git diff --stat bd18215 bb13ea28`: `external/swmm/src/solver/massbal.c` and
 #: `src/swmm_triton.h` only). It is the `known_absent_in` member of every REGISTRY entry, which
-#: `scripts/check_live_pin_registered.py` asserts at commit time. NOT an entry of any defect: the
+#: `tests/test_model_defects.py::test_every_registered_defect_is_absent_at_the_live_pin` asserts;
+#: it stays registered because recorded runs name it. NOT an entry of any defect: the
 #: two commits it adds (7a59d18, the flooding-debug path buffer; bb13ea28, the path-length refusal)
 #: are deliberately unregistered under the developer's ruling that no fix before the next public
 #: release needs a registry entry.
 SHA_MAIN_SWMM_PATH_REFUSAL_PIN = "bb13ea28603d50879f8d85cd041c17f440fbdb2b"
 
-#: ORNL UPSTREAM `triton-swmm` TIP, `faba2232`: the build the coupling-flux experiment compiles
+#: ORNL UPSTREAM `triton-swmm` TIP, `faba2232`: the synthetic tier's LIVE PIN since package 1j (its source is
+#: identical to `SHA_MAIN_SWMM_PATH_REFUSAL_PIN`'s: `git diff --stat bb13ea28 faba2232 -- src external/swmm/src`
+#: -> empty, measured 2026-11-15), and the build the coupling-flux experiment compiles
 #: natively on Rivanna. It is the ORNL re-curation of the fork's coupled-run work, so the fork's
 #: fix shas are NOT its ancestors (rc 1, listed below) and the registry's content probes decide
 #: every verdict that ancestry cannot. Measured 2026-11-06 against FULL, non-shallow clones

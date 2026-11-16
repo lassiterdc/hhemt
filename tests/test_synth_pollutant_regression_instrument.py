@@ -35,7 +35,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from hhemt.synthetic_model import swmm_template
+from hhemt.synthetic_model import swmm_model
 from hhemt.synthetic_model._build import SyntheticModelParams, build_synthetic_case
 
 # sha256 of each default-parameter variant (pollutant knob off), taken from the generator
@@ -46,9 +46,12 @@ from hhemt.synthetic_model._build import SyntheticModelParams, build_synthetic_c
 # taken for was measured against the independent base 5e83c4c6 when the knob landed, and
 # is not re-measured by this re-take.
 _PRE_CHANGE_INP_SHA256 = {
-    "swmm_hydraulics.inp": "95613c7d0101fde2ffee948ade0b43d80c49b01164f8a8d8dfcf0bda15f34b2a",
-    "swmm_hydrology.inp": "db131d125b769f79e4b6d602117279c69c3fb581dd4ac1191960544a7da5fa92",
-    "swmm_full.inp": "7b4bb7b28af86cfbbdeab0beef73a470dd51d72f11d9ac84d9664d5ee9b4b399",
+    # Re-taken when the three template variants became ONE runnable model (hhemt 1.2): the model is the old
+    # `full` variant with concrete dates and inline rain rows, so its digest differs from the three variants' digests.
+    # Re-taken again when the synthetic model gained its matched water-level outfall (`SYNTH_OUTFALL`, a TIMESERIES
+    # outfall at the end of the `C_out` reach from `sewer_outflow`): the added [OUTFALLS] row and its link and node
+    # rows change the default emission by design.
+    "swmm_model.inp": "233cd5802374dff8ff8e8e5cd0e145b5ef6558799489224f4e46fe7009721328",
 }
 
 # Scoped to the `.inp` variants deliberately. The knob reaches no other artifact,
@@ -147,14 +150,14 @@ def test_the_byte_identity_gate_reds_under_an_unconditional_pollutant(tmp_path, 
     invoked, so it discharges the invocation-isolation requirement by discrimination
     rather than by re-running under a second tree.
 
-    What kills it: restoring the knob's gate inside `_write_variant` instead of
+    What kills it: restoring the knob's gate inside `build_model` instead of
     inside `_pollutants_df`, which would leave nothing to patch and make this test
     pass vacuously — it would stop being able to red.
 
     A second correct implementation under which it still passes: compare whole file
     bytes instead of sha256 digests; the inequality it asserts is unchanged.
     """
-    monkeypatch.setattr(swmm_template, "_pollutants_df", _always_emit_pollutant)
+    monkeypatch.setattr(swmm_model, "_pollutants_df", _always_emit_pollutant)
     got = _inp_digests(SyntheticModelParams(), tmp_path)
     assert got != _PRE_CHANGE_INP_SHA256
     for variant in _VARIANTS:
@@ -234,7 +237,7 @@ def test_the_trigger_gate_reds_when_the_outfall_is_routed(tmp_path, monkeypatch)
     by adding only `RouteTo`, or by adding the `TideGate`+`RouteTo` pair; both emit
     the literal this asserts on.
     """
-    real_outfalls_df = swmm_template._outfalls_df
+    real_outfalls_df = swmm_model._outfalls_df
 
     def routed_outfalls_df(params):
         """Wrap the real outfall frame and route it, adding the pair swmmio declares.
@@ -249,9 +252,9 @@ def test_the_trigger_gate_reds_when_the_outfall_is_routed(tmp_path, monkeypatch)
         frame["RouteTo"] = "S1"
         return frame
 
-    monkeypatch.setattr(swmm_template, "_outfalls_df", routed_outfalls_df)
+    monkeypatch.setattr(swmm_model, "_outfalls_df", routed_outfalls_df)
     build_synthetic_case(SyntheticModelParams(pollutant_name="TSS"), tmp_path)
-    text = (tmp_path / "swmm_full.inp").read_text(encoding="utf-8")
+    text = (tmp_path / "swmm_model.inp").read_text(encoding="utf-8")
 
     assert "[POLLUTANTS]" in text, "the pollutant half must survive, or this proves nothing"
     assert "RouteTo" in _section(text, "[OUTFALLS]")

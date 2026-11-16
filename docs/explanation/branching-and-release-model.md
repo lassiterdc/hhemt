@@ -62,6 +62,28 @@ documents the record that a run leaves of the exports.
 
 **A release head's compile context may be a reuse of an identical compile-relevant tree.** When the commits since the last full run changed only inert paths, the pass record of that earlier run is the gate result for the release head. The earlier run was a full run on a fresh runner with both exports set, over a tree identical in every compile-relevant path, and the `Reuse pass record` step names the earlier run. The release walk cites that run in the release record.
 
+### Release step venues
+
+Each command of the release walk has a venue and a tool. A machine without the documentation dependencies or a compiler runs only some of the steps, so the other steps run in CI or in a compiling venue. A named result stands in for a step on a machine that runs the step elsewhere.
+
+| Step | Venue | Tool required | Stand-in |
+|---|---|---|---|
+| `bash scripts/docs_gates.sh` | CI `docs-build` job | The `docs` extra and Vale | The `docs-build` result on the pushed head |
+| `hhemt cache clear --apply` | A compiling venue | `hhemt`, with the `src` directory of the checkout on `PYTHONPATH` or `HHEMT_ALLOW_INSTALLED=1` set when the shell stands in a git worktree | None. On a machine with no permitted compile venue the command exits 2 by design, because the compile tier stays in place. |
+| The release-gate test run with `HHEMT_COMPILE_VENUE=toolchain` and `HHEMT_REQUIRE_COMPILE_TIER=1` | A compiling venue | `hhemt` and a compiler | The `compile-synth-render-gate` pass record |
+| `python scripts/check_release_metadata.py` | Any machine with the tool | Python | None |
+| `python scripts/check_ruleset_sync.py --static --live` | Any machine with the tool | Python and an authenticated `gh` | None |
+| `git tag -a vX.Y.Z -m "..."` and `git push origin vX.Y.Z` | Any machine with the tool | `git` | None |
+| `just tag` | Any machine with `just` | `just` | The commands of the 3 preceding rows, run in that order after `git diff --quiet HEAD -- CITATION.cff pyproject.toml HISTORY.md` shows no change |
+
+The CI `docs-build` job runs `scripts/docs_gates.sh` bare, so the result of the job on the pushed head stands for the docs gates on a machine without the docs dependencies. The release record cites that run.
+
+`hhemt cache clear --apply` removes the 2 cheap cache tiers and leaves the compiled-build tier in place on a machine with no permitted compile venue. The command then exits 2, as the [CLI reference](../reference/cli.md#development) records. The exit is intended, because a machine that lacks the means to rebuild the tier keeps the tier.
+
+Run from a git worktree, an `hhemt` command exits 99 when the shared conda environment holds an editable install of another checkout. Put the `src` directory of the checkout on `PYTHONPATH`, as in `PYTHONPATH=$PWD/src hhemt cache clear`, or set `HHEMT_ALLOW_INSTALLED=1` to run the installed code on purpose.
+
+A release needs no `just`. The `just tag` row lists the commands of the recipe, so a machine without `just` runs the commands of the 3 preceding rows by name, in the order given.
+
 
 ## Tests carrying a structural gate
 

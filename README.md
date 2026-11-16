@@ -56,3 +56,41 @@ repository" button reads that file.
 
 **Cite the version you ran.** The [Citation](https://hhemt.readthedocs.io/en/latest/#how-to-cite) section of the
 documentation explains the concept DOI and the version DOI.
+
+### Cite the solver and the engine
+
+Work that runs TRITON or SWMM through hhemt should also cite the solver and engine works in the following blocks.
+
+``` { .text .copy }
+Morales-Hernández, M., Sharif, M. B., Kalyanapu, A., Ghafoor, S. K., Dullo, T. T.,
+Gangrade, S., Kao, S.-C., Norman, M. R., & Evans, K. J. (2021). TRITON: A multi-GPU
+open source 2D hydrodynamic flood model. Environmental Modelling & Software, 141,
+105034. https://doi.org/10.1016/j.envsoft.2021.105034
+```
+
+``` { .bibtex .copy }
+@article{morales2021triton,
+  author  = {Morales-Hern{\'a}ndez, M. and Sharif, M. B. and Kalyanapu, A. and Ghafoor, S. K. and Dullo, T. T. and Gangrade, S. and Kao, S.-C. and Norman, M. R. and Evans, K. J.},
+  title   = {{TRITON}: A multi-{GPU} open source {2D} hydrodynamic flood model},
+  journal = {Environmental Modelling \& Software},
+  volume  = {141},
+  pages   = {105034},
+  year    = {2021},
+  doi     = {10.1016/j.envsoft.2021.105034}
+}
+```
+
+``` { .text .copy }
+Rossman, L. A., & Simon, M. (2022). Storm Water Management Model user's manual
+version 5.2 (EPA/600/R-22/030). U.S. Environmental Protection Agency.
+```
+
+``` { .bibtex .copy }
+@manual{rossman2022swmm,
+  author       = {Rossman, L. A. and Simon, M.},
+  title        = {Storm Water Management Model User's Manual Version 5.2},
+  organization = {U.S. Environmental Protection Agency},
+  number       = {EPA/600/R-22/030},
+  year         = {2022}
+}
+```

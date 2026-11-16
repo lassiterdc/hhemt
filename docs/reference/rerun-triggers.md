@@ -12,7 +12,7 @@ force_rerun: none
 
 `analysis.run()` passes Snakemake only the `mtime` trigger, so a step reruns when either condition holds.
 
-1. **An input is newer than the output.** A file that the step declares as an input was modified after the output that the step produced. Editing a DEM, a weather file, or a SWMM template reruns the steps downstream of the file.
+1. **An input is newer than the output.** A file that the step declares as an input was modified after the output that the step produced. Editing a DEM, a weather file, or the SWMM model reruns the steps downstream of the file.
 2. **The output is missing.** Snakemake has no output to compare and executes the step.
 
 Neither a change to the list of declared inputs of a step nor a change to the code of a step reruns the step by itself. The toolkit narrows the triggers this way, so a resume after a crashed driver never reruns simulations that already finished.

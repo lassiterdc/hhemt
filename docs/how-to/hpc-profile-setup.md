@@ -30,6 +30,10 @@ max_concurrent_cpus: null              # optional CPU budget; measure your QOS f
 halt_sims_below_free_bytes: null       # optional disk floor; measure what statvfs sees first (below)
 additional_modules:
   - gcc/12.4.0
+gpu_aware_mpi: false                   # true only when the cluster's MPI can pass GPU memory directly
+mpich_ofi_nic_policy: null             # null keeps the toolkit's default (BLOCK for MPI and hybrid runs)
+hsa_xnack: null                        # AMD unified-memory setting; null exports nothing
+cuda_managed_force_device_alloc: null  # NVIDIA managed-memory setting; null exports nothing
 
 partitions:
   standard:                            # CPU partition
@@ -131,6 +135,15 @@ Pick a partition name on your **analysis** config. Use `hpc_ensemble_partition` 
     The GPU partitions in the profile differ only in hardware values for this reason, and selecting `gpu-a100-80` in place of `gpu-a6000` changes the GPU hardware of an analysis.
 
 Compile the solver for a partition before the first analysis on the partition. [Compile the solver](compiling-the-solver.md#on-a-cluster) gives the command-line form.
+
+## Machine settings for the solver launch
+
+The fields in the following list describe the MPI build and the GPU memory behavior of the cluster. A field left at the default leaves the launch unchanged.
+
+- `gpu_aware_mpi` is `true` when the cluster's MPI build can pass GPU memory directly. The solver then runs with `gpu_direct_flag=1`. On a Cray machine the toolkit also sets `MPICH_GPU_SUPPORT_ENABLED=1`. A `true` value with an analysis `run_mode` other than `gpu` is refused when the system, analysis, and HPC configs are validated, because the setting would be ignored.
+- `mpich_ofi_nic_policy` exports `MPICH_OFI_NIC_POLICY`. Left unset, the field gives MPI runs and hybrid runs the value `BLOCK`. The default keeps Cray MPICH from aborting when the CPUs of a rank span several NUMA domains.
+- `hsa_xnack` exports `HSA_XNACK` as `1` when `true` and as `0` when `false`. Leave the field unset unless the cluster needs a value.
+- `cuda_managed_force_device_alloc` sets `CUDA_MANAGED_FORCE_DEVICE_ALLOC` the same way.
 
 ## Differences on an AMD-GPU cluster
 

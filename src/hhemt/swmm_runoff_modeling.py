@@ -187,58 +187,49 @@ class SWMMRunoffModeler:
 
     def write_swmm_waterlevel_dat_files(self) -> None:
         """
-        Generate water level input files for SWMM boundary conditions.
+        Generate the water-level input files for SWMM, one per ``water_level`` record of the external boundary.
 
-        Creates a .dat file with storm tide/water level time series formatted
-        for SWMM input. Updates the scenario log with the path to the created file.
+        Each file ``dats/water_level_{k}.dat`` holds the record's level in meters, written by the one function that also
+        writes the TRITON file, so both models receive the same values. The standalone model reads the file through
+        the series named ``hhemt_water_level_{k}``. Under the SWMM-model source no file is written: a matched outfall
+        reads its own series. The scenario log records the path of each file by record index.
         """
-        storm_tide_units = self.cfg_analysis.storm_tide_units
-        weather_time_series_storm_tide_datavar = self.cfg_analysis.weather_time_series_storm_tide_datavar
+        from hhemt.water_level_boundary import boundary_level_series, boundary_records_for
 
-        sim_id_str = self.scenario.sim_id_str
-
-        s_wlevel = (
-            self.scenario.ds_event_ts[weather_time_series_storm_tide_datavar].reset_coords(drop=True).to_dataframe()
-        )[weather_time_series_storm_tide_datavar]
-
-        fname_wleveldat = "waterlevel.dat"
-
-        f_out_swmm_wlevel = self.scenario.scen_paths.dir_weather_datfiles / fname_wleveldat
-
-        # create data frame with proper formatting to be read in SWMM
-        df_wlevel = pd.DataFrame(
-            dict(
-                date=s_wlevel.index.strftime("%m/%d/%Y"),
-                time=s_wlevel.index.time,
-                water_level_m=s_wlevel,
-            )
-        )
-
-        with open(f_out_swmm_wlevel, "w+") as file:
-            file.write(f";;water level for sim {sim_id_str}\n")
-            file.write(f";;Water Level ({storm_tide_units})\n")
-
-        df_wlevel.to_csv(f_out_swmm_wlevel, sep="\t", index=False, header=False, mode="a")
-        self.scenario.log.storm_tide_for_swmm.set(f_out_swmm_wlevel)
+        cfg_analysis = self.cfg_analysis
+        paths: dict[int, Path] = {}
+        if (
+            cfg_analysis.toggle_external_boundaries
+            and cfg_analysis.water_level_boundary_series_source == "weather_time_series"
+        ):
+            records, _problems = boundary_records_for(cfg_analysis, self.scenario._system.cfg_system)
+            sim_id_str = self.scenario.sim_id_str
+            for record in records:
+                if record.kind != "water_level":
+                    continue
+                level = boundary_level_series(self.scenario, record)
+                f_out = self.scenario.scen_paths.water_level_dat(record.index)
+                with open(f_out, "w") as file:
+                    file.write(f";;water level for sim {sim_id_str}, record {record.index}\n")
+                    file.write(f";;Water Level (m), {level.source}\n")
+                    file.writelines(
+                        f"{t.strftime('%m/%d/%Y')}\t{t.strftime('%H:%M:%S')}\t{v}\n"
+                        for t, v in zip(level.times, level.meters, strict=True)
+                    )
+                paths[record.index] = f_out
+        self.scenario.log.water_level_boundary_dats.set(paths)
         return
 
-    def create_hydrology_model_from_template(self, swmm_model_template, destination: Path) -> None:
+    def create_hydrology_model(self, destination: Path) -> None:
         """
-        Create SWMM hydrology-only model from template file.
+        Write the hydrology SWMM role model of this scenario to ``destination``.
 
-        Fills in template placeholders with scenario-specific values including
-        time series data, rain gauges, simulation timing, and reporting intervals.
-
-        Parameters
-        ----------
-        swmm_model_template : Path
-            Path to the SWMM hydrology template file
-        destination : Path
-            Path where the filled template should be written (typically hydro.inp)
+        The role is derived from ``system_config.SWMM_model`` and only the forcing the toolkit owns
+        (simulation window, rain gauges, rain and water-level series) is rewritten for this scenario.
         """
-        from .swmm_utils import create_swmm_inp_from_template
+        from .swmm_utils import write_swmm_role_model
 
-        create_swmm_inp_from_template(self.scenario, swmm_model_template, destination)
+        write_swmm_role_model(self.scenario, "hydrology", destination)
         return
 
     def run_swmm_hydro_model(self, rerun_if_exists: bool = False, verbose: bool = False) -> None:

@@ -15,6 +15,7 @@ imported and called without constructing the class.
 import functools
 import gc
 import json
+import math
 import os
 import sys
 import time
@@ -105,7 +106,12 @@ from hhemt.utils import (
 # directory, not inside it. A future FILE-level reclaim under `out_triton/` would need an
 # explicit carve-out that this one does not. Cite this block by name, not by line number:
 # the prior citation of it in run_simulation.py went stale by 168 lines.
-_CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset({"H", "QX", "QY", "MH", "bin", "cfg", "performance"})
+#
+# `series/` holds TRITON's observation-point text files (`H_at_Xsec.txt`, `QX_at_Xsec.txt`, `QY_at_Xsec.txt`). Their
+# rows are read into the per-scenario series store (`_export_observation_series`) before this reclaim runs, so once the
+# store holds the point series the raw text is redundant, as `H/`, `QX/` and `QY/` are once the gridded store holds
+# theirs. It is a directory, so the `child.is_dir()` guard above reaches it.
+_CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset({"H", "QX", "QY", "MH", "bin", "cfg", "performance", "series"})
 
 # FILE-suffix allowlist for the post-processing reclaim INSIDE `out_tritonswmm/swmm/`.
 # Same shape rationale as _CLEAR_RAW_DELETE_SUBDIRS above and for the same reason: an
@@ -1185,6 +1191,69 @@ class TRITONSWMM_sim_post_processing:
         log_field.set(True)
         return
 
+    @staticmethod
+    def _store_holds_observation_series(store: Path) -> bool:
+        """Whether the per-scenario gridded store at ``store`` already carries the observation variables."""
+        if Path(store).suffix == ".zarr":
+            import zarr
+
+            group = zarr.open_group(str(store), mode="r")
+            return all(name in group for name in OBSERVATION_SERIES_FILES)
+        with xr.open_dataset(store, engine="h5netcdf") as ds:
+            return all(name in ds.data_vars for name in OBSERVATION_SERIES_FILES)
+
+    def _export_observation_series(self, model_type: Literal["tritonswmm", "triton"], fname_out: Path) -> None:
+        """Write this scenario's observation-point series into its gridded series store as three more variables.
+
+        Applies only when the system config sets ``observation_points``. The text files TRITON wrote under
+        ``{out_dir}/series/`` become ``point_flood_depth``, ``point_unit_discharge_x`` and ``point_unit_discharge_y`` on
+        ``(point_elapsed_s, obs_point)``, whose time label is ``k * interval`` for an uninterrupted file and, after a
+        resume, the restart time plus ``j * interval`` (``nominal_observation_times``), in the EXISTING per-scenario
+        store of the same model: no new kind of store is created, and the consolidation reads them from here into the
+        analysis tree. The point identity (id, x, y, and the DEM row and column by TRITON's own formula) comes from
+        the system's point file, whose row order is the column order of the text files.
+
+        Idempotent: a store that already holds the variables is left alone, so the skip pass of a scenario already
+        written returns here without touching the raw text, which ``clear_raw`` may have removed. A store that is
+        absent (deleted after its slice was consolidated) is skipped for the same reason. A store that lacks the
+        variables with no ``series/`` directory beside it was written for a run that did not print observations, and
+        that is refused by name rather than read as an empty series.
+        """
+        points_file = getattr(self._system.cfg_system, "observation_points", None)
+        store = Path(fname_out)
+        if points_file is None or not store.exists() or self._store_holds_observation_series(store):
+            return
+        from hhemt.system import read_triton_grid_header
+        from hhemt.triton_cfg import observation_cell, parse_observation_points
+        from hhemt.utils import append_zarr, deferred_consolidation
+
+        out_dir = self.scen_paths.out_triton if model_type == "triton" else self.scen_paths.out_tritonswmm
+        series_dir = Path(out_dir) / OBSERVATION_SERIES_DIR if out_dir is not None else None
+        if series_dir is None or not series_dir.is_dir():
+            raise ProcessingError(
+                "write the observation series",
+                store,
+                f"the system config sets observation_points but {store.name} holds no point series and "
+                f"{series_dir} does not exist, so this scenario's run did not print observations; re-run the "
+                "scenario with the points set",
+            )
+        points, problems = parse_observation_points(Path(points_file).read_text(encoding="utf-8-sig"))
+        if problems:
+            raise ProcessingError("write the observation series", Path(points_file), "; ".join(problems))
+        header = read_triton_grid_header(self._system.sys_paths.dem_processed)
+        cells = [observation_cell(p, header) for p in points]
+        cfg = self._analysis.cfg_analysis
+        interval_s = float(cfg.TRITON_observation_interval_s or cfg.TRITON_reporting_timestep_s)
+        start, end = self._scenario._resolve_event_window()
+        duration_s = (pd.Timestamp(end) - pd.Timestamp(start)).total_seconds()
+        ds = build_observation_dataset(series_dir, points, cells, interval_s=interval_s, duration_s=duration_s)
+        apply_cf_attributes(ds, "observation_series")
+        if store.suffix == ".zarr":
+            with deferred_consolidation(store):
+                append_zarr(ds, store, group=None, consolidate=False, mode="a")
+        else:
+            ds.to_netcdf(store, mode="a", engine="h5netcdf")
+
     @_deferred_log_writes
     def _export_TRITONSWMM_TRITON_outputs(
         self,
@@ -1215,6 +1284,8 @@ class TRITONSWMM_sim_post_processing:
             # value-based __bool__ would silently block.
             if self.log.TRITON_timeseries_written is not None:
                 self.log.TRITON_timeseries_written.set(True)
+            # The observation series join the store BEFORE the raw reclaim below removes their text files.
+            self._export_observation_series("tritonswmm", fname_out)
             if self._should_clear_raw_for_model(resolved_clear_raw, "tritonswmm"):
                 self._clear_raw_outputs("tritonswmm")
             return
@@ -1242,6 +1313,7 @@ class TRITONSWMM_sim_post_processing:
             verbose=verbose,
             override_clear_raw=override_clear_raw,
         )
+        self._export_observation_series("tritonswmm", fname_out)
 
         # Consolidated metadata belongs to a zarr STORE. Under nc the writer published a
         # NetCDF file at fname_out, and zarr.consolidate_metadata would raise on it.
@@ -1295,6 +1367,8 @@ class TRITONSWMM_sim_post_processing:
             # value-based __bool__ would silently block.
             if self.log.TRITON_timeseries_written is not None:
                 self.log.TRITON_timeseries_written.set(True)
+            # The observation series join the store BEFORE the raw reclaim below removes their text files.
+            self._export_observation_series("triton", fname_out)
             if self._should_clear_raw_for_model(resolved_clear_raw, "triton"):
                 self._clear_raw_outputs("triton")
             return
@@ -1325,6 +1399,7 @@ class TRITONSWMM_sim_post_processing:
             verbose=verbose,
             override_clear_raw=override_clear_raw,
         )
+        self._export_observation_series("triton", fname_out)
 
         # Consolidated metadata belongs to a zarr STORE. Under nc the writer published a
         # NetCDF file at fname_out, and zarr.consolidate_metadata would raise on it.
@@ -3005,7 +3080,7 @@ def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> 
     if "prep_inputs" in classes:
         for _p in (
             scen.scen_paths.dir_weather_datfiles,
-            scen.scen_paths.extbc_tseries.parent,
+            scen.scen_paths.extbc_dir,
             scen.scen_paths.weather_timeseries,
         ):
             if _p is not None and Path(_p).exists():
@@ -4297,6 +4372,208 @@ def _streaming_argmax_with_companions(
         result[f"{cv}_at_argmax"] = np.where(no_data_mask, np.nan, companion_at_argmax[cv]).astype(np.float64)
 
     return result
+
+
+#: The directory under a model's output folder in which TRITON writes the observation-point text files.
+OBSERVATION_SERIES_DIR = "series"
+
+#: Per-scenario observation variable -> (the file TRITON writes for it, the prefix of that file's header columns).
+#: TRITON writes one global text file per printed variable (rank 0 gathers every rank's points), and the toolkit holds
+#: ``print_option`` at ``huv``, so all three exist for a run that set ``observation_points``.
+OBSERVATION_SERIES_FILES: dict[str, tuple[str, str]] = {
+    "point_flood_depth": ("H_at_Xsec.txt", "H"),
+    "point_unit_discharge_x": ("QX_at_Xsec.txt", "QX"),
+    "point_unit_discharge_y": ("QY_at_Xsec.txt", "QY"),
+}
+
+#: The per-scenario dimension of the observation series' time axis. The nominal time of each row, in seconds.
+OBSERVATION_TIME_DIM = "point_elapsed_s"
+
+
+def read_observation_series_file(path: Path, prefix: str, n_points: int) -> tuple[np.ndarray, np.ndarray]:
+    """The rows of one TRITON observation text file as ``(simtime, values)``, in file order, resume duplicates kept.
+
+    Line 1 is the header, ``Time(s),{prefix}_at_Point_1,...,{prefix}_at_Point_N``, which TRITON writes at a clean
+    start and does not rewrite on a resume. It must name exactly ``n_points`` points: a different count means the
+    file was written for another point set, and the refusal names the file and both counts. Every data row is
+    ``simtime,v1,...,vN``. ``values`` has shape ``(rows, n_points)``, and ``(0, n_points)`` when the file holds a
+    header and no data row (which the caller refuses with the scenario's expectations).
+    """
+    path = Path(path)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        raise ProcessingError("read an observation series", path, f"{path.name} does not exist") from None
+    if not lines:
+        raise ProcessingError("read an observation series", path, f"{path.name} is empty; it must start with a header")
+    header = [cell.strip() for cell in lines[0].split(",")]
+    if header[0] != "Time(s)":
+        raise ProcessingError(
+            "read an observation series",
+            path,
+            f"line 1 of {path.name} is not TRITON's header (it must start with 'Time(s)', not {header[0]!r})",
+        )
+    if len(header) - 1 != n_points:
+        raise ProcessingError(
+            "read an observation series",
+            path,
+            f"{path.name} has {len(header) - 1} point column(s) in its header and the scenario's point file lists "
+            f"{n_points}; the file was written for another point set",
+        )
+    expected = [f"{prefix}_at_Point_{i}" for i in range(1, n_points + 1)]
+    if header[1:] != expected:
+        raise ProcessingError(
+            "read an observation series",
+            path,
+            f"the header of {path.name} names {header[1:]} where {expected} are expected",
+        )
+    times: list[float] = []
+    rows: list[list[float]] = []
+    for number, line in enumerate(lines[1:], start=2):
+        if not line.strip():
+            continue
+        cells = line.split(",")
+        if len(cells) != n_points + 1:
+            raise ProcessingError(
+                "read an observation series",
+                path,
+                f"line {number} of {path.name} has {len(cells)} field(s) where {n_points + 1} are expected "
+                "(simtime and one value per point); a write may have been cut off",
+            )
+        try:
+            numbers = [float(c) for c in cells]
+        except ValueError:
+            raise ProcessingError(
+                "read an observation series", path, f"line {number} of {path.name} holds a value that is not a number"
+            ) from None
+        times.append(numbers[0])
+        rows.append(numbers[1:])
+    return np.asarray(times, dtype="float64"), np.asarray(rows, dtype="float64").reshape(len(rows), n_points)
+
+
+def nominal_observation_times(
+    simtimes: np.ndarray, interval_s: float, duration_s: float, source: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """``(rows kept, label of each)`` for the raw rows of one observation file, under one rule for every file.
+
+    TRITON writes the initial state, then one row per period at the first step at or after the period's time (its
+    recorded ``simtime`` is that step's actual time), then one row at the end. A resumed run re-bases its schedule at
+    the checkpoint time, so a ``simtime`` that goes BACKWARDS in file order is a restart: every earlier row at or
+    after the restart time is superseded, whether or not the resumed rows repeat those ``simtime`` values.
+
+    Labels. The initial row is 0 and each following periodic row of an uninterrupted file is ``k * interval``. After a
+    restart at ``R`` the restart's own row is labelled ``R`` itself, and each later periodic row ``R + j * interval``,
+    unless the restart time equals the ``simtime`` of a row it superseded: the checkpoint was then one of the
+    observation rows, and the restart row takes that row's label so the grid continues. The final row keeps its actual
+    time; when the remaining time is a whole number of periods the final write lands on the last period and the two
+    are one row.
+
+    A row count other than the restart row, ``floor((duration - R) / interval)`` periodic rows and the final row is
+    refused with the counts named, because a missing period would otherwise shift every later row onto the wrong label.
+    """
+    if simtimes.size == 0:
+        raise ProcessingError(
+            "read an observation series",
+            source,
+            f"{source} holds a header and no data row; TRITON writes one at the start",
+        )
+    live: list[list[float]] = []  # [simtime, file position, label]
+    segment = 0
+    for position, time_s in enumerate(simtimes.tolist()):
+        if live and time_s == live[-1][0]:
+            live[-1][1] = position
+        elif live and time_s < live[-1][0]:
+            equal = [row for row in live if row[0] == time_s]
+            base = equal[0][2] if equal else time_s
+            live = [row for row in live if row[0] < time_s]
+            live.append([time_s, position, base])
+            segment = len(live) - 1
+        else:
+            live.append([time_s, position, live[-1][2] + interval_s if live else 0.0])
+    start_s = live[segment][0]
+    remaining = duration_s - start_s
+    periods = int(math.floor(remaining / interval_s + 1e-9))
+    whole = abs(periods * interval_s - remaining) <= 1e-6
+    n_rows = len(live)
+    after = n_rows - segment - 1
+    if after == periods + 1:
+        final = True
+    elif after == periods and whole:
+        final = False
+    else:
+        expected = segment + 1 + periods + 1
+        raise ProcessingError(
+            "read an observation series",
+            source,
+            f"{source} holds {n_rows} distinct row(s) after removing resume duplicates; a {duration_s} s simulation "
+            f"written every {interval_s} s holds {expected} (the rows before the last restart, the restart row, "
+            f"{periods} periodic row(s) and the final row)"
+            + (f" or {expected - 1} when the final row falls on the last period" if whole else ""),
+        )
+    if abs(live[0][0]) > 1e-6:
+        raise ProcessingError(
+            "read an observation series", source, f"the first row of {source} is at simtime {live[0][0]} s, not 0 s"
+        )
+    labels = [row[2] for row in live[: segment + 1]]
+    labels += [live[segment][2] + interval_s * j for j in range(1, periods + 1)]
+    if final:
+        labels.append(live[-1][0])
+    nominal = np.asarray(labels, dtype="float64")
+    if nominal.size > 1 and not np.all(np.diff(nominal) > 0):
+        raise ProcessingError(
+            "read an observation series",
+            source,
+            f"the final row of {source} (simtime {live[-1][0]} s) does not come after the last label "
+            f"{labels[-2] if final else labels[-1]} s",
+        )
+    return np.asarray([row[1] for row in live], dtype="int64"), nominal
+
+
+def build_observation_dataset(
+    series_dir: Path,
+    points: Sequence,
+    cells: Sequence[tuple[int, int]],
+    *,
+    interval_s: float,
+    duration_s: float,
+) -> xr.Dataset:
+    """One scenario's observation series as a Dataset on ``(point_elapsed_s, obs_point)``.
+
+    ``points`` are the system's ``ObservationPoint`` rows in file order and ``cells`` the ``(row, col)`` of each on the
+    processed DEM; the order is the identity of a column of the text files, which carry no names. The three variables
+    must agree on their row times, since TRITON writes them in one pass.
+    """
+    series_dir = Path(series_dir)
+    n_points = len(points)
+    variables: dict[str, np.ndarray] = {}
+    axis: np.ndarray | None = None
+    axis_source = ""
+    for name, (file_name, prefix) in OBSERVATION_SERIES_FILES.items():
+        path = series_dir / file_name
+        simtimes, values = read_observation_series_file(path, prefix, n_points)
+        kept, nominal = nominal_observation_times(simtimes, interval_s, duration_s, str(path))
+        if axis is None:
+            axis, axis_source = nominal, file_name
+        elif not np.array_equal(axis, nominal):
+            raise ProcessingError(
+                "read an observation series",
+                path,
+                f"{file_name} and {axis_source} do not hold the same row times after removing resume duplicates",
+            )
+        variables[name] = values[kept]
+    assert axis is not None
+    return xr.Dataset(
+        {name: ((OBSERVATION_TIME_DIM, "obs_point"), arr) for name, arr in variables.items()},
+        coords={
+            OBSERVATION_TIME_DIM: axis,
+            "obs_point": np.arange(n_points, dtype="int64"),
+            "obs_point_id": ("obs_point", np.asarray([p.id for p in points], dtype=str)),
+            "obs_x": ("obs_point", np.asarray([p.x for p in points], dtype="float64")),
+            "obs_y": ("obs_point", np.asarray([p.y for p in points], dtype="float64")),
+            "obs_row": ("obs_point", np.asarray([c[0] for c in cells], dtype="int64")),
+            "obs_col": ("obs_point", np.asarray([c[1] for c in cells], dtype="int64")),
+        },
+    )
 
 
 def summarize_triton_simulation_results(

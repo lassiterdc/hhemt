@@ -13,7 +13,7 @@ HPC allocation:
   every rank (so the row-strip boundaries are exactly ``k*n_rows/rank``,
   independent of TRITON's remainder distribution); (3) every equal strip owns
   >= 1 coupling node, computed from the solver-authoritative placement helper
-  ``swmm_template._node_matrix_rows`` (which itself asserts the interior span is
+  ``swmm_model._node_matrix_rows`` (which itself asserts the interior span is
   large enough for the nodes).
 * ``_validate_caps`` — rejects any experiment-matrix row whose requested
   ``(n_nodes, n_gpus, n_mpi*n_omp, runtime)`` tuple exceeds the resolved
@@ -131,7 +131,7 @@ class synthetic_experiment_config(cfgBaseModel):
         coupling collective (a rank owning zero coupling junctions)."""
         from hhemt.synthetic_experiment import _DEM_FIXED_CONFIG, _configs
         from hhemt.synthetic_model import SyntheticModelParams
-        from hhemt.synthetic_model.swmm_template import _N_COUPLING_NODES, _node_matrix_rows
+        from hhemt.synthetic_model.swmm_model import _N_COUPLING_NODES, _node_matrix_rows
 
         # Ranks are DERIVED from the matrix THIS config actually emits. Nothing is
         # exempt: every emitted rank is guarded, and a config that emits fewer ranks is
@@ -149,7 +149,7 @@ class synthetic_experiment_config(cfgBaseModel):
         # own description) and have SEPARATE row builders, so the emitted rank set is
         # read from whichever one applies. The resolution sweep is the transpose of the
         # compute sweep -- ONE fixed config across N cell sizes -- and that config is
-        # _DEM_FIXED_CONFIG, pinned at 1 rank (corroborated at swmm_template.py: "
+        # _DEM_FIXED_CONFIG, pinned at 1 rank (corroborated at swmm_model.py: "
         # dem_resolution_matrix_rows pins a 1-rank _DEM_FIXED_CONFIG"). Rank 1 clears
         # all three guards for any n_rows, so this is a real check that passes, not a
         # skipped one.

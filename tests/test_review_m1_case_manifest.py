@@ -39,9 +39,9 @@ def _manifest() -> dict[str, str]:
 # --------------------------------------------------------------------------------------------
 
 
-def test_case_yaml_manifest_is_the_23_entry_external_block_with_lowercase_sha256_digests():
+def test_case_yaml_manifest_is_the_20_entry_external_block_with_lowercase_sha256_digests():
     m = _manifest()
-    assert len(m) == 23
+    assert len(m) == 20
     assert all(k.startswith("data/contents/external/") for k in m)
     assert all(re.fullmatch(r"[0-9a-f]{64}", v) for v in m.values())
 
@@ -217,7 +217,7 @@ def test_pinned_arm_does_not_content_check_a_payload_file_the_manifest_does_not_
 
     The bag lists table.csv; the pinned manifest declares only the DEM. Corrupting table.csv used to be
     caught by bagit's md5 arm; under the pinned arm it passes. The manifest is the content pin, so the
-    manifest must declare every file whose content matters (the Norfolk manifest declares 23 files).
+    manifest must declare every file whose content matters (the Norfolk manifest declares 20 files).
     """
     z = _make_bag_zip(tmp_path, multipart_etag_on=None, corrupt="table.csv")
     partial = {"data/contents/external/fullres_dem_m.tif": _MANIFEST["data/contents/external/fullres_dem_m.tif"]}

@@ -4,7 +4,7 @@
 cfg_system.watershed_gis_polygon to "external/{filename}" at emit time. A LIVE analysis dir
 has no external/ at all -- the polygon sits at the absolute cfg_system path. Without a
 fallback the mask degrades to None in every analysis.eda() render, depth_vmax reverts to the
-unmasked coastal storm-tide maximum, and no boundary ring is drawn.
+unmasked coastal boundary-level maximum, and no boundary ring is drawn.
 """
 
 from __future__ import annotations

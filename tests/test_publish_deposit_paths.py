@@ -126,22 +126,20 @@ def _every_path_field_absolute(tmp_path: Path) -> SimpleNamespace:
             "watershed_gis_polygon": str(_put(sd / "gis" / "ws.shp")),
             "DEM_fullres": str(_put(out / "dem.tif")),
             "landuse_lookup_file": str(_put(sd / "gis" / "lu.csv")),
-            "SWMM_hydraulics": str(_put(out / "hyd.inp")),
-            "SWMM_hydrology": str(_put(sd / "hy.inp")),
-            "SWMM_full": str(_put(out / "full.inp")),
+            "SWMM_model": str(_put(out / "model.inp")),
             "swmm_coupling_mode": "list",
             "swmm_coupling_nodes_file": str(_put(sd / "nodes.txt")),
             "landuse_raster": str(_put(out / "lu.tif")),
             "SWMM_software_directory": str(out / "swmm_src"),
             "TRITONSWMM_software_directory": str(out / "triton_src"),
             "subcatchment_raingage_mapping": str(_put(sd / "map.csv")),
-            "triton_swmm_configuration_template": str(_put(out / "t.cfg")),
+            "observation_points": str(_put(sd / "gis" / "obs.csv")),
         },
         analysis_over={
             "weather_timeseries": str(_put(ad / "in" / "weather.nc")),
             "dataset_license": None,
             "dataset_license_file": str(_put(out / "lic.yaml", "name: Our License\n")),
-            "storm_tide_boundary_line_gis": str(_put(out / "line.gpkg")),
+            "external_boundary_gis": str(_put(out / "line.gpkg")),
             "weather_event_summary_csv": str(_put(ad / "sum.csv")),
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": str(_put(ad / "sens.csv")),
@@ -150,6 +148,10 @@ def _every_path_field_absolute(tmp_path: Path) -> SimpleNamespace:
             "experiment_cfg_yaml": str(_put(sd / "exp.yaml")),
             "brand_theme": str(_put(out / "brand.yaml")),
             "static_plot_configs": [str(_put(ad / "p" / "s1.yaml")), str(_put(out / "s2.yaml"))],
+            "TRITON_initial_depth_raster": str(_put(ad / "in" / "h.asc")),
+            "TRITON_initial_depth_raster_kind": "depth",
+            "TRITON_initial_qx_raster": str(_put(out / "qx.asc")),
+            "TRITON_initial_qy_raster": str(_put(out / "qy.asc")),
         },
     )
     for cfg in (world.analysis._system.cfg_system, world.analysis.cfg_analysis):
@@ -308,7 +310,7 @@ def test_data_deposit_configs_are_written_in_the_relative_form(tmp_path):
     assert a["analysis_dir"] == "." and s["system_directory"] == "."
     assert a["weather_timeseries"] == "in/weather.nc", "a path inside the analysis directory reads analysis-relative"
     assert s["landuse_lookup_file"] == "gis/lu.csv", "a path inside the system directory reads system-relative"
-    assert s["SWMM_full"] == "external/full.inp", "a path inside neither reads external/{filename}"
+    assert s["SWMM_model"] == "external/model.inp", "a path inside neither reads external/{filename}"
     assert a["static_plot_configs"] == ["p/s1.yaml", "external/s2.yaml"], "a list field is rewritten element by element"
     assert s["SWMM_software_directory"] is None and s["TRITONSWMM_software_directory"] is None
 
@@ -434,7 +436,7 @@ def test_publish_refuses_an_analysis_inside_and_a_system_inside_path_with_one_re
     world = _world(
         tmp_path,
         system_over={"landuse_lookup_file": str(s)},
-        analysis_over={"storm_tide_boundary_line_gis": str(a)},
+        analysis_over={"external_boundary_gis": str(a)},
     )
     _assert_refused_naming(_publish(world, monkeypatch), a, s)
 
@@ -451,7 +453,7 @@ def test_publish_refuses_one_external_filename_from_the_system_and_analysis_conf
     one = _put(base / "o1" / "w.nc", b"one")
     two = _put(base / "o2" / "w.nc", b"two")
     world = _world(
-        tmp_path, system_over={"landuse_raster": str(one)}, analysis_over={"storm_tide_boundary_line_gis": str(two)}
+        tmp_path, system_over={"landuse_raster": str(one)}, analysis_over={"external_boundary_gis": str(two)}
     )
     _assert_refused_naming(_publish(world, monkeypatch), one, two)
 
@@ -471,7 +473,7 @@ def test_publish_refuses_an_already_relative_value_equal_to_a_rewritten_output(t
     world = _world(
         tmp_path,
         system_over={"landuse_lookup_file": str(system_file)},
-        analysis_over={"storm_tide_boundary_line_gis": "ext/w.nc"},
+        analysis_over={"external_boundary_gis": "ext/w.nc"},
     )
     _assert_refused_naming(_publish(world, monkeypatch), inside, system_file)
 
@@ -489,17 +491,17 @@ def test_publish_accepts_the_same_outside_file_in_two_fields_and_distinct_filena
     world = _world(
         tmp_path,
         system_over={"landuse_raster": str(shared)},
-        analysis_over={"storm_tide_boundary_line_gis": str(shared)},
+        analysis_over={"external_boundary_gis": str(shared)},
     )
     kind, call = _publish(world, monkeypatch)
     assert kind == "published", f"one file named twice was refused: {call}"
     a, s = yaml.safe_load(call["text"]["cfg_analysis.yaml"]), yaml.safe_load(call["text"]["cfg_system.yaml"])
-    assert a["storm_tide_boundary_line_gis"] == s["landuse_raster"] == "external/shared.nc"
+    assert a["external_boundary_gis"] == s["landuse_raster"] == "external/shared.nc"
 
     distinct = _world(
         tmp_path / "d",
         system_over={"landuse_raster": str(_put(base / "o1" / "one.nc", b"1"))},
-        analysis_over={"storm_tide_boundary_line_gis": str(_put(base / "o2" / "two.nc", b"2"))},
+        analysis_over={"external_boundary_gis": str(_put(base / "o2" / "two.nc", b"2"))},
     )
     assert _publish(distinct, monkeypatch)[0] == "published"
 
@@ -516,7 +518,7 @@ def test_reprex_bundle_publish_receives_the_emit_s_configuration_error(tmp_path,
     one = _put(base / "o1" / "w.nc", b"one")
     two = _put(base / "o2" / "w.nc", b"two")
     world = _world(
-        tmp_path, system_over={"landuse_raster": str(one)}, analysis_over={"storm_tide_boundary_line_gis": str(two)}
+        tmp_path, system_over={"landuse_raster": str(one)}, analysis_over={"external_boundary_gis": str(two)}
     )
     (world.ad / "plots").mkdir()
     (world.ad / "plots" / "fig.manifest.json").write_text(json.dumps({"source_paths_relative": []}))
@@ -542,7 +544,7 @@ def test_gap1_a_relative_and_an_absolute_value_of_one_filename_refuse(tmp_path):
     two = _put(base / "o2" / "w.nc", b"two bytes")
     world = _world(
         tmp_path,
-        analysis_over={"storm_tide_boundary_line_gis": "../o1/w.nc", "weather_event_summary_csv": str(two)},
+        analysis_over={"external_boundary_gis": "../o1/w.nc", "weather_event_summary_csv": str(two)},
     )
     _assert_emit_refused_naming(_emit_outcome(world), "external/w.nc", {one: b"one bytes", two: b"two bytes"})
 
@@ -590,7 +592,7 @@ def test_overfire_a_relative_and_an_absolute_value_of_ONE_file_publish_and_lose_
     x = _put(world.ad / "x.nc", b"x bytes")
     world = _world(
         tmp_path,
-        analysis_over={"storm_tide_boundary_line_gis": "x.nc", "weather_event_summary_csv": str(x)},
+        analysis_over={"external_boundary_gis": "x.nc", "weather_event_summary_csv": str(x)},
     )
     kind, payload = _emit_outcome(world)
     assert kind == "published", f"one file named twice was refused: {payload}"
@@ -633,7 +635,7 @@ def test_a_directory_inputs_member_and_a_file_input_of_one_bundle_name_refuse(tm
     world = _world(
         tmp_path,
         system_over={"landuse_raster": str(base / "system" / "data")},
-        analysis_over={"storm_tide_boundary_line_gis": str(file_)},
+        analysis_over={"external_boundary_gis": str(file_)},
     )
     outcome = _emit_outcome(world)
     _assert_emit_refused_naming(outcome, "data/a.nc", {member: b"directory member bytes", file_: b"file input bytes"})
@@ -681,7 +683,7 @@ def test_a_config_input_a_renderer_also_declared_publishes_once(tmp_path):
     """
     world = _world(tmp_path)
     shared = _put(world.ad / "shared" / "in.nc", b"shared bytes")
-    world = _world(tmp_path, analysis_over={"storm_tide_boundary_line_gis": str(shared)})
+    world = _world(tmp_path, analysis_over={"external_boundary_gis": str(shared)})
     kind, payload = _emit_outcome(world, harvested=("shared/in.nc",))
     assert kind == "published", f"the normal overlap was refused: {payload}"
     assert _zip_names(payload).count("shared/in.nc") == 1
@@ -1150,7 +1152,7 @@ def test_planning_copies_nothing(tmp_path):
     """
     base = tmp_path / "w"
     inp = _put(base / "outside" / "w.nc", b"w")
-    world = _world(tmp_path, analysis_over={"storm_tide_boundary_line_gis": str(inp)})
+    world = _world(tmp_path, analysis_over={"external_boundary_gis": str(inp)})
     staging = tmp_path / "plan_staging"
     staging.mkdir()
     planned, deposits = _emit._plan_declared_inputs(world.analysis)
@@ -1364,7 +1366,7 @@ def test_a_relative_value_is_rewritten_the_way_an_absolute_one_is(tmp_path, valu
         tmp_path,
         nested=True,
         system_over={"landuse_lookup_file": value},
-        analysis_over={"storm_tide_boundary_line_gis": value},
+        analysis_over={"external_boundary_gis": value},
     )
     staging = tmp_path / "deposit_staging"
     staging.mkdir()
@@ -1377,7 +1379,7 @@ def test_a_relative_value_is_rewritten_the_way_an_absolute_one_is(tmp_path, valu
         cfgs = _staged_cfgs(deposit)
         got = (
             cfgs["cfg_system.yaml"]["landuse_lookup_file"],
-            cfgs["cfg_analysis.yaml"]["storm_tide_boundary_line_gis"],
+            cfgs["cfg_analysis.yaml"]["external_boundary_gis"],
         )
         assert got == (expected, expected), f"{label}: {value!r} was written as {got}, expected {expected!r}"
 

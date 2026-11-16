@@ -86,7 +86,7 @@ def test_the_caption_bold_check_fires_on_the_old_wording(old_caption: str) -> No
     assert set(bold_names(old_caption)) != _ALWAYS_PRESENT
 
 
-def test_the_caption_cuts_the_conditional_panels_the_storm_tide_clause_and_the_deprecated_override() -> None:
+def test_the_caption_cuts_the_conditional_panels_the_water_level_clause_and_the_deprecated_override() -> None:
     """The caption keeps the opening sentence, the DEM colours, the Manning's n panel and the CRS.
 
     Input class: the `system_map.rst` source. Required because shape rows P01 (K9, K15) cut the
@@ -98,15 +98,15 @@ def test_the_caption_cuts_the_conditional_panels_the_storm_tide_clause_and_the_d
 
     assert text.startswith("Model inputs for **")
     assert "horizontal_epsg" in text
-    for cut in ("deprecated", "target_epsg", "Hydrology", "Hydraulics", "storm-tide", "When the analysis includes"):
+    for cut in ("deprecated", "target_epsg", "Hydrology", "Hydraulics", "water-level", "When the analysis includes"):
         assert cut not in text
 
 
-@pytest.mark.parametrize("cut", ["deprecated", "target_epsg", "Hydrology", "storm-tide"])
+@pytest.mark.parametrize("cut", ["deprecated", "target_epsg", "Hydrology", "water-level"])
 def test_the_caption_cut_check_fires_on_the_old_caption(cut: str) -> None:
     """Must-fire control: the old caption text contains each cut phrase."""
     old = (
-        "the storm-tide boundary-condition line is drawn when the analysis has one. a Hydrology panel ... "
+        "the water-level boundary-condition line is drawn when the analysis has one. a Hydrology panel ... "
         "unless the deprecated ``report.system_map.target_epsg`` override is set."
     )
     assert cut in old

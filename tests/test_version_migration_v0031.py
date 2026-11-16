@@ -151,7 +151,7 @@ def test_the_summary_groups_move_and_the_series_fold_in_and_the_old_store_goes(v
     assert bool(np.isnan(got["depth"].values[0, 3]).all()), "the padded NaN tail survives the copy"
     assert not (v30_tree / "analysis_timeseries.zarr").exists()
     assert zarr_root_attrs(v30_tree / "analysis_datatree.zarr")["migrated_from_analysis_timeseries"] == "done"
-    assert state.read_version_file(v30_tree).layout_version == 31 == LAYOUT_VERSION
+    assert state.read_version_file(v30_tree).layout_version == 31 <= LAYOUT_VERSION
 
 
 def test_a_second_run_changes_no_byte(v30_tree: Path):
@@ -522,7 +522,7 @@ def test_a_master_tree_gets_the_same_summary_rename_under_each_member(tmp_path: 
 
 
 def test_the_layout_version_is_31_and_the_v31_fixture_is_a_byte_copy_of_v30():
-    """Property: LAYOUT_VERSION is 31 and the v31 fixture is a byte copy of v30.
+    """Property: LAYOUT_VERSION is at least 31 and the v31 fixture is a byte copy of v30.
     Class: NEW CAPABILITY. Plausible wrong implementation: a v31 fixture that differs, or no bump. A non-empty copy
         is the control.
     Why required: the layout checker requires both fixtures.
@@ -533,7 +533,7 @@ def test_the_layout_version_is_31_and_the_v31_fixture_is_a_byte_copy_of_v30():
     """
     import filecmp
 
-    assert LAYOUT_VERSION == 31
+    assert LAYOUT_VERSION >= 31  # the 30 to 31 bump happened; later bumps (V0032) move the live constant
     cmp = filecmp.dircmp(FIXTURE_ROOT / "v30", FIXTURE_ROOT / "v31")
 
     def walk(c: filecmp.dircmp) -> list[str]:

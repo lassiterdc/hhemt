@@ -1145,7 +1145,9 @@ unpaired_allowlist:
       change to this file rather than on arrival.
   - renderer: system_overview
     caption: src/hhemt/report_templates/captions/system_map.rst
-    renderer_sha256: 60a87a64e9499de9b8b271dc94c9868eb52c9738360489a2be63b644e9bcef40
+    renderer_sha256: 28846365aad66ada04d7cb126e864636bef2d45d4fdb8f5a19a8716601fbd299
+    justification_2026_11_15_boundary_names: >-
+      Re-read 2026-11-15 against this renderer's diff. The diff changes the config attributes the renderer reads for the boundary line, the provenance value and the boundary legend and tooltip text. The caption (read in full) names the TRITON DEM and Manning's n panels, the color-range and over-color treatment and the CRS, and names no boundary legend, so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the post-change renderer content, so this exemption expires on the next change to the renderer.
     justification_2026_11_09_1e3_removed_scenarios_system_overview: >-
       (Includes the later hunk that reaches the member enumeration through the helper all_members_for_reading_of and one import line; no displayed text moved.) Re-read 2026-11-09 against this renderer's diff (git diff HEAD -- src/hhemt/report_renderers/system_overview.py, 35 lines). The hunks make the member enumeration cover removed members and add a fallback in the INP resolver: when no scenario directory holds a prepared SWMM input, the renderer reads the copies the directory removal kept beside the records. The caption was read in full. It names the TRITON DEM and Manning's n panels, the color-range and over-color treatment, and the CRS from system_config.crs.horizontal_epsg; it makes no claim about which file a SWMM panel's input comes from, and the panels drawn are the same, so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. PAIRING discharge on a re-read; the digest expires on the next change to this renderer.
     justification_2026_11_04_develop_merge: >-
@@ -1302,7 +1304,11 @@ unpaired_allowlist:
 
   - renderer: per_sim_peak_flood_depth
     caption: src/hhemt/report_templates/captions/per_sim_peak_flood_depth.rst
-    renderer_sha256: 1effb1547cad8dff7f58c9f7981091c75844de536b4b968490ecdf6a4f03f1c9
+    renderer_sha256: 72e14b0ba45259ff7fbb0925f5058887c7f1c701c892dbffc1cbcd609114e28e
+    justification_2026_11_15_per_outfall_levels: >-
+      Re-read 2026-11-15 against this renderer's diff. The diff changes which config fields the renderer reads for the boundary water level and plots the level in meters, one line per weather variable of the outfall map; no panel, label or unit of the figure moves. The caption (read in full) names the Flood Drivers panel with its boundary-condition water level and names no attribute, so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the post-change renderer content, so this exemption expires on the next change to the renderer.
+    justification_2026_11_15_boundary_names: >-
+      Re-read 2026-11-15 against this renderer's diff. The diff changes the two config attributes the renderer reads for the boundary water-level units; no plotted quantity, panel, label or unit moves. The caption (read in full) describes peak flood depth, water surface elevation, the watershed clip and the Flood Drivers panel with its boundary-condition water level, and names no attribute, so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the post-change renderer content, so this exemption expires on the next change to the renderer.
     justification_2026_10_18: >-
       Re-read 2026-10-18 (general watershed wording). Two caption sentences were
       false of this renderer and were rewritten: the per-cell maximum is taken by the
@@ -1602,7 +1608,11 @@ unpaired_allowlist:
       renderer.
   - renderer: per_sim_conduit_flow
     caption: src/hhemt/report_templates/captions/per_sim_conduit_flow.rst
-    renderer_sha256: b3dbe7ea36acbb260ff8c10bcf428e5d81f8ddd5a0cbfd49d1011e818b2c1057
+    renderer_sha256: 34cb09dbf112b2c3d4a1ed05afd1835601325db17f86dcb4c74600411ad3dd6a
+    justification_2026_11_15_per_outfall_levels: >-
+      Re-read 2026-11-15 against this renderer's diff. The diff changes which config fields the renderer reads for the boundary water level and plots the level in meters, one line per weather variable of the outfall map; no panel, label or unit of the figure moves. The caption (read in full) names the Flood Drivers panel with its boundary-condition water level and names no attribute, so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the post-change renderer content, so this exemption expires on the next change to the renderer.
+    justification_2026_11_15_boundary_names: >-
+      Re-read 2026-11-15 against this renderer's diff. The diff changes the two config attributes the renderer reads for the boundary water-level units; no plotted quantity, panel, label or unit moves. The caption (read in full) names the max / full flow and peak flow panels, the watershed overlay and the Flood Drivers panel with its boundary-condition water level, and names no attribute, so no clause is falsified, weakened or left ambiguous and there is no caption edit to make. Digest recorded at the post-change renderer content, so this exemption expires on the next change to the renderer.
     justification_2026_11_10_chunk_1e10: >-
       Re-read 2026-11-10 against this renderer's diff. The diff adds `event_hydraulics_inp`, which answers the conduit geometry file for a removed scenario from the .inp kept beside the removal records and for a live scenario exactly as before, and drops the two run-object constructions that raised for a removed scenario. The caption (read in full) describes the max/full-flow and peak-flow panels, colormaps and bounds, the watershed overlay and the Flood Drivers panel; it names no source of the geometry file, and every analysis shares one network, so what the figure shows is unchanged. No clause is falsified, weakened or left ambiguous, so there is no caption edit to make. Digest recorded at the post-change renderer content.
     justification_2026_11_02_develop_merge: >-

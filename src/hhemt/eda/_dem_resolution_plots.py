@@ -1375,7 +1375,7 @@ def build_dem_resolution_coupling_table_figure(root: Path, *, cfg_system=None) -
     entries (where TRITON writes surface water into SWMM; the junction also surcharges back
     to the surface when its head exceeds the cell). No per-model node-name assumptions, so
     it applies to ANY coupled model. It imports NO generator
-    rank-cap/deadlock constant -- that construct stays in swmm_template/synthetic_experiment.
+    rank-cap/deadlock constant -- that construct stays in swmm_model/synthetic_experiment.
     Peak = absolute max per resolution; the signed
     over/under-estimate columns are coarse - fine (depth regridded onto the finest grid;
     flow on the shared conduit index; finest = reference, delta = 0). The total junction

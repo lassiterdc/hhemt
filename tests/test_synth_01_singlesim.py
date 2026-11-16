@@ -1,8 +1,23 @@
-"""Synthetic-model single-sim tier. Mirror of test_PC_01 using synth fixtures."""
+"""Synthetic-model single-sim tier. Mirror of test_PC_01 using synth fixtures.
 
+The fixture ``synth_all_models_analysis_cached`` carries the TRITON inputs of hhemt 1.2 (see ``tests/conftest.py``): a
+Courant number of 0.45, the Kokkos configuration print, 2 observation points read every 600 s, and an initial-depth
+raster of zeros. The tests below follow one pipeline (prepare, run, process, consolidate) and each stage asserts the
+inputs where that stage can see them, so the inputs cost no solver run of their own. A failure in a stage that touches
+the inputs is therefore not always a failure of the stage's own subject.
+"""
+
+import math
+import os
+import shutil
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
 import pytest
 import xarray as xr
 
+import tests.conftest as suite_conftest
 import tests.utils_for_testing as tst_ut
 
 pytestmark = [
@@ -11,6 +26,289 @@ pytestmark = [
     # absent and HARD-FAILS under HHEMT_REQUIRE_COMPILE_TIER=1.
     pytest.mark.usefixtures("tritonswmm_cpu_compiled"),
 ]
+
+# Per model: the family group of the consolidated tree, the per-scenario gridded series store, the model output
+# folder TRITON writes under, and the cfg file the toolkit renders. SWMM-only has no TRITON input and no row here.
+_TRITON_ARMS = {
+    "tritonswmm": {
+        "family": "tritonswmm",
+        "store": "output_tritonswmm_triton_timeseries",
+        "out": "out_tritonswmm",
+        "cfg": "triton_swmm_cfg",
+    },
+    "triton": {
+        "family": "triton_only",
+        "store": "output_triton_only_timeseries",
+        "out": "out_triton",
+        "cfg": "triton_cfg",
+    },
+}
+
+
+def _triton_arms(analysis):
+    """The ``(model_type, arm)`` pairs of the TRITON models this analysis enables."""
+    enabled = tst_ut.get_enabled_model_types(analysis)
+    return [(model_type, arm) for model_type, arm in _TRITON_ARMS.items() if model_type in enabled]
+
+
+def _cfg_values(path) -> dict[str, str]:
+    """The active ``key=value`` lines of a TRITON cfg, comment lines dropped and one pair of quotes removed."""
+    values = {}
+    for line in Path(path).read_text().splitlines():
+        text = line.strip()
+        if not text or text.startswith("#") or "=" not in text:
+            continue
+        key, __, value = text.partition("=")
+        values[key.strip()] = value.strip().strip('"')
+    return values
+
+
+def _zarr_store_paths(analysis) -> set[str]:
+    """Every zarr store directory under the analysis directory, found without descending into a store."""
+    root = Path(analysis.analysis_paths.analysis_dir)
+    found: set[str] = set()
+    for dirpath, dirnames, __ in os.walk(root):
+        for name in [d for d in dirnames if d.endswith(".zarr")]:
+            found.add(str((Path(dirpath) / name).relative_to(root)))
+            dirnames.remove(name)
+    return found
+
+
+def _remove_entries_added_since(analysis_dir: Path, names_before: set[str]) -> None:
+    """Delete the top-level entries of ``analysis_dir`` that ``names_before`` does not list.
+
+    The analysis directory is shared by every test that takes ``synth_all_models_analysis_cached``. A consolidated
+    tree left in it with no layout record makes the version-state tests refuse it, since a tree that holds results
+    and carries no record reads as one of unknown version; a test that consolidates removes what it added.
+    """
+    for entry in Path(analysis_dir).iterdir():
+        if entry.name in names_before:
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+
+
+def _open_store(path):
+    """A per-scenario series store, zarr or netcdf, opened without relying on a consolidated index."""
+    path = Path(path)
+    if path.suffix == ".zarr":
+        return xr.open_zarr(path, consolidated=False)
+    return xr.open_dataset(path, engine="h5netcdf")
+
+
+def _assert_folded_inputs_rendered(analysis) -> None:
+    """Each TRITON cfg the preparation wrote carries the folded non-default inputs, and the points file is in order.
+
+    Class: NEW CAPABILITY. Property: the cfg of every enabled TRITON model holds ``courant`` at the folded value,
+    ``time_series_flag=1``, ``print_observation`` at the folded interval, an ``observation_loc_file`` that holds the
+    CSV's ``x,y`` rows in file order, and an ``h_infile`` that names the zero raster. Why required: the arrival of a
+    value in the cfg is the first of the two places a setting can be lost, and the second, the solver's read, is
+    asserted after the run. Killed by: a renderer that drops the setting, a points file written in another order, or
+    an overlay that never reached the scenario. A second correct implementation compares whole cfg text to a golden.
+    Not established: that TRITON parses these lines; the cfg dump asserted after the run does that.
+    """
+    expected_rows = [f"{x:g},{y:g}" for __, x, y in suite_conftest.FOLDED_OBSERVATION_POINTS]
+    arms = _triton_arms(analysis)
+    checked = 0
+    for event_iloc in analysis.df_sims.index:
+        paths = analysis._retrieve_sim_runs(event_iloc)._scenario.scen_paths
+        for model_type, arm in arms:
+            cfg_path = Path(getattr(paths, arm["cfg"]))
+            values = _cfg_values(cfg_path)
+            where = f"{model_type} cfg {cfg_path}"
+            assert float(values["courant"]) == suite_conftest.FOLDED_COURANT_NUMBER, where
+            assert values["time_series_flag"] == "1", where
+            assert float(values["print_observation"]) == suite_conftest.FOLDED_OBSERVATION_INTERVAL_S, where
+            points_file = Path(values["observation_loc_file"])
+            assert points_file == cfg_path.parent / "observation_points.txt", where
+            assert points_file.read_text().split() == expected_rows, f"{where}: the points file rows"
+            assert Path(values["h_infile"]).is_file(), f"{where}: h_infile names no file"
+            checked += 1
+    # Must-fire control: at least one cfg was read, and one for every event and enabled TRITON model.
+    assert checked == len(analysis.df_sims) * len(arms) > 0
+
+
+def _assert_solver_read_the_folded_inputs(analysis) -> None:
+    """TRITON's own cfg dump carries the folded inputs, and the run log carries the Kokkos configuration print.
+
+    Class: NEW CAPABILITY. Property: every enabled TRITON model's simulation completed, as ``model_run_completed``
+    reads it (the ``Simulation ends`` marker TRITON prints at the end of a run, which a run that exits at the raster
+    read never prints); and when the solver ran in this entry, it wrote at least one ``cfg/config_*.cfg``
+    under each enabled TRITON model's output folder, every one holds ``courant`` at the folded value and the
+    observation and initial-condition keys, and the model's run log holds ``Kokkos Version``, which only
+    ``KOKKOS_PRINT_CONFIGURATION=1`` prints. Those facts are then written to a sidecar under the system directory's
+    ``folded_inputs/``, which ``clear_raw`` does not reach. When the solver did not run in this entry (the tree is
+    warm: ``test_process_sim`` cleared ``cfg/`` and the runner skips a completed model), the same facts are read from
+    the sidecar written by the entry that did run it. Why required: a setting that reaches the cfg and not the
+    process (an environment variable lost between the launcher and the solver, a cfg key the solver ignores) is
+    invisible to the cfg assertion, and a stage that reds on every second entry reports a solver fault that is not
+    there. Killed by: an environment export dropped from the launch, a rendered key that TRITON does not read, a
+    re-entry that finds no evidence, an initial-condition raster that TRITON cannot read. A second correct
+    implementation forces the solver to run in every entry. Not established: the text of the Kokkos print on
+    another Kokkos version; a warm tree with no sidecar (one built before this evidence existed) fails here by
+    design, because nothing then shows the solver read the inputs. The completion check is the proof that the run
+    got past its raster reads, and the cfg dump is not: TRITON writes its dump from ``write_output``, after those
+    reads, but a dump found under ``cfg/`` can come from an earlier run of the same tree.
+    """
+    import json
+
+    from hhemt.run_simulation import model_logfile_for
+
+    sidecar_dir = Path(analysis._system.cfg_system.system_directory) / suite_conftest._FOLDED_INPUTS_DIR
+    arms = _triton_arms(analysis)
+    checked = 0
+    for event_iloc in analysis.df_sims.index:
+        run = analysis._retrieve_sim_runs(event_iloc)
+        paths = run._scenario.scen_paths
+        for model_type, arm in arms:
+            assert run.model_run_completed(model_type), (
+                f"{model_type} event {event_iloc}: the simulation did not complete, so TRITON did not get past "
+                "reading its inputs"
+            )
+            sidecar = sidecar_dir / f"solver_read_{event_iloc}_{model_type}.json"
+            dump_dir = Path(getattr(paths, arm["out"])) / "cfg"
+            dumps = sorted(dump_dir.glob("config_*.cfg"))
+            if dumps:
+                facts = {"dumps": [], "kokkos_print": False}
+                for dump in dumps:
+                    values = _cfg_values(dump)
+                    facts["dumps"].append(
+                        {
+                            "name": dump.name,
+                            "courant": float(values["courant"]),
+                            "time_series_flag": values["time_series_flag"],
+                            "print_observation": float(values["print_observation"]),
+                            "h_infile": "h_infile" in values,
+                        }
+                    )
+                log = model_logfile_for(analysis, event_iloc, model_type)
+                facts["kokkos_print"] = "Kokkos Version" in log.read_text(errors="replace")
+                sidecar.parent.mkdir(parents=True, exist_ok=True)
+                sidecar.write_text(json.dumps(facts))
+            else:
+                assert sidecar.is_file(), (
+                    f"{model_type}: no cfg dump under {dump_dir} and no sidecar {sidecar}; the solver never ran "
+                    "with the folded inputs on this tree, so nothing shows it read them"
+                )
+                facts = json.loads(sidecar.read_text())
+            assert facts["dumps"], f"{model_type}: the evidence holds no cfg dump"
+            for dump in facts["dumps"]:
+                where = f"{model_type} {dump['name']}"
+                assert dump["courant"] == suite_conftest.FOLDED_COURANT_NUMBER, where
+                assert dump["time_series_flag"] == "1", where
+                assert dump["print_observation"] == suite_conftest.FOLDED_OBSERVATION_INTERVAL_S, where
+                assert dump["h_infile"], where
+            assert facts["kokkos_print"], f"{model_type}: the run log held no Kokkos configuration print"
+            checked += 1
+    assert checked == len(analysis.df_sims) * len(arms) > 0
+
+
+def _assert_observation_series_processed(analysis) -> None:
+    """Each scenario's gridded store holds the 3 point variables, labelled ``k * interval``.
+
+    Class: NEW CAPABILITY. Property: for every enabled TRITON model the store carries ``point_flood_depth``,
+    ``point_unit_discharge_x`` and ``point_unit_discharge_y`` on the two named dimensions with the folded points in file
+    order, their ids and their DEM cells; the labels start at 0 and an uninterrupted run keeps ``k * interval`` for the
+    first ``floor(duration / interval) + 1`` rows; the values are finite and the depth is not negative; and the raw
+    ``series/`` text was reclaimed after the store took the rows. Why required: this is the only end-to-end proof that
+    TRITON wrote the files the reader expects, with the header the reader checks and the row count it demands. Killed
+    by: a reader that mislabels periods, a run that wrote no series, a clear that ran before the export. A second
+    correct implementation checks the tree only. Not established: that the depths are plausible, since a point may
+    stay dry.
+    """
+    interval = suite_conftest.FOLDED_OBSERVATION_INTERVAL_S
+    ids = [pid for pid, __, __ in suite_conftest.FOLDED_OBSERVATION_POINTS]
+    cells = suite_conftest.FOLDED_OBSERVATION_CELLS
+    arms = _triton_arms(analysis)
+    checked = 0
+    for event_iloc in analysis.df_sims.index:
+        proc = analysis._retrieve_sim_run_processing_object(event_iloc)
+        start, end = proc._scenario._resolve_event_window()
+        duration_s = (pd.Timestamp(end) - pd.Timestamp(start)).total_seconds()
+        periods = math.floor(duration_s / interval + 1e-9)
+        assert periods >= 2, f"the simulated {duration_s} s holds only {periods} period(s) of {interval} s"
+        for model_type, arm in arms:
+            store = Path(getattr(proc.scen_paths, arm["store"]))
+            where = f"{model_type} store {store}"
+            with _open_store(store) as ds:
+                for name in ("point_flood_depth", "point_unit_discharge_x", "point_unit_discharge_y"):
+                    assert ds[name].dims == ("point_elapsed_s", "obs_point"), f"{where}: {name} dims"
+                    assert np.isfinite(ds[name].values).all(), f"{where}: {name} holds a non-finite value"
+                assert (ds["point_flood_depth"].values >= 0).all(), f"{where}: a negative depth"
+                labels = ds["point_elapsed_s"].values
+                assert labels[0] == 0.0, where
+                assert np.array_equal(labels[: periods + 1], np.arange(periods + 1) * interval), f"{where}: {labels}"
+                assert ds.sizes["point_elapsed_s"] in (periods + 1, periods + 2), f"{where}: {labels}"
+                assert ds["obs_point_id"].values.tolist() == ids, where
+                assert list(zip(ds["obs_row"].values.tolist(), ds["obs_col"].values.tolist(), strict=True)) == list(
+                    cells
+                ), f"{where}: the DEM cells"
+            series_dir = Path(getattr(proc.scen_paths, arm["out"])) / "series"
+            assert not series_dir.exists(), f"{where}: the raw text {series_dir} was not reclaimed"
+            checked += 1
+    assert checked == len(analysis.df_sims) * len(arms) > 0
+
+
+def _assert_matched_outfall_coupled_through_one_water_level_row(analysis) -> None:
+    """The coupling list holds the synthetic matched outfall, and the external-boundary file carries one type-1 row.
+
+    Class: NEW CAPABILITY (package 1h, DR-25). Property: for every event the TRITON coupling-node file written beside
+    ``hydraulics.inp`` names the synthetic matched outfall, which the system converted into a junction because the
+    boundary layer's water-level record names it; the location file ``extbc/loc.extbc`` holds one data row, of type 1
+    (a water level that varies with time), and that row names a series file that exists. Why required: this is the only
+    end-to-end proof that a record-converted outfall reaches the solver as a coupled node and that the layer's record
+    reaches the solver as one boundary row, and the laptop tests read text only. Killed by: a conversion that leaves
+    the outfall out of the list, a record written with another type code, a layer that writes no row or two rows.
+    A second correct implementation reads the cfg dump the solver wrote. Not established: that the solver exchanged
+    water at the node; the run's completion and the processed outputs show the run got through its inputs.
+    """
+    from hhemt.scenario import coupling_nodes_file_for, read_coupling_node_file
+    from hhemt.synthetic_model.swmm_model import MATCHED_OUTFALL
+
+    checked = 0
+    for event_iloc in analysis.df_sims.index:
+        paths = analysis._retrieve_sim_runs(event_iloc)._scenario.scen_paths
+        nodes = read_coupling_node_file(coupling_nodes_file_for(paths.swmm_hydraulics_inp))
+        assert MATCHED_OUTFALL in nodes, f"event {event_iloc}: the coupling list {nodes} omits {MATCHED_OUTFALL}"
+        rows = [
+            line.strip()
+            for line in Path(paths.extbc_loc).read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("%")
+        ]
+        assert len(rows) == 1, f"event {event_iloc}: {len(rows)} external-boundary rows {rows}"
+        fields = [field.strip() for field in rows[0].split(",")]
+        assert fields[0] == "1", f"event {event_iloc}: the boundary row {rows[0]} is not a water-level (type 1) row"
+        assert (Path(paths.extbc_loc).parent / fields[5].strip('"')).is_file(), f"event {event_iloc}: no series file"
+        checked += 1
+    # Must-fire control: at least one event was read.
+    assert checked == len(analysis.df_sims) > 0
+
+
+def _assert_coupled_swmm_ran_on_one_thread(analysis) -> None:
+    """The coupled SWMM report carries ``Number of Threads`` 1, the default of ``swmm_threads`` (DR-36).
+
+    Class: NEW CAPABILITY. Property: for every event the coupled model's ``hydraulics.rpt`` (the file SWMM writes
+    for the coupled run) holds a ``Number of Threads`` line, and the count is 1. Why required: the thread line of the
+    written model is the one input of the run that reaches SWMM from ``swmm_threads`` and not from TRITON, and a line
+    that is missing or carries another count would show a model that never took the setting. Killed by: a model
+    written with a thread count taken from the OpenMP count of the run mode, or with no ``THREADS`` line. A second
+    correct implementation reads the line from the scenario's model log. Not established: that a count above 1 is
+    honoured, because ``serial`` admits only 1 and this fixture runs ``serial``.
+    """
+    import re
+
+    line = re.compile(r"^\s*Number of Threads\s*\.*\s*(\d+)\s*$", re.MULTILINE)
+    checked = 0
+    for event_iloc in analysis.df_sims.index:
+        rpt = Path(analysis._retrieve_sim_runs(event_iloc)._scenario.scen_paths.swmm_hydraulics_rpt)
+        assert rpt.is_file(), f"event {event_iloc}: no coupled SWMM report {rpt}"
+        match = line.search(rpt.read_text(errors="replace"))
+        assert match is not None, f"event {event_iloc}: {rpt} holds no Number of Threads line"
+        assert int(match.group(1)) == 1, f"event {event_iloc}: SWMM ran on {match.group(1)} threads"
+        checked += 1
+    assert checked == len(analysis.df_sims) > 0
 
 
 def test_load_system_and_analysis(synth_all_models_analysis):
@@ -25,6 +323,8 @@ def test_prepare_all_scenarios(synth_all_models_analysis_cached):
         rerun_swmm_hydro_if_outputs_exist=True,
     )
     tst_ut.assert_scenarios_setup(analysis)
+    _assert_folded_inputs_rendered(analysis)
+    _assert_matched_outfall_coupled_through_one_water_level_row(analysis)
 
 
 def test_run_sim(synth_all_models_analysis_cached):
@@ -46,6 +346,9 @@ def test_run_sim(synth_all_models_analysis_cached):
                 + "\n".join(f"  - {d}" for d in failed_scenarios[:5])
                 + (f"\n  ... and {len(failed_scenarios) - 5} more" if len(failed_scenarios) > 5 else "")
             )
+
+    _assert_solver_read_the_folded_inputs(analysis)
+    _assert_coupled_swmm_ran_on_one_thread(analysis)
 
 
 def test_process_sim(synth_all_models_analysis_cached):
@@ -99,6 +402,59 @@ def test_process_sim(synth_all_models_analysis_cached):
         pytest.fail("Clearing raw outputs failed.")
 
     tst_ut.assert_hydraulic_components_exercised(analysis)
+    _assert_observation_series_processed(analysis)
+
+
+def test_observation_series_consolidate_into_the_one_analysis_store(synth_all_models_analysis_cached):
+    """The observation groups land in ``analysis_datatree.zarr`` and the consolidation adds no other zarr store.
+
+    Class: NEW CAPABILITY. Property: after ``consolidate_to_datatree`` the zarr stores under the analysis directory
+    are the ones that existed before, plus at most the tree itself; each enabled TRITON model has the
+    ``triton_observation`` series group on ``(event_iloc, elapsed_s, obs_point)`` and the summary group on
+    ``(event_iloc, obs_point)`` with the folded point ids; and no store is named for observations. Why required: the
+    developer's ruling is that observation points end up in the one analysis-level zarr and in no extra zarr, and
+    ``toggle_consolidate_timeseries`` is off in this fixture, so the groups must appear without it. Killed by: a
+    consolidation that writes a store of its own, one that appends only under the toggle, a group on other dimensions.
+    A second correct implementation compares to the set of stores of a points-free run, as the laptop file does.
+    Not established: the group content across events, which the laptop file covers on a golden tree.
+
+    The analysis directory is shared, so the test removes the top-level entries it added; the consolidated tree it
+    leaves carries no layout record, and the version-state tests refuse such a tree.
+    """
+    analysis = synth_all_models_analysis_cached
+    ids = [pid for pid, __, __ in suite_conftest.FOLDED_OBSERVATION_POINTS]
+    arms = _triton_arms(analysis)
+    before = _zarr_store_paths(analysis)
+    assert before, "control: the per-scenario stores written by the processing step are found"
+
+    analysis_dir = Path(analysis.analysis_paths.analysis_dir)
+    names_before = {entry.name for entry in analysis_dir.iterdir()}
+    try:
+        _assert_consolidation_lands_observations_in_the_one_store(analysis, ids, arms, before)
+    finally:
+        _remove_entries_added_since(analysis_dir, names_before)
+
+
+def _assert_consolidation_lands_observations_in_the_one_store(analysis, ids, arms, before) -> None:
+    analysis.process.consolidate_to_datatree()
+
+    tree = Path(analysis.analysis_paths.analysis_datatree_zarr)
+    tree_rel = str(tree.relative_to(analysis.analysis_paths.analysis_dir))
+    after = _zarr_store_paths(analysis)
+    assert tree_rel in after, "control: the matcher finds the consolidated tree"
+    assert after - before <= {tree_rel}, f"consolidation added stores beyond the tree: {sorted(after - before)}"
+    assert not [p for p in after if "observ" in Path(p).name], f"a store is named for observations: {sorted(after)}"
+    for model_type, arm in arms:
+        group = f"{arm['family']}/triton_observation"
+        series = xr.open_zarr(tree, group=f"{group}/timeseries", consolidated=True)
+        assert series["point_flood_depth"].dims == ("event_iloc", "elapsed_s", "obs_point"), model_type
+        assert series.sizes["event_iloc"] == len(analysis.df_sims), model_type
+        assert float(series["elapsed_s"].values[0]) == 0.0, model_type
+        assert series["obs_point_id"].values.tolist() == ids, model_type
+        summary = xr.open_zarr(tree, group=f"{group}/summary", consolidated=True)
+        for name in ("max_point_flood_depth", "time_of_max_point_flood_depth"):
+            assert summary[name].dims == ("event_iloc", "obs_point"), f"{model_type} {name}"
+        assert summary["obs_point_id"].values.tolist() == ids, model_type
 
 
 def test_swmm_cross_model_consistency(synth_all_models_analysis_cached):
@@ -348,10 +704,14 @@ def test_hydrology_variant_local_runoff_invariant(synth_all_models_analysis_cach
         f"outfalls skipped: {sorted(lst_outfalls)})"
     )
 
-    # (2) the two BC-side interaction junctions carry no local runoff -> exactly
-    #     0.0. A conduit would fold upstream runoff into them (non-zero).
-    assert set(zero_nodes) == {"collector", "sewer_outflow"}, (
-        f"expected exactly {{collector, sewer_outflow}} to book zero TOTAL_INFLOW, got {sorted(zero_nodes)}"
+    # (2) the BC-side junctions carry no local runoff -> exactly 0.0. A conduit would fold upstream runoff into
+    #     them (non-zero). The matched outfall is one of them: the hydrology role converts it to a junction, so it
+    #     is not in `lst_outfalls`, and it books zero like `collector` and `sewer_outflow`.
+    from hhemt.synthetic_model.swmm_model import MATCHED_OUTFALL
+
+    expected_zero = {"collector", "sewer_outflow", MATCHED_OUTFALL}
+    assert set(zero_nodes) == expected_zero, (
+        f"expected exactly {sorted(expected_zero)} to book zero TOTAL_INFLOW, got {sorted(zero_nodes)}"
     )
 
     # (3) every runoff node books IDENTICAL local runoff (uniform subcatchments +
@@ -377,5 +737,5 @@ def test_hydrology_variant_local_runoff_invariant(synth_all_models_analysis_cach
         f"hydrology-variant flow-routing continuity error "
         f"{sys_out['flow_continuity_error']}% >= 5.0% -- routing likely "
         f"reverted to DYNWAVE on a conduit-free network (see "
-        f"swmm_template._options_df)"
+        f"swmm_model._options_df)"
     )

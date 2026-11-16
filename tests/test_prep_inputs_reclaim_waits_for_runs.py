@@ -61,7 +61,7 @@ def _probe(tmp_path: Path, *, unrun: tuple[str, ...]):
         ),
         scen_paths=types.SimpleNamespace(
             dir_weather_datfiles=dats,
-            extbc_tseries=extbc_dir / "tseries.txt",
+            extbc_dir=extbc_dir,
             weather_timeseries=weather,
         ),
         # R13 (2026-09-18): `remove_after_processing` is wrapped by the module-level
@@ -128,7 +128,7 @@ def test_prep_inputs_is_reclaimed_at_the_relocated_call_site(tmp_path):
         scen_paths=types.SimpleNamespace(
             sim_folder=tmp_path,
             dir_weather_datfiles=dats,
-            extbc_tseries=extbc_dir / "tseries.txt",
+            extbc_dir=extbc_dir,
             weather_timeseries=weather,
         ),
     )

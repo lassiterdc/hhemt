@@ -379,7 +379,7 @@ def test_docs_table_rows_and_the_note():
 def test_help_text_cfg_template_and_eda_units_map():
     """Property: the three non-table places that said 'velocity' now say unit discharge.
 
-    Class: the `process_store_float32` field description, the synthetic TRITON cfg comment block above
+    Class: the `process_store_float32` field description, the TRITON cfg template comment block above
     `print_option=huv`, and the EDA byte-identity dataset's `units_by_raw_output_type` attribute, built by
     the real `_b4b_dataset`.
     Why required: the help text is what a user reads, the cfg comment is copied into every synthetic model
@@ -388,8 +388,8 @@ def test_help_text_cfg_template_and_eda_units_map():
     wording; the units map reading `m/s` for either discharge name or losing a name.
     Passes under: an implementation that derives the units map from the CF table instead of a literal.
     """
+    from hhemt import triton_cfg
     from hhemt.config.analysis import analysis_config
-    from hhemt.synthetic_model import triton_cfg
 
     desc = analysis_config.model_fields["process_store_float32"].description
     assert "unit discharge" in desc and "velocity" not in desc, desc

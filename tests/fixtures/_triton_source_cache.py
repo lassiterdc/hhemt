@@ -52,7 +52,22 @@ from hhemt.cache import paths as cache_paths
 #: Never record one without the other — record TRITON_SOURCE_DESCRIPTOR.
 TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 
-#: The fork's `main` (github.com/lassiterdc/triton.git), at "fix(swmm): refuse SWMM file paths
+#: ORNL's `triton-swmm` head `faba2232` (DR-37, package 1j: the tier builds the solver the toolkit is
+#: pinned to elsewhere, `model_defects.SHA_ORNL_COUPLING_DECLARATION_PIN`). The sha is served by
+#: `TRITON_GIT_URL` above: GitHub's compare of `lassiterdc/triton` `faba2232...main` reports `ahead`
+#: with `behind_by` 0, so `faba2232` is an ancestor of the fork's `main`. The move FROM `bb13ea28` is a
+#: change of tests and ignore rules only, measured 2026-11-15 in a depth-1 fetch of both commits from that
+#: URL: `git diff --stat bb13ea28 faba2232 -- src external/swmm/src` -> empty;
+#: `git diff --stat bb13ea28 faba2232 -- . ':!test'` -> `.gitignore` alone (7 deletions); and
+#: `git ls-tree` returns the same `external/kokkos` (dc1bf738), `external/yaml-cpp` (a83cd315) and
+#: `external/swmm` tree (6c5a47f9) at both. Solver behaviour and the synthetic goldens therefore do not
+#: change, and what is owed is one rebuild of the tier's TRITON build cache on Rivanna. NO REGISTRATION IS
+#: OWED BY THIS MOVE: `faba2232` is already a `known_absent_in` member of every `REGISTRY` entry
+#: (`tests/test_triton_pin_faba2232.py`) and a member of the three sets in `scenario.py`.
+#: THE PREVIOUS PIN, `bb13ea28`, remains registered (`SHA_MAIN_SWMM_PATH_REFUSAL_PIN`) and remains a
+#: member of those sets, because recorded runs name it.
+#: THE PRECEDING MOVE'S RECORD, RETAINED AND NO LONGER LIVE (bd18215 -> bb13ea28). The fork's `main`
+#: (github.com/lassiterdc/triton.git), at "fix(swmm): refuse SWMM file paths
 #: longer than MAXFNAME before swmm_open" (`bb13ea28`; `git merge-base --is-ancestor bd18215
 #: bb13ea28` -> rc 0, a plain FORWARD move of two commits on one lineage). `git diff --stat
 #: bd18215 bb13ea28` -> 2 files: `external/swmm/src/solver/massbal.c` (7a59d18, the flooding-debug
@@ -60,7 +75,7 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: an input, report or binary-output path over 259 characters before swmm_open). The snapshot is
 #: unchanged (`git diff bd18215 bb13ea28 -- external/swmm/src/solver/snapshot.c` -> empty;
 #: SNAPSHOT_VERSION 7 at both), so a resume across the two pins is not refused, and
-#: `scenario.SWMM_QUALITY_SNAPSHOT_SHAS` lists this pin beside bd18215. The vendored SWMM is still
+#: `scenario.SWMM_QUALITY_SNAPSHOT_SHAS` lists that pin beside bd18215. The vendored SWMM is still
 #: `VERSION 5.2.3`. THE PREVIOUS PIN, bd18215 ("carry water-quality state across a snapshot
 #: resume"), remains registered and remains a member of that set.
 #: THE PRECEDING MOVE'S RECORD, RETAINED AND NO LONGER LIVE (320b3313 -> a146fb6, the pin
@@ -109,7 +124,8 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: every `REGISTRY` entry's `known_absent_in` set reds with `pin-indeterminate`, and a commit
 #: that adds the sha without moving this constant leaves the guard asserting the OLD pin.
 #: Neither half is independently green.
-#: Measured 2026-10-26 against this pin, not inherited:
+#: Measured 2026-10-26 against the PREVIOUS pin `bb13ea28`, retained as the method's record (the probes
+#: for `faba2232` are in `model_defects.SHA_ORNL_COUPLING_DECLARATION_PIN`'s comment):
 #:   * `git merge-base --is-ancestor a38338b0 bb13ea28` -> rc 0
 #:   * `git merge-base --is-ancestor 3a832f7d bb13ea28` -> rc 0
 #:   * `git merge-base --is-ancestor 9db367dd bb13ea28` -> rc 0
@@ -131,8 +147,9 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #: IMPORTS both constants rather than restating them, so that coupling is satisfied by
 #: construction and this is ONE edit in THIS file -- but it is NOT one edit in the tree. The
 #: deciding command is a tracked literal census over the FULL 40-character sha,
-#: `grep -rlF {sha} tests src`. At this pin it puts the live sha in six files; the five
-#: besides this one are:
+#: `grep -rlF {sha} tests src`. At the previous pin `bb13ea28` it put the live sha in six files; the five
+#: besides this one are listed next, and the move to `faba2232` edited the three TEST literals among them
+#: (the registry and set members for `faba2232` already existed):
 #:   * `src/hhemt/model_defects.py` (ADD beside, do not move);
 #:   * `src/hhemt/scenario.py::SWMM_QUALITY_SNAPSHOT_SHAS`, the set A3 and A2 key on, which is
 #:     NOT covered by the live-pin guard, so a later pin that carries the fix is added there by hand;
@@ -144,7 +161,7 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #:   * `tests/test_known_solver_defects.py::_PIN`.
 #: A short-prefix search also matches docstrings that merely mention the pin, which are not
 #: coupled literals a move must update.
-TRITON_PIN = "bb13ea28603d50879f8d85cd041c17f440fbdb2b"
+TRITON_PIN = "faba223212408f04b7a3dbf6580adedf4a4e6b13"
 
 #: The ONE form every version RECORD prints, so a URL cannot be omitted beside a pin.
 #: Consumed by `model_version_lines()` and by the estate's per-chunk provenance stamp.

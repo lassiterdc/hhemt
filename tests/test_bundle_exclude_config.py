@@ -71,7 +71,7 @@ def test_exclude_config_accepts_fetchable_and_unfetchable() -> None:
                     "contentUrl": "https://example.org/dem.tif",
                     "identifier": "10.5281/zenodo.1",
                 },
-                "SWMM_hydraulics": {
+                "SWMM_model": {
                     "citation": "Licensed network — request from County GIS",
                     "url": "https://gis.example.gov/request",
                 },
@@ -80,7 +80,7 @@ def test_exclude_config_accepts_fetchable_and_unfetchable() -> None:
     )
     # contentUrl present/absent IS the fetchable bit — there is no separate flag.
     assert cfg.refs_for("DEM_fullres", "dem.tif").contentUrl == "https://example.org/dem.tif"
-    assert cfg.refs_for("SWMM_hydraulics", "net.inp").contentUrl is None
+    assert cfg.refs_for("SWMM_model", "net.inp").contentUrl is None
 
 
 def test_exclude_config_list_field_maps_by_basename() -> None:

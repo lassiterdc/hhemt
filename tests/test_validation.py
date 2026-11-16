@@ -139,15 +139,15 @@ def test_validate_data_consistency(synth_multi_sim_analysis):
     assert result.is_valid or result.has_warnings
 
 
-def test_validate_storm_tide_when_disabled(synth_multi_sim_analysis):
-    """Test storm tide validation when toggle disabled."""
-    from hhemt.validation import ValidationResult, _validate_storm_tide_data
+def test_validate_water_level_boundary_when_disabled(synth_multi_sim_analysis):
+    """Test water-level boundary validation when toggle disabled."""
+    from hhemt.validation import ValidationResult, _validate_water_level_boundary_data
 
     cfg_analysis = synth_multi_sim_analysis.cfg_analysis
     result = ValidationResult()
 
-    # Norfolk test case has toggle_storm_tide_boundary=False
-    _validate_storm_tide_data(cfg_analysis, result)
+    # Norfolk test case has toggle_external_boundaries=False
+    _validate_water_level_boundary_data(cfg_analysis, result)
 
     # Should not have errors (toggle disabled)
     assert result.is_valid

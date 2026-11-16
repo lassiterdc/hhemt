@@ -35,6 +35,44 @@ Lassiter, D. (2026). H&H Ensemble Modeling Toolkit (hhemt) (Version 0.2.1)
 [Computer software]. https://doi.org/10.5281/zenodo.21359151
 ```
 
+### Cite the solver and the engine
+
+If your work uses the TRITON solver or the SWMM engine through hhemt, cite them too.
+
+``` { .text .copy }
+Morales-Hernández, M., Sharif, M. B., Kalyanapu, A., Ghafoor, S. K., Dullo, T. T.,
+Gangrade, S., Kao, S.-C., Norman, M. R., & Evans, K. J. (2021). TRITON: A multi-GPU
+open source 2D hydrodynamic flood model. Environmental Modelling & Software, 141,
+105034. https://doi.org/10.1016/j.envsoft.2021.105034
+```
+
+``` { .bibtex .copy }
+@article{morales2021triton,
+  author  = {Morales-Hern{\'a}ndez, M. and Sharif, M. B. and Kalyanapu, A. and Ghafoor, S. K. and Dullo, T. T. and Gangrade, S. and Kao, S.-C. and Norman, M. R. and Evans, K. J.},
+  title   = {{TRITON}: A multi-{GPU} open source {2D} hydrodynamic flood model},
+  journal = {Environmental Modelling \& Software},
+  volume  = {141},
+  pages   = {105034},
+  year    = {2021},
+  doi     = {10.1016/j.envsoft.2021.105034}
+}
+```
+
+``` { .text .copy }
+Rossman, L. A., & Simon, M. (2022). Storm Water Management Model user's manual
+version 5.2 (EPA/600/R-22/030). U.S. Environmental Protection Agency.
+```
+
+``` { .bibtex .copy }
+@manual{rossman2022swmm,
+  author       = {Rossman, L. A. and Simon, M.},
+  title        = {Storm Water Management Model User's Manual Version 5.2},
+  organization = {U.S. Environmental Protection Agency},
+  number       = {EPA/600/R-22/030},
+  year         = {2022}
+}
+```
+
 <!-- hhemt:doi-kind-convention
      A page built from a release tag names only identifiers that exist at that tag.
      Zenodo mints the version DOI after the release is published, so the block above

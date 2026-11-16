@@ -152,11 +152,11 @@ def _padded_master(tmp_path):
     """
     n_axis, n_win = 40, 12
     ts = pd.date_range("2025-08-31", periods=n_axis, freq="120s")
-    tide = np.full((2, n_axis), np.nan)
-    tide[:, :n_win] = 1.0
+    level = np.full((2, n_axis), np.nan)
+    level[:, :n_win] = 1.0
     ds = xr.Dataset(
         {
-            "waterlevel_m": (("year", TDIM), tide),
+            "waterlevel_m": (("year", TDIM), level),
             "first_obs_tstep_w_rainfall": ((), 0),
         },
         coords={"year": [0, 1], TDIM: ts},
@@ -181,8 +181,9 @@ def _padded_master(tmp_path):
 class _PreflightCfgAnalysis:
     weather_time_series_timestep_dimension_name = TDIM
     weather_event_indices = ["year"]
-    weather_time_series_storm_tide_datavar = "waterlevel_m"
-    toggle_storm_tide_boundary = True
+    water_level_boundary_series_source = "weather_time_series"
+    water_level_boundary_outfall_variables = {"E143250": "waterlevel_m"}
+    toggle_external_boundaries = True
     weather_event_start_column = "win_start"
     weather_event_end_column = "win_end"
 

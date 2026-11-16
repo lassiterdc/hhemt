@@ -1059,10 +1059,85 @@ def synth_all_models_analysis():
     return case.analysis
 
 
+# The single-sim tier is the one place that runs all three models end to end, so it also carries the TRITON inputs
+# added in hhemt 1.2 instead of a test file of their own: a non-default Courant number, the Kokkos configuration
+# print, two observation points with an interval, and an initial-depth raster of zeros. The overlay is applied by
+# `synth_all_models_analysis_cached` alone, after the case is built, so the shared case builder and the sibling
+# fixture `synth_all_models_analysis` (6 consumer files) stay as they were. The consumers of the cached fixture are
+# `tests/test_synth_01_singlesim.py` and `tests/test_version_migration_state.py`.
+# The overlay also sets `TRITON_observation_interval_s: 600.0`: it exercises the explicit-interval path at 19 or 20
+# rows per point, where an unset interval would write about 1081 rows per variable.
+FOLDED_COURANT_NUMBER = 0.45
+FOLDED_OBSERVATION_INTERVAL_S = 600.0
+# (id, x, y) in the synthetic DEM's local coordinates: 16 columns by 30 rows of 10 m cells with the lower-left corner
+# at the origin. Both points lie on interior floodplain cells (not on the wall rings, the sea wall or the tidal
+# shelf) and inside the watershed polygon. TRITON's own formula puts "north_floodplain" on cell (row 7, col 4) and
+# "river_centerline" on cell (row 14, col 7), counted from the top-left cell.
+FOLDED_OBSERVATION_POINTS = (("north_floodplain", 45.0, 225.0), ("river_centerline", 75.0, 155.0))
+FOLDED_OBSERVATION_CELLS = ((7, 4), (14, 7))
+_FOLDED_INPUTS_DIR = "folded_inputs"
+
+
+def _overlay_folded_inputs(analysis):
+    """Set the folded TRITON inputs on a built synthetic analysis, on disk and in memory, and return it.
+
+    The solver runs in a subprocess (``hhemt.run_simulation_runner``) that loads both configs from their YAML files,
+    so the overlay is written to the two files first and the in-memory configs are then loaded from them. An overlay
+    held in memory alone would reach scenario preparation but not the launch, where the Kokkos environment is read.
+    The builder rewrites both YAML files every time it constructs a case, so the next construction starts from the
+    base config again.
+    """
+    import yaml
+
+    from hhemt.config.loaders import load_analysis_config, load_system_config
+    from hhemt.system import read_triton_grid_header
+
+    system = analysis._system
+    folder = Path(system.cfg_system.system_directory) / _FOLDED_INPUTS_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+
+    points_file = folder / "observation_points.csv"
+    points_file.write_text("id,x,y\n" + "".join(f"{pid},{x},{y}\n" for pid, x, y in FOLDED_OBSERVATION_POINTS))
+
+    # A zero-depth raster on the grid of the processed DEM: it exercises the raster read path of TRITON and leaves
+    # the numerics unchanged.
+    header = read_triton_grid_header(system.sys_paths.dem_processed)
+    raster = folder / "initial_depth_zeros.asc"
+    zero_row = " ".join(["0"] * header["ncols"])
+    raster.write_text(
+        f"ncols {header['ncols']}\nnrows {header['nrows']}\nxllcorner {header['xllcorner']}\n"
+        f"yllcorner {header['yllcorner']}\ncellsize {header['cellsize']}\nNODATA_value -9999\n"
+        + "\n".join([zero_row] * header["nrows"])
+        + "\n"
+    )
+
+    system_yaml = Path(system.system_config_yaml)
+    system_cfg = yaml.safe_load(system_yaml.read_text())
+    system_cfg["observation_points"] = str(points_file)
+    system_yaml.write_text(yaml.safe_dump(system_cfg, sort_keys=False))
+
+    analysis_yaml = Path(analysis.analysis_config_yaml)
+    analysis_cfg = yaml.safe_load(analysis_yaml.read_text())
+    analysis_cfg.update(
+        {
+            "TRITON_courant_number": FOLDED_COURANT_NUMBER,
+            "TRITON_kokkos_print_configuration": True,
+            "TRITON_observation_interval_s": FOLDED_OBSERVATION_INTERVAL_S,
+            "TRITON_initial_depth_raster": str(raster),
+            "TRITON_initial_depth_raster_kind": "depth",
+        }
+    )
+    analysis_yaml.write_text(yaml.safe_dump(analysis_cfg, sort_keys=False))
+
+    system.cfg_system = load_system_config(system_yaml)
+    analysis.cfg_analysis = load_analysis_config(analysis_yaml)
+    return analysis
+
+
 @pytest.fixture
 def synth_all_models_analysis_cached():
     case = cases.Local_TestCases.retrieve_synth_all_models_test_case(start_from_scratch=False)
-    return case.analysis
+    return _overlay_folded_inputs(case.analysis)
 
 
 @pytest.fixture

@@ -1,8 +1,9 @@
 """Unit-derived labels and conversion constants for report renderers.
 
 Single source of truth so renderer axis/colorbar labels stay in lockstep with
-the units declared on `analysis_config.rainfall_units` and
-`analysis_config.storm_tide_units`.
+the units declared on `analysis_config.rainfall_units`. The boundary water level is always drawn in meters,
+because the toolkit converts each weather variable by its stated unit and datum offset before it writes either
+boundary file.
 
 Conversion constants are stored as `factor_to_*` floats (multiply the source
 value to convert) so the call sites read as
@@ -43,19 +44,18 @@ def rainfall_provenance_units(rainfall_units: Literal["mm", "mm/hr"]) -> str:
     return rainfall_units
 
 
-# ---- Storm-tide / boundary-condition labels --------------------------------
-def bc_water_level_axis_label(storm_tide_units: str) -> str:
+# ---- Water-level boundary-condition labels --------------------------------
+BC_WATER_LEVEL_UNITS: str = "m"
+"""Unit of every boundary water level a report draws or records in provenance."""
+
+
+def bc_water_level_axis_label(unit: str = BC_WATER_LEVEL_UNITS) -> str:
     """Two-line y-axis label for the BC water-level sub-panel.
 
     Verbatim default matches `_hydrology_panel.draw_event_hydrology_panel`:
-      "Boundary condition\\nwater level (m)" for storm_tide_units == "m"
+      "Boundary condition\\nwater level (m)"
     """
-    return f"Boundary condition\nwater level ({storm_tide_units})"
-
-
-def bc_provenance_units(storm_tide_units: str) -> str:
-    """Provenance-channel `units` value used by the BC water-level artist."""
-    return storm_tide_units
+    return f"Boundary condition\nwater level ({unit})"
 
 
 # ---- Time-axis label -------------------------------------------------------

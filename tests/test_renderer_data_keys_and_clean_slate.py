@@ -253,6 +253,9 @@ EXCLUDED = (
 #: set is the one code value below; every other added line the matcher reports at the working tree is rewritten.
 EXCEPTIONS: tuple[tuple[str, str], ...] = (
     ("docs/reference/coupled-inflow-nodes.md", "| `lega" + "cy`, an explicit opt-in |"),
+    # One value of the swmm_coupling_mode setting is named below, where the converted-outfall check reads it.
+    ("src/hhemt/validation.py", 'mode == "lega' + 'cy"'),
+    ("src/hhemt/validation.py", "swmm_coupling_mode is lega" + "cy, which couples"),
 )
 
 

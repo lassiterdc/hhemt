@@ -17,6 +17,7 @@ row with the member id.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -514,12 +515,46 @@ def check_scenario_status_csv(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
+_SWMM_THREADS_LINE = re.compile(r"^\s*Number of Threads\s*\.*\s*(\d+)\s*$", re.MULTILINE)
+
+
+def swmm_thread_issues(analysis: TRITONSWMM_analysis, *, df_status=None) -> list[dict]:
+    """Rows where the coupled SWMM ran with a thread count other than ``min(swmm_threads, omp_thread_count)``.
+
+    Reads ``Number of Threads`` from each scenario's ``out_tritonswmm/swmm/hydraulics.rpt`` (DR-36). A scenario
+    with no report is not examined (it did not run the coupled model). A report with no such line is an INFO row
+    ``not measured`` and never a pass.
+    """
+    from hhemt.run_simulation import omp_thread_count
+
+    cfg = analysis.cfg_analysis
+    expected = min(int(cfg.swmm_threads), omp_thread_count(cfg))
+    frame = analysis.df_status if df_status is None else df_status
+    if "scenario_directory" not in frame.columns:
+        return []
+    issues: list[dict] = []
+    for scenario_dir in frame["scenario_directory"].dropna().unique():
+        rpt = Path(str(scenario_dir)) / "out_tritonswmm" / "swmm" / "hydraulics.rpt"
+        if not rpt.is_file():
+            continue
+        match = _SWMM_THREADS_LINE.search(rpt.read_text(errors="replace"))
+        row = {"scenario_dir": str(scenario_dir), "resource": "SWMM threads", "expected": expected}
+        if match is None:
+            issues.append({**row, "actual": "not measured: no Number of Threads line", "severity": "info"})
+        elif int(match.group(1)) != expected:
+            issues.append({**row, "actual": int(match.group(1))})
+    return issues
+
+
 def check_resource_usage(analysis: TRITONSWMM_analysis, *, df_status=None) -> CheckResult:
     """Resource: actual MPI/OMP/GPU/backend match intended config per scenario."""
     from hhemt.consolidate_workflow import validate_resource_usage
 
     try:
         passed, issues = validate_resource_usage(analysis, logger=None, df_status=df_status)
+        _thread_issues = swmm_thread_issues(analysis, df_status=df_status)
+        issues = [*issues, *_thread_issues]
+        passed = passed and not any(i.get("severity") != "info" for i in _thread_issues)
     except Exception as e:
         return CheckResult(
             name="Resource usage matches config",
@@ -534,8 +569,15 @@ def check_resource_usage(analysis: TRITONSWMM_analysis, *, df_status=None) -> Ch
     # an unmeasured campaign is legible as such in the report, not read as a measured pass.
     n_fail = len([i for i in issues if i.get("severity") != "info"])
     n_unmeasured = len(
-        [i for i in issues if i.get("severity") == "info" and str(i.get("actual", "")).startswith("not")]
+        [
+            i
+            for i in issues
+            if i.get("severity") == "info"
+            and str(i.get("actual", "")).startswith("not")
+            and i.get("resource") != "SWMM threads"
+        ]
     )
+    n_swmm_unmeasured = len([i for i in issues if i.get("resource") == "SWMM threads" and i.get("severity") == "info"])
     n_signature = len(
         [
             i
@@ -558,6 +600,8 @@ def check_resource_usage(analysis: TRITONSWMM_analysis, *, df_status=None) -> Ch
             f" (GPU binding: {_count(n_unmeasured, 'row')} not measured, "
             f"{n_signature} classified by negative signature)"
         )
+    if n_swmm_unmeasured:
+        _disclosure += f" (SWMM threads: {_count(n_swmm_unmeasured, 'row')} not measured)"
     summary = (
         "All scenarios used expected compute resources" + _disclosure
         if passed

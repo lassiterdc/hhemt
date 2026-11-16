@@ -159,7 +159,7 @@ RUN="scripts/hook_env.sh --python 3.12" bash scripts/docs_gates.sh
 With `just` installed, `just docs-check` runs the same line. `scripts/hook_env.sh` binds `import hhemt` to the
 checkout that runs the command, so the autodoc gate grades that checkout and the `population root:` line of the
 gate names the tree the gate enumerated. Avoid `uv run --active` here. Under a foreign `VIRTUAL_ENV`, the command
-re-points the editable install of another checkout.
+re-points the editable install of another checkout. The CI `docs-build` job runs the same script, and the result of the job stands for this step on a machine without the docs dependencies.
 
 Separately from the gates, `python scripts/check_anonymization.py` fails when a tracked file contains an identifier from the project's private-identifier blocklist. CI runs the script as the `anonymization-guard` job, and the pre-commit configuration runs the script at both the commit and push stages.
 
@@ -183,6 +183,7 @@ escapes. A marker states a fact about the file and silences no finding.
 ## Branching and releases
 
 Read [Branching and release model](explanation/branching-and-release-model.md) for the branches, contributor branching, the release definition, the tests that carry a structural gate, the layout version, and the release version.
+The table [Release step venues](explanation/branching-and-release-model.md#release-step-venues) names the venue and the tool of each command of the release walk.
 
 ## Code conventions
 

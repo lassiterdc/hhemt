@@ -6,8 +6,8 @@ authors:
   - family-names: "Lassiter"
     given-names: "Daniel"
     email: "daniel.lassiter@outlook.com"
-version: "0.2.1"
-date-released: "2026-11-14"
+version: "0.3.0"
+date-released: "2026-11-15"
 license: AGPL-3.0-or-later
 repository-code: "https://github.com/lassiterdc/hhemt"
 url: "https://hhemt.readthedocs.io"
@@ -18,3 +18,41 @@ url: "https://hhemt.readthedocs.io"
 # DOI of the release is added to the latest build of that page after the tag.
 # Reasoning: "DOI kind convention" in architecture.md.
 doi: "10.5281/zenodo.21359151"
+references:
+  - type: article
+    title: "TRITON: A multi-GPU open source 2D hydrodynamic flood model"
+    authors:
+      - family-names: "Morales-Hernández"
+        given-names: "M."
+      - family-names: "Sharif"
+        given-names: "M. B."
+      - family-names: "Kalyanapu"
+        given-names: "A."
+      - family-names: "Ghafoor"
+        given-names: "S. K."
+      - family-names: "Dullo"
+        given-names: "T. T."
+      - family-names: "Gangrade"
+        given-names: "S."
+      - family-names: "Kao"
+        given-names: "S.-C."
+      - family-names: "Norman"
+        given-names: "M. R."
+      - family-names: "Evans"
+        given-names: "K. J."
+    journal: "Environmental Modelling & Software"
+    volume: "141"
+    start: "105034"
+    year: 2021
+    doi: "10.1016/j.envsoft.2021.105034"
+  - type: manual
+    title: "Storm Water Management Model User's Manual Version 5.2"
+    authors:
+      - family-names: "Rossman"
+        given-names: "L. A."
+      - family-names: "Simon"
+        given-names: "M."
+    number: "EPA/600/R-22/030"
+    institution:
+      name: "U.S. Environmental Protection Agency"
+    year: 2022

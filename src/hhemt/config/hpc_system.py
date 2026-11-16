@@ -195,6 +195,28 @@ class hpc_system_config(BaseModel):
         None,
         description="Environment modules loaded before every compile and simulation on this cluster.",
     )
+    gpu_aware_mpi: bool = Field(
+        False,
+        description="True when this machine's MPI build is GPU-aware, so TRITON may exchange device buffers directly, "
+        "with the cfg key `gpu_direct_flag=1`. On a Cray platform the toolkit also sets MPICH_GPU_SUPPORT_ENABLED=1. "
+        "A GPU-aware MPI on a CPU run is refused, because the setting would be ignored.",
+    )
+    mpich_ofi_nic_policy: str | None = Field(
+        None,
+        description="Value of MPICH_OFI_NIC_POLICY exported to MPI runs on this machine. Unset keeps the toolkit's "
+        "default of BLOCK for MPI and hybrid runs. BLOCK avoids Cray MPICH aborting MPI_Init when a rank's CPUs "
+        "span more than one NUMA domain.",
+    )
+    hsa_xnack: bool | None = Field(
+        None,
+        description="Value of HSA_XNACK, the AMD unified-memory behaviour, exported to TRITON runs on this machine. "
+        "True exports 1 and false exports 0. Unset exports no variable.",
+    )
+    cuda_managed_force_device_alloc: bool | None = Field(
+        None,
+        description="Value of CUDA_MANAGED_FORCE_DEVICE_ALLOC exported to TRITON runs on this machine. True "
+        "exports 1 and false exports 0. Unset exports no variable.",
+    )
     max_concurrent_jobs: int | None = Field(
         None,
         description="Caps how many jobs the workflow keeps in flight at once, bounding queue pressure on a shared "

@@ -263,7 +263,19 @@ class TRITONSWMM_analysis_post_processing:
         "triton_only_triton_ts": "output_triton_only_timeseries",
         "tritonswmm_performance_ts": "output_tritonswmm_performance_timeseries",
         "triton_only_performance_ts": "output_triton_only_performance_timeseries",
+        # The observation-point series ride in the gridded store of the same model, as three more variables on their own
+        # dimensions, so these four modes read the gridded store's path attribute and no store of their own exists.
+        # The `summary` group is derived from the series slice (the maximum depth and its time per point), so it needs
+        # no per-scenario summary stem.
+        "tritonswmm_observation_ts": "output_tritonswmm_triton_timeseries",
+        "triton_only_observation_ts": "output_triton_only_timeseries",
     }
+
+    # The observation modes: consolidated whenever the system config sets `observation_points`, whatever
+    # `toggle_consolidate_timeseries` says, because the developer's ruling is that the points "must ultimately end up
+    # consolidated in the main analysis level / experiment level .zarr".
+    _OBSERVATION_SERIES_MODES = frozenset({"tritonswmm_observation_ts", "triton_only_observation_ts"})
+    _OBSERVATION_MODES = _OBSERVATION_SERIES_MODES
 
     _TIMESERIES_MODE_TO_TREE_PATH = {
         "tritonswmm_swmm_node_ts": "tritonswmm/swmm_node/timeseries",
@@ -275,6 +287,8 @@ class TRITONSWMM_analysis_post_processing:
         "triton_only_triton_ts": "triton_only/triton/timeseries",
         "tritonswmm_performance_ts": "tritonswmm/performance/timeseries",
         "triton_only_performance_ts": "triton_only/performance/timeseries",
+        "tritonswmm_observation_ts": "tritonswmm/triton_observation/timeseries",
+        "triton_only_observation_ts": "triton_only/triton_observation/timeseries",
     }
 
     # Mode -> the model whose per-scenario log records that mode's clearing. A model has one log of its own
@@ -291,6 +305,8 @@ class TRITONSWMM_analysis_post_processing:
         "triton_only_triton_ts": "triton",
         "tritonswmm_performance_ts": "tritonswmm",
         "triton_only_performance_ts": "triton",
+        "tritonswmm_observation_ts": "tritonswmm",
+        "triton_only_observation_ts": "triton",
     }
 
     # Mode -> (the log bool that records the store's clearing as done, the log list that records it as pending).
@@ -331,6 +347,16 @@ class TRITONSWMM_analysis_post_processing:
             "consolidated_performance_timeseries_cleared",
             "consolidated_performance_timeseries_clearing_pending",
         ),
+        # The observation series group and its summary group are cut from ONE store and cleared together, so one pair
+        # of fields serves both and the pending list names the variables of both groups.
+        "tritonswmm_observation_ts": (
+            "consolidated_observation_timeseries_cleared",
+            "consolidated_observation_timeseries_clearing_pending",
+        ),
+        "triton_only_observation_ts": (
+            "consolidated_observation_timeseries_cleared",
+            "consolidated_observation_timeseries_clearing_pending",
+        ),
     }
 
     # Bytes one write chunk of a series group, and one read-back block, is sized to. 32 MB is the developer-
@@ -347,6 +373,11 @@ class TRITONSWMM_analysis_post_processing:
     def __init__(self, analysis: "TRITONSWMM_analysis") -> None:
         self._analysis = analysis
 
+    def _observation_points_set(self) -> bool:
+        """Whether the system config names an observation-point file (the observation groups are then unconditional)."""
+        cfg_system = getattr(getattr(self._analysis, "_system", None), "cfg_system", None)
+        return getattr(cfg_system, "observation_points", None) is not None
+
     # 2: the SWMM node/link time series left the datatree for analysis_timeseries.zarr (elapsed_s axis), the
     # coupling-node flag is always present in a coupled node store, and the flux and clearing toggles join the
     # fingerprint. Every tree consolidated at version 1 rebuilds once.
@@ -357,7 +388,10 @@ class TRITONSWMM_analysis_post_processing:
     # `swmm_subcatchment_hydro` summary), so every tree consolidated at version 3 rebuilds once and the next
     # consolidation appends the new groups from the per-scenario stores still on disk; a scenario whose stores were
     # already removed has no source for them and is refused by name.
-    CONSOLIDATION_VERSION = 4
+    # 5: an analysis whose system config sets `observation_points` holds `{family}/triton_observation/timeseries` and
+    # `{family}/triton_observation/summary` groups. A tree consolidated at version 4 holds none, because no scenario
+    # of it had observation points, so the bump records that the group set changed and no group is added to such a tree.
+    CONSOLIDATION_VERSION = 5
 
     def _consolidation_inputs_fingerprint(self) -> str:
         """Hash of every input that determines the SHAPE of the consolidated tree.
@@ -410,6 +444,7 @@ class TRITONSWMM_analysis_post_processing:
                     False,
                 )
             ),
+            "observation_points_set": self._observation_points_set(),
             "scenario_ids": sorted(
                 compute_event_id_slug(self._analysis._retrieve_weather_indexer_using_integer_index(ei))
                 for ei in self._analysis.df_sims.index
@@ -580,7 +615,9 @@ class TRITONSWMM_analysis_post_processing:
         # different `long_name`. This is the only production call threading
         # `emitted_attrs` into the analysis/member-tier crate; the experiment tier's own
         # call is in sensitivity_analysis.py.
-        _emitted_vars, _emitted_attrs = emitted_vars_and_attrs(_ds for _p, _ds in tree_dict.items() if _p != "/")
+        _emitted_vars, _emitted_attrs = emitted_vars_and_attrs(
+            [_ds for _p, _ds in tree_dict.items() if _p != "/"] + self._observation_crate_datasets()
+        )
         _core_json, _graph_json = emit_provenance(
             self._analysis, emitted_vars=_emitted_vars, emitted_attrs=_emitted_attrs
         )
@@ -754,6 +791,10 @@ class TRITONSWMM_analysis_post_processing:
             if getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False):
                 self.consolidate_timeseries(verbose=verbose)
                 self.consolidate_hydrology(verbose=verbose, compression_level=compression_level)
+            elif self._observation_points_set():
+                # The observation groups are unconditional: the developer's ruling is that observation points end up
+                # consolidated in the analysis-level zarr, and the toggle names the gridded and SWMM series.
+                self.consolidate_timeseries(verbose=verbose, observation_only=True)
             if clear:
                 self._clear_summary_stores(Path(store), drop_flag=self._exclude_coupling_flag())
             update_zarr_root_attrs(store, dict(tree.attrs))
@@ -1647,7 +1688,11 @@ class TRITONSWMM_analysis_post_processing:
     def _stored_axis_extent_s(self) -> float:
         """The longest ``elapsed_s`` stored in any ``timeseries`` group of the tree; refuses when there is none."""
         store = self._analysis.analysis_paths.analysis_datatree_zarr
-        for group in self._TIMESERIES_MODE_TO_TREE_PATH.values():
+        for ts_mode, group in self._TIMESERIES_MODE_TO_TREE_PATH.items():
+            # The observation groups sit on their own axis (the observation interval, with each event's end), and the
+            # observation summary has none, so neither names the extent of the reporting-step axis.
+            if ts_mode in self._OBSERVATION_MODES:
+                continue
             if self._timeseries_group_state(store, group) is not None:
                 stored = xr.open_zarr(store, group=group, consolidated=zarr_store_has_index(store), chunks=None)
                 return float(np.asarray(stored["elapsed_s"].values).max())
@@ -1691,6 +1736,8 @@ class TRITONSWMM_analysis_post_processing:
         derived from the scenario's own ``coupling_nodes.txt``. The SWMM-only node store has no coupling and
         therefore no flag: nothing is kept for it beyond the time-variant variables and nothing is derived.
         """
+        if ts_mode in self._OBSERVATION_SERIES_MODES:
+            return self._observation_timeseries_slice(scen, ts_mode, event_iloc, start, step, axis)
         if ts_mode.endswith("_triton_ts"):
             return self._gridded_timeseries_slice(scen, ts_mode, event_iloc, start, step, axis)
         if ts_mode.endswith("_performance_ts"):
@@ -1810,6 +1857,207 @@ class TRITONSWMM_analysis_post_processing:
             event_id=("event_iloc", [slug]),
             event_start_datetime=("event_iloc", np.array([start.to_datetime64()], dtype="datetime64[ns]")),
         )
+
+    def _observation_crate_datasets(self) -> list[xr.Dataset]:
+        """A stamped stand-in carrying the observation variable names, for the RO-Crate's emitted-variable set.
+
+        The observation groups are appended to the store after the in-memory tree is assembled, so the crate, which
+        advertises only the variables of that tree, would otherwise never name them. Empty unless the system config
+        sets ``observation_points``, which is when the groups are written.
+        """
+        if not self._observation_points_set():
+            return []
+        names = (
+            "point_flood_depth",
+            "point_unit_discharge_x",
+            "point_unit_discharge_y",
+            "max_point_flood_depth",
+            "time_of_max_point_flood_depth",
+        )
+        ds = xr.Dataset({name: ("obs_point", np.zeros(1)) for name in names})
+        return [apply_cf_attributes(ds, "observation_timeseries")]
+
+    def _observation_interval_s(self) -> float:
+        """Seconds between TRITON's observation writes: the configured interval, else the reporting step."""
+        cfg = self._analysis.cfg_analysis
+        return float(cfg.TRITON_observation_interval_s or cfg.TRITON_reporting_timestep_s)
+
+    def _observation_axis(self, store: Path, group: str) -> np.ndarray:
+        """The ``elapsed_s`` axis of the observation series group, fixed before its first append.
+
+        The union of the instant 0, every multiple of the observation interval up to the longest event window, each
+        event's own end (TRITON's last write is at the simulation's end, not at a period) and every label a scenario's
+        own series store carries (``observation_axis_values``). A scenario that was never interrupted carries only the
+        first three kinds, so its labels are the shared grid exactly; a resumed scenario adds its restart time and the
+        times that follow it. An append whose non-append dimension differs from the store's raises, so a group that
+        already exists keeps the axis it was created with, and an event that does not fit it is refused by name where
+        its slice is placed.
+        """
+        if self._timeseries_group_state(store, group) is not None:
+            stored = xr.open_zarr(store, group=group, consolidated=zarr_store_has_index(store), chunks=None)
+            return np.asarray(stored["elapsed_s"].values)
+        from hhemt.process_simulation import OBSERVATION_TIME_DIM
+        from hhemt.scenario_records import event_is_removed
+
+        interval = self._observation_interval_s()
+        durations, label_sets = [], []
+        for event_iloc in self._analysis.df_sims.index:
+            if event_is_removed(self._analysis.analysis_paths.analysis_dir, self._event_slug(int(event_iloc))):
+                continue
+            scen = TRITONSWMM_scenario(event_iloc, self._analysis)
+            start, end = scen._resolve_event_window()
+            durations.append((pd.Timestamp(end) - pd.Timestamp(start)).total_seconds())
+            path = getattr(scen.scen_paths, self._TIMESERIES_MODE_CONFIG[self._observation_mode_of_group(group)])
+            if path is not None and Path(path).exists():
+                open_kwargs = {"engine": self._open_engine(), "decode_timedelta": False}
+                if open_kwargs["engine"] == "zarr":
+                    open_kwargs["consolidated"] = zarr_store_has_index(path)
+                with xr.open_dataset(path, **open_kwargs) as full:
+                    if OBSERVATION_TIME_DIM in full.coords:
+                        label_sets.append(np.asarray(full[OBSERVATION_TIME_DIM].values, dtype="float64"))
+        if not durations:
+            raise ProcessingError(
+                "fix the observation elapsed_s axis",
+                store,
+                "no scenario of the analysis has a directory to read its window from",
+            )
+        return observation_axis_values(interval, durations, label_sets)
+
+    def _observation_mode_of_group(self, group: str) -> str:
+        """The observation series mode whose tree path is ``group``."""
+        return next(m for m in self._OBSERVATION_SERIES_MODES if self._TIMESERIES_MODE_TO_TREE_PATH[m] == group)
+
+    def _observation_timeseries_slice(
+        self,
+        scen: TRITONSWMM_scenario,
+        ts_mode: str,
+        event_iloc: int,
+        start: "pd.Timestamp",
+        interval: float,
+        axis: np.ndarray,
+    ) -> xr.Dataset:
+        """One scenario's observation series on the group's ``elapsed_s`` axis, NaN where the event wrote no row.
+
+        Reads the three ``point_*`` variables the processing step wrote into the scenario's gridded store. Each
+        row's nominal time (``point_elapsed_s``) must be on the axis; one that is not (an event longer than the
+        axis the group was created with) is refused naming the event, before anything is written.
+        """
+        from hhemt.process_simulation import OBSERVATION_SERIES_FILES, OBSERVATION_TIME_DIM
+
+        path = getattr(scen.scen_paths, self._TIMESERIES_MODE_CONFIG[ts_mode])
+        open_kwargs = {"chunks": {}, "engine": self._open_engine(), "decode_timedelta": False}
+        if open_kwargs["engine"] == "zarr":
+            open_kwargs["consolidated"] = zarr_store_has_index(path)
+        full = xr.open_dataset(path, **open_kwargs)
+        slug = self._event_slug(event_iloc)
+        names = list(OBSERVATION_SERIES_FILES)
+        missing = [n for n in names if n not in full.data_vars]
+        if missing:
+            raise ProcessingError(
+                "consolidate the observation series",
+                path,
+                f"scenario {slug} (event_iloc {event_iloc}) has no {missing} in its gridded store; the observation "
+                "series are written when the scenario is processed with observation_points set in the system config",
+            )
+        ds = full[names].load()
+        seconds = np.asarray(ds[OBSERVATION_TIME_DIM].values, dtype="float64")
+        position = np.searchsorted(axis, seconds)
+        fits = position < len(axis)
+        fits[fits] = np.isclose(np.asarray(axis, dtype="float64")[position[fits]], seconds[fits], rtol=0, atol=1e-6)
+        if not fits.all():
+            raise ProcessingError(
+                "place a scenario's observation series on the shared elapsed_s axis",
+                path,
+                f"scenario {slug} (event_iloc {event_iloc}) has observation row time(s) {seconds[~fits].tolist()} s "
+                f"that are not on the group's axis (interval {interval} s, last instant {axis[-1]} s); the group was "
+                "created with a shorter event window or without this scenario's resume labels",
+            )
+        ds = ds.assign_coords(elapsed_s=(OBSERVATION_TIME_DIM, axis[position]))
+        ds = ds.swap_dims({OBSERVATION_TIME_DIM: "elapsed_s"})
+        ds = ds.drop_vars(OBSERVATION_TIME_DIM).reindex(elapsed_s=axis)
+        for variable in ds.variables.values():
+            variable.encoding = {}
+        apply_cf_attributes(ds, "observation_timeseries")
+        ds = ds.expand_dims(event_iloc=[int(event_iloc)])
+        return ds.assign_coords(
+            event_id=("event_iloc", [slug]),
+            event_start_datetime=("event_iloc", np.array([start.to_datetime64()], dtype="datetime64[ns]")),
+        )
+
+    @staticmethod
+    def _observation_summary_group(group: str) -> str:
+        """The ``summary`` group cut beside an observation ``timeseries`` group."""
+        return group.rsplit("/", 1)[0] + "/summary"
+
+    def _observation_summary_from_slice(self, series: xr.Dataset) -> xr.Dataset:
+        """The per-point summary of one event's series slice: the maximum depth and the time at which it occurred.
+
+        Computed from the slice already in memory, so the summary is written in the same pass as its series. A point
+        whose depth is NaN at every row has NaN for both; a tie in depth takes the earliest row; the time is the row's
+        nominal time in seconds since the simulation start.
+        """
+        depth = series["point_flood_depth"].isel(event_iloc=0)
+        values = np.asarray(depth.values, dtype="float64")
+        times = np.asarray(depth["elapsed_s"].values, dtype="float64")
+        observed = ~np.isnan(values).all(axis=0)
+        row = np.where(np.isnan(values), -np.inf, values).argmax(axis=0)
+        point = np.arange(values.shape[1])
+        peak = np.where(observed, values[row, point], np.nan)
+        when = np.where(observed, times[row], np.nan)
+        keep = {"event_iloc", "obs_point"}
+        coords = {c: series.coords[c] for c in series.coords if set(series.coords[c].dims) <= keep}
+        ds = xr.Dataset(
+            {
+                "max_point_flood_depth": (("event_iloc", "obs_point"), peak[None, :]),
+                "time_of_max_point_flood_depth": (("event_iloc", "obs_point"), when[None, :]),
+            },
+            coords=coords,
+        )
+        return apply_cf_attributes(ds, "observation_summary")
+
+    def _write_observation_summary(self, store: Path, group: str, series: xr.Dataset, event_iloc: int) -> list[str]:
+        """Write the event's summary beside its series group, read it back, and return the variables it holds.
+
+        Follows the series path: a new group is created, an event not yet in it is appended along ``event_iloc``,
+        and an event already in it is rewritten in place unless the stored slice already equals the computed one.
+        """
+        summary_group = self._observation_summary_group(group)
+        state = self._timeseries_group_state(store, summary_group)
+        ds = self._widen_event_strings(
+            self._join_series_outer(store, summary_group, self._observation_summary_from_slice(series)), summary_group
+        )
+        if state is not None:
+            ds = self._fit_strings(store, summary_group, ds)
+        present = state is not None and event_iloc in state[1]
+        if not (present and self._stored_slice_equals(store, summary_group, ds, event_iloc)):
+            if state is not None:
+                self._ensure_series_variables(store, summary_group, ds)
+            # The caller's block already holds this store open, and a block opened on a held store leaves the one
+            # index rebuild to the outer block; stating the block here keeps each `consolidate=False` write
+            # inside its own, which is what the write discipline checks.
+            with deferred_consolidation(store):
+                if present:
+                    at = state[1].index(event_iloc)
+                    append_zarr(
+                        ds.drop_vars([c for c in ds.coords if "event_iloc" not in ds[c].dims]),
+                        store,
+                        group=summary_group,
+                        consolidate=False,
+                        mode="r+",
+                        region={"event_iloc": slice(at, at + 1)},
+                    )
+                elif state is not None:
+                    append_zarr(ds, store, group=summary_group, consolidate=False, mode="a", append_dim="event_iloc")
+                else:
+                    append_zarr(ds, store, group=summary_group, consolidate=False, mode="a")
+            if not self._stored_slice_equals(store, summary_group, ds, event_iloc):
+                raise ProcessingError(
+                    "read back the consolidated observation summary",
+                    store,
+                    f"the summary of scenario {self._event_slug(event_iloc)} (event_iloc {event_iloc}) in "
+                    f"{summary_group} does not equal the data it was written from; its own store was kept",
+                )
+        return sorted(ds.data_vars)
 
     def _rank_axis(self) -> np.ndarray:
         """The ``Rank`` axis of the performance groups: ``0`` up to the largest rank count the compute config admits.
@@ -2156,7 +2404,7 @@ class TRITONSWMM_analysis_post_processing:
             return "rewrite", ds, state[1].index(event_iloc)
         return ("append" if state is not None else "create"), ds, None
 
-    def consolidate_timeseries(self, verbose: bool = False) -> Path:
+    def consolidate_timeseries(self, verbose: bool = False, *, observation_only: bool = False) -> Path:
         """Append each scenario's SWMM node, SWMM link and gridded TRITON series to the ``timeseries`` branches.
 
         Every model family that writes series is consolidated the same way: the coupled model's three stores,
@@ -2173,18 +2421,28 @@ class TRITONSWMM_analysis_post_processing:
         consolidation rebuild (``_write_summary_branches`` rewrites ``summary`` groups only) and no reprocess
         delete (``delete_reprocess_zarr_runner`` keeps every ``timeseries`` branch) removes or rewrites one,
         because with clearing on it holds the only copy.
+
+        The observation-point groups (``{family}/triton_observation/timeseries`` and ``/summary``) are appended when
+        the system config sets ``observation_points``, on their own ``elapsed_s`` axis, and they are read from the
+        gridded store of the same model, so they are appended BEFORE that store's clearing deletes it. With
+        ``observation_only`` set (the ``toggle_consolidate_timeseries`` toggle is off) nothing but the observation
+        groups is appended and no store is cleared: the gridded series is then the processed output and exists
+        nowhere else.
         """
         store = self._analysis.analysis_paths.analysis_datatree_zarr
         if store is None:
             raise ValueError("analysis_datatree_zarr path is not configured on AnalysisPaths.")
-        clear = bool(
-            getattr(self._analysis.cfg_analysis, "toggle_clear_scenario_timeseries_after_consolidation", False)
+        clear = (
+            bool(getattr(self._analysis.cfg_analysis, "toggle_clear_scenario_timeseries_after_consolidation", False))
+            and not observation_only
         )
         first = TRITONSWMM_scenario(self._analysis.df_sims.index[0], self._analysis)
+        observations = self._observation_points_set()
         modes = [
             (ts_mode, self._TIMESERIES_MODE_TO_TREE_PATH[ts_mode])
             for ts_mode, attr in self._TIMESERIES_MODE_CONFIG.items()
             if getattr(first.scen_paths, attr) is not None
+            and (observations if ts_mode in self._OBSERVATION_MODES else not observation_only)
         ]
         if not modes:
             return store
@@ -2195,6 +2453,12 @@ class TRITONSWMM_analysis_post_processing:
             # Data-loss guard first, so a removed scenario absent from the tree is named before any axis is derived.
             self._event_removed_and_in_tree(store, int(event_iloc), [g for _m, g in modes])
         starts, step, axis = self._timeseries_axis()
+        observation_step = self._observation_interval_s()
+        observation_axes = {
+            ts_mode: self._observation_axis(store, group)
+            for ts_mode, group in modes
+            if ts_mode in self._OBSERVATION_SERIES_MODES
+        }
         with deferred_consolidation(store):
             for event_iloc in self._analysis.df_sims.index:
                 event_iloc = int(event_iloc)
@@ -2215,8 +2479,13 @@ class TRITONSWMM_analysis_post_processing:
                             continue
                         if pending:
                             pending_field.clear()
+                        mode_step, mode_axis = (
+                            (observation_step, observation_axes[ts_mode])
+                            if ts_mode in self._OBSERVATION_SERIES_MODES
+                            else (step, axis)
+                        )
                         action, ds, position = self._plan_timeseries_write(
-                            scen, ts_mode, group, event_iloc, starts[event_iloc], step, axis, cleared_already
+                            scen, ts_mode, group, event_iloc, starts[event_iloc], mode_step, mode_axis, cleared_already
                         )
                         if action in ("rewrite", "append"):
                             self._ensure_series_variables(store, group, ds)
@@ -2243,6 +2512,8 @@ class TRITONSWMM_analysis_post_processing:
                             )
                         if ds is not None:
                             verified[ts_mode] = sorted(ds.data_vars)
+                            if ts_mode in self._OBSERVATION_SERIES_MODES:
+                                verified[ts_mode] += self._write_observation_summary(store, group, ds, event_iloc)
                     if clear and verified:
                         self._clear_scenario_timeseries(scen, log, verified)
         return store
@@ -2274,10 +2545,8 @@ class TRITONSWMM_analysis_post_processing:
         from hhemt.utils import _recover_and_clear_publish_temps, chapters_dir_for, unified_flag_for
 
         doomed: list[Path] = []
-        for store in stores:
-            if store is None:
-                continue
-            store = Path(store)
+        # The observation groups and the gridded group are cut from ONE store, so the same path arrives once per mode.
+        for store in dict.fromkeys(Path(st) for st in stores if st is not None):
             _recover_and_clear_publish_temps(
                 store, store.with_name(store.name + ".aside"), store.with_name(store.name + ".tmp")
             )
@@ -2327,14 +2596,21 @@ class TRITONSWMM_analysis_post_processing:
         """
         store = self._analysis.analysis_paths.analysis_datatree_zarr
         state = self._timeseries_group_state(store, group)
-        missing = sorted(set(names) - set(state[0])) if state is not None else list(names)
-        if state is None or event_iloc not in state[1] or missing:
+        held = set(state[0]) if state is not None else set()
+        events_held = state is not None and event_iloc in state[1]
+        if ts_mode in self._OBSERVATION_SERIES_MODES:
+            # The pending list names the variables of the series group AND of the summary group cut beside it.
+            summary_state = self._timeseries_group_state(store, self._observation_summary_group(group))
+            held |= set(summary_state[0]) if summary_state is not None else set()
+            events_held = events_held and summary_state is not None and event_iloc in summary_state[1]
+        missing = sorted(set(names) - held)
+        if not events_held or missing:
             raise ProcessingError(
                 "finish a recorded clearing of a time-series store",
                 store,
                 f"scenario {self._event_slug(event_iloc)} (event_iloc {event_iloc}) records its {ts_mode} store as "
                 f"being cleared, but {group} does not hold its slice with every recorded variable "
-                f"(missing {missing}, event present: {state is not None and event_iloc in state[1]}); nothing was "
+                f"(missing {missing}, event present: {events_held}); nothing was "
                 "deleted or marked done",
             )
         self._delete_cleared_stores(scen, [getattr(scen.scen_paths, self._TIMESERIES_MODE_CONFIG[ts_mode])])
@@ -3196,6 +3472,21 @@ class TRITONSWMM_analysis_post_processing:
 #: so the mapping this module hands it carries exactly the keys it reads and no others; a wider
 #: mapping would be silently truncated there and a narrower one would publish a `None`.
 _CRATE_DESCRIPTOR_KEYS: tuple[str, ...] = ("long_name", "units", "standard_name", "cell_methods")
+
+
+def observation_axis_values(interval_s: float, durations_s, label_sets) -> np.ndarray:
+    """The shared ``elapsed_s`` axis of an observation series group.
+
+    The union of the instant 0, every multiple of ``interval_s`` up to the longest duration, each duration (an event's
+    own end) and every label in ``label_sets`` (the ``point_elapsed_s`` of each scenario's own store, which only a
+    resumed scenario makes differ from the grid). Rounded to micro-seconds so equal labels merge, and integer when every
+    value is whole, as the reporting-step axes are.
+    """
+    durations = np.asarray(list(durations_s), dtype="float64")
+    periods = int(np.floor(durations.max() / interval_s + 1e-9))
+    parts = [interval_s * np.arange(0, periods + 1), durations, *[np.asarray(x, dtype="float64") for x in label_sets]]
+    values = np.unique(np.round(np.concatenate(parts), 6))
+    return values.astype("int64") if np.all(values == np.rint(values)) else values
 
 
 def emitted_vars_and_attrs(node_datasets) -> tuple[set[str], dict[str, dict[str, str | None]]]:

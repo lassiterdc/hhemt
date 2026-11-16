@@ -33,6 +33,8 @@ KEY_MAP = {
     "_".join(("depth", "boundaries", "m")): ("depth_boundaries", "m"),
 }
 FIELD = "_".join(("depth", "boundaries", "m"))  # the configuration field, which keeps its name
+#: The `long_name` the synthetic weather generator writes on the boundary water-level variable.
+BOUNDARY_LONG_NAME = "boundary water level"
 FLOW_KEY = ("_".join(("peak", "flow", "max", "cms")), "peak_flow_max", "m3 s-1")
 DEPTH_RENDERER = "src/hhemt/report_renderers/per_sim_peak_flood_depth.py"
 FLOW_RENDERER = "src/hhemt/report_renderers/per_sim_conduit_flow.py"
@@ -149,10 +151,13 @@ def test_each_committed_peak_flood_depth_manifest_differs_from_the_earlier_one_o
     equal).
 
     Class: the seven fixtures under `tests/fixtures/bundles` (three of one experiment, four members of a
-    sensitivity master), whole-document equality after applying the key mapping to the earlier document.
+    sensitivity master), whole-document equality after applying the key mapping to the earlier document and the
+    one wording change the boundary rename made: the `long_name` of the `water_level` variable the rainfall and
+    boundary-level panels read, now `BOUNDARY_LONG_NAME`, which the synthetic weather generator writes.
     Why required: the bundle tests copy and harvest these files, so a stray edit elsewhere in a manifest changes
     what they test.
-    Kills it: a fixture edited by hand in one key only; a changed `bundle_schema_version`; a value that moved.
+    Kills it: a fixture edited by hand in one key only; a changed `bundle_schema_version`; a value that moved; a
+    `water_level` `long_name` that is not the generator's wording.
     Passes under: any byte layout of the same JSON document.
     """
     paths = sorted(FIXTURES.rglob("peak_flood_depth.manifest.json"))
@@ -170,6 +175,15 @@ def test_each_committed_peak_flood_depth_manifest_differs_from_the_earlier_one_o
             else:
                 data[key] = value
         expected["renderer_data"] = data
+        rewritten_count = 0
+        for artist in expected["artists"]:
+            for channel in artist["channels"]:
+                ref = channel["ref"]
+                if ref["variable"] == "water_level":
+                    assert ref["attrs"]["long_name"] != BOUNDARY_LONG_NAME, "control: the earlier wording differs"
+                    ref["attrs"]["long_name"] = BOUNDARY_LONG_NAME
+                    rewritten_count += 1
+        assert rewritten_count, "control: the fixture reads the water_level variable"
         assert json.loads(path.read_text()) == expected, rel
         assert "bundle_schema_version" not in set(earlier["renderer_data"]), "control: it is a document-level key"
 

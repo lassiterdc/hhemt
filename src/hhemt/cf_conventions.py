@@ -2218,6 +2218,75 @@ def _swmm_inventory_provenance_entries() -> dict[str, dict[str, str]]:
 _QUANTITY_PROVENANCE.update(_swmm_inventory_provenance_entries())
 
 
+# Observation-point variables. TRITON prints H, QX and QY at the points of the system's observation file;
+# the toolkit stores them per scenario beside the gridded series and consolidates them into the
+# `{family}/triton_observation/{timeseries,summary}` groups of the analysis tree. A point is a grid cell, so the
+# values carry the gridded variables' meaning (depth in m, unit discharge in m2/s) at one cell.
+_CF_VARIABLE_MAP.update(
+    {
+        "point_flood_depth": _cf(
+            "Flood depth at an observation point (the printed cell's depth)",
+            "m",
+            standard_name="flood_water_thickness",
+        ),
+        "point_unit_discharge_x": _cf(
+            "Unit discharge in x at an observation point (flow rate per meter of flow width)", "m2 s-1"
+        ),
+        "point_unit_discharge_y": _cf(
+            "Unit discharge in y at an observation point (flow rate per meter of flow width)", "m2 s-1"
+        ),
+        "max_point_flood_depth": _cf(
+            "Maximum flood depth at an observation point (over the printed rows)",
+            "m",
+            standard_name="flood_water_thickness",
+            cell_methods="time: maximum",
+        ),
+        "time_of_max_point_flood_depth": _cf(
+            "Time of maximum flood depth at an observation point (row label since simulation start)", "s"
+        ),
+    }
+)
+_QUANTITY_PROVENANCE.update(
+    {
+        "point_flood_depth": {
+            "spatial_representation": "grid cell",
+            "source_variables": "TRITON H_at_Xsec.txt",
+            "operation": "raw model output at the point's cell (timeseries, no reduction)",
+            "operation_expr": "h(point, t)",
+            "reduced_coordinate": "none",
+        },
+        "point_unit_discharge_x": {
+            "spatial_representation": "grid cell",
+            "source_variables": "TRITON QX_at_Xsec.txt",
+            "operation": "raw model output at the point's cell (timeseries, no reduction)",
+            "operation_expr": "q_x(point, t)",
+            "reduced_coordinate": "none",
+        },
+        "point_unit_discharge_y": {
+            "spatial_representation": "grid cell",
+            "source_variables": "TRITON QY_at_Xsec.txt",
+            "operation": "raw model output at the point's cell (timeseries, no reduction)",
+            "operation_expr": "q_y(point, t)",
+            "reduced_coordinate": "none",
+        },
+        "max_point_flood_depth": {
+            "spatial_representation": "grid cell",
+            "source_variables": "point_flood_depth",
+            "operation": "maximum over the printed rows of the depth at the point's cell; a maximum over prints only",
+            "operation_expr": "max_t h(point, t)",
+            "reduced_coordinate": "elapsed_s",
+        },
+        "time_of_max_point_flood_depth": {
+            "spatial_representation": "grid cell",
+            "source_variables": "point_flood_depth",
+            "operation": "label (seconds since simulation start) of the row at which the depth is largest",
+            "operation_expr": "argmax_t h(point, t)",
+            "reduced_coordinate": "elapsed_s",
+        },
+    }
+)
+
+
 # Computed-quantity provenance for the THIRTEEN performance columns.
 #
 # WHY THIS IS A SEPARATE TABLE AND NOT THIRTEEN MORE ENTRIES IN `_QUANTITY_PROVENANCE`.
@@ -2845,6 +2914,16 @@ _COORD_ATTRS: dict[str, dict[str, str]] = {
         "long_name": "Storm event index",
         "cf_role": "timeseries_id",
     },
+    # Observation points: the identity of a point is its position in the system's `observation_points` file.
+    "obs_point": {
+        "long_name": "Observation point index, in the row order of the system's observation_points file",
+        "cf_role": "timeseries_id",
+    },
+    "obs_point_id": {"long_name": "Observation point identifier from the observation_points file"},
+    "obs_x": {"long_name": "Observation point x coordinate in the system's horizontal CRS", "units": "m", "axis": "X"},
+    "obs_y": {"long_name": "Observation point y coordinate in the system's horizontal CRS", "units": "m", "axis": "Y"},
+    "obs_row": {"long_name": "Row of the processed-DEM cell TRITON assigns the point (0 is the top row)", "units": "1"},
+    "obs_col": {"long_name": "Column of the processed-DEM cell TRITON assigns the point (0 is the left)", "units": "1"},
 }
 
 
@@ -2863,6 +2942,8 @@ _COORD_ATTRS: dict[str, dict[str, str]] = {
 _ANALYSIS_FIELD_UNITS: dict[str, str] = {
     "n_mpi_procs": "1",
     "n_omp_threads": "1",
+    "swmm_threads": "1",
+    "water_level_boundary_outfall_max_distance_m": "m",
     "n_gpus": "1",
     "n_nodes": "1",
     "hpc_total_nodes": "1",
@@ -2892,7 +2973,14 @@ _ANALYSIS_FIELD_UNITS: dict[str, str] = {
     "manhole_loss_coefficient": "1",
     "hydraulic_timestep_s": "s",
     "TRITON_reporting_timestep_s": "s",
+    "TRITON_observation_interval_s": "s",
     "open_boundaries": "1",
+    "TRITON_courant_number": "1",
+    "TRITON_hextra_m": "m",
+    "TRITON_initial_depth_raster_datum_offset": "m",
+    "TRITON_initial_depth_nodata_fill": "m",
+    "TRITON_domain_decomposition_check_factor": "1",
+    "TRITON_progress_print_iterations": "1",
 }
 
 
@@ -2922,6 +3010,29 @@ def stamp_parameter_units(ds: xr.Dataset, resolve_field=lambda column: column) -
 #: Coordinate attributes that differ from `_COORD_ATTRS` under one mode. The runoff-model store counts its
 #: `timestep` axis in hours (SWMM's hydrology output is read in hours), every other store in minutes.
 _COORD_ATTRS_BY_MODE: dict[str, dict[str, dict[str, str]]] = {
+    # The observation series' time axis, in seconds since the simulation start, on the per-scenario store
+    # (`point_elapsed_s`) and on the consolidated group (`elapsed_s`). An uninterrupted file labels its periodic rows
+    # k * interval; a resumed file labels the rows after its restart restart_time + j * interval.
+    "observation_series": {
+        "point_elapsed_s": {
+            "long_name": (
+                "Label of an observation row: the period time k * interval, or after a resume the restart time "
+                "plus j * interval (seconds since simulation start)"
+            ),
+            "units": "s",
+            "axis": "T",
+        },
+    },
+    "observation_timeseries": {
+        "elapsed_s": {
+            "long_name": (
+                "Label of an observation row: the period time k * interval, or after a resume the restart time "
+                "plus j * interval (seconds since simulation start)"
+            ),
+            "units": "s",
+            "axis": "T",
+        },
+    },
     "hydrology_inflow_summary": {
         "timestep": {"long_name": "Model timestep (hours since simulation start)", "units": "h", "axis": "T"},
     },

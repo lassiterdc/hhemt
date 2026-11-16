@@ -62,6 +62,11 @@ class LiveSignals:
     # tier's name is not a worktree basename and not a branch slug, so none of them
     # fires and only the 7-day TTL stands between a live tier and deletion.
     live_path_slugs: frozenset[str] = frozenset()
+    # Fifth arm, the converse of the fourth: a tier whose `.origin` breadcrumb was read, is
+    # non-empty and names a path that is not a directory. The checkout that owned the tier
+    # is gone, so nothing can be using it and the TTL has nothing left to protect. Only
+    # `is_reapable` consults it, and only AFTER every liveness arm has said no.
+    gone_origin_slugs: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -87,7 +92,7 @@ def owner_of(candidate: Path, runs_root: Path) -> str:
 
 
 def collect_live_signals(repo_root: Path, *, runs_root: Path, candidate_slugs: frozenset[str]) -> LiveSignals:
-    """Gather the four liveness signals. The ONLY impure function.
+    """Gather the four liveness signals and the gone-origin reap signal. The ONLY impure function.
 
     `repo_root` is derived by `sweep_with_live_signals` as
     `Path(__file__).resolve().parents[2]` — the clone that HOSTS this test tree —
@@ -206,7 +211,17 @@ def collect_live_signals(repo_root: Path, *, runs_root: Path, candidate_slugs: f
     # escaped tier. So the tier stays live if it is what its checkout derives today, OR if
     # that checkout does not run the digest derivation (_checkout_mints_digest_address);
     # only a tier superseded by its own checkout falls through to the TTL.
+    #
+    # GONE ORIGIN. The same loop records the converse: a breadcrumb that was READ, is
+    # non-empty, and names a path that is not a directory means the checkout that owned the
+    # tier no longer exists, so the tier is reapable without waiting out the TTL. Only a
+    # successfully read, non-empty breadcrumb counts: an unreadable one (`OSError`) and an
+    # empty one both say nothing about the checkout and fall through as before. A missing
+    # PARENT of the recorded path is the same verdict as a missing leaf, because
+    # `Path.is_dir()` is False for both; a parent-directory guard here would keep every tier
+    # whose whole checkout tree was removed.
     live_path = set()
+    gone_origin = set()
     for slug in candidate_slugs:
         try:
             recorded = (runs_root / slug / ".origin").read_text().strip()
@@ -214,7 +229,10 @@ def collect_live_signals(repo_root: Path, *, runs_root: Path, candidate_slugs: f
             if slug.startswith("path"):
                 live_path.add(slug)
             continue
-        if not (recorded and Path(recorded).is_dir()):
+        if not recorded:
+            continue
+        if not Path(recorded).is_dir():
+            gone_origin.add(slug)
             continue
         origin = Path(recorded)
         if tier_address_for(origin) == slug or not _checkout_mints_digest_address(origin):
@@ -225,6 +243,7 @@ def collect_live_signals(repo_root: Path, *, runs_root: Path, candidate_slugs: f
         live_branch_slugs=live_branch_slugs,
         locked_slugs=frozenset(locked),
         live_path_slugs=frozenset(live_path),
+        gone_origin_slugs=frozenset(gone_origin),
     )
 
 
@@ -260,6 +279,7 @@ def is_reapable(
     live_branch_slugs: frozenset[str],
     locked_slugs: frozenset[str],
     live_path_slugs: frozenset[str] = frozenset(),
+    gone_origin_slugs: frozenset[str] = frozenset(),
     ttl_days: int,
     now: float,
     mtime: float,
@@ -267,7 +287,9 @@ def is_reapable(
     """Return (reapable, reason). PURE — no subprocess, no filesystem.
 
     Order is liveness-first, TTL-last. Returns the ARM that blocked, so the
-    report can name why each candidate was skipped.
+    report can name why each candidate was skipped. `origin-gone` sits between
+    the last liveness arm and the TTL: it reaps regardless of age, but every
+    liveness arm still wins over it.
     """
     if owner in _NEVER_REAP:
         return (False, "never-reap")
@@ -279,6 +301,8 @@ def is_reapable(
         return (False, "compile-lock")
     if owner in live_path_slugs:
         return (False, "live-path")
+    if owner in gone_origin_slugs:
+        return (True, "origin-gone")
     if now - mtime < ttl_days * 86400:
         return (False, "ttl-not-elapsed")
     return (True, "reapable")
@@ -332,6 +356,7 @@ def sweep(
             live_branch_slugs=signals.live_branch_slugs,
             locked_slugs=signals.locked_slugs,
             live_path_slugs=signals.live_path_slugs,
+            gone_origin_slugs=signals.gone_origin_slugs,
             ttl_days=ttl_days,
             now=now,
             mtime=child.stat().st_mtime,

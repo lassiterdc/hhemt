@@ -7,7 +7,7 @@ a grid:
 
 - **TRITON DEM panel** (top left, always) — the elevation raster with its color range
   confined to the modeled area, wall and outside-watershed fill cells in the configured
-  over-color, and the storm-tide boundary-condition line overlaid when one exists.
+  over-color, and the water-level boundary-condition line overlaid when one exists.
 - **Manning's n panel** (top right, always) — the processed roughness raster on the
   DEM's grid.
 - **Hydrology panel** (bottom left, only when a SWMM model is rendered) — subcatchment
@@ -142,7 +142,7 @@ def render(
     prov = ProvenanceLog()
 
     # ---- Load the DEM up front so the figure can be sized to data aspect. (The
-    # storm-tide BC is only resolved to a path below; the DEM panel reads it.)
+    # water-level BC is only resolved to a path below; the DEM panel reads it.)
     dem = rxr.open_rasterio(sys_paths.dem_processed)
     if dem.rio.crs is not None and dem.rio.crs != target_crs:
         dem = dem.rio.reproject(target_crs)
@@ -161,8 +161,8 @@ def render(
     mannings_res = analysis._system.cfg_system.target_dem_resolution
 
     bc_path: Path | None = None
-    if cfg_ana.toggle_storm_tide_boundary and cfg_ana.storm_tide_boundary_line_gis:
-        bc_path = Path(cfg_ana.storm_tide_boundary_line_gis)
+    if cfg_ana.toggle_external_boundaries and cfg_ana.external_boundary_gis:
+        bc_path = Path(cfg_ana.external_boundary_gis)
         if not bc_path.exists():
             bc_path = None
 
@@ -429,7 +429,7 @@ def _build_manifest_data(
             "title": DEM_PANEL_TITLE,
             "axis_extents": panel_extents,
             "dem_bounds": [float(b) for b in dem_bounds],
-            "legend_labels": ["Storm tide BC"] if bc_present else [],
+            "legend_labels": ["Water-level BC"] if bc_present else [],
         }
     )
     # The Manning's-n panel is present for both arms (system input).
@@ -805,7 +805,7 @@ def _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes,
 
 
 # ---------------------------------------------------------------------------
-# DEM panel — elevation raster + storm-tide BC overlay
+# DEM panel — elevation raster + water-level BC overlay
 # ---------------------------------------------------------------------------
 
 
@@ -905,14 +905,14 @@ def _draw_elevation_panel(
             target_crs_str = target_crs.to_string() if hasattr(target_crs, "to_string") else str(target_crs)
             bc_ref = ProvenanceRef(
                 source_path=bc_rel if bc_rel is not None else str(bc_path),
-                variable="storm_tide_boundary",
+                variable="water_level_boundary",
                 attrs={},
                 transform=f"reproject to {target_crs_str}",
             )
             with prov.artist(
                 axes_id="ax_dem",
                 kind="line2d",
-                note="storm tide boundary line",
+                note="water-level boundary line",
             ) as a:
                 a.add_channel("x", bc_ref)
                 a.add_channel("y", bc_ref)
@@ -922,7 +922,7 @@ def _draw_elevation_panel(
                     linewidth=ep.bc_line_width,
                 )
             legend_handles.append(
-                Line2D([], [], color=map_cfg.bc_color, linewidth=ep.bc_line_width, label="Storm tide BC")
+                Line2D([], [], color=map_cfg.bc_color, linewidth=ep.bc_line_width, label="Water-level BC")
             )
 
     ax.set_title(DEM_PANEL_TITLE)
@@ -2141,14 +2141,14 @@ def _draw_elevation_panel_plotly(
             target_crs_str = target_crs.to_string() if hasattr(target_crs, "to_string") else str(target_crs)
             bc_ref = ProvenanceRef(
                 source_path=bc_rel if bc_rel is not None else str(bc_path),
-                variable="storm_tide_boundary",
+                variable="water_level_boundary",
                 attrs={},
                 transform=f"reproject to {target_crs_str}",
             )
             with prov.artist(
                 axes_id="ax_dem_plotly",
                 kind="scatter_path",
-                note="storm tide boundary line",
+                note="water-level boundary line",
             ) as a:
                 a.add_channel("x", bc_ref)
                 a.add_channel("y", bc_ref)
@@ -2180,10 +2180,10 @@ def _draw_elevation_panel_plotly(
                             color=map_cfg.bc_color,
                             width=ep.bc_line_width,
                         ),
-                        name="Storm tide BC",
+                        name="Water-level BC",
                         legendgroup="dem",
                         hovertemplate=(
-                            "Storm tide boundary<br>Easting: %{x:.1f} m<br>Northing: %{y:.1f} m<extra></extra>"
+                            "Water-level boundary<br>Easting: %{x:.1f} m<br>Northing: %{y:.1f} m<extra></extra>"
                         ),
                     ),
                     row=_prow,

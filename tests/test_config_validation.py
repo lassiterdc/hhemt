@@ -41,11 +41,10 @@ def _minimal_system_config_dict(tmp_path: Path) -> dict:
         "system_directory": str(system_dir),
         "watershed_gis_polygon": str(_touch(tmp_path / "inputs" / "watershed.shp")),
         "DEM_fullres": str(_touch(tmp_path / "inputs" / "dem.tif")),
-        "SWMM_hydraulics": str(_touch(tmp_path / "inputs" / "hydraulics.inp")),
+        "SWMM_model": str(_touch(tmp_path / "inputs" / "model.inp")),
         "TRITONSWMM_software_directory": str(tmp_path / "triton"),
         "TRITONSWMM_git_URL": "https://example.com/triton.git",
         "SWMM_git_URL": "https://example.com/swmm.git",
-        "triton_swmm_configuration_template": str(_touch(tmp_path / "inputs" / "TRITONSWMM.cfg")),
         "toggle_use_swmm_for_hydrology": False,
         "toggle_use_constant_mannings": True,
         "toggle_triton_model": False,
@@ -69,11 +68,13 @@ def _minimal_analysis_config_dict(tmp_path: Path) -> dict:
         "run_mode": "serial",
         "multi_sim_run_method": "local",
         "toggle_sensitivity_analysis": False,
-        "toggle_storm_tide_boundary": False,
+        "toggle_external_boundaries": False,
         "weather_events_to_simulate": str(_touch(tmp_path / "inputs" / "events.csv")),
         "manhole_diameter": 1.0,
         "manhole_loss_coefficient": 0.1,
         "hydraulic_timestep_s": 1.0,
+        "TRITON_courant_number": 0.5,
+        "TRITON_hextra_m": 0.001,
         "TRITON_reporting_timestep_s": 60,
         "open_boundaries": 1,
         "report": {},
@@ -134,9 +135,9 @@ def test_system_config_explicit_toggle_dependency(tmp_path: Path):
 
 def test_analysis_config_explicit_toggle_dependency(tmp_path: Path):
     cfg = _minimal_analysis_config_dict(tmp_path)
-    cfg["toggle_storm_tide_boundary"] = True
+    cfg["toggle_external_boundaries"] = True
 
-    with pytest.raises(ValidationError, match="storm_tide_boundary_line_gis"):
+    with pytest.raises(ValidationError, match="external_boundary_gis"):
         analysis_config.model_validate(cfg)
 
 
@@ -1496,3 +1497,65 @@ def test_reporting_set_rename_warning_lists_each_rename_once_in_table_order():
         renamed = [str(w.message) for w in caught if str(w.message).startswith("report.reporting_set: renamed")]
         assert len(renamed) == 1, renamed
         assert renamed[0].startswith(once), renamed[0]
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "teaching"),
+    [
+        ("toggle_storm_tide_boundary", "toggle_external_boundaries", "Replacement: toggle_external_boundaries."),
+        ("storm_tide_boundary_line_gis", "external_boundary_gis", "Replacement: external_boundary_gis."),
+        (
+            "storm_tide_units",
+            "water_level_boundary_units",
+            "Replacement: water_level_boundary_variable_units, for example {VARIABLE: m}, and "
+            "water_level_boundary_variable_datum_offsets, for example {VARIABLE: 0}",
+        ),
+        (
+            "weather_time_series_storm_tide_datavar",
+            "weather_time_series_water_level_datavar",
+            "Replacement: water_level_boundary_outfall_variables, for example {OUTFALL_ID: VARIABLE} for every outfall "
+            "your boundary layer names.",
+        ),
+    ],
+)
+def test_a_refused_boundary_key_is_refused_at_load_naming_the_replacement(old, new, teaching):
+    """Each refused key, in its coastal and its neutral spelling where one exists, names what to write instead."""
+    from hhemt.config.analysis import _REFUSED_BOUNDARY_KEYS
+
+    with pytest.raises(ValidationError) as excinfo:
+        analysis_config.model_validate({old: True})
+    message = str(excinfo.value)
+    assert f"'{old}' is not an analysis config field" in message
+    assert teaching in message
+    # Control that varies the property (the key is a refused one), not the call: a neutral spelling that is still a
+    # field draws no refusal at all, and one a map replaced draws the teaching text and not the coastal wording.
+    with pytest.raises(ValidationError) as control:
+        analysis_config.model_validate({new: True})
+    if new in _REFUSED_BOUNDARY_KEYS:
+        assert teaching in str(control.value) and "coastal terms" not in str(control.value)
+    else:
+        assert "is not an analysis config field" not in str(control.value)
+
+
+def test_a_validation_issue_renders_its_write_and_edit_blocks_last():
+    from hhemt.validation import IssueLevel, ValidationIssue
+
+    issue = ValidationIssue(
+        level=IssueLevel.ERROR,
+        field="analysis.swmm_outfalls_to_keep",
+        message="two outfalls have no decision",
+        current_value="[]",
+        fix_hint="Name each in the layer.",
+        config_line="swmm_outfalls_to_keep: [OF_A, OF_B]",
+        layer_edit="column outfall of layer.geojson, record 0: OF_A",
+    )
+    lines = str(issue).splitlines()
+    assert lines[-3:] == [
+        "  Write:",
+        "    swmm_outfalls_to_keep: [OF_A, OF_B]",
+        "  Edit: column outfall of layer.geojson, record 0: OF_A",
+    ]
+    assert lines[-4] == "  Fix: Name each in the layer."
+    # Control: an issue with neither block renders exactly as before.
+    plain = ValidationIssue(level=IssueLevel.WARNING, field="f", message="m")
+    assert str(plain) == "[WARNING] f\n  Problem: m"

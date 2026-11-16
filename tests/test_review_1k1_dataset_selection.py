@@ -1,7 +1,7 @@
 """Reviewer tests for chunk 1k.1: the Norfolk case dataset chosen from a reprex bundle.
 
 The dataset itself lives outside the repository. What a laptop run can hold is the
-dataset's FILE LIST, measured by the reviewer on the staged tree (23 files under
+dataset's FILE LIST, measured by the reviewer on the staged tree (20 files under
 ``data/contents/external/``), against the two production surfaces that name dataset
 files: the Norfolk config templates and the shapefile sidecar rule of the bundle emitter.
 Nothing here compiles or runs a solver and nothing reads the dataset's bytes.
@@ -19,16 +19,14 @@ from hhemt.bundle._emit import SHAPEFILE_REQUIRED_SIDECARS
 _CASE_DIR = Path(__file__).resolve().parents[1] / "test_data" / "norfolk_coastal_flooding"
 
 # The staged dataset's members by basename, as listed by `find <stage> -type f -printf "%f\n"`
-# over the staged tree (23 entries). Basenames, not relative paths, so the pin survives the folder
+# over the staged tree (20 entries). Basenames, not relative paths, so the pin survives the folder
 # layout the case fetch path settles on.
 _STAGED_BASENAMES = frozenset(
     {
         "b_sub_ids_and_mrms_rain_col.csv",
         "event_windows_observed.csv",
         "fullres_dem_m.tif",
-        "hague_full_model_template.inp",
-        "hague_hydraulics_model_template.inp",
-        "hague_hydrology_model_template.inp",
+        "hague_model.inp",
         "hurricane_irene_event_index.csv",
         "landuse_clipped_to_triton_extent.tif",
         "landuse_lookup_tables.csv",
@@ -40,7 +38,6 @@ _STAGED_BASENAMES = frozenset(
         "observed_event_events.csv",
         "observed_events_named_subset.csv",
         "obs_event_tseries_from_yrs_with_complete_coverage.nc",
-        "TRITON_SWMM_definition_template.cfg",
         "variable_bc.cpg",
         "variable_bc.dbf",
         "variable_bc.prj",

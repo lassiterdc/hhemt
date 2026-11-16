@@ -88,7 +88,7 @@ def _cfg_dict(base: Path, system_directory: Path, dem_resolution: float, softwar
     them, and a real DEM/INP/template would make the test simulation-bearing for no gain.
     ``target_dem_resolution`` is a parameter because it is the dedup key's first element.
     """
-    for rel in ("wshed.shp", "dem.tif", "template.cfg", "swmm/hydraulics.inp"):
+    for rel in ("wshed.shp", "dem.tif", "swmm/model.inp"):
         fp = base / rel
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_bytes(b"")
@@ -99,8 +99,7 @@ def _cfg_dict(base: Path, system_directory: Path, dem_resolution: float, softwar
         "DEM_fullres": str(base / "dem.tif"),
         "TRITONSWMM_software_directory": str(software),
         "TRITONSWMM_git_URL": "https://example.invalid/triton.git",
-        "triton_swmm_configuration_template": str(base / "template.cfg"),
-        "SWMM_hydraulics": str(base / "swmm" / "hydraulics.inp"),
+        "SWMM_model": str(base / "swmm" / "model.inp"),
         "toggle_use_swmm_for_hydrology": False,
         "toggle_use_constant_mannings": True,
         "constant_mannings": 0.03,

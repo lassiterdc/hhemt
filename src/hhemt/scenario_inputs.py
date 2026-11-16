@@ -14,7 +14,6 @@ The ScenarioInputGenerator class coordinates:
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import pandas as pd
 import swmmio
 
 if TYPE_CHECKING:
@@ -55,27 +54,16 @@ class ScenarioInputGenerator:
         self.cfg_analysis = scenario._analysis.cfg_analysis
         self.system = scenario._system
 
-    def create_hydraulics_model_from_template(self, swmm_model_template, destination: Path) -> None:
+    def create_hydraulics_model(self, destination: Path) -> None:
         """
-        Create SWMM hydraulics model from template - direct input to TRITON-SWMM.
+        Write the hydraulics SWMM role model of this scenario to ``destination``.
 
-        This creates the SWMM hydraulics .inp file that is specified in the TRITON-SWMM
-        configuration file. This model defines the drainage network structure that
-        TRITON-SWMM will use for coupled surface-subsurface flow simulation.
-
-        Fills in template placeholders with scenario-specific values including
-        time series data, rain gauges, simulation timing, and reporting intervals.
-
-        Parameters
-        ----------
-        swmm_model_template : Path
-            Path to the SWMM hydraulics template file
-        destination : Path
-            Path where the filled template should be written (typically hydraulics.inp)
+        The role is derived from ``system_config.SWMM_model`` and only the forcing the toolkit owns
+        (simulation window, rain gauges, rain and water-level series) is rewritten for this scenario.
         """
-        from .swmm_utils import create_swmm_inp_from_template
+        from .swmm_utils import write_swmm_role_model
 
-        create_swmm_inp_from_template(self.scenario, swmm_model_template, destination)
+        write_swmm_role_model(self.scenario, "hydraulics", destination)
         return
 
     def update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(self, verbose: bool = False) -> None:
@@ -158,134 +146,94 @@ class ScenarioInputGenerator:
         self.scenario.log.inflow_nodes_in_hydraulic_inp_assigned = True
         return
 
-    def update_swmm_threads_in_inp_file(self, inp_file_path: Path) -> None:
-        """
-        Update THREADS parameter in SWMM .inp file OPTIONS section.
-
-        Modifies the THREADS option in the [OPTIONS] section to match the
-        n_omp_threads configuration parameter. This enables dynamic control
-        of SWMM threading for performance tuning and benchmarking studies.
-
-        Parameters
-        ----------
-        inp_file_path : Path
-            Path to the SWMM .inp file to modify
-
-        Notes
-        -----
-        - Preserves all other OPTIONS parameters unchanged
-        - Uses line-by-line replacement to maintain file structure
-        - If THREADS parameter not found, no modification occurs (backward compatible)
-        """
-        n_threads = self.cfg_analysis.n_omp_threads
-
-        with open(inp_file_path) as fp:
-            lines = fp.readlines()
-
-        # Find and replace THREADS line in [OPTIONS] section
-        in_options_section = False
-
-        for idx, line in enumerate(lines):
-            # Track when we enter/exit OPTIONS section
-            if "[OPTIONS]" in line:
-                in_options_section = True
-                continue
-            elif line.startswith("[") and in_options_section:
-                # Left OPTIONS section
-                break
-
-            # Replace THREADS line if found
-            if in_options_section and line.strip().startswith("THREADS"):
-                # Preserve spacing format: "THREADS              {value}"
-                lines[idx] = f"THREADS              {n_threads}\n"
-                break
-
-        # Write back modified file
-        with open(inp_file_path, "w") as fp:
-            fp.writelines(lines)
-
-        # Note: If THREADS not found, file remains unchanged (backward compatible)
-        return
-
     def create_external_boundary_condition_files(self) -> None:
         """
-        Create boundary condition files for TRITON.
+        Create the boundary condition files for TRITON.
 
-        Generates two files for TRITON-SWMM external boundary conditions:
-        1. Time series file with water level boundary conditions
-        2. Location file specifying where boundary conditions apply on the DEM
+        Writes the location file ``extbc/loc.extbc``, one row per record of the external-boundary layer in record
+        order, and one level-versus-time file ``extbc/tseries_{k}.txt`` for each ``water_level`` record. A record's
+        type picks its row: ``water_level`` names its series file, ``free_outflow`` writes 0.0, and ``normal_slope``
+        and ``froude_number`` write the number the layer holds. With the external boundaries off the location file
+        holds its header only and no level file is written.
 
-        Updates the scenario log to indicate files were created successfully.
+        Updates the scenario log to indicate files were created successfully, and records each record's type, its
+        reprojected endpoints, the DEM cells they snap to, and the distance of each matched outfall to its line.
         """
-        import geopandas as gpd
         import rioxarray as rxr
 
-        from .scenario import (
-            extract_vertex_coordinates,
-            find_closest_dem_coord,
-            infer_side,
+        from hhemt.exceptions import ProcessingError
+        from hhemt.water_level_boundary import (
+            EXTBC_TYPE_CODE,
+            boundary_level_series,
+            boundary_records_for,
+            matched_outfall_problems,
+            model_coordinates,
+            model_outfalls,
+            snap_segments,
         )
 
-        weather_time_series_storm_tide_datavar = self.cfg_analysis.weather_time_series_storm_tide_datavar
-        storm_tide_units = self.cfg_analysis.storm_tide_units
+        cfg_system = self.system.cfg_system
+        paths = self.scenario.scen_paths
+        records: tuple = ()
+        if self.cfg_analysis.toggle_external_boundaries:
+            records, _problems = boundary_records_for(self.cfg_analysis, cfg_system)
 
-        dem_processed = self.system.sys_paths.dem_processed
-        storm_tide_boundary_line_gis = self.cfg_analysis.storm_tide_boundary_line_gis
-        ds_event_ts = self.scenario.ds_event_ts
-        df_water_levels = (ds_event_ts[weather_time_series_storm_tide_datavar].reset_coords(drop=True).to_dataframe())[
-            weather_time_series_storm_tide_datavar
-        ].to_frame()
+        rows: list[str] = []
+        segments: list[dict] = []
+        if records:
+            from hhemt.swmm_runnable import _parse
+            from hhemt.swmm_utils import _read_model_text
 
-        # .dt.seconds is the SECONDS COMPONENT (0-86399) and silently wraps on a
-        # gap of >= 24 h; .dt.total_seconds() is the non-wrapping form. Contiguous
-        # steps are unaffected. The .dropna() that USED to justify this was removed by
-        # the [Q85] scrub, but the choice stands on a second ground: a non-uniform
-        # weather axis can still open a >= 24 h gap here, and the uniformity assertion
-        # in _weather_step_seconds fires from the post-write window-agreement guard,
-        # AFTER this writer has already run. Do not narrow this back to .dt.seconds.
-        tseries_diff_hrs = pd.Series(df_water_levels.index).diff().dt.total_seconds() / 60 / 60
-        tseries_diff_hrs.loc[0] = 0
+            rds_dem = rxr.open_rasterio(self.system.sys_paths.dem_processed)
+            snapped, problems = snap_segments(records, rds_dem)
+            sections = _parse(_read_model_text(Path(cfg_system.SWMM_model)))
+            more, distances = matched_outfall_problems(
+                records,
+                model_outfalls(sections),
+                model_coordinates(sections),
+                self.cfg_analysis.water_level_boundary_outfall_max_distance_m,
+            )
+            if problems or more:
+                raise ProcessingError(
+                    operation="create_external_boundary_condition_files",
+                    reason="; ".join(p.message for p in [*problems, *more]),
+                )
+            sim_id_str = self.scenario.sim_id_str
+            for record, (_side, x1, y1, x2, y2) in snapped:
+                last = str(0.0)
+                if record.kind == "water_level":
+                    level = boundary_level_series(self.scenario, record)
+                    hours = [(t - level.times[0]).total_seconds() / 3600 for t in level.times]
+                    near = ", ".join(f"{n} {d:.1f} m" for n, d in sorted(distances.get(record.index, {}).items()))
+                    first_line = (
+                        f"%{sim_id_str} Water Level Boundary Condition, record {record.index}, outfalls "
+                        f"{' '.join(record.outfalls)}, distance to the line {near}\n"
+                    )
+                    second_line = f"%Time(hr) water_elevation (m), {level.source}\n"
+                    tseries = paths.extbc_tseries(record.index)
+                    with open(tseries, "w") as f:
+                        f.write(first_line + second_line)
+                        f.writelines(f"{h},{v}\n" for h, v in zip(hours, level.meters, strict=True))
+                    last = f'"{tseries.name}"'
+                elif record.kind in ("normal_slope", "froude_number"):
+                    last = str(record.value)
+                rows.append(f"{EXTBC_TYPE_CODE[record.kind]},{x1},{y1},{x2},{y2},{last}")
+                segments.append(
+                    {
+                        "record": record.index,
+                        "type": record.kind,
+                        "endpoints": [list(v) for v in (record.vertices[0], record.vertices[-1])],
+                        "snapped_cells": [[x1, y1], [x2, y2]],
+                        "outfalls": list(record.outfalls),
+                        "outfall_distance_m": {n: round(d, 3) for n, d in distances.get(record.index, {}).items()},
+                    }
+                )
+        if any(r.kind == "water_level" for r in records):
+            self.scenario.log.extbc_tseries_created.set(True)
 
-        df_water_levels["time_hr"] = tseries_diff_hrs.cumsum().values
-        df_water_levels.set_index("time_hr", inplace=True)
-
-        sim_id_str = self.scenario.sim_id_str
-
-        wlevel_first_line = f"%{sim_id_str} Water Level Boundary Condition\n"
-        wlevel_second_line = f"%Time(hr) water_elevation ({storm_tide_units})\n"
-
-        with open(self.scenario.scen_paths.extbc_tseries, "w") as f:
-            f.write(wlevel_first_line + wlevel_second_line)
-
-        df_water_levels.to_csv(self.scenario.scen_paths.extbc_tseries, mode="a", header=False)
-
-        self.scenario.log.extbc_tseries_created.set(True)
-        # write external boundary condition location file
-        rds_dem = rxr.open_rasterio(dem_processed)
-        gdf_bc = gpd.read_file(storm_tide_boundary_line_gis)
-        str_line1 = "% BC Type, X1, Y1, X2, Y2, BC"
-        gdf_row = gdf_bc.loc[0, :]
-        vertices = extract_vertex_coordinates(gdf_row.geometry)
-        lst_x = []
-        lst_y = []
-        for vertex in vertices:
-            lst_x.append(vertex[0])
-            lst_y.append(vertex[1])
-        # find x and ys at edge of DEM representing the boundary condition
-        min_x = min(lst_x)
-        min_y = min(lst_y)
-        max_x = max(lst_x)
-        max_y = max(lst_y)
-        BC_side = infer_side(rds_dem, min_x, max_x, min_y, max_y)
-        x1, y1 = find_closest_dem_coord(min_x, min_y, BC_side, rds_dem)
-        x2, y2 = find_closest_dem_coord(max_x, max_y, BC_side, rds_dem)
-        BC_with_quotes = f'"{self.scenario.scen_paths.extbc_tseries.name}"'
-        str_line2 = "{},{},{},{},{},{}".format("1", x1, y1, x2, y2, BC_with_quotes)
-        # write file
-
-        fpath_extbc = self.scenario.scen_paths.extbc_loc
-        with open(fpath_extbc, "w") as f:
-            f.write(str_line1 + "\n")
-            f.write(str_line2 + "\n")
+        with open(paths.extbc_loc, "w") as f:
+            f.write("% BC Type, X1, Y1, X2, Y2, BC\n")
+            f.writelines(row + "\n" for row in rows)
+        self.scenario.log.external_boundary_segments.set(segments)
         self.scenario.log.extbc_loc_created.set(True)
         return

@@ -138,6 +138,8 @@ nav:
       - how-to/index.md
       - HPC-profile setup: how-to/hpc-profile-setup.md
       - Config filling: how-to/config-filling.md
+      - Use a runnable SWMM model: how-to/using-a-runnable-swmm-model.md
+      - Set observation points and initial conditions: how-to/triton-inputs.md
       - Compile the solver: how-to/compiling-the-solver.md
       - Building container images: how-to/building-container-images.md
       - Running an experiment definition: how-to/running-an-experiment-definition.md

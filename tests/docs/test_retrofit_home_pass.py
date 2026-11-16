@@ -27,7 +27,7 @@ _REMOVED_HEADINGS = re.compile(
     r"^#{1,6}\s+(Example run|Analysis kinds|More GPUs can run slower|Scientific validity|Release maturity)\s*$",
     re.I | re.M,
 )
-_SOLVER_COMMIT = re.compile(r"\b(?:bd18215|bb13ea28)\b")
+_SOLVER_COMMIT = re.compile(r"\b(?:bd18215|bb13ea28|faba2232)\b")
 _RELEASE_NUMBER = re.compile(r"(?<![\w.])0\.1\.0(?![\w.])")
 
 
@@ -125,3 +125,4 @@ def test_limitations_holds_none_of_the_removed_sections_and_no_solver_commit(phr
     assert "Only junctions are eligible for coupling." in text
     # Control: the commit pattern reports a hash planted in a sentence.
     assert _SOLVER_COMMIT.search("A snapshot written before bd18215 is refused.")
+    assert _SOLVER_COMMIT.search("The synthetic tier builds faba2232.")

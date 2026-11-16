@@ -40,11 +40,18 @@ def load_event_hydrology_data(
 
     Variable names are resolved via `cfg_analysis`:
       - rainfall: `cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar`
-      - bc:       `cfg_analysis.weather_time_series_storm_tide_datavar`
+      - bc:       the distinct values of `cfg_analysis.water_level_boundary_outfall_variables`, one line each,
+                  in meters (each variable is converted by its stated unit and datum offset, the conversion
+                  that writes the boundary files)
       - time:     `cfg_analysis.weather_time_series_timestep_dimension_name`
+
+    `bc_water_level` is a ``(n_variables, n_times)`` array and `bc_var` and `bc_attrs` are lists of the same length.
+    An analysis with no weather-sourced water level carries one row of zeros and an empty `bc_var`.
     """
+    from hhemt.water_level_boundary import to_meters
+
     rain_var = cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
-    bc_var = cfg_analysis.weather_time_series_storm_tide_datavar
+    bc_vars = water_level_variables(cfg_analysis)
     time_var = cfg_analysis.weather_time_series_timestep_dimension_name
     with xr.open_dataset(weather_path, engine="h5netcdf") as master:
         ws = master.sel(**weather_event_indexers)
@@ -58,9 +65,22 @@ def load_event_hydrology_data(
             ws = ws.sel({time_var: slice(*window)})
         times = ws[time_var].values
         rainfall = ws[rain_var].values.astype(float)
-        bc_water_level = ws[bc_var].values.astype(float) if bc_var is not None else np.zeros_like(rainfall)
+        bc_water_level = (
+            np.vstack(
+                [
+                    to_meters(
+                        ws[v].values.astype(float),
+                        cfg_analysis.water_level_boundary_variable_units[v],
+                        cfg_analysis.water_level_boundary_variable_datum_offsets[v],
+                    )
+                    for v in bc_vars
+                ]
+            )
+            if bc_vars
+            else np.zeros((1, rainfall.size))
+        )
         rain_attrs = dict(ws[rain_var].attrs)
-        bc_attrs = dict(ws[bc_var].attrs) if bc_var is not None else {}
+        bc_attrs = [dict(ws[v].attrs) for v in bc_vars]
     times_min = (times - times[0]).astype("timedelta64[s]").astype(float) / units.SECONDS_PER_MINUTE
     return {
         "times_min": times_min,
@@ -69,8 +89,18 @@ def load_event_hydrology_data(
         "rain_attrs": rain_attrs,
         "bc_attrs": bc_attrs,
         "rain_var": rain_var,
-        "bc_var": bc_var,
+        "bc_var": bc_vars,
     }
+
+
+def water_level_variables(cfg_analysis) -> list[str]:
+    """The distinct weather variables the boundary's outfalls map to, in map order; none when no weather level is on."""
+    if (
+        not cfg_analysis.toggle_external_boundaries
+        or cfg_analysis.water_level_boundary_series_source != "weather_time_series"
+    ):
+        return []
+    return list(dict.fromkeys((cfg_analysis.water_level_boundary_outfall_variables or {}).values()))
 
 
 def draw_event_hydrology_panel(
@@ -100,7 +130,10 @@ def draw_event_hydrology_panel(
     bc_var = hydro_data["bc_var"]
 
     rain_units = units.rainfall_provenance_units(cfg_analysis.rainfall_units)
-    bc_units = units.bc_provenance_units(cfg_analysis.storm_tide_units) if cfg_analysis.storm_tide_units else ""
+    bc_units = units.BC_WATER_LEVEL_UNITS
+    bc_names = list(bc_var) if isinstance(bc_var, list | tuple) else [bc_var]
+    bc_rows = np.atleast_2d(np.asarray(bc_water_level, dtype=float))
+    bc_attr_list = list(bc_attrs) if isinstance(bc_attrs, list | tuple) else [bc_attrs]
 
     rain_ref = ProvenanceRef(
         source_path=weather_rel_path,
@@ -144,40 +177,32 @@ def draw_event_hydrology_panel(
     for spine in ("top", "right"):
         ax_rain.spines[spine].set_visible(False)
 
-    bc_ref = ProvenanceRef(
-        source_path=weather_rel_path,
-        variable=bc_var if bc_var is not None else "",
-        attrs=bc_attrs,
-        selection={"event_iloc": int(event_iloc)},
-    )
-    if prov is not None:
-        with prov.artist(
-            axes_id="ax_bc",
-            kind="line2d",
-            note="boundary condition water level (event hydrology, bottom sub-panel)",
-        ) as a:
-            a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
-            a.add_channel("y", bc_ref, units=bc_units)
-            ax_bc.plot(
-                times_hr,
-                bc_water_level,
-                color=panel_cfg.bc_line_color,
-                linewidth=panel_cfg.bc_line_width,
-            )
-    else:
-        ax_bc.plot(
-            times_hr,
-            bc_water_level,
-            color=panel_cfg.bc_line_color,
-            linewidth=panel_cfg.bc_line_width,
+    for i, row in enumerate(bc_rows):
+        name = bc_names[i] if i < len(bc_names) and bc_names[i] is not None else ""
+        bc_ref = ProvenanceRef(
+            source_path=weather_rel_path,
+            variable=name,
+            attrs=bc_attr_list[i] if i < len(bc_attr_list) else {},
+            selection={"event_iloc": int(event_iloc)},
         )
+        if prov is not None:
+            with prov.artist(
+                axes_id="ax_bc",
+                kind="line2d",
+                note="boundary condition water level (event hydrology, bottom sub-panel)",
+            ) as a:
+                a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
+                a.add_channel("y", bc_ref, units=bc_units)
+                ax_bc.plot(times_hr, row, color=panel_cfg.bc_line_color, linewidth=panel_cfg.bc_line_width)
+        else:
+            ax_bc.plot(times_hr, row, color=panel_cfg.bc_line_color, linewidth=panel_cfg.bc_line_width)
 
-    ax_bc.set_ylabel(units.bc_water_level_axis_label(cfg_analysis.storm_tide_units or "m"))
+    ax_bc.set_ylabel(units.bc_water_level_axis_label())
     ax_bc.set_xlabel(units.TIME_AXIS_FROM_EVENT_START_HOURS)
     ax_bc.tick_params(axis="both", labelsize=panel_cfg.tick_labelsize)
     ax_bc.set_xlim(times_hr[0], times_hr[-1])
-    bc_min = float(np.nanmin(bc_water_level))
-    bc_max = float(np.nanmax(bc_water_level))
+    bc_min = float(np.nanmin(bc_rows))
+    bc_max = float(np.nanmax(bc_rows))
     if (bc_max - bc_min) < panel_cfg.bc_flat_threshold:
         center = round((bc_max + bc_min) / 2.0)
         ax_bc.set_ylim(center - 1.0, center + 1.0)
@@ -199,7 +224,6 @@ def draw_event_hydrology_panel_plotly(
     bc_water_level,
     panel_cfg,
     rainfall_units,
-    storm_tide_units,
     axis_extent_px: float,
     rain_row: int = 1,
     bc_row: int = 2,
@@ -241,24 +265,23 @@ def draw_event_hydrology_panel_plotly(
         row=rain_row,
         col=col,
     )
-    fig.add_trace(
-        go.Scatter(
-            x=times_hr,
-            y=bc_water_level,
-            mode="lines",
-            line=dict(color=panel_cfg.bc_line_color, width=panel_cfg.bc_line_width),
-            name="bc_water_level",
-            showlegend=False,
-            hovertemplate="t: %{x:.2f} hr<br>BC: %{y:.3f} m<extra></extra>",
-        ),
-        row=bc_row,
-        col=col,
-    )
+    for row_values in np.atleast_2d(np.asarray(bc_water_level, dtype=float)):
+        fig.add_trace(
+            go.Scatter(
+                x=times_hr,
+                y=row_values,
+                mode="lines",
+                line=dict(color=panel_cfg.bc_line_color, width=panel_cfg.bc_line_width),
+                name="bc_water_level",
+                showlegend=False,
+                hovertemplate="t: %{x:.2f} hr<br>BC: %{y:.3f} m<extra></extra>",
+            ),
+            row=bc_row,
+            col=col,
+        )
 
     rain_title, rain_px = wrap_axis_title(_units.rainfall_axis_label(rainfall_units), axis_extent_px=axis_extent_px)
-    bc_title, bc_px = wrap_axis_title(
-        _units.bc_water_level_axis_label(storm_tide_units or "m"), axis_extent_px=axis_extent_px
-    )
+    bc_title, bc_px = wrap_axis_title(_units.bc_water_level_axis_label(), axis_extent_px=axis_extent_px)
     t0, t1 = float(times_hr[0]), float(times_hr[-1])
     fig.update_xaxes(range=[t0, t1], title_text="", row=rain_row, col=col)
     fig.update_yaxes(title_text=rain_title, row=rain_row, col=col)

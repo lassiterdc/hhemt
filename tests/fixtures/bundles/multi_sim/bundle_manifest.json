@@ -7,7 +7,7 @@
         "weather_events_to_simulate"
       ],
       "bundle_relative_or_None": [
-        "storm_tide_boundary_line_gis",
+        "external_boundary_gis",
         "weather_event_summary_csv",
         "sensitivity_analysis",
         "weather_event_windows_csv",
@@ -24,13 +24,10 @@
       "bundle_relative": [
         "watershed_gis_polygon",
         "DEM_fullres",
-        "SWMM_hydraulics",
-        "triton_swmm_configuration_template"
+        "SWMM_model"
       ],
       "bundle_relative_or_None": [
         "landuse_lookup_file",
-        "SWMM_hydrology",
-        "SWMM_full",
         "landuse_raster",
         "subcatchment_raingage_mapping"
       ],
