@@ -5512,3 +5512,7 @@ non_breaking_allowlist:
     layout_signature: ec24da6edaae3209a5c73ea3a9ade5a636ef4cfa2b8086b2c185077c49c03a47
     justification: |-
       Description text of config fields rewritten to the published style brief. No field, default, validator, name or on-disk path changed.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 20fed8c954aa446dc55e2a5cc048727c2739bd25bb11216cd20b78993e1a66b1
+    justification: |-
+      non-breaking: the append_zarr call is wrapped in deferred_consolidation, same arguments and same data written
