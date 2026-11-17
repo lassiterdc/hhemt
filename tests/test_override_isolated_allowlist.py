@@ -98,6 +98,7 @@ OVERRIDE_ISOLATED_NODE_IDS: tuple[str, ...] = (
     "tests/test_synth_flag_writes.py::test_override_force_rerun_does_not_clear_other_member_processing_log",
     "tests/test_synth_flag_writes.py::test_override_force_rerun_event_iloc_invalidates_only_named_events",
     "tests/test_synth_fungibility_same_named_figures.py::test_same_named_figures_are_fungible",
+    "tests/test_synth_manhole_table.py::test_a_coupling_node_without_a_row_refuses_at_run_entry_naming_the_toggle",
     "tests/test_synth_per_sim_model_arms.py::test_composite_page_renders_end_to_end",
     "tests/test_synth_sensitivity_csv_row_rerun.py::test_empty_independent_vars_degenerate_case",
     "tests/test_synth_sensitivity_csv_row_rerun.py::test_fingerprint_files_written_on_first_invocation",
