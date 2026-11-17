@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -11,6 +12,14 @@ from hhemt.analysis import TRITONSWMM_analysis
 
 if TYPE_CHECKING:
     import xarray as xr
+
+
+_THREADS_ROW = re.compile(r"^[ \t]*THREADS[ \t]+(\S+)[ \t]*$", re.IGNORECASE | re.MULTILINE)
+
+
+def threads_rows(inp_text: str) -> list[str]:
+    """The value of every ``THREADS`` row of a SWMM input, in file order, whatever the row's column spacing."""
+    return _THREADS_ROW.findall(inp_text)
 
 
 def uses_slurm() -> bool:

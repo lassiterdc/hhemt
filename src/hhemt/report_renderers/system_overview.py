@@ -46,6 +46,7 @@ from hhemt.report_renderers._map_bounds import (
     compute_padded_square_bounds,
 )
 from hhemt.scenario_records import all_members_for_reading_of
+from hhemt.swmm_runnable import without_injected_dummy_chain as _without_injected_dummy_chain
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -416,9 +417,9 @@ def _build_manifest_data(
                 "title": HYDRAULICS_PANEL_TITLE,
                 "axis_extents": panel_extents,
                 "element_counts": {
-                    "junctions": int(len(hydraulics_model.inp.junctions)),
-                    "outfalls": int(len(hydraulics_model.inp.outfalls)),
-                    "conduits": int(len(hydraulics_model.inp.conduits)),
+                    "junctions": int(len(_without_injected_dummy_chain(hydraulics_model.inp.junctions))),
+                    "outfalls": int(len(_without_injected_dummy_chain(hydraulics_model.inp.outfalls))),
+                    "conduits": int(len(_without_injected_dummy_chain(hydraulics_model.inp.conduits))),
                 },
                 "legend_labels": ["SWMM conduits", "SWMM junction"],
             }
@@ -623,9 +624,9 @@ def _draw_hydraulics_panel(
 
     hp = map_cfg.hydraulics_panel
     coords_df = hydraulics_model.inp.coordinates
-    junctions_df = hydraulics_model.inp.junctions
-    outfalls_df = hydraulics_model.inp.outfalls
-    conduits_df = hydraulics_model.inp.conduits
+    junctions_df = _without_injected_dummy_chain(hydraulics_model.inp.junctions)
+    outfalls_df = _without_injected_dummy_chain(hydraulics_model.inp.outfalls)
+    conduits_df = _without_injected_dummy_chain(hydraulics_model.inp.conduits)
 
     legend_handles: list = []
     connected_nodes = _collect_connected_nodes(conduits_df)
@@ -1608,9 +1609,9 @@ def _draw_hydraulics_panel_plotly(
     hp_node_size = _plotly_node_marker_size(map_cfg)
     hp_junction_size = _plotly_junction_marker_size(map_cfg)
     coords_df = hydraulics_model.inp.coordinates
-    junctions_df = hydraulics_model.inp.junctions
-    outfalls_df = hydraulics_model.inp.outfalls
-    conduits_df = hydraulics_model.inp.conduits
+    junctions_df = _without_injected_dummy_chain(hydraulics_model.inp.junctions)
+    outfalls_df = _without_injected_dummy_chain(hydraulics_model.inp.outfalls)
+    conduits_df = _without_injected_dummy_chain(hydraulics_model.inp.conduits)
 
     inverts: dict[str, float] = {}
     for name, row in junctions_df.iterrows():

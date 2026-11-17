@@ -44,6 +44,16 @@ SWMM_ROLES: tuple[SwmmRole, ...] = ("full", "hydraulics", "hydrology")
 # model (for example the hydrograph writer) can skip them by name.
 DUMMY_NODE_PREFIX = "hhemt_dummy_"
 
+
+def without_injected_dummy_chain(df):
+    """``df`` without the rows (indexed by node or link name) of the dummy chain a derived model may carry.
+
+    The chain has no ``[COORDINATES]`` rows and is a solver scaffold, so a reader that draws or counts the nodes of a
+    derived model (the system overview, the DEM-resolution junction count) takes its frames through this.
+    """
+    return df.loc[~df.index.astype(str).str.startswith(DUMMY_NODE_PREFIX)]
+
+
 # The keys of ``[OPTIONS]`` the toolkit rewrites per event. ``fill`` must carry each of them.
 FORCING_OPTION_KEYS: tuple[str, ...] = (
     "START_DATE",

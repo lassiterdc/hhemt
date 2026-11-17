@@ -50,6 +50,7 @@ from hhemt.report_renderers._figure_emission import (
     emit_plot_with_sources,  # noqa: F401  # reserved for the /design-figure-authored bodies
 )
 from hhemt.report_renderers._table_presentation import plotly_table_header
+from hhemt.swmm_runnable import without_injected_dummy_chain
 from hhemt.utils import open_store, resolve_experiment_tree
 
 if TYPE_CHECKING:
@@ -1363,6 +1364,17 @@ def build_dem_resolution_error_ecdf_figure(
     return fig
 
 
+def _junction_counts_of_model(m) -> tuple[int, int]:
+    """``(coupling_junctions, total_junctions)`` of one derived hydraulics model read by swmmio.
+
+    The derived model carries an injected dummy junction when every outfall is coupled; it is a solver scaffold and
+    not a junction of the system, so it is in neither count.
+    """
+    junctions = {str(n) for n in without_injected_dummy_chain(m.inp.junctions).index}
+    inflow_nodes = {str(n) for n in m.inp.inflows.index}
+    return len(junctions & inflow_nodes), len(junctions)
+
+
 def build_dem_resolution_coupling_table_figure(root: Path, *, cfg_system=None) -> go.Figure:
     """Artifact 4 (a TABLE, not a panel): DEM resolution x coupling / peak / over-under.
     plot_id `dem_resolution_coupling_table`.
@@ -1446,11 +1458,7 @@ def build_dem_resolution_coupling_table_figure(root: Path, *, cfg_system=None) -
             inps = sorted(root.glob(f"members/*{node_name}*/sims/*/swmm/hydraulics.inp"))
         if not inps:
             return None, None
-        m = swmmio.Model(str(inps[0]))
-        junctions = {str(n) for n in m.inp.junctions.index}
-        inflow_nodes = {str(n) for n in m.inp.inflows.index}
-        coupling = len(junctions & inflow_nodes)  # junctions receiving TRITON inflow
-        return coupling, len(junctions)
+        return _junction_counts_of_model(swmmio.Model(str(inps[0])))
 
     counts = {res: _junction_counts(res) for res in order}
     total_junctions_model = counts[finest_res][1]
