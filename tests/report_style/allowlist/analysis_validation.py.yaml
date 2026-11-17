@@ -4,7 +4,7 @@ entries:
   string: sa_id
   status: permitted
   reason: Dictionary key of the check details and the status table; the page never prints it.
-  count: 9
+  count: 11
 - rule: retired_word
   string: sim
   status: permitted
