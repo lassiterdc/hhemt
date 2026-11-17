@@ -203,7 +203,7 @@ def manhole_root(tritonswmm_cpu_compiled, tmp_path_factory) -> Path:
     """One temporary directory holding every arm's analysis tree and table.
 
     Requests `tritonswmm_cpu_compiled` as a parameter so the collection-time fixture closure sees the compile: every
-    arm and the run-entry test depend on this fixture, and a compile reached only through `request.getfixturevalue`
+    arm and the run-entry test depend on this fixture, and a compile requested at call time instead of as a parameter
     is invisible to the closure and trips the compile guard on the first arm.
     """
     _require_chunk()
