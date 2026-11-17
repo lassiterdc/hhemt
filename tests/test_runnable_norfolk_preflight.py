@@ -33,8 +33,8 @@ from hhemt.water_level_boundary import converted_node_depths
 
 _CASE_DIR = Path(__file__).resolve().parents[1] / "test_data" / "norfolk_coastal_flooding"
 
-# The head of the ORNL ``triton-swmm`` branch, whose ``src/config_utils.h`` reads ``swmm_coupling_nodes``.
-PIN = "faba223212408f04b7a3dbf6580adedf4a4e6b13"
+# The head of the fork's ``develop`` branch, whose ``src/config_utils.h`` reads ``swmm_coupling_nodes``.
+PIN = "deefa6e6fcb26184a60eb8242dc82dcc3cab9618"
 # A commit whose ``[INFLOWS]`` read the toolkit recognizes and which does not read ``swmm_coupling_nodes``:
 # the commit the published coupled Norfolk run used.
 KEYLESS_PIN = "15eb18a5d25afe5da295cb4b559a62669dbe5bc3"
@@ -170,7 +170,7 @@ def test_template_names_the_runnable_model_the_outfall_decisions_and_the_pinned_
     assert set(analysis["water_level_boundary_variable_units"]) == variables == {"waterlevel_m"}
     assert set(analysis["water_level_boundary_variable_datum_offsets"]) == variables
     assert cfg["TRITONSWMM_branch_key"] == PIN
-    assert cfg["TRITONSWMM_git_URL"] == "https://code.ornl.gov/hydro/triton.git"
+    assert cfg["TRITONSWMM_git_URL"] == "https://github.com/lassiterdc/triton.git"
     removed = {"SWMM_hydraulics", "SWMM_hydrology", "SWMM_full", "triton_swmm_configuration_template"}
     assert removed.isdisjoint(cfg)
     # Control: the matcher fires on a config that still carries a removed key.

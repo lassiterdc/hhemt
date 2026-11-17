@@ -104,16 +104,29 @@ if TYPE_CHECKING:
 # the level, exactly as `Other` closes Simulation and `Init` closes Total. The solver
 # enforces `XFER + MPI + STEP + OTHER == SWMM` on every emitted PER-RANK row -- the
 # Average row is outside that identity, and hhemt's summary drops it.
+#
+# `SWMM_SOLVE` and `SWMM_LOG` are two more measured children, nested inside `SWMM_STEP` rather
+# than beside it: `SWMM_SOLVE` brackets the `swmm_step(...)` call alone and `SWMM_LOG` the
+# exchange-log append, so `SWMM_SOLVE + SWMM_LOG <= SWMM_STEP` per rank and the four-child
+# identity above is unchanged. `DIAG` is the solver's capture-work timer, a top-level category
+# that is never open while another category is and is subtracted in the `Other` residual. It
+# is nonzero on rank 0 only for the SWMM-side captures, so under the per-column `max(Rank)` it
+# reports the slowest rank's capture cost beside its parent `Simulation`, never summed with
+# the other categories' maxima. All three are present-if-emitted like every name here: a solver
+# built without the diagnostic timers writes none of them.
 PERF_VARS: list[str] = [
     "Compute",
     "MPI",
     "IO",
     "Resize",
+    "DIAG",
     "SWMM",
     "SWMM_XFER",
     "SWMM_MPI",
     "SWMM_STEP",
     "SWMM_OTHER",
+    "SWMM_SOLVE",
+    "SWMM_LOG",
     "Other",
     "Simulation",
     "Init",
@@ -135,10 +148,13 @@ PERF_VARS_ORDERED: list[str] = [
     "SWMM_MPI",
     "SWMM_STEP",
     "SWMM_OTHER",
+    "SWMM_SOLVE",
+    "SWMM_LOG",
     "MPI",
     "Simulation",
     "IO",
     "Resize",
+    "DIAG",
     "Other",
     "Init",
 ]
@@ -318,6 +334,19 @@ def _systems_run_by(analysis) -> list:
     if analysis.cfg_analysis.toggle_sensitivity_analysis:
         return [target.system for target in analysis.sensitivity.unique_system_targets]
     return [analysis._system]
+
+
+def _analysis_system_pairs_run_by(analysis) -> list:
+    """Every ``(cfg_analysis, system)`` pair a run of ``analysis`` executes.
+
+    The primary's pair, or, under ``toggle_sensitivity_analysis``, each member's own analysis config and
+    system: a matrix overlay such as ``analysis.manhole_table`` sets a field on a member while the master's
+    ``cfg_analysis`` carries none, so a check that reads an analysis field judges the members and never the
+    master. A module function so the checks can be exercised on a stand-in analysis object.
+    """
+    if analysis.cfg_analysis.toggle_sensitivity_analysis:
+        return [(member.cfg_analysis, member._system) for member in analysis.sensitivity.members.values()]
+    return [(analysis.cfg_analysis, analysis._system)]
 
 
 def _coupled_system_configs(analysis) -> list:
@@ -2916,6 +2945,50 @@ class TRITONSWMM_analysis:
                 recorded_sha=cfg.TRITONSWMM_branch_key if environment == "container" else None,
             )
 
+    def _refuse_manhole_table_mismatch(self) -> None:
+        """Refuse, before any job is submitted, a manhole table that does not fit the coupling nodes.
+
+        Judged for every ``(analysis config, coupled system)`` pair the run executes
+        (``_analysis_system_pairs_run_by``) that sets ``manhole_table``, each judged on its own: members that share a
+        system differ in what the candidate set and the relaxation read. Each is judged against the candidate junctions
+        the system's coupling declaration names, by ``scenario.require_valid_manhole_table``, the rule
+        scenario preparation applies to the nodes it writes. A template naming a placeholder node (a ``$``
+        in the name) is left to preparation, which judges the filled file, because a placeholder is a
+        candidate whose filled name is unknown. Under the coupling mode that takes every inflow node of the model,
+        with ``one_coupled_inflow_node_per_dem_cell``, the candidates are a superset of the written set, so only
+        the rules the superset decides are applied here: the table's own form and the rows that name no
+        candidate. The missing-row rule is left to preparation.
+        """
+        from .scenario import (
+            ManholeTableContext,
+            coupling_candidate_junction_coordinates,
+            keyless_inflows_read,
+            require_valid_manhole_table,
+            swmm_role_inp,
+        )
+
+        for cfg_analysis, system in _analysis_system_pairs_run_by(self):
+            cfg = system.cfg_system
+            table = cfg_analysis.manhole_table
+            if table is None or not cfg.toggle_tritonswmm_model:
+                continue
+            template = swmm_role_inp(cfg, "hydraulics", cfg_analysis)
+            listed = [name for name, _x, _y in coupling_candidate_junction_coordinates(cfg, cfg_analysis)]
+            if any("$" in n for n in listed) or any("$" in n for n in keyless_inflows_read(template)):
+                continue
+            superset = cfg.swmm_coupling_mode == "legacy" and bool(cfg_analysis.one_coupled_inflow_node_per_dem_cell)
+            require_valid_manhole_table(
+                table,
+                listed,
+                cfg_analysis.manhole_table_fill_with_constants or superset,
+                ManholeTableContext(
+                    table=Path(table),
+                    model=str(cfg.SWMM_model),
+                    diameter_constant=cfg_analysis.manhole_diameter,
+                    loss_constant=cfg_analysis.manhole_loss_coefficient,
+                ),
+            )
+
     def _refuse_coupled_system_with_no_coupling_candidate(self) -> None:
         """Refuse, before any job is submitted, a coupled system that declares no coupling node.
 
@@ -3228,6 +3301,7 @@ class TRITONSWMM_analysis:
             overwrite_system_inputs=translate_mode("fresh" if from_scratch else "resume")["overwrite_system_inputs"]
         )
         self._refuse_coupling_the_triton_build_would_not_read()
+        self._refuse_manhole_table_mismatch()
 
         # _test/ deletion offer: if a leftover smoke-test subtree from a
         # prior analysis.test() exists, offer to delete it before the real run.
@@ -4579,6 +4653,7 @@ class TRITONSWMM_analysis:
         self._refuse_coupled_system_with_no_coupling_candidate()
         self._refuse_coupling_nodes_outside_triton_grid(overwrite_system_inputs=overwrite_system_inputs)
         self._refuse_coupling_the_triton_build_would_not_read()
+        self._refuse_manhole_table_mismatch()
 
         # Login-node preflight: refuse any analysis path a compute node cannot see.
         # Refuse BEFORE anything is stamped, written or

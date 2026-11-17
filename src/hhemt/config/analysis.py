@@ -1182,6 +1182,127 @@ class analysis_config(cfgBaseModel):
         ),
         json_schema_extra=field_meta(applies_when=[when("toggle_tritonswmm_model", True)]),
     )
+    toggle_coupling_diagnostics: bool = Field(
+        default=False,
+        description=(
+            "When True, the toolkit writes the lines `swmm_diag_steps=1`, `diag_domain_balance=1`, "
+            "`diag_wet_cells=1`, and `diag_dt_limiter=1` into the TRITON cfg of each coupled scenario. The "
+            "solver then writes the coupling-diagnostics files. The files hold a per-step SWMM record with the "
+            "trials used, the nodes left non-converged, and the signed path-3 volume, the per-node path-3 "
+            "account, the domain mass balance with the open-edge fluxes, the wet cells per rank, and the "
+            "step-limiting cell of every step. The solver is specified to account the wall "
+            "time of the captures to the timer "
+            "category DIAG, separate from every other category. "
+            "Applies only to a coupled system with toggle_tritonswmm_model on, and preflight refuses True when "
+            "the coupled model is off. The TRITON-only cfg never carries the keys. The default False appends no "
+            "line, so a run that leaves the field unset emits a cfg byte-identical to a cfg emitted before the "
+            "field existed. "
+            "The spelling of each key is load-bearing in the solver repository. The solver reads each key "
+            'through `argsd(key, argmap, "0")`, so only the value 1 switches a capture on, and a misspelt key '
+            "switches no capture on and gives no message. The solver pin is part of the contract and no check "
+            "covers the pin. A solver that predates the keys ignores the keys, and no TRITON cfg parse rejects "
+            "an unknown key, so the field then emits the lines and the run writes no capture file. Verify that "
+            "the keys appear in the argsd table of the solver at the pin you run."
+        ),
+        json_schema_extra=field_meta(applies_when=[when("toggle_tritonswmm_model", True)]),
+    )
+    swmm_diagnostic_links: str | None = Field(
+        default=None,
+        description=(
+            "Selects the SWMM links whose flow the solver records at every coupled step, into "
+            "swmm_link_flow_diag.bin. The value `ALL` records every link of the coupled model. Any other value "
+            "is the absolute path of a text file that names the links, and the file must exist when the analysis "
+            "runs. The path is absolute because the solver reads the file from the working directory of the "
+            "solver, where a relative name resolves to a different file or to none. "
+            'The toolkit writes the line `swmm_diag_links=ALL`, or `swmm_diag_links="{path}"`, into the TRITON '
+            "cfg of each coupled scenario. The capture is independent of toggle_coupling_diagnostics. The record "
+            "holds 8 bytes per link per coupled step, so ALL on a model with 1000 links writes about 8 kilobytes "
+            "every step. Name only the links you need. "
+            "Applies only to a coupled system with toggle_tritonswmm_model on, and preflight refuses a value "
+            "when the coupled model is off. The default None appends no line. The spelling of the key is "
+            "load-bearing in the solver repository, and the solver pin is part of the contract with no check on "
+            "the pin, as toggle_coupling_diagnostics states."
+        ),
+        json_schema_extra=field_meta(applies_when=[when("toggle_tritonswmm_model", True)]),
+    )
+    swmm_diagnostic_node_path3_per_step: bool = Field(
+        default=False,
+        description=(
+            "When True, the toolkit writes the line `swmm_diag_node_path3_per_step=1` into the TRITON cfg of "
+            "each coupled scenario. The solver then records, at every coupled step and for every non-outfall "
+            "node, the signed path-3 volume into swmm_node_path3_step.bin, with the node names beside the "
+            "volumes in swmm_node_diag.nodes. The file is large. Each step writes 8 bytes per node plus a "
+            "16-byte step header, a total of gigabytes per event at the finest grid, so switch the field on only "
+            "for a run that needs to localise an unbooked volume in time. "
+            "The toolkit checks that the file and the name list exist after the run. The toolkit neither ingests "
+            "nor consolidates the file, and the report reads the file lazily from the scenario's solver output. "
+            "The capture is independent of toggle_coupling_diagnostics. Applies only to a coupled system with "
+            "toggle_tritonswmm_model on, and preflight refuses True when the coupled model is off. The default "
+            "False appends no line, so a run that leaves the field unset emits a cfg byte-identical to a cfg "
+            "emitted before the field existed. "
+            "The spelling of the key is load-bearing in the solver repository, and the solver pin is part of the "
+            "contract with no check on the pin. A solver that predates the key ignores the key, and only the "
+            "missing file after the run shows the failure."
+        ),
+        json_schema_extra=field_meta(applies_when=[when("toggle_tritonswmm_model", True)]),
+    )
+    swmm_coupling_interval: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "The number of TRITON steps per SWMM step, in the coupled model only. At the default 1, SWMM steps "
+            "once per TRITON step. At a value N above 1, the solver applies the exchange of every TRITON step "
+            "to the surface and accumulates the exchange volume per node. SWMM steps once per N TRITON steps "
+            "with the summed step and the interval-mean exchange, and the solver holds the depths SWMM returns "
+            "for the next N steps. "
+            "SWMM always steps at the TRITON step that ends a print interval, whatever N is, so the last SWMM "
+            "step of an interval covers fewer than N TRITON steps whenever the step count of the interval is not "
+            "a multiple of N. A value above 1 changes hydraulic results by design. The value gives a "
+            "counterfactual that measures the cost of fewer SWMM steps. "
+            "The toolkit writes the line `swmm_coupling_interval={N}` into the TRITON cfg of each coupled "
+            "scenario only when N is above 1, so a run that leaves the field at 1 emits a cfg byte-identical to "
+            "a cfg emitted before the field existed. Applies only to a coupled system with "
+            "toggle_tritonswmm_model on, and preflight refuses a value above 1 when the coupled model is off. "
+            "The spelling of the key is load-bearing in the solver repository, and the solver pin is part of the "
+            "contract with no check on the pin. A solver that predates the key ignores the key and steps SWMM "
+            "every step."
+        ),
+        json_schema_extra=field_meta(applies_when=[when("toggle_tritonswmm_model", True)]),
+    )
+    swmm_coupling_lag: Literal[0, 1] = Field(
+        default=0,
+        description=(
+            "Sets whether the exchange of a step reads SWMM 1 TRITON step behind the default, in the coupled "
+            "model only. At the default 0, the solver applies the depths SWMM returns after a step from the next "
+            "TRITON step. At 1, the solver applies the depths 1 TRITON step later than at the default. The "
+            "result is a lag of 1 coupling interval only when swmm_coupling_interval is 1, and the lag matches "
+            "the state that a SWMM solve overlapped with the TRITON step would impose. The toolkit builds no "
+            "asynchrony. "
+            "At every print instant the solver applies the freshest depths regardless, so a checkpoint always "
+            "holds a complete coupled state, and the lag breaks once per print interval. A value of 1 changes "
+            "hydraulic results by design. The toolkit writes the line `swmm_coupling_lag=1` into the TRITON cfg "
+            "of each coupled scenario only when the value is 1, so a run that leaves the field at 0 emits a "
+            "byte-identical cfg. "
+            "Applies only to a coupled system with toggle_tritonswmm_model on, and preflight refuses a value of "
+            "1 when the coupled model is off. The spelling of the key is load-bearing in the solver repository, "
+            "and the solver pin is part of the contract with no check on the pin. A solver that predates the key "
+            "ignores the key and applies the depths at the next step."
+        ),
+        json_schema_extra=field_meta(applies_when=[when("toggle_tritonswmm_model", True)]),
+    )
+    swmm_report_step_s: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "The REPORT_STEP of the coupled SWMM model, in whole seconds, independent of the TRITON reporting "
+            "step. At the default None, the report step is TRITON_reporting_timestep_s. A finer value gives the "
+            "SWMM series a time coordinate of their own. Preflight refuses a value below the ROUTING_STEP of the "
+            "coupled model, because SWMM stops with an error when the report step is below the routing step. A "
+            "model that declares no ROUTING_STEP has the SWMM default of 20 seconds. Applies only to a coupled "
+            "system with toggle_tritonswmm_model on, and preflight refuses a value when the coupled model is off."
+        ),
+        json_schema_extra=field_meta(applies_when=[when("toggle_tritonswmm_model", True)]),
+    )
     toggle_clear_scenario_timeseries_after_consolidation: bool | None = Field(
         default=None,
         description=(
@@ -1207,19 +1328,23 @@ class analysis_config(cfgBaseModel):
     timeseries_keep_swmm_node: str | list[str] | None = Field(
         default=None,
         description=(
-            "The SWMM node time-series variables to KEEP in the per-scenario store after the summary is "
-            "written. The store drops the rest, and the summary keeps every statistic. None or blank keeps "
-            "everything. A string names a toolkit set. The set 'all' holds every variable of the class, and the "
-            "set 'default' holds every variable except flooding for the coupled model, because flooding there "
-            "is the growth rate of stored volume above full volume and not water lost. For standalone SWMM the "
-            "set 'default' holds every variable. "
-            "A list names variables explicitly and may force in a variable that a set excludes. Variables with "
-            "no time dimension are static and always kept. They are the coupling-node flag, the per-node "
-            "statistics, and the run-level variables. The kept names are the variables that "
-            "the `timeseries` branches of analysis_datatree.zarr and the bundle carry. Preflight refuses a name "
-            "outside the domain of every "
-            "enabled model family. The field applies even when toggle_consolidate_timeseries is off. A pruned "
-            "variable is gone, and recovering the variable takes a re-run."
+            "The SWMM node time-series variables to keep in the per-scenario store after the summary is written. "
+            "The store drops the other variables, and the summary keeps every statistic. None or blank keeps "
+            "every variable. A string names a toolkit set. The set 'all' holds every variable of the class. The "
+            "set 'default' holds every variable except flooding for the coupled model, because flooding there is "
+            "the growth rate of stored volume above full volume and not water lost, and holds every variable for "
+            "standalone SWMM. "
+            "A list names variables explicitly and can force in a variable that a set excludes. For the coupled "
+            "model, the domain also holds the coupling-exchange flow coupling_exchange_flow and the 3 "
+            "per-interval path-3 variables that the coupling diagnostics add. They are path3_volume_pos, "
+            "path3_volume_neg, and nonconverged_steps. A list can name the 4 variables, and a list that omits "
+            "the variables prunes them. "
+            "Variables with no time dimension are static and always kept. The static variables are the "
+            "coupling-node flag, the per-node statistics, and the run-level variables. The kept names are the "
+            "variables that the `timeseries` branches of analysis_datatree.zarr and the bundle carry. Preflight "
+            "refuses a name outside the domain of every enabled model family. The field applies even when "
+            "toggle_consolidate_timeseries is off. A pruned variable is gone, and recovering the variable takes "
+            "a re-run."
         ),
     )
     timeseries_keep_swmm_link: str | list[str] | None = Field(
@@ -1377,6 +1502,44 @@ class analysis_config(cfgBaseModel):
     manhole_loss_coefficient: float = Field(
         ...,
         description="Loss coefficient of TRITON-SWMM interactions occuring at manholes.",
+    )
+    manhole_table: Path | None = Field(
+        default=None,
+        description=(
+            "Path to a CSV that gives each coupling node a manhole diameter and a loss coefficient. The header "
+            "is node_id,manhole_diameter_m,manhole_loss_coefficient. A row names a coupling node of the coupled "
+            "SWMM model, gives the diameter in meters, and gives the dimensionless loss coefficient. Both cells "
+            "of a row are required, and a row with an empty cell is refused. A diameter is finite and above "
+            "zero, a loss coefficient is finite and not negative, and a node name appears once after the case "
+            "fold of SWMM. "
+            "A row that names no coupling node is refused whatever manhole_table_fill_with_constants says, "
+            "because a misspelt name would leave the intended node at the constants with no message. Every "
+            "coupling node needs a row unless manhole_table_fill_with_constants is True. Otherwise the run is "
+            "refused. The run-entry check applies the rule before any job is queued, except for a node whose name "
+            "holds a placeholder and for the legacy mode that couples 1 node per DEM cell. The check leaves "
+            "both cases to scenario preparation. Scenario preparation applies the rule to "
+            "the exact set of coupling nodes. "
+            "The error names the nodes without a row. "
+            "With a table set, TRITON takes both values of every node from the table and ignores "
+            "manhole_diameter and manhole_loss_coefficient for the nodes. Only a TRITON build that reads the cfg "
+            "key swmm_manhole_table honours the table, and preparation refuses a build that lacks the key. Read "
+            "only for a coupled system with toggle_tritonswmm_model on. With the field unset, every coupling "
+            "node takes manhole_diameter and manhole_loss_coefficient. A table whose values differ from the "
+            "constants changes hydraulic results."
+        ),
+        json_schema_extra=field_meta(required_when=[when("manhole_table_fill_with_constants", True)]),
+    )
+    manhole_table_fill_with_constants: bool = Field(
+        default=False,
+        description=(
+            "When True, each coupling node with no row in manhole_table takes the constants manhole_diameter and "
+            "manhole_loss_coefficient. When False, the default, a coupling node with no row refuses the run, "
+            "at run entry where the check can judge the node and otherwise at scenario "
+            "preparation. The error names the nodes without a row and names this field as the "
+            "remedy. The refusal stops a table that misses a node from passing as a table that covers every "
+            "node. The field requires manhole_table. The field excuses no row that names a node outside the "
+            "coupling nodes, and such a row is refused in both states."
+        ),
     )
     swmm_node_rim_from_dem: bool = Field(
         default=False,
@@ -1893,6 +2056,28 @@ class analysis_config(cfgBaseModel):
                         f"use the sentinel as a bare string (remove_after_processing: {item})"
                     )
         return v
+
+    @field_validator("swmm_diagnostic_links", mode="after")
+    @classmethod
+    def _validate_swmm_diagnostic_links(cls, v):
+        """Refuse a blank value, and any value but ``ALL`` that is not an absolute path.
+
+        The solver reads the file from its own working directory, which is not the directory of this config, so a
+        relative name would resolve to a different file or to none and the run would record no link. Whether the
+        file exists is a preflight question (``validation._validate_coupling_diagnostics``), because a config
+        loads on machines where the file does not.
+        """
+        if v is None:
+            return v
+        value = v.strip()
+        if not value:
+            raise ValueError("swmm_diagnostic_links is blank; use ALL, an absolute path, or leave it unset")
+        if value != "ALL" and not Path(value).is_absolute():
+            raise ValueError(
+                f"swmm_diagnostic_links {value!r} is neither ALL nor an absolute path; the solver reads the file "
+                "from its own working directory, where a relative name would not resolve to this file"
+            )
+        return value
 
     @field_validator("resume_interruption_schedule", mode="after")
     @classmethod

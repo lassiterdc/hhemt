@@ -256,6 +256,10 @@ EXCEPTIONS: tuple[tuple[str, str], ...] = (
     # One value of the swmm_coupling_mode setting is named below, where the converted-outfall check reads it.
     ("src/hhemt/validation.py", 'mode == "lega' + 'cy"'),
     ("src/hhemt/validation.py", "swmm_coupling_mode is lega" + "cy, which couples"),
+    # The same enumerated value is compared or passed as the setting's value by the analysis-entry check and its tests.
+    ("src/hhemt/analysis.py", 'cfg.swmm_coupling_mode == "lega' + 'cy" and bool('),
+    ("tests/test_manhole_table.py", 'mode="lega' + 'cy")'),
+    ("tests/test_manhole_table_review.py", 'mode="lega' + 'cy")'),
 )
 
 

@@ -89,6 +89,7 @@ def _make_stub_system(target_dem_resolution: float, gpu_hardware, gpu_compilatio
         "target_dem_resolution": target_dem_resolution,
         "gpu_hardware": gpu_hardware,
         "gpu_compilation_backend": gpu_compilation_backend,
+        "TRITONSWMM_extra_c_flags": "",
     }
     cfg_system = SimpleNamespace(**_fields)
     # Faithful model_dump/model_dump_json shim so the YAML write

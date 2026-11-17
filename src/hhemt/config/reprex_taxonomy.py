@@ -144,6 +144,8 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "landuse_lookup_mannings_colname": "experiment",
     "manhole_diameter": "experiment",
     "manhole_loss_coefficient": "experiment",
+    # "manhole_table" is a Path field: its bucket, "experiment", comes from its bundle path policy.
+    "manhole_table_fill_with_constants": "experiment",
     # "experiment": it decides which manholes exchange water with the surface, so it is part
     # of what was modelled and a reproducer keeps it.
     "one_coupled_inflow_node_per_dem_cell": "experiment",
@@ -206,6 +208,18 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     # Gates WHAT LANDS in the coupled node time-series store (the exchange flux series and its eight
     # statistics), so it is an experiment field by the RULE above, like its sibling directly above.
     "toggle_coupling_exchange_flow": "experiment",
+    # The coupling-diagnostics group. Each is "experiment" by the RULE above and none is an HPC-execution field:
+    # the toggle and the links decide WHICH capture files exist, the interval and the lag change what SWMM receives
+    # and when (a hydraulics-changing arm by design), the report step decides the time coordinate of the SWMM series,
+    # and the extra C flags decide how the coupled solver was built. A reproducer keeps every one of them, because
+    # dropping one changes the files or the numbers the reproduction is checked against.
+    "toggle_coupling_diagnostics": "experiment",
+    "swmm_diagnostic_links": "experiment",
+    "swmm_diagnostic_node_path3_per_step": "experiment",
+    "swmm_coupling_interval": "experiment",
+    "swmm_coupling_lag": "experiment",
+    "swmm_report_step_s": "experiment",
+    "TRITONSWMM_extra_c_flags": "experiment",
     # Gates whether the per-scenario time-series stores survive the consolidation, so it decides WHAT LANDS on disk.
     "toggle_clear_scenario_timeseries_after_consolidation": "experiment",
     # The three keep-lists decide which time-series variables survive on disk and in the consolidated store.

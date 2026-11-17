@@ -435,7 +435,7 @@ SHA_MAIN_QUALITY_SNAPSHOT_PIN = "bd18215972c348020d53b3a8a1a64ee6266cae28"
 #: release needs a registry entry.
 SHA_MAIN_SWMM_PATH_REFUSAL_PIN = "bb13ea28603d50879f8d85cd041c17f440fbdb2b"
 
-#: ORNL UPSTREAM `triton-swmm` TIP, `faba2232`: the synthetic tier's LIVE PIN since package 1j (its source is
+#: ORNL UPSTREAM `triton-swmm` TIP, `faba2232`: the synthetic tier's PREVIOUS LIVE PIN (its source is
 #: identical to `SHA_MAIN_SWMM_PATH_REFUSAL_PIN`'s: `git diff --stat bb13ea28 faba2232 -- src external/swmm/src`
 #: -> empty, measured 2026-11-15), and the build the coupling-flux experiment compiles
 #: natively on Rivanna. It is the ORNL re-curation of the fork's coupled-run work, so the fork's
@@ -465,6 +465,32 @@ SHA_MAIN_SWMM_PATH_REFUSAL_PIN = "bb13ea28603d50879f8d85cd041c17f440fbdb2b"
 #:     entry inherits a38338b0's verdict on a38338b0's basis, no stronger.
 #: It is an entry of every defect below as ABSENT; none is `also_present_in`.
 SHA_ORNL_COUPLING_DECLARATION_PIN = "faba223212408f04b7a3dbf6580adedf4a4e6b13"
+
+#: THE LIVE PIN: the head of `develop` on the fork (`github.com/lassiterdc/triton.git`), `deefa6e6`, read
+#: 2026-11-16 with `git ls-remote https://github.com/lassiterdc/triton.git refs/heads/develop`, whose one line names
+#: the full sha stored below. It descends from `faba2232` (`git merge-base faba2232 deefa6e6` -> `faba2232`, and
+#: `git rev-list --count faba2232..deefa6e6` -> 10), so every ancestry rc recorded for `faba2232` above holds here too:
+#: 3a832f7d, 9db367dd, 0cf5faff, a38338b0 and faba2232 itself are ancestors (rc 0 each); 5d2ad1e8, 681d809,
+#: d456518, 852f10c and 2ecb1cf are not (rc 1 each, the two-probe trap: the curated fixes are new trees).
+#: The ten commits add solver diagnostics and options whose cfg defaults are off or inert (`git diff --stat faba2232
+#: deefa6e6 -- src external` -> 12 files): the per-step SWMM and TRITON captures, the per-node manhole table
+#: (`swmm_manhole_table`), the coupling interval and lag, the timers, and a neutrality test suite. Measured
+#: 2026-11-16 in a full, non-shallow clone (`git rev-parse --is-shallow-repository` -> false), the
+#: content probes that decide every verdict ancestry cannot are UNCHANGED from `faba2232`, each read as
+#: `git show {sha}:{path} | grep -o {needle} | wc -l` (unit: occurrences), with the same needle's count at the
+#: fix commit as the must-be-nonzero control:
+#:   * traversal guard: `s->routeTo >= 0` in external/swmm/src/solver/snapshot.c -> 1 at deefa6e6 (1 at faba2232 and
+#:     681d809, 0 at 031ea42b); SNAPSHOT_VERSION 7 at both.
+#:   * clean-start disposal: `swmm_snapshot_keep_previous` in src/swmm_triton.h -> 5 at deefa6e6 (5 at faba2232 and
+#:     d456518, 0 at 681d809).
+#:   * coupled list and rim: `coupled_node_rim(` in src/swmm_triton.h -> 2 at deefa6e6 (2 at faba2232 and 852f10c,
+#:     0 at d456518).
+#:   * US-unit lengths: `0.3048` in src/swmm_triton.h -> 2 at deefa6e6 (2 at faba2232 and 2ecb1cf, 0 at 852f10c).
+#:   * ghost ring: `write_output_ghost_ring|read_output_ghost_ring` -> output.h 5, triton.h 1 at deefa6e6 (the same at
+#:     faba2232), and a38338b0 is an ancestor, so this entry inherits a38338b0's verdict on its basis, no stronger.
+#: It is an entry of every defect below as ABSENT; none is `also_present_in`. `faba2232` stays registered because
+#: recorded runs name it, and it is the baseline the solver's neutrality suite compares against.
+SHA_TRITON_CUSTOM_DIAGNOSTICS_PIN = "deefa6e6fcb26184a60eb8242dc82dcc3cab9618"
 # the curated traversal fix, from 23b75781 (guard re-predication)
 SHA_CURATED_TRAVERSAL_GUARD_FIX = "681d809ad1449b11ce5e0c4e1162429b2f13d9c6"
 # the curated clean-start disposal, from cf357e4b (earlier-run disposal)
@@ -531,6 +557,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
                 # 3a832f7d is an ANCESTOR of faba2232 -- measured rc 0 in a full ORNL clone (2026-11-06).
                 SHA_ORNL_COUPLING_DECLARATION_PIN,
+                # deefa6e6 descends from faba2232 (rc 0); the content probes read the same (that constant's comment).
+                SHA_TRITON_CUSTOM_DIAGNOSTICS_PIN,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME}),
@@ -568,6 +596,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 SHA_MAIN_SWMM_PATH_REFUSAL_PIN,
                 # 9db367dd is an ANCESTOR of faba2232 -- measured rc 0 in a full ORNL clone (2026-11-06).
                 SHA_ORNL_COUPLING_DECLARATION_PIN,
+                # deefa6e6 descends from faba2232 (rc 0); the content probes read the same (that constant's comment).
+                SHA_TRITON_CUSTOM_DIAGNOSTICS_PIN,
             }
         ),
         also_present_in=frozenset({SHA_PRE_COUPLED_RESUME, SHA_COUPLED_RESUME_FIX, SHA_PRE_DEPTH_SCATTER}),
@@ -624,6 +654,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # faba2232 descends from a38338b0 (rc 0 in a full ORNL clone, 2026-11-06) and inherits the SAME
                 # independent-upstream verdict; `is-ancestor 5d2ad1e8 faba2232` -> rc 1, the same trap.
                 SHA_ORNL_COUPLING_DECLARATION_PIN,
+                # deefa6e6 descends from faba2232 (rc 0); the content probes read the same (that constant's comment).
+                SHA_TRITON_CUSTOM_DIAGNOSTICS_PIN,
             }
         ),
         also_present_in=frozenset(
@@ -690,6 +722,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # faba2232 carries the guard by CONTENT (`s->routeTo >= 0` in snapshot.c -> 1, SNAPSHOT_VERSION 7);
                 # the fork fix 681d809 is not an ancestor (rc 1); see the SHA_ORNL_COUPLING_DECLARATION_PIN comment.
                 SHA_ORNL_COUPLING_DECLARATION_PIN,
+                # deefa6e6 descends from faba2232 (rc 0); the content probes read the same (that constant's comment).
+                SHA_TRITON_CUSTOM_DIAGNOSTICS_PIN,
                 # THE SEVEN NO-PAYLOAD SHAS. `external/swmm/src/solver/snapshot.c` does not exist
                 # at any of them (`git ls-tree` -> 0 entries each, against a control needle
                 # `src/triton.h` -> 1 entry each, so the zero is an absence and not a bad path).
@@ -798,6 +832,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # faba2232 carries the disposal by CONTENT: swmm_snapshot_keep_previous counts 5 in
                 # src/swmm_triton.h and snapshot.c exists (1 entry); d456518 is not an ancestor (rc 1).
                 SHA_ORNL_COUPLING_DECLARATION_PIN,
+                # deefa6e6 descends from faba2232 (rc 0); the content probes read the same (that constant's comment).
+                SHA_TRITON_CUSTOM_DIAGNOSTICS_PIN,
                 # THE SEVEN NO-PAYLOAD SHAS: snapshot.c -> 0 entries at each.
                 SHA_PRE_COUPLED_RESUME,
                 SHA_COUPLED_RESUME_FIX,
@@ -842,6 +878,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # faba2232 carries the fix by CONTENT: coupled_node_rim( counts 2 in src/swmm_triton.h
                 # (as at 852f10c); 852f10c is not an ancestor of it (rc 1).
                 SHA_ORNL_COUPLING_DECLARATION_PIN,
+                # deefa6e6 descends from faba2232 (rc 0); the content probes read the same (that constant's comment).
+                SHA_TRITON_CUSTOM_DIAGNOSTICS_PIN,
             }
         ),
         also_present_in=_REGISTERED_BEFORE_COUPLED_FIXES,
@@ -869,6 +907,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # faba2232 carries the fix by CONTENT: 0.3048 counts 2 in src/swmm_triton.h (as at 2ecb1cf);
                 # 2ecb1cf is not an ancestor of it (rc 1).
                 SHA_ORNL_COUPLING_DECLARATION_PIN,
+                # deefa6e6 descends from faba2232 (rc 0); the content probes read the same (that constant's comment).
+                SHA_TRITON_CUSTOM_DIAGNOSTICS_PIN,
             }
         ),
         also_present_in=_REGISTERED_BEFORE_COUPLED_FIXES,
@@ -899,6 +939,8 @@ REGISTRY: tuple[ModelDefect, ...] = (
                 # faba2232 carries the fix by CONTENT: coupled_node_rim( counts 2 in src/swmm_triton.h
                 # (as at 852f10c); 852f10c is not an ancestor of it (rc 1).
                 SHA_ORNL_COUPLING_DECLARATION_PIN,
+                # deefa6e6 descends from faba2232 (rc 0); the content probes read the same (that constant's comment).
+                SHA_TRITON_CUSTOM_DIAGNOSTICS_PIN,
             }
         ),
         also_present_in=_REGISTERED_BEFORE_COUPLED_FIXES,

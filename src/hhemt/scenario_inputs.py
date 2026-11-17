@@ -136,6 +136,7 @@ class ScenarioInputGenerator:
         nodes_file.write_text("".join(f"{name}\n" for name in selection.written))
         if verbose:
             print(f"Wrote {len(selection.written)} coupling nodes to {nodes_file}.")
+        self._write_manhole_table(selection.written, f_inp)
         if one_per_cell:
             # Written for EVERY scenario prepared with the option on, empty when no cell was
             # reduced, so that an ABSENT file means "not prepared by this build" to the report's
@@ -145,6 +146,45 @@ class ScenarioInputGenerator:
             record.write_text(json.dumps({"cells": selection_cells}, indent=2) + "\n")
         self.scenario.log.inflow_nodes_in_hydraulic_inp_assigned = True
         return
+
+    def _write_manhole_table(self, coupling_nodes, hydraulics_inp) -> None:
+        """Write ``manhole_table.txt`` beside ``coupling_nodes.txt`` when ``manhole_table`` is set.
+
+        The table is judged against ``coupling_nodes``, the exact set TRITON couples, by the rules the
+        run-entry check applies to the candidates, so a table that passed run entry can still be refused
+        here when a coupling node it names was dropped from the set. The file written lists every
+        coupling node in the order of ``coupling_nodes.txt``, the two constants on each node that has no
+        row, so the file TRITON reads is always complete. With no table nothing is written.
+        """
+        from .scenario import (
+            ManholeTableContext,
+            manhole_table_file_for,
+            manhole_table_text,
+            require_valid_manhole_table,
+        )
+
+        # Read tolerantly: the configuration stand-ins of tests/test_scenario_boundary_guards.py carry
+        # only the fields their cases set, and 16 of its tests reach this method without a table.
+        table = getattr(self.cfg_analysis, "manhole_table", None)
+        if table is None:
+            return
+        rows = require_valid_manhole_table(
+            table,
+            coupling_nodes,
+            self.cfg_analysis.manhole_table_fill_with_constants,
+            ManholeTableContext(
+                table=Path(table),
+                model=str(self.system.cfg_system.SWMM_model),
+                diameter_constant=self.cfg_analysis.manhole_diameter,
+                loss_constant=self.cfg_analysis.manhole_loss_coefficient,
+            ),
+        )
+        table_file = manhole_table_file_for(hydraulics_inp)
+        table_file.write_text(
+            manhole_table_text(
+                rows, coupling_nodes, self.cfg_analysis.manhole_diameter, self.cfg_analysis.manhole_loss_coefficient
+            )
+        )
 
     def create_external_boundary_condition_files(self) -> None:
         """

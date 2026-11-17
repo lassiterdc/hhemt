@@ -158,6 +158,19 @@ _INITIAL_CONDITIONS = (
     ("QY_INFILE", "qy_infile", "TRITON_initial_qy_raster"),
 )
 
+# The cfg keys of the coupling-diagnostics group, which the toolkit writes only into the COUPLED cfg and only when the
+# analysis config departs from the default. The spelling is load-bearing in the solver repository, which reads each
+# through `argsd(key, argmap, ...)`: a key spelled differently silently switches nothing on and no cfg parse rejects
+# it. One toggle writes the four capture keys together (the uniform set of the experiment); the links, the interval
+# and the lag are separate because each has its own value.
+DIAG_CAPTURE_KEYS = ("swmm_diag_steps", "diag_domain_balance", "diag_wet_cells", "diag_dt_limiter")
+SWMM_DIAG_LINKS_KEY = "swmm_diag_links"
+SWMM_DIAG_NODE_PATH3_KEY = "swmm_diag_node_path3_per_step"
+SWMM_COUPLING_INTERVAL_KEY = "swmm_coupling_interval"
+SWMM_COUPLING_LAG_KEY = "swmm_coupling_lag"
+#: The value of ``swmm_diagnostic_links`` that records every link; any other value is the path of a file naming them.
+DIAG_LINKS_ALL = "ALL"
+
 # TRITON's `print_option`/`inp_filename` handling for a TRITON-only cfg: the coupled input is commented out.
 _DISABLED_INP = 'inp_filename="#DISABLED_FOR_TRITON_ONLY"'
 _TRITON_ONLY_INP = '#inp_filename=""  # TRITON-only mode (no SWMM coupling)'
@@ -168,6 +181,11 @@ def render_triton_cfg(mapping: dict, *, coupled: bool) -> str:
 
     ``mapping`` carries one value per ``${NAME}`` placeholder of the text. For ``coupled=False`` the SWMM
     input line is commented out, and ``mapping["SWMM"]`` must be ``#DISABLED_FOR_TRITON_ONLY``.
+
+    Beyond the placeholders, the mapping may carry the optional keys ``DIAG_CAPTURES``, ``DIAG_LINKS``,
+    ``DIAG_NODE_PATH3``, ``COUPLING_INTERVAL`` and ``COUPLING_LAG`` (see ``triton_cfg_settings``). Each adds a
+    line to a COUPLED cfg only when it departs from the solver's default, so a mapping without them renders the
+    cfg it always rendered.
     """
     absent = [key for key in _REQUIRED if key not in mapping]
     if absent:
@@ -192,6 +210,22 @@ def render_triton_cfg(mapping: dict, *, coupled: bool) -> str:
     for placeholder, key, _field in _INITIAL_CONDITIONS:
         if values.get(placeholder):
             extra.append(f'{key}="{values[placeholder]}"')
+    # The coupling-diagnostics group acts on the SWMM coupling surface, so the TRITON-only cfg never carries it.
+    # Each line is written only when its value departs from the solver's own default, so a run that names a default
+    # explicitly renders the same bytes as one that leaves it unset.
+    if coupled:
+        if values.get("DIAG_CAPTURES"):
+            extra.extend(f"{key}=1" for key in DIAG_CAPTURE_KEYS)
+        if values.get("DIAG_NODE_PATH3"):
+            extra.append(f"{SWMM_DIAG_NODE_PATH3_KEY}=1")
+        links = values.get("DIAG_LINKS")
+        if links is not None:
+            written = links if links == DIAG_LINKS_ALL else f'"{links}"'
+            extra.append(f"{SWMM_DIAG_LINKS_KEY}={written}")
+        if values.get("COUPLING_INTERVAL") not in (None, 1):
+            extra.append(f"{SWMM_COUPLING_INTERVAL_KEY}={values['COUPLING_INTERVAL']}")
+        if values.get("COUPLING_LAG") not in (None, 0):
+            extra.append(f"{SWMM_COUPLING_LAG_KEY}={values['COUPLING_LAG']}")
     if extra:
         text = text.rstrip("\n") + "\n" + "\n".join(extra) + "\n"
     return text
@@ -201,6 +235,10 @@ def triton_cfg_settings(cfg_analysis, cfg_hpc_system) -> dict:
     """The TRITON cfg settings that are config fields, by the placeholder or key each one renders to.
 
     A run with no HPC system config (a local run) takes the setting an HPC config at its defaults gives.
+
+    The coupling-diagnostics group (``DIAG_CAPTURES``, ``DIAG_LINKS``, ``COUPLING_INTERVAL``, ``COUPLING_LAG``)
+    appears in the result only for a field that departs from its default, so a run that leaves the group unset gets
+    exactly the seven keys above.
     """
     gpu_aware = cfg_hpc_system is not None and bool(cfg_hpc_system.gpu_aware_mpi)
     return {
@@ -211,7 +249,33 @@ def triton_cfg_settings(cfg_analysis, cfg_hpc_system) -> dict:
         "DECOMP_CHECK_FACTOR": cfg_analysis.TRITON_domain_decomposition_check_factor,
         "IT_PRINT": cfg_analysis.TRITON_progress_print_iterations,
         "GPU_DIRECT": int(gpu_aware),
+        **_coupling_diagnostic_settings(cfg_analysis),
     }
+
+
+def _coupling_diagnostic_settings(cfg_analysis) -> dict:
+    """The coupling-diagnostics placeholders that depart from their defaults, and no others.
+
+    Absent keys, not defaulted ones: ``render_triton_cfg`` writes a line only for a key present with a non-default
+    value, and a mapping without the keys is the mapping every older caller built, so a run that leaves the group
+    unset hands the renderer exactly the dict it always did. The fields are read with ``getattr`` because several
+    tests drive the cfg generators with stand-in configs that predate them; the real model always carries them.
+    """
+    settings: dict = {}
+    if getattr(cfg_analysis, "toggle_coupling_diagnostics", False):
+        settings["DIAG_CAPTURES"] = 1
+    links = getattr(cfg_analysis, "swmm_diagnostic_links", None)
+    if links is not None:
+        settings["DIAG_LINKS"] = links
+    if getattr(cfg_analysis, "swmm_diagnostic_node_path3_per_step", False):
+        settings["DIAG_NODE_PATH3"] = 1
+    interval = getattr(cfg_analysis, "swmm_coupling_interval", 1)
+    if interval != 1:
+        settings["COUPLING_INTERVAL"] = interval
+    lag = getattr(cfg_analysis, "swmm_coupling_lag", 0)
+    if lag != 0:
+        settings["COUPLING_LAG"] = lag
+    return settings
 
 
 def _number_text(value: float) -> str:

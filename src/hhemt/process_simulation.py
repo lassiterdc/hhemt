@@ -132,6 +132,208 @@ _CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset({"H", "QX", "QY", "MH", "b
 # multi_allocation_in_progress guard. Do not fold the two.
 _RECLAIM_COUPLED_SWMM_SUFFIXES: frozenset[str] = frozenset({".out"})
 
+# The coupling-diagnostics capture files the coupled solver writes beside its normal outputs (the solver's
+# capture-file format names every file and its layout; `coupling_diagnostics.py` decodes them). Each is ingested into
+# one per-scenario store under `processed/coupling_diagnostics/`, a subdirectory on purpose: the scenario-directory
+# removal test looks for zarr/nc stores directly under `processed/` and these stores are covered by the consolidated
+# tree's `tritonswmm/coupling_diagnostics/{name}` group, so they must not block the removal.
+COUPLING_DIAGNOSTICS_DIRNAME = "coupling_diagnostics"
+#: Variables of the coupled node store the T1b per-node path-3 account adds. Each carries `date_time`, so the
+#: consolidated `timeseries` group picks them up beside `coupling_exchange_flow`, and the per-scenario summary drops
+#: them (see `summarize_swmm_simulation_results`).
+COUPLING_NODE_DIAGNOSTIC_VARIABLES: tuple[str, ...] = ("path3_volume_pos", "path3_volume_neg", "nonconverged_steps")
+#: Variables of the coupled node store that record the manhole values the solver read: the diameter in meters and the
+#: loss coefficient, on ``node_id`` alone. Present only when the analysis sets ``manhole_table``.
+MANHOLE_TABLE_NODE_VARIABLES: tuple[str, ...] = ("manhole_diameter", "manhole_loss_coefficient")
+
+
+def read_written_manhole_table(table_file: Path, coupling_nodes: list[str]) -> tuple[np.ndarray, np.ndarray]:
+    """Decode the ``manhole_table.txt`` a scenario was prepared with into its two value columns.
+
+    The file lists every coupling node as ``{name} {diameter} {loss}`` (scenario preparation writes it complete,
+    the constants on any node the user's table left out), so the values returned are the ones the solver read.
+
+    Parameters
+    ----------
+    table_file
+        The scenario's ``manhole_table.txt``.
+    coupling_nodes
+        The names of the scenario's ``coupling_nodes.txt``, in file order.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        The diameter in meters and the loss coefficient of each coupling node, both in ``coupling_nodes`` order.
+
+    Raises
+    ------
+    ProcessingError
+        If the file is absent, a line is not a name and two finite numbers, a name repeats, a name is no coupling
+        node, or a coupling node has no line. A value is never guessed for a node: the store would then record a
+        manhole size the solver did not use.
+    """
+    if not table_file.is_file():
+        raise ProcessingError(
+            "attach the manhole table values",
+            table_file,
+            "the analysis sets manhole_table and the scenario holds no manhole_table.txt; scenario preparation "
+            "writes it beside coupling_nodes.txt",
+        )
+    known = set(coupling_nodes)
+    values: dict[str, tuple[float, float]] = {}
+    for number, line in enumerate(table_file.read_text().splitlines(), start=1):
+        if not line.strip():
+            continue
+        tokens = line.split()
+        try:
+            parsed = [float(t) for t in tokens[1:]]
+        except ValueError:
+            parsed = []
+        if len(tokens) != 3 or len(parsed) != 2 or not all(np.isfinite(parsed)):
+            raise ProcessingError(
+                "attach the manhole table values",
+                table_file,
+                f"line {number} is not a node name followed by a finite diameter and a finite loss "
+                f"coefficient: {line!r}",
+            )
+        name = tokens[0]
+        if name not in known:
+            raise ProcessingError(
+                "attach the manhole table values",
+                table_file,
+                f"line {number} names {name!r}, which is not a line of coupling_nodes.txt",
+            )
+        if name in values:
+            raise ProcessingError(
+                "attach the manhole table values", table_file, f"line {number} repeats the node {name!r}"
+            )
+        values[name] = (parsed[0], parsed[1])
+    absent = [n for n in coupling_nodes if n not in values]
+    if absent:
+        raise ProcessingError(
+            "attach the manhole table values",
+            table_file,
+            f"{len(absent)} coupling node(s) have no line: {absent[:5]}",
+        )
+    return (
+        np.array([values[n][0] for n in coupling_nodes], dtype="float64"),
+        np.array([values[n][1] for n in coupling_nodes], dtype="float64"),
+    )
+
+
+class CouplingCapture:
+    """One capture file the solver writes when the toolkit asks for it, and how it is ingested.
+
+    ``name`` is the store name and the consolidated group name; ``raw_file`` is the solver's file name (found by name
+    under the coupled output directory, because the solver's sub-directory for it is not part of the interface);
+    ``sidecar`` names the node or link list written beside a binary whose width it fixes; ``reader`` is the
+    ``coupling_diagnostics`` function that decodes it; ``trigger`` is ``"captures"`` (the four lines
+    ``toggle_coupling_diagnostics`` writes), ``"links"`` (``swmm_diagnostic_links``) or ``"path3_step"``
+    (``swmm_diagnostic_node_path3_per_step``, a raw-only capture that is checked and never
+    ingested); ``record_dim`` is the
+    dimension of the decoded store that counts records, so an empty capture is recognisable without reading values.
+    """
+
+    __slots__ = ("name", "raw_file", "reader", "record_dim", "sidecar", "trigger")
+
+    def __init__(
+        self, name: str, raw_file: str, reader: str, trigger: str, record_dim: str, sidecar: str | None = None
+    ):
+        self.name = name
+        self.raw_file = raw_file
+        self.reader = reader
+        self.trigger = trigger
+        self.record_dim = record_dim
+        self.sidecar = sidecar
+
+
+COUPLING_CAPTURES: tuple[CouplingCapture, ...] = (
+    CouplingCapture("swmm_step", "swmm_step_diag.bin", "read_swmm_step_diag", "captures", "swmm_step"),
+    CouplingCapture(
+        "swmm_node_path3",
+        "swmm_node_path3.bin",
+        "read_swmm_node_path3",
+        "captures",
+        "timestep",
+        sidecar="swmm_node_diag.nodes",
+    ),
+    CouplingCapture("edge_flux", "edge_flux.bin", "read_edge_flux", "captures", "step"),
+    CouplingCapture("domain_balance", "domain_balance.csv", "read_domain_balance", "captures", "timestep"),
+    CouplingCapture("wet_cells", "wet_cells.csv", "read_wet_cells", "captures", "timestep"),
+    CouplingCapture("dt_limiter", "dt_limiter.bin", "read_dt_limiter", "captures", "step"),
+    CouplingCapture(
+        "swmm_link_flow",
+        "swmm_link_flow_diag.bin",
+        "read_swmm_link_flow_diag",
+        "links",
+        "swmm_step",
+        sidecar="swmm_link_flow_diag.links",
+    ),
+)
+
+
+#: Capture files the solver writes that the toolkit only CHECKS for and never ingests. ``swmm_node_path3_step.bin``
+#: holds a record per step and node (gigabytes per event), is read lazily from the solver output, and stays out of
+#: ``COUPLING_CAPTURES`` on purpose: an entry there would be decoded into a per-scenario store, consolidated into the
+#: tree and counted by the ``coupling diagnostics captured`` check, copying the whole file three times.
+COUPLING_RAW_ONLY_CAPTURES: tuple[CouplingCapture, ...] = (
+    CouplingCapture(
+        "swmm_node_path3_step",
+        "swmm_node_path3_step.bin",
+        "read_swmm_node_path3_step",
+        "path3_step",
+        "swmm_step",
+        sidecar="swmm_node_diag.nodes",
+    ),
+)
+
+
+def expected_coupling_raw_captures(cfg_analysis) -> tuple[CouplingCapture, ...]:
+    """The raw-only captures an analysis config asks the solver for (``swmm_diagnostic_node_path3_per_step``).
+
+    Read with ``getattr`` and a falsy default, like ``expected_coupling_captures``, so a stand-in config asks for none.
+    """
+    if not getattr(cfg_analysis, "swmm_diagnostic_node_path3_per_step", False):
+        return ()
+    return COUPLING_RAW_ONLY_CAPTURES
+
+
+def expected_coupling_captures(cfg_analysis) -> tuple[CouplingCapture, ...]:
+    """The captures an analysis config asks the solver for, in ``COUPLING_CAPTURES`` order.
+
+    Read with ``getattr`` and a falsy default, deliberately: several tests drive the processing code with a stand-in
+    config that predates the fields. A real config always carries them. A config that sets neither field expects
+    nothing, which is every run made before the captures existed.
+    """
+    captures_on = bool(getattr(cfg_analysis, "toggle_coupling_diagnostics", False))
+    links_on = getattr(cfg_analysis, "swmm_diagnostic_links", None) is not None
+    return tuple(
+        c for c in COUPLING_CAPTURES if (captures_on and c.trigger == "captures") or (links_on and c.trigger == "links")
+    )
+
+
+def coupling_capture_store_path(scen_paths, name: str, out_type: str) -> Path:
+    """Where one capture's per-scenario store lives: ``processed/coupling_diagnostics/{name}.{out_type}``.
+
+    Derived from the coupled node store's path, which sits in the scenario's ``processed/`` folder, so no new
+    ``ScenarioPaths`` field is needed. ``out_type`` is ``target_processed_output_type`` (``zarr`` or ``nc``).
+
+    Raises
+    ------
+    ProcessingError
+        If the scenario has no coupled node store path, which means the coupled model is off and no capture is
+        ever written.
+    """
+    node_store = getattr(scen_paths, "output_tritonswmm_node_time_series", None)
+    if node_store is None:
+        raise ProcessingError(
+            "locate a coupling-diagnostics store",
+            None,
+            "the scenario has no coupled node store path, so the coupled model is off and no capture is written",
+        )
+    return Path(node_store).parent / COUPLING_DIAGNOSTICS_DIRNAME / f"{name}.{out_type}"
+
+
 # Content-addressed truncation boundary for out_tritonswmm/**/swmm/hydraulics.rpt.
 #
 # MEASURED, on two independently produced real coupled rpts (2026-08-17): every line
@@ -624,6 +826,12 @@ class TRITONSWMM_sim_post_processing:
                     f"SWMM simulation not completed. Check model log files in {self._scenario.scen_paths.logs_dir}"
                 )
         print(f"Processing run results for scenario {scen.event_iloc}", flush=True)
+
+        # The coupling-diagnostics capture files are ingested FIRST, before any export that can reclaim raw output
+        # and before the SWMM node store attaches the per-node path-3 account from the ingested store. A toggle that
+        # is on while its file is absent is refused here (rule 1 of the capture design), not later.
+        if model_type == "tritonswmm" and which in {"TRITON", "SWMM", "both"}:
+            self._export_coupling_diagnostics(comp_level=compression_level, verbose=verbose)
 
         # Performance time series processing: model_type determines which performance files to process
         # Performance files only exist for TRITON models (not SWMM-only)
@@ -1914,19 +2122,22 @@ class TRITONSWMM_sim_post_processing:
         solver's exchange side-file is decoded and added as ``coupling_exchange_flow`` on
         ``(date_time, node_id)`` (the mean over each report interval, NaN at uncoupled nodes) plus the
         eight per-node statistics of ``coupling_exchange.STATISTIC_NAMES`` on ``node_id`` (NaN at
-        uncoupled nodes).
+        uncoupled nodes). When the analysis sets ``manhole_table``, the scenario's ``manhole_table.txt`` is
+        decoded and added as ``manhole_diameter`` (meters) and ``manhole_loss_coefficient`` (dimensionless) on
+        ``node_id``, the values the solver read at each coupling node and NaN at uncoupled nodes; with no table
+        neither variable is added.
 
         Raises
         ------
         ProcessingError
-            If a listed coupling node is missing from the SWMM output, or the flux is requested and the
+            If a listed coupling node is missing from the SWMM output, the table file is absent or unreadable
+            (see ``read_written_manhole_table``), or the flux is requested and the
             side-file is absent. A store is never written with the flux variable silently missing:
             ``_clear_raw_outputs`` reclaims the side-file once the node store is written, so a missing
             file means the reclaim ran too early or the run did not couple.
         """
         from hhemt.coupling_exchange import exchange_statistics, read_exchange_sidefile, to_reporting_intervals
-        from hhemt.scenario import coupling_nodes_file_for
-        from hhemt.swmm_output_parser import RPT_DATETIME_FORMAT, read_rpt_starting_date
+        from hhemt.scenario import coupling_nodes_file_for, manhole_table_file_for
 
         nodes_file = coupling_nodes_file_for(f_inp)
         names = [line.strip() for line in nodes_file.read_text().splitlines() if line.strip()]
@@ -1943,6 +2154,13 @@ class TRITONSWMM_sim_post_processing:
         flag = np.zeros(len(node_ids), dtype="int8")
         flag[slots] = 1
         ds_nodes["is_coupling_node"] = ("node_id", flag)
+        if getattr(getattr(self._analysis, "cfg_analysis", None), "manhole_table", None) is not None:
+            diameters, losses = read_written_manhole_table(manhole_table_file_for(f_inp), names)
+            for variable, column in zip(MANHOLE_TABLE_NODE_VARIABLES, (diameters, losses), strict=True):
+                full = np.full(len(node_ids), np.nan)
+                full[slots] = column
+                ds_nodes[variable] = ("node_id", full)
+        ds_nodes = self._attach_coupling_node_diagnostics(ds_nodes)
         if not self._coupling_exchange_flow_on():
             return ds_nodes
 
@@ -1954,12 +2172,7 @@ class TRITONSWMM_sim_post_processing:
                 f"found {len(sidefiles)} exchange side-file(s) where exactly one is required; "
                 "_reclaim_exchange_replay_sidefiles deletes it, and it must not run before the node store is written",
             )
-        rpt_file = self.scen_paths.swmm_hydraulics_rpt
-        starting = read_rpt_starting_date(rpt_file)
-        if starting is None:
-            raise ProcessingError("attach coupling exchange flow", rpt_file, "the report has no Starting Date line")
-        start = pd.to_datetime(starting, format=RPT_DATETIME_FORMAT)
-        report_times_s = (pd.to_datetime(ds_nodes["date_time"].values) - start).total_seconds().to_numpy()
+        report_times_s = self._report_times_seconds(ds_nodes, "attach coupling exchange flow")
         series = read_exchange_sidefile(sidefiles[0], nodes_file)
         intervals = to_reporting_intervals(series, report_times_s)
         flow = np.full((len(report_times_s), len(node_ids)), np.nan)
@@ -1974,6 +2187,199 @@ class TRITONSWMM_sim_post_processing:
             column = np.full(len(node_ids), np.nan)
             column[slots] = values
             ds_nodes[name] = ("node_id", column)
+        return ds_nodes
+
+    def _report_times_seconds(self, ds_nodes: xr.Dataset, operation: str) -> np.ndarray:
+        """The node store's report times as seconds since the SWMM report's ``Starting Date``.
+
+        Raises
+        ------
+        ProcessingError
+            If the coupled report has no ``Starting Date`` line.
+        """
+        from hhemt.swmm_output_parser import RPT_DATETIME_FORMAT, read_rpt_starting_date
+
+        rpt_file = self.scen_paths.swmm_hydraulics_rpt
+        starting = read_rpt_starting_date(rpt_file)
+        if starting is None:
+            raise ProcessingError(operation, rpt_file, "the report has no Starting Date line")
+        start = pd.to_datetime(starting, format=RPT_DATETIME_FORMAT)
+        return (pd.to_datetime(ds_nodes["date_time"].values) - start).total_seconds().to_numpy()
+
+    def _coupling_captures_expected(self) -> tuple[CouplingCapture, ...]:
+        """The captures this analysis asks the solver for (empty for a stand-in config that sets no field)."""
+        return expected_coupling_captures(getattr(self._analysis, "cfg_analysis", None))
+
+    def _coupling_capture_store(self, capture: CouplingCapture) -> Path:
+        """The per-scenario store of ``capture`` for this analysis's processed output type."""
+        return coupling_capture_store_path(
+            self.scen_paths, capture.name, self._analysis.cfg_analysis.target_processed_output_type
+        )
+
+    def _find_capture_file(self, file_name: str) -> Path | None:
+        """The one file called ``file_name`` under the coupled output directory, or None when there is none.
+
+        Searched by name below ``out_tritonswmm`` the way the exchange side-file is (``**/swmm/*_exchange_replay.bin``),
+        because the solver's sub-directory for a capture is not part of the interface the toolkit pins.
+
+        Raises
+        ------
+        ProcessingError
+            If more than one file carries the name: two candidates cannot be told apart by anything the toolkit
+            knows, and choosing one would ingest a file the run may not have written.
+        """
+        out_dir = self.scen_paths.out_tritonswmm
+        if out_dir is None or not Path(out_dir).exists():
+            return None
+        found = sorted(Path(out_dir).glob(f"**/{file_name}"))
+        if len(found) > 1:
+            raise ProcessingError(
+                "locate a coupling-diagnostics capture file",
+                out_dir,
+                f"found {len(found)} files named {file_name} where one is required: {[str(p) for p in found[:3]]}",
+            )
+        return found[0] if found else None
+
+    def _export_coupling_diagnostics(self, *, comp_level: int = 5, verbose: bool = False) -> None:
+        """Ingest every capture file the analysis asked for into its per-scenario store.
+
+        Each capture is decoded by its ``coupling_diagnostics`` reader and written through ``_write_output`` to
+        ``processed/coupling_diagnostics/{name}.{type}``. A capture whose store is already recorded written in the
+        model log is left alone, so a re-run and a reprocess after the raw file was reclaimed are idempotent.
+
+        Raises
+        ------
+        ProcessingError
+            If a capture is expected, its store is not written and its raw file (or the sidecar beside it) is
+            absent: a toggle that is on with its file missing means the solver pin predates the key, the key is
+            misspelt, or the run did not write it, and a store is never written silently without it. Also if a
+            reader refuses the file.
+        """
+        import hhemt.coupling_diagnostics as decoders
+
+        for raw_only in expected_coupling_raw_captures(getattr(self._analysis, "cfg_analysis", None)):
+            raw = self._find_capture_file(raw_only.raw_file)
+            if raw is None:
+                raise ProcessingError(
+                    f"check the {raw_only.name} coupling diagnostic",
+                    self.scen_paths.out_tritonswmm,
+                    f"the analysis asks for {raw_only.raw_file} (swmm_diagnostic_node_path3_per_step) and the run "
+                    "wrote none. Check that the solver at the pinned commit reads the key; a solver that predates "
+                    "it ignores the line without error.",
+                )
+            sidecar = raw.parent / raw_only.sidecar
+            if not sidecar.is_file():
+                raise ProcessingError(
+                    f"check the {raw_only.name} coupling diagnostic",
+                    raw,
+                    f"the name list {raw_only.sidecar} that fixes the file's width is absent beside it",
+                )
+            # Presence is not enough: a solver at another pin can write a different layout under this name, and a
+            # cut-short write leaves a partial record. The lazy reader validates the header (magic, version, value
+            # width, node count against the name list) and the whole-record length through a read-only memory map, so
+            # opening it copies nothing; the Dataset is dropped at once because the file is never ingested.
+            ds = getattr(decoders, raw_only.reader)(raw, sidecar)
+            ds.close()
+            del ds
+
+        for capture in self._coupling_captures_expected():
+            store = self._coupling_capture_store(capture)
+            if store.exists() and self._already_written(store):
+                if verbose:
+                    print(f"{store.name} already written. Not overwriting.")
+                continue
+            start_time = time.time()
+            raw = self._find_capture_file(capture.raw_file)
+            if raw is None:
+                raise ProcessingError(
+                    f"ingest the {capture.name} coupling diagnostic",
+                    self.scen_paths.out_tritonswmm,
+                    f"the analysis asks for {capture.raw_file} (toggle_coupling_diagnostics or swmm_diagnostic_links) "
+                    "and the run wrote none. Check that the solver at the pinned commit reads the key; a solver "
+                    "that predates it ignores the line without error.",
+                )
+            read = getattr(decoders, capture.reader)
+            if capture.sidecar is None:
+                ds = read(raw)
+            else:
+                sidecar = raw.parent / capture.sidecar
+                if not sidecar.is_file():
+                    raise ProcessingError(
+                        f"ingest the {capture.name} coupling diagnostic",
+                        raw,
+                        f"the name list {capture.sidecar} that fixes the file's width is absent beside it",
+                    )
+                ds = read(raw, sidecar)
+            store.parent.mkdir(parents=True, exist_ok=True)
+            self._write_output(ds, store, comp_level, verbose, mode="tritonswmm_coupling_diagnostics")
+            self.log.add_sim_processing_entry(store, get_file_size_MiB(store), time.time() - start_time, True)
+            del ds
+            gc.collect()
+
+    def _attach_coupling_node_diagnostics(self, ds_nodes: xr.Dataset) -> xr.Dataset:
+        """Put the per-node path-3 account of the ingested ``swmm_node_path3`` store onto the coupled node dataset.
+
+        Adds ``path3_volume_pos``, ``path3_volume_neg`` (m3) and ``nonconverged_steps`` (count) on
+        ``(date_time, node_id)``: one value per report interval and per non-outfall node, NaN at the outfalls the
+        solver does not record. The capture is one record per PRINT interval; a record is added into the report
+        interval that contains its end (``(tau - R, tau]``), so with the report step equal to the print interval
+        each record lands on its own row and with a coarser report step several are summed. A report interval
+        that no record ends in stays NaN. All three quantities are additive, so the sum is the interval's value.
+
+        Nothing is attached when the analysis does not ask for the per-node capture.
+
+        Raises
+        ------
+        ProcessingError
+            If a recorded node is absent from the SWMM output, or a record ends after the last report time.
+        """
+        if not any(c.name == "swmm_node_path3" for c in self._coupling_captures_expected()):
+            return ds_nodes
+        capture = next(c for c in COUPLING_CAPTURES if c.name == "swmm_node_path3")
+        store = self._coupling_capture_store(capture)
+        if not store.exists():
+            raise ProcessingError(
+                "attach the coupling per-node path-3 account",
+                store,
+                "the swmm_node_path3 store is absent; it is written by _export_coupling_diagnostics, which "
+                "write_timeseries_outputs runs before the node store",
+            )
+        node_ids = [str(n) for n in ds_nodes["node_id"].values]
+        position = {n: i for i, n in enumerate(node_ids)}
+        with self._open(store) as ds_diag:
+            names = [str(n) for n in ds_diag["node_id"].values]
+            missing = sorted(set(names) - set(position))
+            if missing:
+                raise ProcessingError(
+                    "attach the coupling per-node path-3 account",
+                    store,
+                    f"{len(missing)} recorded node(s) are absent from the SWMM node output: {missing[:5]}",
+                )
+            slots = np.array([position[n] for n in names], dtype=int)
+            report_times_s = self._report_times_seconds(ds_nodes, "attach the coupling per-node path-3 account")
+            t_end = np.asarray(ds_diag["time_s"].values, dtype="float64")
+            row = np.searchsorted(report_times_s, t_end - 1e-6, side="left")
+            beyond = np.flatnonzero(row >= len(report_times_s))
+            if beyond.size:
+                raise ProcessingError(
+                    "attach the coupling per-node path-3 account",
+                    store,
+                    f"{beyond.size} print-interval record(s) end after the last report time "
+                    f"{report_times_s[-1]} s (first at {t_end[beyond[0]]} s)",
+                )
+            hit = np.zeros(len(report_times_s), dtype=bool)
+            hit[row] = True
+            for name in COUPLING_NODE_DIAGNOSTIC_VARIABLES:
+                added = np.zeros((len(report_times_s), len(names)))
+                np.add.at(added, row, np.asarray(ds_diag[name].values, dtype="float64"))
+                full = np.full((len(report_times_s), len(node_ids)), np.nan)
+                full[:, slots] = np.where(hit[:, None], added, np.nan)
+                ds_nodes[name] = xr.DataArray(
+                    full,
+                    dims=("date_time", "node_id"),
+                    coords={"date_time": ds_nodes["date_time"], "node_id": ds_nodes["node_id"]},
+                    attrs={k: v for k, v in ds_diag[name].attrs.items() if k in ("units", "long_name")},
+                )
         return ds_nodes
 
     def _reclaim_exchange_replay_sidefiles(self) -> None:
@@ -4191,8 +4597,11 @@ def summarize_swmm_simulation_results(ds, event_iloc, tstep_dimname="date_time")
     # `_last` partner, so a generic pair would enter its compared set for every water-quality member.
     quality_series = [v for v in ("pollutant_conc", "link_pollutant_conc") if v in ds.data_vars]
     # The exchange flux gets no generic `_max`/`_last` pair for the same reason, and its summary is the eight
-    # static statistics written beside it, which carry no time dimension and pass through unchanged.
-    ds = ds.drop_vars([v for v in ("coupling_exchange_flow",) if v in ds.data_vars])
+    # static statistics written beside it, which carry no time dimension and pass through unchanged. The three
+    # per-interval path-3 account series of the coupling diagnostics are dropped likewise: a maximum or a last value
+    # of a per-interval volume or count would be a named summary no one asked for, and the series themselves are
+    # consolidated through the `timeseries` group.
+    ds = ds.drop_vars([v for v in ("coupling_exchange_flow", *COUPLING_NODE_DIAGNOSTIC_VARIABLES) if v in ds.data_vars])
     lst_time_variant_vars = []
     for var in ds.data_vars:
         if var not in quality_series and tstep_dimname in ds[var].coords:

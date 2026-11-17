@@ -5376,3 +5376,139 @@ non_breaking_allowlist:
     layout_signature: 0e890b4035272c830eaf8af12fc708ac47943ae3a6bfe5eb3da51ec88b264448
     justification: |-
       The water_surface_elevation option text of TRITON_initial_depth_raster_kind is rendering metadata; no on-disk path, key, variable or default changes.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: ce4a6cdc01e58605c3e054b5e651b820830dfe6f373eaecc4c8b40523e5df5c2
+    justification: |-
+      coupling-diagnostics config: additive optional config fields (analysis: toggle_coupling_diagnostics, swmm_diagnostic_links, swmm_coupling_interval, swmm_coupling_lag, swmm_report_step_s; system: TRITONSWMM_extra_c_flags) and their reprex buckets; pure config schema with defaults that leave every existing run and every on-disk tree unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/system.py
+    layout_signature: 034b70f3c2e9c1fd59930e129477b4ef32bf000268b2c09820d1cdc91751efe4
+    justification: |-
+      coupling-diagnostics config: additive optional config fields (analysis: toggle_coupling_diagnostics, swmm_diagnostic_links, swmm_coupling_interval, swmm_coupling_lag, swmm_report_step_s; system: TRITONSWMM_extra_c_flags) and their reprex buckets; pure config schema with defaults that leave every existing run and every on-disk tree unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: b0bc4d4cb082808e0170f7342bf9255a6f0d22ef42f05b4aac57600fc434e5a7
+    justification: |-
+      coupling-diagnostics config: additive optional config fields (analysis: toggle_coupling_diagnostics, swmm_diagnostic_links, swmm_coupling_interval, swmm_coupling_lag, swmm_report_step_s; system: TRITONSWMM_extra_c_flags) and their reprex buckets; pure config schema with defaults that leave every existing run and every on-disk tree unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 17db7c79e968b2c4b65ae505059d8d48731b993627198877b02d201c695b4778
+    justification: |-
+      coupling-diagnostics capture ingestion: ADDITIVE only. New optional per-scenario stores under processed/coupling_diagnostics/ (a subdirectory the scenario-removal glob does not scan), new optional consolidated groups tritonswmm/coupling_diagnostics/{capture}, three new node-store variables (path3_volume_pos, path3_volume_neg, nonconverged_steps) and two root attributes (swmm_coupling_interval, swmm_coupling_lag) that exist only for an analysis that sets the new config fields or is coupled; the consolidation fingerprint gains an entry only for a non-default setting so no existing stamped tree is rebuilt; cf_conventions gains map entries only. Every existing on-disk analysis reads and writes unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 0da4676f4aefbed990fb0509caa45a5083f76918e550acff24f40705c0f732f0
+    justification: |-
+      coupling-diagnostics capture ingestion: ADDITIVE only. New optional per-scenario stores under processed/coupling_diagnostics/ (a subdirectory the scenario-removal glob does not scan), new optional consolidated groups tritonswmm/coupling_diagnostics/{capture}, three new node-store variables (path3_volume_pos, path3_volume_neg, nonconverged_steps) and two root attributes (swmm_coupling_interval, swmm_coupling_lag) that exist only for an analysis that sets the new config fields or is coupled; the consolidation fingerprint gains an entry only for a non-default setting so no existing stamped tree is rebuilt; cf_conventions gains map entries only. Every existing on-disk analysis reads and writes unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: eaa039ab049e5898fa5be6501f604d53d69c33515fc0e54de91bbf847986ddc3
+    justification: |-
+      coupling-diagnostics capture ingestion: ADDITIVE only. New optional per-scenario stores under processed/coupling_diagnostics/ (a subdirectory the scenario-removal glob does not scan), new optional consolidated groups tritonswmm/coupling_diagnostics/{capture}, three new node-store variables (path3_volume_pos, path3_volume_neg, nonconverged_steps) and two root attributes (swmm_coupling_interval, swmm_coupling_lag) that exist only for an analysis that sets the new config fields or is coupled; the consolidation fingerprint gains an entry only for a non-default setting so no existing stamped tree is rebuilt; cf_conventions gains map entries only. Every existing on-disk analysis reads and writes unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 79b1070aaba4db7f88e6a50f5a5e913bbf2ff81ee5d31173881f085cc4782a5b
+    justification: |-
+      coupling-diagnostics capture ingestion: one-line repair of the capture consolidation join (index coordinate-less dimensions before the outer join); additive group content only, same additive-only layout reasoning as the capture-ingestion row above. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: ce4a6cdc01e58605c3e054b5e651b820830dfe6f373eaecc4c8b40523e5df5c2
+    justification: |-
+      coupling-diagnostics capture ingestion: description-only change of timeseries_keep_swmm_node (names the three per-interval path-3 variables as selectable); no field, default or on-disk path changes. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 2c8453c276296490e16245601ff6b409b4424019693a49d5d3f8c19c44287b9f
+    justification: |-
+      coupling-diagnostics capture ingestion: description-only change of timeseries_keep_swmm_node (names the three per-interval path-3 variables as selectable); no field, default or on-disk path changes. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 5ba29279ac59736a6cd71c61b4b7eee2fa014cd7bd267264d5d2341fdd507de2
+    justification: |-
+      coupling-diagnostics config: adds the optional bool field swmm_diagnostic_node_path3_per_step (default False), its reprex bucket and a raw-file presence check in sim processing; no on-disk layout change, defaults leave existing runs unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: cc9eb7c032eddfb677f6a9024fc84e682eca503e07a4c57f7fbac3e264f75334
+    justification: |-
+      coupling-diagnostics config: adds the optional bool field swmm_diagnostic_node_path3_per_step (default False), its reprex bucket and a raw-file presence check in sim processing; no on-disk layout change, defaults leave existing runs unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 73fc11ed56779d2d30295c833bfa0d2b00a2450d7f69250d4e8302811286d200
+    justification: |-
+      coupling-diagnostics config: adds the optional bool field swmm_diagnostic_node_path3_per_step (default False), its reprex bucket and a raw-file presence check in sim processing; no on-disk layout change, defaults leave existing runs unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: e00e2be49ae142d2659f6f5fed98dae350ee7ad12fd11826c3e8df1f7b7bd37b
+    justification: |-
+      coupling-diagnostics sim processing: opens the raw-only per-step path-3 capture through its lazy reader to validate it; no on-disk layout change. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 95d437a56e8115807e3733d7a3d0ed870b3fded51b5fbb3301c25c4828f99c99
+    justification: |-
+      merge of develop 423c5d6d (release 0.3.0) into the coupling-diagnostics run: re-stamps analysis.py after combining the release run's water_surface_elevation option wording (rendering metadata) with this run's additive coupling-diagnostics config fields; no on-disk path, key, variable or default changes. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 97e5aee743e97dfe7f8cef6f6465242a27360640b0124c885e45f6baf3ed899d
+    justification: |-
+      coupling-diagnostics capture ingestion: re-stamps processing_analysis.py as it stands (additive capture consolidation, covered by the capture-ingestion rows above, which expired when the merged file differed from both stamped signatures) so the run's diff against develop 423c5d6d grades clean. Additive-only group content; no existing on-disk analysis changes. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: ce53ae584fed546714cf3034de4b028a1cec35eb6deaa4de4303999b86d6b00b
+    justification: |-
+      coupling-diagnostics compile identity: the coupled compile identity gains the extra C flags in the sensitivity master's compile key; additive, defaults leave every existing run and on-disk tree unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 0b6fe66573d8508b893bea8582bf3c23c783202a813040922e4fa288fae65403
+    justification: |-
+      coupling-diagnostics config: rewords the description of toggle_coupling_diagnostics to state the cfg-key spelling requirement in the present tense; rendering metadata only, no field, default, key or on-disk path changes. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 06efb6167900b1ede09184b02eaef4796c0b1c761c86c150fa01905badfb4d96
+    justification: |-
+      coupling-diagnostics capture ingestion: rewords one comment above COUPLING_DIAGNOSTICS_DIRNAME; comment only, no code, on-disk path, key or variable changes. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: c0e079ec228fc5d241143207d2d0ffb11d11b9837e95726efedd3ad37e414109
+    justification: |-
+      per-node manhole table: adds the optional per-node manhole table and no on-disk layout change an existing analysis reads: two config fields (manhole_table, default None; manhole_table_fill_with_constants, default False), one optional per-scenario file manhole_table.txt written beside coupling_nodes.txt only when a table is set, and one optional cfg line swmm_manhole_table written only when a table is set. An older config loads unchanged and a run with no table writes the bytes it wrote before. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 13733dc9be1cc01440d6b06420e5a860ef804c5f5ffceccb586465ad7a936b58
+    justification: |-
+      per-node manhole table: adds the optional per-node manhole table and no on-disk layout change an existing analysis reads: two config fields (manhole_table, default None; manhole_table_fill_with_constants, default False), one optional per-scenario file manhole_table.txt written beside coupling_nodes.txt only when a table is set, and one optional cfg line swmm_manhole_table written only when a table is set. An older config loads unchanged and a run with no table writes the bytes it wrote before. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/scenario.py
+    layout_signature: 3d6fa398f25517f90607f56777d347c3e06be2c616961eaa1fb9faf43998d1b7
+    justification: |-
+      per-node manhole table: adds the optional per-node manhole table and no on-disk layout change an existing analysis reads: two config fields (manhole_table, default None; manhole_table_fill_with_constants, default False), one optional per-scenario file manhole_table.txt written beside coupling_nodes.txt only when a table is set, and one optional cfg line swmm_manhole_table written only when a table is set. An older config loads unchanged and a run with no table writes the bytes it wrote before. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/scenario_inputs.py
+    layout_signature: 51c57983bdd0534ce8f2d2a67f875d1ae15858837bfb2a46d507bf03926ad109
+    justification: |-
+      per-node manhole table: adds the optional per-node manhole table and no on-disk layout change an existing analysis reads: two config fields (manhole_table, default None; manhole_table_fill_with_constants, default False), one optional per-scenario file manhole_table.txt written beside coupling_nodes.txt only when a table is set, and one optional cfg line swmm_manhole_table written only when a table is set. An older config loads unchanged and a run with no table writes the bytes it wrote before. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/scenario.py
+    layout_signature: 64a8fcdc6b290a797aa49b772ce1d4dfdb1263af5d3add7aa31b0553f26525c5
+    justification: |-
+      per-node manhole table: comment-only re-statement of why the table is read tolerantly; no field, default, key or on-disk change. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/scenario_inputs.py
+    layout_signature: 7bd9f8a9e8bbf2e0d336e327fef8a7effb16786255a55546245dc40ab98fa8a2
+    justification: |-
+      per-node manhole table: comment-only re-statement of why the table is read tolerantly; no field, default, key or on-disk change. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 50dc4dec54929913872acae3535b28d03cad1f52a4db24b3c43ba32ccf72483c
+    justification: |-
+      per-node manhole table values on the coupled node store: when manhole_table is set the processed node store gains two optional variables, manhole_diameter and manhole_loss_coefficient, on node_id, plus their CF attributes and provenance rows. A store written with no table carries neither, so no existing analysis changes on disk. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: b2df408225ffa16a48cdf3e9abcf076eee19c2ab127371d8856558b4ddb2f138
+    justification: |-
+      per-node manhole table values on the coupled node store: when manhole_table is set the processed node store gains two optional variables, manhole_diameter and manhole_loss_coefficient, on node_id, plus their CF attributes and provenance rows. A store written with no table carries neither, so no existing analysis changes on disk. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/scenario.py
+    layout_signature: 72ff3203f953c3eaffd9bdfe5742a32f069e2c461e2bd6f6222b100d5fb58017
+    justification: |-
+      NON-BREAKING. Adds the triton fork develop head deefa6e6fcb26184a60eb8242dc82dcc3cab9618 to SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS, SWMM_QUALITY_SNAPSHOT_SHAS and SWMM_COUPLING_NODES_CONTAINER_SHAS, the three sets that decide whether a container build reads swmm_node_rim_from_dem and swmm_coupling_nodes and whether a build's snapshot carries water-quality state (config_utils.h reads both keys at that commit, and snapshot.c carries oldQual, count 7). The sets are read only by guards that return a bool or raise ConfigurationError and write nothing; a larger set only turns a refusal or a forced replay into a pass for the added commit. No path, filename, log field, zarr group, fingerprint, Snakemake rule or figure stem changes, and _version.json is untouched.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: c018ea125c49968e7a556de5192737c0a0d55ece28c9db53d6216e111e1f13c1
+    justification: |-
+      Description text of config fields rewritten to the published style brief. No field, default, validator, name or on-disk path changed.
+  - path: src/hhemt/config/system.py
+    layout_signature: e99d51fb45b27dfb34035cf4ecb463e13e8dfe539b89fdbe09d0cbe0894cb010
+    justification: |-
+      Description text of config fields rewritten to the published style brief. No field, default, validator, name or on-disk path changed.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: d1f595ba42762948de7bcf067b6d31b014c3db7cf1cbd52f8624f9fb1dbac26c
+    justification: |-
+      Description and docstring text only, rewritten to the published style brief. No field, default, validator, name or on-disk path changed.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: f42a984c1866f78f731cddf94340969174131ce14804f106587386fd458040dd
+    justification: |-
+      Description and docstring text only, rewritten to the published style brief. No field, default, validator, name or on-disk path changed.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: ec24da6edaae3209a5c73ea3a9ade5a636ef4cfa2b8086b2c185077c49c03a47
+    justification: |-
+      Description and docstring text only, rewritten to the published style brief. No field, default, validator, name or on-disk path changed.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: c018ea125c49968e7a556de5192737c0a0d55ece28c9db53d6216e111e1f13c1
+    justification: |-
+      Description text of config fields rewritten to the published style brief. No field, default, validator, name or on-disk path changed.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: ec24da6edaae3209a5c73ea3a9ade5a636ef4cfa2b8086b2c185077c49c03a47
+    justification: |-
+      Description text of config fields rewritten to the published style brief. No field, default, validator, name or on-disk path changed.

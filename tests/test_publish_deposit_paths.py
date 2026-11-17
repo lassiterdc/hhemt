@@ -152,6 +152,7 @@ def _every_path_field_absolute(tmp_path: Path) -> SimpleNamespace:
             "TRITON_initial_depth_raster_kind": "depth",
             "TRITON_initial_qx_raster": str(_put(out / "qx.asc")),
             "TRITON_initial_qy_raster": str(_put(out / "qy.asc")),
+            "manhole_table": str(_put(out / "manhole.csv", "node_id,manhole_diameter_m,manhole_loss_coefficient\n")),
         },
     )
     for cfg in (world.analysis._system.cfg_system, world.analysis.cfg_analysis):

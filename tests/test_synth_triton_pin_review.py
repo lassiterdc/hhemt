@@ -21,6 +21,7 @@ import pytest
 _ROOT = Path(__file__).resolve().parent.parent
 _FIXTURE = _ROOT / "tests" / "fixtures" / "_triton_source_cache.py"
 _FABA = "faba223212408f04b7a3dbf6580adedf4a4e6b13"
+_DEEFA = "deefa6e6fcb26184a60eb8242dc82dcc3cab9618"
 # Written in two pieces so this file does not carry the full old sha itself: the census below finds every tracked file
 # that does, and this one is not allowed to be among them.
 _BB13 = "bb13ea28" + "603d50879f8d85cd041c17f440fbdb2b"
@@ -35,6 +36,22 @@ _RESTATEMENTS = (
 #: The only tracked tests/src files that may still carry the OLD pin's full sha: the registry and the sets (recorded
 #: runs name it) and the re-pin review's `_BB13EA28` member of `_CARRYING`.
 _OLD_PIN_ALLOWED = frozenset({"src/hhemt/model_defects.py", "src/hhemt/scenario.py", "tests/test_review_repin_s2.py"})
+
+
+#: The only tracked tests/src files that may carry the full sha of the pin before the live one (`faba2232`): the
+#: registry and the sets, the re-pin and registration reviews, the set-membership guard, the cross-solver renderer's
+#: recorded-solver fixture, and this file's own outgoing-pin literal.
+_FABA_ALLOWED = frozenset(
+    {
+        "src/hhemt/model_defects.py",
+        "src/hhemt/scenario.py",
+        "tests/test_review_repin_s2.py",
+        "tests/test_triton_pin_faba2232.py",
+        "tests/test_scenario_boundary_guards.py",
+        "tests/test_cross_solver_renderer.py",
+        "tests/test_synth_triton_pin_review.py",
+    }
+)
 
 
 def _module_string(source: str, name: str) -> str | None:
@@ -56,20 +73,20 @@ def _live_pin() -> str:
 
 
 def test_the_live_pin_is_the_ornl_head_and_the_registry_constant_agrees():
-    """Property: `TRITON_PIN` is the full `faba2232` sha, and `model_defects` names the same commit as the ORNL pin.
+    """Property: `TRITON_PIN` is the full `deefa6e6` sha, and `model_defects` names the same commit as the live pin.
 
     Class: the pin move itself. Why: a short, mistyped or old literal still imports. What kills it: leaving the
     literal on `bb13ea28`, or a 39-character edit.
     """
-    from hhemt.model_defects import SHA_ORNL_COUPLING_DECLARATION_PIN
+    from hhemt.model_defects import SHA_TRITON_CUSTOM_DIAGNOSTICS_PIN
 
     pin = _live_pin()
-    assert pin == _FABA, pin
-    assert SHA_ORNL_COUPLING_DECLARATION_PIN == pin
+    assert pin == _DEEFA, pin
+    assert SHA_TRITON_CUSTOM_DIAGNOSTICS_PIN == pin
     assert re.fullmatch(r"[0-9a-f]{40}", pin)
     # Control: the extractor reports a planted old literal as the old literal, so the equality above can fail.
     assert _module_string(f'TRITON_PIN = "{_BB13}"\n', "TRITON_PIN") == _BB13
-    assert _module_string(f'TRITON_PIN = "{_BB13}"\n', "TRITON_PIN") != _FABA
+    assert _module_string(f'TRITON_PIN = "{_BB13}"\n', "TRITON_PIN") != _DEEFA
 
 
 @pytest.mark.parametrize(("rel", "name"), _RESTATEMENTS, ids=[n for _, n in _RESTATEMENTS])
@@ -116,7 +133,7 @@ def test_the_outgoing_pin_stays_registered_where_recorded_runs_name_it():
         scenario.SWMM_COUPLING_NODES_CONTAINER_SHAS,
     )
     for s in sets:
-        assert _FABA in s and _BB13 in s
+        assert _DEEFA in s and _FABA in s and _BB13 in s
     assert not any(("0123456789abcdef" * 3)[:40] in s for s in sets)
 
 
@@ -124,19 +141,21 @@ def test_no_tracked_file_outside_the_registry_still_names_the_old_pin_in_full():
     """Property: the full 40-character old sha is carried only by the registry, the sets and the re-pin review.
 
     Class: a stale restatement of any shape, including ones the three-name list above does not know. Why: the
-    census is `grep -rln 'TRITON_PIN\\b\\|bb13ea28' tests src`; a literal this move missed is a file in
+    census is `git grep -lF {sha} -- tests src docs`; a literal this move missed is a file in
     this census that is not allowed. What kills it: a stale `_PIN = "bb13..."` anywhere in tests/src. Control: the
     same `git grep` over the NEW sha finds the fixture, so a zero for the old sha is not a broken matcher.
     """
 
     def census(sha: str) -> set[str]:
         r = subprocess.run(
-            ["git", "-C", str(_ROOT), "grep", "-lF", sha, "--", "tests", "src"], capture_output=True, text=True
+            ["git", "-C", str(_ROOT), "grep", "-lF", sha, "--", "tests", "src", "docs"], capture_output=True, text=True
         )
         if r.returncode not in (0, 1):
             pytest.skip(f"git grep unavailable here (rc {r.returncode})")
         return {ln for ln in r.stdout.splitlines() if ln}
 
-    assert "tests/fixtures/_triton_source_cache.py" in census(_FABA)
+    assert "tests/fixtures/_triton_source_cache.py" in census(_DEEFA)
     extra = census(_BB13) - _OLD_PIN_ALLOWED
     assert extra == set(), extra
+    extra_faba = census(_FABA) - _FABA_ALLOWED
+    assert extra_faba == set(), extra_faba

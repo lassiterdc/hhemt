@@ -450,7 +450,38 @@ class TRITONSWMM_analysis_post_processing:
                 for ei in self._analysis.df_sims.index
             ),
         }
+        # The coupling-diagnostics group joins the payload ONLY when the analysis departs from the defaults, so an
+        # analysis that never sets these fields keeps the fingerprint it had before they existed and its stamped
+        # tree is not rebuilt once for nothing.
+        diagnostics = self._coupling_diagnostics_fingerprint()
+        if diagnostics:
+            payload["coupling_diagnostics"] = diagnostics
         return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+    def _coupling_diagnostics_fingerprint(self) -> dict:
+        """The config values that gate the coupling-diagnostics groups and attributes of the tree, non-defaults only.
+
+        The captures gate which ``tritonswmm/coupling_diagnostics/*`` groups land; the two T3 values are stamped on
+        the root as attributes, so a change to either changes the tree.
+        """
+        cfg = self._analysis.cfg_analysis
+        out: dict = {}
+        captures = [c.name for c in self._coupling_captures()]
+        if captures:
+            out["captures"] = captures
+        if getattr(cfg, "swmm_coupling_interval", 1) != 1:
+            out["swmm_coupling_interval"] = int(cfg.swmm_coupling_interval)
+        if getattr(cfg, "swmm_coupling_lag", 0) != 0:
+            out["swmm_coupling_lag"] = int(cfg.swmm_coupling_lag)
+        return out
+
+    def _coupling_captures(self) -> tuple:
+        """The coupling-diagnostics captures this analysis asks for, none when the coupled model is not enabled."""
+        from hhemt.process_simulation import expected_coupling_captures
+
+        if "tritonswmm" not in set(self._analysis._get_enabled_model_types()):
+            return ()
+        return expected_coupling_captures(self._analysis.cfg_analysis)
 
     def _timeseries_keep_for_fingerprint(self) -> dict[str, list[str]]:
         """The RESOLVED keep-lists, per kind and enabled family, sorted so a reordered list does not rebuild.
@@ -595,14 +626,21 @@ class TRITONSWMM_analysis_post_processing:
         # exactly as the summary path does, which the master's member-ensure loop already tolerates under
         # allow_incomplete=True.
 
-        tree_dict["/"] = xr.Dataset(
-            attrs={
-                "analysis_id": str(self._analysis.cfg_analysis.analysis_id),
-                "output_creation_date": current_datetime_string(),
-                "consolidation_version": self.CONSOLIDATION_VERSION,
-                "consolidation_inputs_fingerprint": _inputs_fingerprint,
-            }
-        )
+        root_attrs = {
+            "analysis_id": str(self._analysis.cfg_analysis.analysis_id),
+            "output_creation_date": current_datetime_string(),
+            "consolidation_version": self.CONSOLIDATION_VERSION,
+            "consolidation_inputs_fingerprint": _inputs_fingerprint,
+        }
+        # T3 of the coupling diagnostics: the two coupling-schedule values the run used, so a reader of the tree can
+        # tell a baseline from a counterfactual without opening the config. Stamped only for a coupled analysis,
+        # which is the only one the keys act on.
+        if "tritonswmm" in set(self._analysis._get_enabled_model_types()):
+            root_attrs["swmm_coupling_interval"] = int(
+                getattr(self._analysis.cfg_analysis, "swmm_coupling_interval", 1)
+            )
+            root_attrs["swmm_coupling_lag"] = int(getattr(self._analysis.cfg_analysis, "swmm_coupling_lag", 0))
+        tree_dict["/"] = xr.Dataset(attrs=root_attrs)
         tree = xr.DataTree.from_dict(tree_dict)
         apply_global_attributes(tree, analysis_id=str(self._analysis.cfg_analysis.analysis_id))
 
@@ -795,9 +833,95 @@ class TRITONSWMM_analysis_post_processing:
                 # The observation groups are unconditional: the developer's ruling is that observation points end up
                 # consolidated in the analysis-level zarr, and the toggle names the gridded and SWMM series.
                 self.consolidate_timeseries(verbose=verbose, observation_only=True)
+            self._consolidate_coupling_diagnostics(Path(store), compression_level=compression_level, verbose=verbose)
             if clear:
                 self._clear_summary_stores(Path(store), drop_flag=self._exclude_coupling_flag())
             update_zarr_root_attrs(store, dict(tree.attrs))
+
+    # ------------------------------------------------------------------------------------------------
+    # The coupling-diagnostics groups
+    # ------------------------------------------------------------------------------------------------
+
+    #: Tree path of the per-capture groups: ``tritonswmm/coupling_diagnostics/{name}``.
+    _COUPLING_DIAGNOSTICS_GROUP = "tritonswmm/coupling_diagnostics"
+    #: Longest chunk along a capture's own (non-event) dimension; a per-step capture has millions of rows.
+    _COUPLING_DIAGNOSTICS_CHUNK = 1 << 20
+
+    def _consolidate_coupling_diagnostics(
+        self, store: Path, *, compression_level: int = 5, verbose: bool = False
+    ) -> list[str]:
+        """Write one group per requested capture, each holding every scenario's store on ``event_iloc``.
+
+        Must be called inside ``deferred_consolidation(store)``. A group is rewritten whole from the per-scenario
+        stores when every scenario still holds its own. When some scenario's store is gone (its directory was
+        removed after an earlier consolidation) and the group already exists in the tree, the group is left as it is:
+        it was written while every store existed and the removed scenario's slice is only there. A scenario store
+        that is missing with no group to fall back on is refused.
+
+        The captures are ragged across scenarios (a longer event writes more steps), so the scenarios are joined on
+        the union of their step or interval index and the shorter ones are padded with NaN. Returns the groups
+        written.
+
+        Raises
+        ------
+        FileNotFoundError
+            If a scenario's store is absent and the tree holds no group for the capture.
+        """
+        from hhemt.process_simulation import coupling_capture_store_path
+
+        written: list[str] = []
+        out_type = self._analysis.cfg_analysis.target_processed_output_type
+        engine = self._open_engine()
+        for capture in self._coupling_captures():
+            group = f"{self._COUPLING_DIAGNOSTICS_GROUP}/{capture.name}"
+            event_ilocs = [int(i) for i in self._analysis.df_sims.index]
+            paths = {
+                ei: coupling_capture_store_path(
+                    TRITONSWMM_scenario(ei, self._analysis).scen_paths, capture.name, out_type
+                )
+                for ei in event_ilocs
+            }
+            absent = [self._event_slug(ei) for ei, path in paths.items() if not path.exists()]
+            if absent:
+                if self._timeseries_group_state(store, group) is not None:
+                    if verbose:
+                        print(f"{group}: scenario store(s) {absent} are gone and the group exists; leaving it.")
+                    continue
+                raise FileNotFoundError(
+                    f"coupling-diagnostics store {capture.name} is absent for scenario(s) {absent}; "
+                    "reprocess them (hhemt reprocess) before consolidating"
+                )
+            pieces = []
+            for ei, path in paths.items():
+                open_kwargs = {"chunks": None, "engine": engine, "decode_timedelta": False}
+                if engine == "zarr":
+                    open_kwargs["consolidated"] = zarr_store_has_index(path)
+                with xr.open_dataset(path, **open_kwargs) as piece:
+                    piece = piece.load()
+                # An outer join needs every dimension indexed; a flat list dimension such as ``nonconverged_entry``
+                # of the step capture has no coordinate and xarray refuses to align two sizes of it.
+                piece = piece.assign_coords({d: np.arange(piece.sizes[d]) for d in piece.dims if d not in piece.coords})
+                piece = piece.expand_dims(event_iloc=[ei]).assign_coords(
+                    event_id=("event_iloc", [self._event_slug(ei)])
+                )
+                pieces.append(piece)
+            ds = xr.concat(pieces, dim="event_iloc", join="outer", data_vars="all", coords="different", compat="equals")
+            ds.attrs = {"capture": capture.name, "source_file": capture.raw_file}
+            chunks = {
+                d: (1 if d == "event_iloc" else min(int(ds.sizes[d]), self._COUPLING_DIAGNOSTICS_CHUNK))
+                for d in ds.dims
+            }
+            prepared = ds.chunk(chunks)
+            append_zarr(
+                prepared,
+                store,
+                group=group,
+                consolidate=False,
+                mode="w",
+                encoding=return_dic_zarr_encodings(prepared, compression_level),
+            )
+            written.append(group)
+        return written
 
     # ------------------------------------------------------------------------------------------------
     # The `summary` branches: group writes, the per-scenario clearing record, and the branch read
@@ -1652,15 +1776,25 @@ class TRITONSWMM_analysis_post_processing:
                 )
         return True
 
-    def _timeseries_axis(self) -> tuple[dict[int, "pd.Timestamp"], float, np.ndarray]:
-        """Each event's simulation start, the reporting step, and the ``elapsed_s`` axis shared by every event.
+    _COUPLED_SWMM_SERIES_MODES = frozenset({"tritonswmm_swmm_node_ts", "tritonswmm_swmm_link_ts"})
 
-        The axis runs from one reporting step to the longest simulation duration among ALL events in ``df_sims``
+    def _coupled_swmm_report_step_s(self) -> float:
+        """The report step of the coupled SWMM model: ``swmm_report_step_s``, else the TRITON reporting step."""
+        cfg = self._analysis.cfg_analysis
+        independent = getattr(cfg, "swmm_report_step_s", None)
+        return float(independent if independent is not None else cfg.TRITON_reporting_timestep_s)
+
+    def _timeseries_axis(self, step_s: float | None = None) -> tuple[dict[int, "pd.Timestamp"], float, np.ndarray]:
+        """Each event's simulation start, the step, and the ``elapsed_s`` axis shared by every event.
+
+        The axis runs from one step to the longest simulation duration among ALL events in ``df_sims``
         (each duration is the analysis's own event window, ``_resolve_event_window``, not the length of whatever
         series happens to be on disk), and it is fixed here, before the first append. An append whose
-        non-append dimension differs from the store's raises, so every scenario is reindexed to this axis.
+        non-append dimension differs from the store's raises, so every scenario is reindexed to this axis. The step
+        is the TRITON reporting step unless ``step_s`` names another, which the coupled SWMM series take when
+        ``swmm_report_step_s`` gives them their own time coordinate.
         """
-        step = float(self._analysis.cfg_analysis.TRITON_reporting_timestep_s)
+        step = float(self._analysis.cfg_analysis.TRITON_reporting_timestep_s if step_s is None else step_s)
         starts: dict[int, pd.Timestamp] = {}
         longest_s = 0.0
         from hhemt.scenario_records import event_is_removed
@@ -2453,6 +2587,8 @@ class TRITONSWMM_analysis_post_processing:
             # Data-loss guard first, so a removed scenario absent from the tree is named before any axis is derived.
             self._event_removed_and_in_tree(store, int(event_iloc), [g for _m, g in modes])
         starts, step, axis = self._timeseries_axis()
+        swmm_step = self._coupled_swmm_report_step_s()
+        swmm_axis = axis if swmm_step == step else self._timeseries_axis(step_s=swmm_step)[2]
         observation_step = self._observation_interval_s()
         observation_axes = {
             ts_mode: self._observation_axis(store, group)
@@ -2479,11 +2615,12 @@ class TRITONSWMM_analysis_post_processing:
                             continue
                         if pending:
                             pending_field.clear()
-                        mode_step, mode_axis = (
-                            (observation_step, observation_axes[ts_mode])
-                            if ts_mode in self._OBSERVATION_SERIES_MODES
-                            else (step, axis)
-                        )
+                        if ts_mode in self._OBSERVATION_SERIES_MODES:
+                            mode_step, mode_axis = observation_step, observation_axes[ts_mode]
+                        elif ts_mode in self._COUPLED_SWMM_SERIES_MODES:
+                            mode_step, mode_axis = swmm_step, swmm_axis
+                        else:
+                            mode_step, mode_axis = step, axis
                         action, ds, position = self._plan_timeseries_write(
                             scen, ts_mode, group, event_iloc, starts[event_iloc], mode_step, mode_axis, cleared_already
                         )

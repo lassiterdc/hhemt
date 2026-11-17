@@ -515,6 +515,9 @@ SWMM_NODE_RIM_FROM_DEM_CONTAINER_SHAS = frozenset(
         # ORNL triton-swmm head: ``git show faba223212408f04b7a3dbf6580adedf4a4e6b13:src/config_utils.h``
         # carries ``argsd("swmm_node_rim_from_dem"`` (line 535), the content test this set admits by.
         "faba223212408f04b7a3dbf6580adedf4a4e6b13",
+        # The head of ``develop`` on the fork, the synthetic tier's pin: ``git show deefa6e6:src/config_utils.h``
+        # carries ``argsd("swmm_node_rim_from_dem"`` (line 594), the content test this set admits by.
+        "deefa6e6fcb26184a60eb8242dc82dcc3cab9618",
     }
 )
 
@@ -545,6 +548,9 @@ SWMM_QUALITY_SNAPSHOT_SHAS = frozenset(
         # `git show faba223212408f04b7a3dbf6580adedf4a4e6b13:external/swmm/src/solver/snapshot.c | grep -c oldQual`
         # -> 7.
         "faba223212408f04b7a3dbf6580adedf4a4e6b13",
+        # The head of ``develop`` on the fork, the synthetic tier's pin: its snapshot.c carries the same state,
+        # ``git show deefa6e6:external/swmm/src/solver/snapshot.c | grep -o oldQual | wc -l`` -> 7.
+        "deefa6e6fcb26184a60eb8242dc82dcc3cab9618",
     }
 )
 
@@ -605,6 +611,36 @@ def set_swmm_coupling_nodes(cfg_content: str, nodes_file) -> str:
     return f'{text}{separator}{SWMM_COUPLING_NODES_KEY}="{nodes_file}"\n'
 
 
+#: The coupled-cfg key naming the file that gives each coupling node its manhole diameter and loss coefficient.
+SWMM_MANHOLE_TABLE_KEY = "swmm_manhole_table"
+
+#: How a TRITON build reads ``swmm_manhole_table``, as the text appears in its ``src/config_utils.h``. A build
+#: whose file does not carry it ignores the table and runs every coupling node at the constants.
+SWMM_MANHOLE_TABLE_READ = 'argsd("swmm_manhole_table"'
+
+
+def manhole_table_file_for(hydraulics_inp) -> Path:
+    """Where a scenario's manhole table is written: beside its ``coupling_nodes.txt``."""
+    return Path(hydraulics_inp).parent / "manhole_table.txt"
+
+
+def set_swmm_manhole_table(cfg_content: str, table_file) -> str:
+    """Return ``cfg_content`` with exactly one active ``swmm_manhole_table="{table_file}"`` line, appended.
+
+    Built like ``set_swmm_coupling_nodes``: an active line already present is removed first (a line whose
+    first non-blank text matches ``swmm_manhole_table\\s*=``; a ``#`` line is a comment and is kept), so a
+    re-prepared scenario's cfg is byte-identical to the first one and a template value never replaces the
+    table the toolkit wrote.
+    """
+    import re
+
+    pattern = re.compile(rf"{SWMM_MANHOLE_TABLE_KEY}\s*=")
+    kept = [line for line in cfg_content.splitlines() if not pattern.match(line.lstrip())]
+    text = "\n".join(kept)
+    separator = "\n" if text else ""
+    return f'{text}{separator}{SWMM_MANHOLE_TABLE_KEY}="{table_file}"\n'
+
+
 #: How a TRITON build reads ``swmm_coupling_nodes``, as the text appears in its ``src/config_utils.h``.
 #: A build whose file carries it couples exactly the nodes the toolkit lists. A build whose file
 #: does not ignores the list and couples the nodes its own ``[INFLOWS]`` read names instead.
@@ -621,6 +657,9 @@ SWMM_COUPLING_NODES_CONTAINER_SHAS = frozenset(
         # The head of ORNL's ``triton-swmm`` branch (measured with ``git ls-remote``), whose ``src/config_utils.h``
         # carries ``argsd("swmm_coupling_nodes"``.
         "faba223212408f04b7a3dbf6580adedf4a4e6b13",
+        # The head of ``develop`` on the fork, the synthetic tier's pin: ``git show deefa6e6:src/config_utils.h``
+        # carries ``argsd("swmm_coupling_nodes"`` (line 595).
+        "deefa6e6fcb26184a60eb8242dc82dcc3cab9618",
     }
 )
 
@@ -688,6 +727,110 @@ def set_hhemt_output_folder(cfg_text: str, folder: str) -> tuple[str, list[str]]
     return "".join(kept), removed
 
 
+def require_triton_reading_key(
+    *,
+    field: str,
+    setting: str,
+    consequence: str,
+    remedy: str,
+    read_text: str,
+    execution_environment: str,
+    software_directory,
+    branch_key,
+    recorded_sha,
+    required_sha: str | None,
+    container_shas: frozenset,
+) -> None:
+    """Refuse a configured setting unless the TRITON build the run uses reads the cfg key that carries it.
+
+    TRITON reads only the cfg keys it asks for, so a build that does not read the key ignores
+    the line the toolkit writes and runs without the setting, with no error. This raises
+    ``ConfigurationError`` instead, naming ``field``, the build's commit and what was required.
+    ``setting`` is the clause that states the configuration ("swmm_node_rim_from_dem is True"),
+    ``consequence`` what an ignoring build would do, and ``remedy`` what the user can change.
+
+    Native mode: the clone in ``software_directory`` passes when its ``src/config_utils.h``
+    carries ``read_text``, or, when ``required_sha`` is given, when it has ``required_sha`` as an
+    ancestor of its HEAD (``git merge-base --is-ancestor``). A missing clone, or a ``required_sha``
+    the clone's objects do not contain, is "cannot be resolved" and refuses too. With no
+    ``required_sha`` only the content test can pass. Container mode: there is no host clone, so
+    the commit recorded from the image (``recorded_sha``, the system log's ``triton_head_sha``)
+    must be present, must equal ``branch_key``, and must be a member of ``container_shas``; an
+    empty ``container_shas`` therefore refuses every container run.
+    """
+    import subprocess
+
+    if execution_environment == "container":
+        if recorded_sha and branch_key and str(recorded_sha) == str(branch_key) and str(recorded_sha) in container_shas:
+            return
+        recorded = str(recorded_sha) if recorded_sha else "(no TRITON commit recorded for the image)"
+        known = (
+            f"one of the commits known to read the key: {sorted(container_shas)}"
+            if container_shas
+            else "a commit known to read the key, and no container image is known to"
+        )
+        tail = (
+            f"Build the image at a listed commit, or {remedy}."
+            if container_shas
+            else f"Use a native build, or {remedy}."
+        )
+        raise ConfigurationError(
+            field=field,
+            message=(
+                f"{setting}, but the container's TRITON build cannot be shown "
+                f"to read it: the recorded image commit is {recorded}, the configured "
+                f"TRITONSWMM_branch_key is {branch_key!r}, and the option needs the two to be equal "
+                f"and {known}. An older "
+                f"build would ignore the key and {consequence}. {tail}"
+            ),
+        )
+    d = Path(software_directory) if software_directory is not None else None
+    # A clone that READS the key is accepted by content first: ancestry alone refuses a
+    # curated commit, which is a new tree that reads the key without descending from it.
+    cfg_utils = d / "src" / "config_utils.h" if d is not None else None
+    if cfg_utils is not None and cfg_utils.is_file():
+        if read_text in cfg_utils.read_text(errors="replace"):
+            return
+    head = None
+    verdict = None
+    if d is not None and (d / ".git").exists():
+        r = subprocess.run(
+            ["git", "-C", str(d), "rev-parse", "--verify", "HEAD^{commit}"], capture_output=True, text=True
+        )
+        head = r.stdout.strip() if r.returncode == 0 else None
+        if head is not None and required_sha is not None:
+            verdict = subprocess.run(
+                ["git", "-C", str(d), "merge-base", "--is-ancestor", required_sha, "HEAD"],
+                capture_output=True,
+                text=True,
+            ).returncode
+    if verdict == 0:
+        return
+    if required_sha is None:
+        reason = (
+            f"its src/config_utils.h does not carry {read_text}, and no commit is recorded as the first to "
+            "read the key. Move TRITONSWMM_branch_key to a commit whose src/config_utils.h carries it and rebuild, "
+            f"or {remedy}."
+        )
+    else:
+        if verdict == 1:
+            why = "it does not descend from"
+        else:
+            why = "whether it descends from it cannot be resolved (no clone, or the clone lacks)"
+        reason = (
+            f"{why} the required commit "
+            f"{required_sha}, the first that reads the key. An older build would ignore the key "
+            f"and {consequence}. Move TRITONSWMM_branch_key to a commit at or after it and "
+            f"rebuild, or {remedy}."
+        )
+    raise ConfigurationError(
+        field=field,
+        message=(
+            f"{setting}, but the TRITON build at {d} (commit {head or 'unresolved'}) is not known to read it: {reason}"
+        ),
+    )
+
+
 def require_dem_rim_capable_triton(
     *,
     execution_environment: str,
@@ -699,72 +842,45 @@ def require_dem_rim_capable_triton(
 ) -> None:
     """Refuse ``swmm_node_rim_from_dem`` unless the TRITON build the run uses reads the key.
 
-    TRITON reads only the cfg keys it asks for, so a build older than ``required_sha`` would
-    ignore the line and run with SWMM's rims while the configuration says DEM rims, with no
-    error. This raises ``ConfigurationError`` instead, naming the field, the build's commit
-    and what was required.
-
-    Native mode: the clone in ``software_directory`` passes when its ``src/config_utils.h``
-    carries ``SWMM_NODE_RIM_FROM_DEM_READ``, or when it has ``required_sha`` as an ancestor of
-    its HEAD (``git merge-base --is-ancestor``). A missing clone, or a ``required_sha`` the
-    clone's objects do not contain, is "cannot be resolved" and refuses too. Container mode:
-    there is no host clone, so the commit recorded from the image (``recorded_sha``, the
-    system log's ``triton_head_sha``) must be present, must equal ``branch_key``, and must be
-    a member of ``container_shas``.
+    ``require_triton_reading_key`` for the DEM-rim key: a build older than ``required_sha`` would
+    ignore the line and run with SWMM's rims while the configuration says DEM rims.
     """
-    import subprocess
+    require_triton_reading_key(
+        field="swmm_node_rim_from_dem",
+        setting="swmm_node_rim_from_dem is True",
+        consequence="run with SWMM's rims",
+        remedy="set swmm_node_rim_from_dem to False",
+        read_text=SWMM_NODE_RIM_FROM_DEM_READ,
+        execution_environment=execution_environment,
+        software_directory=software_directory,
+        branch_key=branch_key,
+        recorded_sha=recorded_sha,
+        required_sha=required_sha,
+        container_shas=container_shas,
+    )
 
-    field = "swmm_node_rim_from_dem"
-    if execution_environment == "container":
-        if recorded_sha and branch_key and str(recorded_sha) == str(branch_key) and str(recorded_sha) in container_shas:
-            return
-        recorded = str(recorded_sha) if recorded_sha else "(no TRITON commit recorded for the image)"
-        raise ConfigurationError(
-            field=field,
-            message=(
-                f"swmm_node_rim_from_dem is True, but the container's TRITON build cannot be shown "
-                f"to read it: the recorded image commit is {recorded}, the configured "
-                f"TRITONSWMM_branch_key is {branch_key!r}, and the option needs the two to be equal "
-                f"and one of the commits known to read the key: {sorted(container_shas)}. An older "
-                "build would ignore the key and run with SWMM's rims. Build the image at a listed "
-                "commit, or set swmm_node_rim_from_dem to False."
-            ),
-        )
-    d = Path(software_directory) if software_directory is not None else None
-    # A clone that READS the key is accepted by content first: ancestry alone refuses a
-    # curated commit, which is a new tree that reads the key without descending from it.
-    cfg_utils = d / "src" / "config_utils.h" if d is not None else None
-    if cfg_utils is not None and cfg_utils.is_file():
-        if SWMM_NODE_RIM_FROM_DEM_READ in cfg_utils.read_text(errors="replace"):
-            return
-    head = None
-    verdict = None
-    if d is not None and (d / ".git").exists():
-        r = subprocess.run(
-            ["git", "-C", str(d), "rev-parse", "--verify", "HEAD^{commit}"], capture_output=True, text=True
-        )
-        head = r.stdout.strip() if r.returncode == 0 else None
-        if head is not None:
-            verdict = subprocess.run(
-                ["git", "-C", str(d), "merge-base", "--is-ancestor", required_sha, "HEAD"],
-                capture_output=True,
-                text=True,
-            ).returncode
-    if verdict == 0:
-        return
-    if verdict == 1:
-        why = "it does not descend from"
-    else:
-        why = "whether it descends from it cannot be resolved (no clone, or the clone lacks)"
-    raise ConfigurationError(
-        field=field,
-        message=(
-            f"swmm_node_rim_from_dem is True, but the TRITON build at {d} (commit "
-            f"{head or 'unresolved'}) is not known to read it: {why} the required commit "
-            f"{required_sha}, the first that reads the key. An older build would ignore the key "
-            "and run with SWMM's rims. Move TRITONSWMM_branch_key to a commit at or after it and "
-            "rebuild, or set swmm_node_rim_from_dem to False."
-        ),
+
+def require_manhole_table_capable_triton(
+    *, execution_environment: str, software_directory, branch_key, recorded_sha
+) -> None:
+    """Refuse ``manhole_table`` unless the TRITON build the run uses reads ``swmm_manhole_table``.
+
+    A build that ignores the key runs every coupling node at the constants while the configuration
+    names a table, with no error. A native clone passes when its ``src/config_utils.h`` carries
+    ``SWMM_MANHOLE_TABLE_READ``. No container image carries the key, so a container run is refused.
+    """
+    require_triton_reading_key(
+        field="manhole_table",
+        setting="manhole_table is set",
+        consequence="run every coupling node at the constants manhole_diameter and manhole_loss_coefficient",
+        remedy="unset manhole_table",
+        read_text=SWMM_MANHOLE_TABLE_READ,
+        execution_environment=execution_environment,
+        software_directory=software_directory,
+        branch_key=branch_key,
+        recorded_sha=recorded_sha,
+        required_sha=None,
+        container_shas=frozenset(),
     )
 
 
@@ -1552,6 +1668,22 @@ class TRITONSWMM_scenario:
                 recorded_sha=self._system.log.triton_head_sha.get(),
             )
         cfg_content = append_swmm_node_rim_from_dem(cfg_content, rim_key)
+        # The per-node manhole table, on the same coupled surface and guarded the same way: a build that
+        # does not read the key would run every coupling node at the constants while the configuration
+        # names a table. With no table nothing is written, so the cfg bytes are the no-table bytes.
+        # The read is tolerant for the same reason as in the table writer: the cfg stand-ins of
+        # tests/test_scenario_boundary_guards.py carry no table field.
+        if getattr(self._analysis.cfg_analysis, "manhole_table", None) is not None:
+            cfg_system = self._system.cfg_system
+            require_manhole_table_capable_triton(
+                execution_environment=self._analysis.cfg_analysis.execution_environment,
+                software_directory=cfg_system.TRITONSWMM_software_directory,
+                branch_key=cfg_system.TRITONSWMM_branch_key,
+                recorded_sha=self._system.log.triton_head_sha.get(),
+            )
+            cfg_content = set_swmm_manhole_table(
+                cfg_content, manhole_table_file_for(self.scen_paths.swmm_hydraulics_inp)
+            )
         # The coupling-node list this scenario wrote, judged against the filled hydraulics.inp
         # the solver reads: run entry judged the template, which a placeholder can leave open.
         # Judged only for a coupled system, because only prepare_scenario's coupled branch writes
@@ -2830,6 +2962,205 @@ def coupling_candidate_junction_coordinates(cfg_system, cfg_analysis=None) -> li
         x, y = sections.coordinates[folded]
         out.append((name, x, y))
     return out
+
+
+#: The header of a manhole table: the coupling node a row describes, then the two values TRITON reads for it.
+MANHOLE_TABLE_COLUMNS = ("node_id", "manhole_diameter_m", "manhole_loss_coefficient")
+
+#: How many names of coupling nodes without a row the missing-row error lists before it counts the rest.
+_MANHOLE_TABLE_MAX_NAMED_NODES = 10
+
+
+@dataclass(frozen=True)
+class ManholeTableRow:
+    """One data row of a manhole table, as written in the file.
+
+    ``line`` is the row's line number in the file and the three cells are the text between the commas, with
+    surrounding whitespace stripped. ``extra_cells`` counts the cells past the third, which the table does not
+    define. The values are text so that an empty cell, a word, and a number outside the allowed range can each
+    be named in the error that refuses the row.
+    """
+
+    line: int
+    node_id: str
+    diameter: str
+    loss: str
+    extra_cells: int = 0
+
+
+@dataclass(frozen=True)
+class ManholeTableContext:
+    """What the refusals of a manhole table name: the file, the SWMM model, and the two constants a fill would use."""
+
+    table: Path
+    model: str
+    diameter_constant: float
+    loss_constant: float
+
+
+def read_manhole_table(path) -> list[ManholeTableRow]:
+    """The data rows of the manhole table at ``path``, in file order.
+
+    The file is a CSV whose first non-blank row is exactly ``MANHOLE_TABLE_COLUMNS``. Blank rows are skipped. A
+    row with fewer than three cells keeps the missing cells empty and a row with more reports the surplus, so
+    ``manhole_table_problems`` names every defect of a row. Raises ``ConfigurationError`` naming the field and
+    the file when the file cannot be read or its header differs.
+    """
+    import csv
+
+    table = Path(path)
+    try:
+        with open(table, newline="", encoding="utf-8-sig") as fh:
+            reader = csv.reader(fh)
+            header = None
+            rows: list[ManholeTableRow] = []
+            for cells in reader:
+                cells = [c.strip() for c in cells]
+                if not any(cells):
+                    continue
+                if header is None:
+                    header = tuple(cells)
+                    if header != MANHOLE_TABLE_COLUMNS:
+                        raise ConfigurationError(
+                            field="manhole_table",
+                            message=(
+                                f"manhole_table {table} must start with the header "
+                                f"{','.join(MANHOLE_TABLE_COLUMNS)}; its first row is {','.join(header)}."
+                            ),
+                            config_path=table,
+                        )
+                    continue
+                padded = cells + [""] * (len(MANHOLE_TABLE_COLUMNS) - len(cells))
+                rows.append(
+                    ManholeTableRow(
+                        line=reader.line_num,
+                        node_id=padded[0],
+                        diameter=padded[1],
+                        loss=padded[2],
+                        extra_cells=max(0, len(cells) - len(MANHOLE_TABLE_COLUMNS)),
+                    )
+                )
+    except (OSError, UnicodeDecodeError, csv.Error) as exc:
+        raise ConfigurationError(
+            field="manhole_table", message=f"manhole_table {table} cannot be read: {exc}", config_path=table
+        ) from exc
+    if header is None:
+        raise ConfigurationError(
+            field="manhole_table",
+            message=f"manhole_table {table} is empty; its first row must be {','.join(MANHOLE_TABLE_COLUMNS)}.",
+            config_path=table,
+        )
+    return rows
+
+
+def _manhole_value(text: str) -> float | None:
+    """``text`` as a float, or None when it is not a number."""
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def manhole_table_problems(rows, coupling_nodes, fill_with_constant: bool, context: ManholeTableContext) -> list[str]:
+    """Every reason a manhole table is refused for these coupling nodes, one entry per defect.
+
+    The rules, checked on the rows as written: a row has exactly the three cells and neither value is empty;
+    a diameter is finite and above zero; a loss coefficient is finite and not negative; no node name repeats
+    once SWMM's case fold is applied; **every row names a coupling node, whatever ``fill_with_constant``
+    says**, because a misspelt name would otherwise leave its node at the constants without a word; and every
+    coupling node has a row unless ``fill_with_constant`` is True. ``coupling_nodes`` are the names compared,
+    in the order the missing-row message lists them. Returns ``[]`` when the table is valid.
+    """
+    import math
+
+    problems: list[str] = []
+    for row in rows:
+        where = f"line {row.line}" + (f" ({row.node_id})" if row.node_id else "")
+        if row.extra_cells:
+            problems.append(
+                f"{where} has {row.extra_cells} cell(s) past the {len(MANHOLE_TABLE_COLUMNS)} the header names"
+            )
+        if not row.node_id:
+            problems.append(f"{where} has an empty node_id")
+        for column, text, valid, rule in (
+            ("manhole_diameter_m", row.diameter, lambda v: v > 0, "finite and above zero"),
+            ("manhole_loss_coefficient", row.loss, lambda v: v >= 0, "finite and not negative"),
+        ):
+            if text == "":
+                problems.append(f"{where} has an empty {column}; a row needs both values")
+                continue
+            value = _manhole_value(text)
+            if value is None or not math.isfinite(value) or not valid(value):
+                problems.append(f"{where} has {column} {text!r}, which must be a number that is {rule}")
+    by_fold: dict[str, list[str]] = {}
+    for row in rows:
+        if row.node_id:
+            by_fold.setdefault(_swmm_fold(row.node_id), []).append(row.node_id)
+    repeated = [name for group in by_fold.values() if len(group) > 1 for name in group]
+    if repeated:
+        problems.append(f"it names a node more than once after SWMM's case fold: {', '.join(repeated)}")
+    coupled_folds = {_swmm_fold(n) for n in coupling_nodes}
+    unknown = [name for group in by_fold.values() for name in group[:1] if _swmm_fold(name) not in coupled_folds]
+    if unknown:
+        problems.append(
+            f"it has {len(unknown)} row(s) naming no coupling node of {context.model}: {', '.join(unknown)}. "
+            "A name that is no coupling node would leave its intended node at the constants, so such a row "
+            "is refused whether or not manhole_table_fill_with_constants is True"
+        )
+    if not fill_with_constant:
+        missing = [n for n in coupling_nodes if _swmm_fold(n) not in by_fold]
+        if missing:
+            named = ", ".join(missing[:_MANHOLE_TABLE_MAX_NAMED_NODES])
+            more = (
+                f", and {len(missing) - _MANHOLE_TABLE_MAX_NAMED_NODES} more"
+                if len(missing) > _MANHOLE_TABLE_MAX_NAMED_NODES
+                else ""
+            )
+            problems.append(
+                f"it gives a diameter and a loss coefficient for {len(coupling_nodes) - len(missing)} of the "
+                f"{len(coupling_nodes)} coupling nodes of {context.model}; {len(missing)} coupling node(s) have "
+                f"no row: {named}{more}. Every coupling node needs a row. To give the nodes without a row the "
+                f"constant manhole_diameter ({context.diameter_constant} m) and the constant "
+                f"manhole_loss_coefficient ({context.loss_constant}), set "
+                "analysis_config.manhole_table_fill_with_constants: true"
+            )
+    return problems
+
+
+def require_valid_manhole_table(path, coupling_nodes, fill_with_constant: bool, context: ManholeTableContext):
+    """Read the manhole table at ``path`` and refuse it unless it fits ``coupling_nodes``; return its rows.
+
+    Raises ``ConfigurationError(field="manhole_table")`` naming the file and every defect
+    ``manhole_table_problems`` reports. The one function both the run-entry check and scenario preparation
+    call, so the two cannot apply different rules.
+    """
+    rows = read_manhole_table(path)
+    problems = manhole_table_problems(rows, coupling_nodes, fill_with_constant, context)
+    if problems:
+        raise ConfigurationError(
+            field="manhole_table",
+            message=f"manhole_table {context.table} is refused:\n    - " + "\n    - ".join(problems),
+            config_path=Path(path),
+        )
+    return rows
+
+
+def manhole_table_text(rows, coupling_nodes, diameter_constant: float, loss_constant: float) -> str:
+    """The table file TRITON reads: one ``{name} {diameter} {loss}`` line per coupling node, in node order.
+
+    ``rows`` are the rows of a table already judged by ``manhole_table_problems`` against ``coupling_nodes``. A
+    node with a row takes the row's two values and a node without one takes the two constants, so the file
+    is always complete. Each value is written with ``repr`` of the float, which the solver reads back as the same
+    double.
+    """
+    by_fold = {_swmm_fold(row.node_id): row for row in rows}
+    lines = []
+    for name in coupling_nodes:
+        row = by_fold.get(_swmm_fold(name))
+        diameter = float(row.diameter) if row is not None else float(diameter_constant)
+        loss = float(row.loss) if row is not None else float(loss_constant)
+        lines.append(f"{name} {diameter!r} {loss!r}\n")
+    return "".join(lines)
 
 
 def nodes_outside_triton_grid(nodes, header: dict) -> list[tuple[str, str, str]]:

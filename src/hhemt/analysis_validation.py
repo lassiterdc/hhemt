@@ -3056,6 +3056,115 @@ def check_inflow_node_reduction(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
+#: Name of the coupling-diagnostics capture check (an ``aggregate``-level row of the Check table).
+COUPLING_DIAGNOSTICS_CHECK = "coupling diagnostics captured"
+
+
+def check_coupling_diagnostics(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Check that every coupling-diagnostics capture the analysis asked for was ingested, and holds records.
+
+    The captures are asked for by ``toggle_coupling_diagnostics`` (the step, per-node, edge-flux, domain-balance,
+    wet-cell and step-limiter files) and ``swmm_diagnostic_links`` (the link-flow file). For every scenario of a
+    coupled analysis that asks, each expected capture has ONE of two valid states: its per-scenario store under
+    ``processed/coupling_diagnostics/`` exists and its record dimension is non-empty, or the scenario's directory
+    is gone (removed after consolidation) and the consolidated tree holds the capture's group. Anything else is a
+    failure row: a store that is missing for a scenario that still has its directory (the solver wrote nothing, or
+    ingestion did not run), a store whose record dimension is empty (a file that holds a header and no record),
+    one that cannot be opened, and a consolidated tree that exists without the group.
+
+    A DISCLOSURE of what was NOT measured, not a silent pass: the summary counts scenarios examined, measured and
+    not measured. An analysis that asks for no capture, or has no coupled model, is not applicable.
+    """
+    from hhemt.process_simulation import expected_coupling_captures
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.utils import zarr_store_has_index
+
+    details: list[dict] = []
+    examined = measured = n_present = 0
+    for member_id, sub in _iter_members_or_self(analysis):
+        captures = expected_coupling_captures(getattr(sub, "cfg_analysis", None))
+        if not captures:
+            continue
+        try:
+            if "tritonswmm" not in set(sub._get_enabled_model_types()):
+                continue
+            sim_dir = _sims_dir_of(analysis, sub)
+            event_ilocs = list(sub.df_sims.index)
+            out_type = sub.cfg_analysis.target_processed_output_type
+        except Exception:  # noqa: BLE001 -- a sub we cannot address is not measured, not failed
+            continue
+        try:
+            tree = Path(sub.analysis_paths.analysis_datatree_zarr)
+        except Exception:  # noqa: BLE001 -- a recorded member has no analysis_paths
+            tree = None
+        for event_iloc in event_ilocs:
+            examined += 1
+            event_id = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(event_iloc))
+            scenario_dir = sim_dir / event_id
+            problems: list[str] = []
+            for capture in captures:
+                store = scenario_dir / "processed" / "coupling_diagnostics" / f"{capture.name}.{out_type}"
+                group = tree / "tritonswmm" / "coupling_diagnostics" / capture.name if tree is not None else None
+                if store.exists():
+                    try:
+                        import xarray as xr
+
+                        kwargs = {"chunks": None, "decode_timedelta": False}
+                        if out_type == "zarr":
+                            kwargs.update(engine="zarr", consolidated=zarr_store_has_index(store))
+                        else:
+                            kwargs["engine"] = "h5netcdf"
+                        with xr.open_dataset(store, **kwargs) as ds:
+                            n_records = int(ds.sizes.get(capture.record_dim, 0))
+                    except Exception as exc:  # noqa: BLE001 -- an unreadable store is the finding
+                        problems.append(f"{capture.name}: store cannot be opened ({type(exc).__name__}: {exc})")
+                        continue
+                    if n_records == 0:
+                        problems.append(f"{capture.name}: store holds no record on {capture.record_dim}")
+                    else:
+                        n_present += 1
+                elif not scenario_dir.is_dir() and group is not None and group.is_dir():
+                    n_present += 1  # the scenario directory was removed; the consolidated tree carries the capture
+                else:
+                    problems.append(f"{capture.name}: no store at {store}")
+            if tree is not None and tree.is_dir():
+                for capture in captures:
+                    if not (tree / "tritonswmm" / "coupling_diagnostics" / capture.name).is_dir():
+                        problems.append(f"{capture.name}: the consolidated tree has no group for it")
+            measured += 1
+            for text in problems:
+                row = {"scenario": event_id, "scenario_dir": str(scenario_dir), "detail": text}
+                if member_id is not None:
+                    row["sa_id"] = f"member_{member_id}"
+                details.append(row)
+    if examined == 0:
+        return CheckResult(
+            name=COUPLING_DIAGNOSTICS_CHECK,
+            level="aggregate",
+            passed=True,
+            applicable=False,
+            summary="No coupled analysis asks for a coupling-diagnostics capture: N/A (0 scenarios examined).",
+        )
+    # Each failure row is one (scenario, capture) pair, except the tree-level rows which repeat per scenario; the
+    # rows are de-duplicated on their text so the count names distinct problems.
+    seen: set[tuple] = set()
+    unique = []
+    for d in details:
+        key = (d.get("sa_id"), d["scenario"], d["detail"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(d)
+    passed = not unique
+    summary = (
+        f"{_count(examined, 'scenario')} asked for coupling diagnostics, {_count(n_present, 'capture store')} present "
+        f"and non-empty; "
+        + ("every expected capture is accounted for." if passed else f"{_count(len(unique), 'problem')} found.")
+    )
+    return CheckResult(
+        name=COUPLING_DIAGNOSTICS_CHECK, level="aggregate", passed=passed, summary=summary, details=unique
+    )
+
+
 #: Name of the consolidated-metadata staleness check (a ``system``-level row of the Check table).
 CONSOLIDATED_METADATA_CHECK = "consolidated metadata current"
 
@@ -3315,6 +3424,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis, *, df_status=None) -> Valid
             check_provenance_completeness(analysis),  # per-stage version coverage
             check_log_recoveries(analysis),  # quarantine-and-reconstruct events on any log tier
             check_inflow_node_reduction(analysis),  # one-node-per-cell option: cells reduced
+            check_coupling_diagnostics(analysis),  # asked-for coupling captures ingested and non-empty
             check_consolidated_metadata(analysis),  # every zarr store's index matches its documents on disk
         ]
         + _read_persisted_eda_verdicts(analysis)

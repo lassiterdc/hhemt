@@ -61,7 +61,8 @@ __all__ = ["TRITONSWMM_sensitivity_analysis"]
 @dataclass
 class _UniqueSystemTarget:
     """One compile target, shared by every member whose resolved system config agrees on
-    the compile-relevant key ``(target_dem_resolution, gpu_hardware, gpu_compilation_backend)``.
+    the compile-relevant key, the tuple of target_dem_resolution, gpu_hardware,
+    gpu_compilation_backend, and TRITONSWMM_extra_c_flags.
 
     The build is done once per target (``compile_and_preprocess_all_targets``), and every
     member in ``analysis_ids`` runs with ``system``. On the primary fast path (no per-row
@@ -3211,10 +3212,13 @@ class TRITONSWMM_sensitivity_analysis:
                 self.experiment.cfg_hpc_system,
                 _row_partition,
             )
+            # TRITONSWMM_extra_c_flags is part of the coupled compile's identity: two rows that differ only
+            # in it are two different builds, so they must not collapse to one target.
             key = (
                 cfg.target_dem_resolution,
                 _gpu_hardware,
                 _gpu_backend,
+                cfg.TRITONSWMM_extra_c_flags,
             )
             if key not in groups:
                 groups[key] = {"cfg": cfg, "member_ids": [], "partition": _row_partition}
@@ -3768,9 +3772,9 @@ class TRITONSWMM_sensitivity_analysis:
         Direct-execution helper. The emitted workflow skips the helper, because the
         per-target setup rules assert an existing build and avoid building.
 
-        Members that agree on the compile-relevant tuple
-        ``(target_dem_resolution, gpu_hardware, gpu_compilation_backend)`` share
-        one compile target -- one per distinct build, used by every member that
+        The compile-relevant tuple is target_dem_resolution, gpu_hardware,
+        gpu_compilation_backend, and TRITONSWMM_extra_c_flags. Members that agree on
+        the tuple share one compile target -- one per distinct build, used by every member that
         needs the target -- so this compiles once per DISTINCT target and not once per
         row. A sweep whose rows differ only in rank count therefore compiles once.
 

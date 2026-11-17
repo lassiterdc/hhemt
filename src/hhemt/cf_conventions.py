@@ -220,6 +220,9 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
         "flag_values": np.array([0, 1], dtype="int8"),
         "flag_meanings": "not_coupled coupled",
     },
+    # The per-node manhole values of a run that sets `manhole_table`, read back from the scenario's `manhole_table.txt`.
+    "manhole_diameter": _cf("Manhole diameter the solver used at the coupling node", "m"),
+    "manhole_loss_coefficient": _cf("Manhole loss coefficient the solver used at the coupling node", "1"),
     "coupling_exchange_flow": _cf(
         "Exchange flow between the street surface and the sewer at the coupling node", "m3 s-1"
     ),
@@ -246,6 +249,23 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
     ),
     "coupling_exchange_duration_to_surface": _cf(
         "Time during which water ran from the sewer onto the street at the coupling node", "s", cell_methods="time: sum"
+    ),
+    # The coupling-diagnostics per-node path-3 account (`coupling_diagnostics.read_swmm_node_path3`), one value per
+    # report interval, attached to the coupled node store by `_attach_coupling_node_diagnostics`.
+    "path3_volume_pos": _cf(
+        "Positive part of the signed path-3 flooding volume booked at the node over the report interval",
+        "m3",
+        cell_methods="time: sum",
+    ),
+    "path3_volume_neg": _cf(
+        "Negative part of the signed path-3 flooding volume booked at the node over the report interval",
+        "m3",
+        cell_methods="time: sum",
+    ),
+    "nonconverged_steps": _cf(
+        "SWMM routing steps in the report interval that ended with the node not converged",
+        "1",
+        cell_methods="time: sum",
     ),
     # SWMM node report columns (Node Inflow Summary and Node Flooding Summary), read as SWMM printed them
     "max_lateral_inflow": _cf(
@@ -902,6 +922,29 @@ _CF_PERFORMANCE_VARIABLES: dict[str, dict[str, str | None]] = {
         "units": "s",
         "cell_methods": None,
     },
+    "SWMM_SOLVE": {
+        "standard_name": None,
+        # A child of SWMM_STEP, not of SWMM: the bracket is the `swmm_step(...)` call alone, so
+        # SWMM_SOLVE + SWMM_LOG <= SWMM_STEP, and, like SWMM_STEP, it is nonzero on rank 0 only.
+        "long_name": "Rank-0 serial SWMM solve alone, nested inside SWMM_STEP",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "SWMM_LOG": {
+        "standard_name": None,
+        "long_name": "Rank-0 exchange-log append alone, nested inside SWMM_STEP",
+        "units": "s",
+        "cell_methods": None,
+    },
+    "DIAG": {
+        "standard_name": None,
+        # Capture work only. The solver never opens it while another category is open and
+        # subtracts it in the `Other` residual, so it is a sibling of Compute and IO under
+        # Simulation. Rank-asymmetric: the SWMM-side captures run on rank 0.
+        "long_name": "Diagnostic-capture work, slowest rank for this column",
+        "units": "s",
+        "cell_methods": None,
+    },
     "Other": {
         "standard_name": None,
         "long_name": "Simulation residual, derived so the simulation level closes",
@@ -1088,7 +1131,7 @@ _RANK_ATTRIBUTION_SUFFIX = ", slowest rank for this column"
 #: is_live` compares the measured fired-set against this. Edit it only together with a deliberate
 #: change to which parents carry an attribution -- never to make a failing test pass.
 _RANK_ATTRIBUTED_COLUMNS: frozenset[str] = frozenset(
-    {"Compute", "MPI", "IO", "Resize", "SWMM", "SWMM_XFER", "SWMM_MPI"}
+    {"Compute", "MPI", "IO", "Resize", "DIAG", "SWMM", "SWMM_XFER", "SWMM_MPI"}
 )
 
 
@@ -1643,6 +1686,22 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
         "operation_expr": "id in coupling_nodes",
         "reduced_coordinate": "none",
     },
+    **{
+        _name: {
+            "spatial_representation": "point (node)",
+            "source_variables": "manhole_table.txt",
+            "operation": _operation,
+            "operation_expr": _name,
+            "reduced_coordinate": "none",
+        }
+        for _name, _operation in (
+            ("manhole_diameter", "the diameter in meters on the node's line of the scenario's manhole table"),
+            (
+                "manhole_loss_coefficient",
+                "the dimensionless loss coefficient on the node's line of the scenario's manhole table",
+            ),
+        )
+    },
     "coupling_exchange_flow": {
         "spatial_representation": "point (node)",
         "source_variables": "exchange side-file, exchange_q per solver step",
@@ -1690,6 +1749,35 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
                 "coupling_exchange_duration_to_surface",
                 "total length of the steps whose flow is negative",
                 "sum_k dt_k [q_k < 0]",
+            ),
+        )
+    },
+    # Coupling-diagnostics per-node path-3 account, decoded from the solver's swmm_node_path3.bin
+    **{
+        _name: {
+            "spatial_representation": "point (node)",
+            "source_variables": "swmm_node_path3.bin, per print interval and non-outfall node",
+            "operation": _operation,
+            "operation_expr": _expr,
+            "reduced_coordinate": "solver step",
+        }
+        for _name, _operation, _expr in (
+            (
+                "path3_volume_pos",
+                "sum over the interval's steps of the positive part of the signed path-3 volume the node booked, "
+                "converted from ft3 to m3",
+                "sum_k max(V3_k, 0)",
+            ),
+            (
+                "path3_volume_neg",
+                "sum over the interval's steps of the negative part of the signed path-3 volume the node booked, "
+                "converted from ft3 to m3",
+                "sum_k min(V3_k, 0)",
+            ),
+            (
+                "nonconverged_steps",
+                "count of the interval's routing steps on which the node was left non-converged after the last trial",
+                "sum_k [node not converged at step k]",
             ),
         )
     },
@@ -2443,6 +2531,41 @@ _PERF_QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
         "operation_expr": "max_r Σ_t SWMM_OTHER",
         "reduced_coordinate": "timestep (summed), Rank (maximum, retained as a size-one dimension)",
     },
+    "SWMM_SOLVE": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": (
+            "SWMM_SOLVE per-rank cumulative timer, the `swmm_step` call alone, nested inside SWMM_STEP"
+        ),
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; nonzero on rank 0 "
+            "only, so the maximum is rank 0's own value exactly rather than an upper bound over a spread"
+        ),
+        "operation_expr": "Σ_t SWMM_SOLVE (rank 0)",
+        "reduced_coordinate": "timestep (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "SWMM_LOG": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": (
+            "SWMM_LOG per-rank cumulative timer, the exchange-replay side-file append alone, nested inside SWMM_STEP"
+        ),
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; nonzero on rank 0 "
+            "only, so the maximum is rank 0's own value exactly rather than an upper bound over a spread"
+        ),
+        "operation_expr": "Σ_t SWMM_LOG (rank 0)",
+        "reduced_coordinate": "timestep (summed), Rank (maximum, retained as a size-one dimension)",
+    },
+    "DIAG": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": "DIAG per-rank cumulative timer (capture work, never open while another category is)",
+        "operation": (
+            "sum over reported timesteps per rank, then maximum over ranks; slowest rank for "
+            "this column. It is rank-asymmetric because the SWMM-side captures run on rank 0, so "
+            "it is read beside its parent Simulation and never summed with another column's maximum"
+        ),
+        "operation_expr": "max_r Σ_t DIAG",
+        "reduced_coordinate": "timestep (summed), Rank (maximum, retained as a size-one dimension)",
+    },
     "Other": {
         "spatial_representation": "whole domain (scalar)",
         "source_variables": (
@@ -2981,6 +3104,8 @@ _ANALYSIS_FIELD_UNITS: dict[str, str] = {
     "TRITON_initial_depth_nodata_fill": "m",
     "TRITON_domain_decomposition_check_factor": "1",
     "TRITON_progress_print_iterations": "1",
+    "swmm_coupling_interval": "1",
+    "swmm_report_step_s": "s",
 }
 
 

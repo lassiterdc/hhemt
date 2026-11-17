@@ -44,7 +44,8 @@ _REPO = Path(__file__).resolve().parent.parent
 _BD18215 = "bd18215972c348020d53b3a8a1a64ee6266cae28"
 _BB13EA28 = "bb13ea28603d50879f8d85cd041c17f440fbdb2b"
 _FABA2232 = "faba223212408f04b7a3dbf6580adedf4a4e6b13"
-_CARRYING = (_BD18215, _BB13EA28, _FABA2232)
+_DEEFA6E6 = "deefa6e6fcb26184a60eb8242dc82dcc3cab9618"
+_CARRYING = (_BD18215, _BB13EA28, _FABA2232, _DEEFA6E6)
 #: The fork commit between them that bounds the flooding-debug path buffer. Its snapshot carries the state
 #: too, but it was never a pin, so the approved shape deliberately leaves it unlisted.
 _7A59D18 = "7a59d1875256a4dc5eedbf56c1160316e7a6b7ac"
@@ -158,7 +159,7 @@ def test_the_live_pin_guard_reports_no_finding_on_this_tree():
 
 
 # --------------------------------------------------------------------------- (b) the quality-state set
-@pytest.mark.parametrize("sha", _CARRYING, ids=["bd18215", "bb13ea28", "faba2232"])
+@pytest.mark.parametrize("sha", _CARRYING, ids=["bd18215", "bb13ea28", "faba2232", "deefa6e6"])
 def test_a_listed_build_is_recognised_in_every_spelling_the_resolver_normalises(sha):
     """Each listed build reads as carrying quality state when padded or upper-cased, and only then.
 

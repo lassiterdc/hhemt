@@ -51,16 +51,25 @@ PRE_SPLIT_VARS = [
 #     "%Rank, Compute, MPI, IO, Resize, SWMM, SWMM_XFER, SWMM_MPI, SWMM_STEP, SWMM_OTHER,
 #      Other, Simulation, Init, Total"
 # `%Rank` is the index column, not a timing variable, so it is not a member here.
+# The coupling-diagnostics capture adds three more timers, `DIAG`, `SWMM_SOLVE` and `SWMM_LOG`
+# (item T4). The solver writes them in the order its file format fixes:
+# `SWMM_SOLVE`, `SWMM_LOG`, `DIAG` immediately after `SWMM_OTHER`, before `Other`. The list below
+# is a set contract in hhemt's own order (`DIAG` after `Resize`), which differs; hhemt reads
+# the header by name, so the difference does not matter, and this test compares the list with
+# `PERF_VARS` by equality.
 POST_SPLIT_VARS = [
     "Compute",
     "MPI",
     "IO",
     "Resize",
+    "DIAG",
     "SWMM",
     "SWMM_XFER",
     "SWMM_MPI",
     "SWMM_STEP",
     "SWMM_OTHER",
+    "SWMM_SOLVE",
+    "SWMM_LOG",
     "Other",
     "Simulation",
     "Init",
@@ -215,7 +224,7 @@ def test_each_swmm_child_sits_adjacent_to_its_parent_in_the_display_order():
 
 @pytest.mark.parametrize("mode", PERF_SUMMARY_MODES + PERF_TSERIES_MODES)
 def test_every_performance_column_carries_cf_long_name_and_units(mode):
-    """All thirteen, not just the four new ones, and now on all FOUR modes.
+    """All sixteen, not just the four new ones, and now on all FOUR modes.
 
     An uncovered variable falls through to `_auto_long_name`, which renders `IO` as "Io"
     and supplies no `units`. Covering only the split columns would leave the artifact's
@@ -335,12 +344,12 @@ def test_the_rank_axis_family_carries_units_without_cell_methods():
     selection from a seconds-valued column, and a minimum over it, are both still seconds. CF-1.13
     section 3.1.1 makes the omission an assertion rather than a gap ("A variable with no units
     attribute is assumed to be dimensionless"), so dropping `units` alongside `cell_methods`
-    publishes 26 durations as dimensionless quantities.
+    publishes 32 durations as dimensionless quantities.
 
-    The `slowest rank` assertion is the third face and the one no other test can see. Seven of the
-    thirteen parent `long_name` strings END in `cf_conventions._RANK_ATTRIBUTION_SUFFIX`, which is
+    The `slowest rank` assertion is the third face and the one no other test can see. Eight of the
+    sixteen parent `long_name` strings END in `cf_conventions._RANK_ATTRIBUTION_SUFFIX`, which is
     true of a maximum and false of both derived families, so a mechanical suffix onto the raw parent
-    string yields seven self-contradictions that read as ordinary prose.
+    string yields eight self-contradictions that read as ordinary prose.
 
     THIS ARM IS A SUBSTRING TEST AND IS THEREFORE HALF OF THE GUARD, NOT ALL OF IT. It tests for the
     words `slowest rank` while the strip it protects is an `endswith` match on the full constant, so

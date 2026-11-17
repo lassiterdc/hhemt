@@ -2,7 +2,7 @@ import warnings
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from hhemt.config.base import cfgBaseModel, field_meta, when
 
@@ -199,6 +199,25 @@ class system_config(cfgBaseModel):
             "re-checked-out and the cached build of the clone is never invalidated. Leave unset to build "
             "whatever the default branch of the clone resolves to."
         ),
+    )
+    TRITONSWMM_extra_c_flags: str = Field(
+        default="",
+        description=(
+            "Extra C compiler flags for the coupled TRITON-SWMM build, appended after `-fopenmp` in the "
+            "`-DCMAKE_C_FLAGS` argument of each of the 3 compile commands (CPU, CUDA, and the other GPU "
+            "backend). The flags reach the SWMM C library that the TRITON-SWMM build compiles. The TRITON-only "
+            "compile ignores the field, because the C-flag site of that compile is never used. The default empty "
+            "string appends no flag, so the compile script of a system that leaves the field unset is "
+            "byte-identical to a script rendered before the field existed. "
+            "The value is part of the identity of the coupled compile, so a change of flags rebuilds the solver. "
+            "Optimisation flags such as `-O3` can change floating-point results, so compare the output with the "
+            "output of a build without the flags before you trust a run that uses them. Applies only to a native "
+            "build. Preflight refuses a non-empty value under the container execution environment, where the SIF "
+            "supplies the binary and no compile runs, and refuses a non-empty value when toggle_tritonswmm_model "
+            "is off. The toolkit splices the text into a single-quoted shell argument, so load refuses a single "
+            "quote or a line break."
+        ),
+        json_schema_extra=field_meta(applies_when=[when("toggle_tritonswmm_model", True)]),
     )
     SWMM_git_URL: str = Field(
         "https://github.com/USEPA/Stormwater-Management-Model.git",
@@ -398,6 +417,25 @@ class system_config(cfgBaseModel):
         if errors:
             raise ValueError("; ".join(errors))
         return values
+
+    @field_validator("TRITONSWMM_extra_c_flags", mode="after")
+    @classmethod
+    def _validate_extra_c_flags(cls, v):
+        """Strip the flags, and refuse a single quote or a control character.
+
+        The compile appends the text inside the single-quoted ``-DCMAKE_C_FLAGS='-fopenmp ...'`` argument of a
+        generated shell script. A quote would close that argument early, and the rest of the string would run as
+        shell text; a line break would end the command line. Refusing is deliberately NOT escaping: an escaped
+        quote reaches the compiler as part of a flag, which is not what the user meant either.
+        """
+        value = v.strip()
+        bad = sorted({c for c in value if c == "'" or ord(c) < 32 or ord(c) == 127})
+        if bad:
+            raise ValueError(
+                f"TRITONSWMM_extra_c_flags must not contain a single quote or a control character; found "
+                f"{[repr(c) for c in bad]}. The text is spliced into a single-quoted shell argument."
+            )
+        return value
 
     @model_validator(mode="after")
     def validate_coupling_declaration(self):

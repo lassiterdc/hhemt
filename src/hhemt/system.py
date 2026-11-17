@@ -1147,6 +1147,17 @@ class TRITONSWMM_system:
             "",
         ]
 
+    def _extra_c_flags_fragment(self) -> str:
+        """The text appended after ``-fopenmp`` in the coupled compile's ``-DCMAKE_C_FLAGS`` argument.
+
+        Empty when ``TRITONSWMM_extra_c_flags`` is empty, so the rendered compile script of a system that
+        leaves the field unset is byte-identical to one rendered before the field existed. Otherwise one
+        space and the flags (the field validator has stripped them and refused a single quote or a control
+        character, the two things that would break the single-quoted argument they are spliced into).
+        """
+        flags = self.cfg_system.TRITONSWMM_extra_c_flags
+        return f" {flags}" if flags else ""
+
     def _libstdcpp_linker_flag_fragment(self) -> str:
         # Container mode (M-7): the SIF base ships gcc-13 (GLIBCXX_3.4.32), so the
         # single libstdc++ is current by construction — the exact-soname patch is
@@ -1434,6 +1445,12 @@ class TRITONSWMM_system:
 
         # Build cmake flags - use TRITON_IGNORE_MACHINE_FILES to bypass machine-specific defaults
         # This gives us full control over compilation settings regardless of the HPC system
+        # TRITONSWMM_extra_c_flags: empty by default, so the three C-flag sites below render
+        # byte-identically to a tree without the field; otherwise a leading space plus the flags,
+        # appended inside the single-quoted -DCMAKE_C_FLAGS argument after -fopenmp. The TRITON-only
+        # compile (the C-flag site of _compile_triton_only_backend) is deliberately not edited: its
+        # CMakeLists declares `project(triton CXX)` and builds no C library without TRITON_ENABLE_SWMM.
+        extra_c_flags = self._extra_c_flags_fragment()
         if backend == "cpu":
             # CPU: Enable OpenMP, disable GPU backends
             # -fopenmp ensures OpenMP runtime is linked (SWMM's CMakeLists.txt uses it)
@@ -1443,7 +1460,7 @@ class TRITONSWMM_system:
                 "-DKokkos_ENABLE_HIP=OFF "
                 "-DKokkos_ENABLE_CUDA=OFF "
                 "-DCMAKE_CXX_FLAGS='-O3 -fopenmp' "
-                "-DCMAKE_C_FLAGS='-fopenmp' "
+                f"-DCMAKE_C_FLAGS='-fopenmp{extra_c_flags}' "
                 "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
                 "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' "
                 + '-DCMAKE_CXX_STANDARD_LIBRARIES="'
@@ -1467,7 +1484,7 @@ class TRITONSWMM_system:
                     '-DCMAKE_CXX_COMPILER="$MPICXX" '
                     '-DCMAKE_C_COMPILER="$MPICC" '
                     "-DCMAKE_CXX_FLAGS='-O3' "
-                    "-DCMAKE_C_FLAGS='-fopenmp' "
+                    f"-DCMAKE_C_FLAGS='-fopenmp{extra_c_flags}' "
                     "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
                     "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' "
                     + '-DCMAKE_CXX_STANDARD_LIBRARIES="'
@@ -1480,7 +1497,7 @@ class TRITONSWMM_system:
                     f"{cmake_backend_flag} "
                     "-DKokkos_ENABLE_OPENMP=OFF "
                     "-DCMAKE_CXX_FLAGS='-O3' "
-                    "-DCMAKE_C_FLAGS='-fopenmp' "
+                    f"-DCMAKE_C_FLAGS='-fopenmp{extra_c_flags}' "
                     "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
                     "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' "
                     + '-DCMAKE_CXX_STANDARD_LIBRARIES="'

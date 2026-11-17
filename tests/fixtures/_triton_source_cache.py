@@ -52,6 +52,23 @@ from hhemt.cache import paths as cache_paths
 #: Never record one without the other — record TRITON_SOURCE_DESCRIPTOR.
 TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 
+#: THE LIVE PIN: the head of `develop` on the fork, `deefa6e6` (the solver carrying the per-step coupling
+#: captures, the per-node manhole table and the coupling interval and lag), read 2026-11-16 with
+#: `git ls-remote https://github.com/lassiterdc/triton.git refs/heads/develop`, which `TRITON_GIT_URL` above names.
+#: It descends from ORNL's `triton-swmm` head `faba2232` (`git merge-base faba2232 deefa6e6` -> `faba2232`; `git
+#: rev-list --count faba2232..deefa6e6` -> 10), so the same URL serves both. The move FROM `faba2232` changes 12
+#: files under `src` and `external` (`git diff --stat faba2232 deefa6e6 -- src external`) and adds test and
+#: documentation files elsewhere; `git ls-tree` returns the same `external/kokkos` (dc1bf738) and
+#: `external/yaml-cpp` (a83cd315) gitlinks at both, and the `external/swmm` tree moves (6c5a47f9 -> aea4b7a4), as
+#: its solver changes live inside it. Every new cfg key defaults off or inert, so a default-config run builds and
+#: behaves as at `faba2232`; what is owed is one rebuild of the tier's TRITON build cache on Rivanna.
+#: THIS MOVE OWES A REGISTRATION AND MAKES IT: `model_defects.SHA_TRITON_CUSTOM_DIAGNOSTICS_PIN` is a
+#: `known_absent_in` member of every `REGISTRY` entry and a member of the three sets in `scenario.py`.
+#: THE PREVIOUS PIN, `faba2232`, remains registered (`model_defects.SHA_ORNL_COUPLING_DECLARATION_PIN`) and
+#: remains a member of those sets, because recorded runs name it; it is also the baseline the solver's
+#: neutrality suite compares against.
+#: THE PRECEDING MOVE'S RECORD, RETAINED AND NO LONGER LIVE (bb13ea28 -> faba2232). Its `NO REGISTRATION IS OWED`
+#: sentence describes that move only.
 #: ORNL's `triton-swmm` head `faba2232` (DR-37, package 1j: the tier builds the solver the toolkit is
 #: pinned to elsewhere, `model_defects.SHA_ORNL_COUPLING_DECLARATION_PIN`). The sha is served by
 #: `TRITON_GIT_URL` above: GitHub's compare of `lassiterdc/triton` `faba2232...main` reports `ahead`
@@ -159,9 +176,13 @@ TRITON_GIT_URL = "https://github.com/lassiterdc/triton.git"
 #:   * `tests/test_wp2b_resume_mechanism_review.py::_SHA_CURRENT_PIN`, asserted
 #:     `== TRITON_PIN`, so a miss is also a LOUD red;
 #:   * `tests/test_known_solver_defects.py::_PIN`.
+#: The move from `faba2232` to `deefa6e6` edited the same three TEST literals, ADDED a member beside the others in
+#: `src/hhemt/model_defects.py` and in each of the three `scenario.py` sets (a new sha is a new member, never a
+#: moved one), and re-pointed the two lines of `test_data/norfolk_coastal_flooding/template_system_config.yaml`
+#: that name the clone URL and the branch key.
 #: A short-prefix search also matches docstrings that merely mention the pin, which are not
 #: coupled literals a move must update.
-TRITON_PIN = "faba223212408f04b7a3dbf6580adedf4a4e6b13"
+TRITON_PIN = "deefa6e6fcb26184a60eb8242dc82dcc3cab9618"
 
 #: The ONE form every version RECORD prints, so a URL cannot be omitted beside a pin.
 #: Consumed by `model_version_lines()` and by the estate's per-chunk provenance stamp.

@@ -178,7 +178,13 @@ def _swmm_fill_values(
     mapping["REPORT_START_TIME"] = mapping["START_TIME"]
     mapping["END_DATE"] = last_tstep.strftime("%m/%d/%Y")
     mapping["END_TIME"] = last_tstep.strftime("%H:%M:%S")
-    mapping["REPORT_STEP"] = scenario.seconds_to_hhmmss(cfg_analysis.TRITON_reporting_timestep_s)
+    # The coupled (hydraulics) model alone takes the independent report step; every other role keeps the TRITON
+    # reporting step, which is also the value of the coupled model while ``swmm_report_step_s`` is None.
+    report_step_s = cfg_analysis.TRITON_reporting_timestep_s
+    independent_step_s = getattr(cfg_analysis, "swmm_report_step_s", None)
+    if independent_step_s is not None and destination == scen_paths.swmm_hydraulics_inp:
+        report_step_s = independent_step_s
+    mapping["REPORT_STEP"] = scenario.seconds_to_hhmmss(report_step_s)
 
     return mapping
 

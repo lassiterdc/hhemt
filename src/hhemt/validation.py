@@ -789,7 +789,7 @@ def _validate_per_member_system_configs(
        silently route the wrong runner script.
     4. **Canonical-YAML correctness (post-dedup)** — YAMLs whose
        compile-relevant tuple ``(target_dem_resolution, gpu_hardware,
-       gpu_compilation_backend)`` matches must agree on every other
+       gpu_compilation_backend, TRITONSWMM_extra_c_flags)`` matches must agree on every other
        ``cfg_system`` field. The dedup picks one canonical YAML
        lexicographically; divergent non-key fields would silently disappear.
 
@@ -950,13 +950,15 @@ def _validate_per_member_system_configs(
     # (now partition-axis-derived), so they are no longer per-sub-YAML consistency
     # dimensions here — the compile-dedup gpu pairing lives in
     # sensitivity_analysis._build_unique_system_targets. The remaining system_config
-    # dedup dimension is target_dem_resolution.
+    # dedup dimensions are target_dem_resolution and TRITONSWMM_extra_c_flags, the same two
+    # system_config fields the builder keys on.
     groups: dict[tuple, list[tuple[Path, system_config]]] = {}
     for path, loaded in loaded_by_path.items():
-        key = (loaded.target_dem_resolution,)
+        key = (loaded.target_dem_resolution, loaded.TRITONSWMM_extra_c_flags)
         groups.setdefault(key, []).append((path, loaded))
     dedup_key_fields = {
         "target_dem_resolution",
+        "TRITONSWMM_extra_c_flags",
     }
     for entries in groups.values():
         if len(entries) < 2:
@@ -1279,6 +1281,8 @@ def validate_data_consistency(
     - Rainfall variable existence in the weather file
     - Units validation (rainfall_units)
     - CSV column existence
+    - Coupling-diagnostics settings against the coupled model, the SWMM model's ROUTING_STEP, the links file and
+      the execution environment
 
     Args:
         cfg_system: System configuration
@@ -1297,6 +1301,15 @@ def validate_data_consistency(
 
     # Units validation
     _validate_units(cfg_analysis, result)
+
+    # The coupling-diagnostics group: each setting acts on the coupled model only and is a silent no-op without it,
+    # and two of the three read a file (the SWMM model, the links list). Called from here and not from
+    # ``preflight_validate`` itself because these are the checks that need BOTH configs and a data file, and the
+    # partition-caps test of ``preflight_validate`` derives its list of silenced validators from the direct callees
+    # of ``preflight_validate``, so a new direct callee obliges an edit to that test's tuple.
+    _validate_coupling_diagnostics(cfg_system, cfg_analysis, result)
+    _validate_swmm_report_step(cfg_system, cfg_analysis, result)
+    _validate_extra_c_flags(cfg_system, cfg_analysis, result)
 
     return result
 
@@ -2353,6 +2366,155 @@ def _validate_coupling_exchange_flow(
         )
 
 
+def _validate_coupling_diagnostics(cfg_system: system_config, cfg_analysis: analysis_config, result: ValidationResult):
+    """Refuse a coupling-diagnostics or coupling-step setting on a system whose coupled model is off, and a links file
+    that does not exist.
+
+    The captures and the T3 keys (``swmm_coupling_interval``, ``swmm_coupling_lag``) act on the SWMM coupling block,
+    which a TRITON-only or SWMM-only system never runs, and the toolkit writes their cfg lines into the coupled cfg
+    only. Left unrefused, the setting would be a silent no-op and the run would finish without the files or the
+    changed coupling the analysis was configured to produce. A ``swmm_diagnostic_links`` value other than ``ALL``
+    names a file the solver reads from its own working directory; a missing file makes the solver record no link
+    and say nothing, so it is refused here, where the run has not yet spent an allocation.
+
+    Read with ``getattr``: ``preflight_validate`` also receives stand-in configs that predate the fields, and an
+    absent field is the default, which no check applies to.
+    """
+    settings = {
+        "toggle_coupling_diagnostics": bool(getattr(cfg_analysis, "toggle_coupling_diagnostics", False)),
+        "swmm_diagnostic_links": getattr(cfg_analysis, "swmm_diagnostic_links", None) is not None,
+        "swmm_diagnostic_node_path3_per_step": bool(
+            getattr(cfg_analysis, "swmm_diagnostic_node_path3_per_step", False)
+        ),
+        "swmm_coupling_interval": getattr(cfg_analysis, "swmm_coupling_interval", 1) != 1,
+        "swmm_coupling_lag": getattr(cfg_analysis, "swmm_coupling_lag", 0) != 0,
+    }
+    if not getattr(cfg_system, "toggle_tritonswmm_model", True):
+        for name, is_set in settings.items():
+            if is_set:
+                result.add_error(
+                    field=f"analysis.{name}",
+                    message=f"{name} requires the coupled model: toggle_tritonswmm_model is False",
+                    current_value=getattr(cfg_analysis, name),
+                    fix_hint=f"Set toggle_tritonswmm_model=True in the system config, or return {name} to its default",
+                )
+    links = getattr(cfg_analysis, "swmm_diagnostic_links", None)
+    if links is not None and links != "ALL" and not Path(links).is_file():
+        result.add_error(
+            field="analysis.swmm_diagnostic_links",
+            message=f"swmm_diagnostic_links names a file that does not exist: {links}",
+            current_value=links,
+            fix_hint="Correct the path to an existing file of link names, or set swmm_diagnostic_links to ALL",
+        )
+
+
+def _routing_step_s(inp_path: Path) -> float | None:
+    """The ``ROUTING_STEP`` of a SWMM ``.inp`` in seconds: the model's own, else SWMM's default of 20.
+
+    Read the way SWMM reads the option (``project.c``, case ``ROUTE_STEP``): the key matches by case-insensitive
+    prefix; a value that parses as a number is SECONDS and any other is ``h:mm:ss`` or ``h:mm``; the last declaring
+    line of an ``[OPTIONS]`` section wins. A bare ``45`` is therefore 45 seconds, where ``REPORT_STEP`` would read it
+    as hours. Returns None when the file cannot be read or the value is in neither form, so the caller skips a
+    judgement it cannot make and leaves the model's own load to report the defect.
+    """
+    try:
+        lines = Path(inp_path).read_text(errors="replace").splitlines()
+    except OSError:
+        return None
+    in_options = False
+    value = None
+    for line in lines:
+        stripped = line.split(";", 1)[0].strip()
+        if not stripped:
+            continue
+        if stripped.startswith("["):
+            in_options = stripped.upper().startswith("[OPTION")
+            continue
+        tokens = stripped.split()
+        if in_options and len(tokens) > 1 and tokens[0].upper().startswith("ROUTING_STEP"):
+            value = tokens[1]
+    if value is None:
+        return 20.0
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    parts = value.split(":")
+    try:
+        numbers = [float(p) for p in parts]
+    except ValueError:
+        return None
+    if len(numbers) == 3:
+        return numbers[0] * 3600.0 + numbers[1] * 60.0 + numbers[2]
+    if len(numbers) == 2:
+        return numbers[0] * 3600.0 + numbers[1] * 60.0
+    return None
+
+
+def _validate_swmm_report_step(cfg_system: system_config, cfg_analysis: analysis_config, result: ValidationResult):
+    """Refuse ``swmm_report_step_s`` on a system whose coupled model is off, or below the model's ROUTING_STEP.
+
+    SWMM stops at validation with an error when its report step is below its routing step, which for a coupled run
+    is after the allocation has started. The field is the report step of the COUPLED model, so with that model off it
+    could only be a silent no-op. An unset field is never judged: the default is today's reporting step, which this
+    check has never refused.
+    """
+    step = getattr(cfg_analysis, "swmm_report_step_s", None)
+    if step is None:
+        return
+    if not getattr(cfg_system, "toggle_tritonswmm_model", True):
+        result.add_error(
+            field="analysis.swmm_report_step_s",
+            message="swmm_report_step_s requires the coupled model: toggle_tritonswmm_model is False",
+            current_value=step,
+            fix_hint="Set toggle_tritonswmm_model=True in the system config, or leave swmm_report_step_s unset",
+        )
+        return
+    model = getattr(cfg_system, "SWMM_model", None)
+    if model is None:
+        return
+    routing = _routing_step_s(Path(model))
+    if routing is not None and step < routing:
+        result.add_error(
+            field="analysis.swmm_report_step_s",
+            message=(
+                f"swmm_report_step_s is {step} s, below the ROUTING_STEP of {model}, {routing:g} s; SWMM stops "
+                "with an error when its report step is below its routing step"
+            ),
+            current_value=step,
+            fix_hint=f"Set swmm_report_step_s to at least {routing:g}, or lower the ROUTING_STEP of the model",
+        )
+
+
+def _validate_extra_c_flags(cfg_system: system_config, cfg_analysis: analysis_config, result: ValidationResult):
+    """Refuse ``TRITONSWMM_extra_c_flags`` under a container run, and on a system whose coupled model is off.
+
+    A container run compiles nothing (the image carries the binary), and the TRITON-SWMM compile that takes the
+    flags does not run when the coupled model is off. A non-empty value in either case is a flag the solver was never
+    built with, recorded in the bundle as if it had been, so a reader would believe the build was optimised.
+    """
+    flags = getattr(cfg_system, "TRITONSWMM_extra_c_flags", "")
+    if not flags:
+        return
+    if getattr(cfg_analysis, "execution_environment", "native") == "container":
+        result.add_error(
+            field="system.TRITONSWMM_extra_c_flags",
+            message=(
+                "TRITONSWMM_extra_c_flags is set but execution_environment is 'container': the image supplies "
+                "the binary and nothing is compiled, so the flags would never reach the solver"
+            ),
+            current_value=flags,
+            fix_hint="Leave TRITONSWMM_extra_c_flags empty under a container run, or use execution_environment: native",
+        )
+    if not getattr(cfg_system, "toggle_tritonswmm_model", True):
+        result.add_error(
+            field="system.TRITONSWMM_extra_c_flags",
+            message="TRITONSWMM_extra_c_flags requires the coupled model: toggle_tritonswmm_model is False",
+            current_value=flags,
+            fix_hint="Set toggle_tritonswmm_model=True, or leave TRITONSWMM_extra_c_flags empty",
+        )
+
+
 def _validate_timeseries_keep(cfg_system: system_config, cfg_analysis: analysis_config, result: ValidationResult):
     """Refuse an unknown set name, or a listed variable outside the domain of every enabled model family.
 
@@ -2564,6 +2726,11 @@ def preflight_validate(
 _NODE_LOCAL_ACK_ENV = "HHEMT_ALLOW_NODE_LOCAL_CONFIGS"
 
 
+#: Config fields typed ``str`` whose value, other than the literal ``ALL``, is a file path. They are not ``Path``
+#: fields because a bundle's path policy (``bundle/_path_policy.py``) would then have to carry them.
+_PATH_VALUED_STR_FIELDS = ("swmm_diagnostic_links",)
+
+
 def _iter_config_paths(cfg) -> list[tuple[str, Path]]:
     """Return every ``(field_name, Path)`` pair the LIVE config model holds.
 
@@ -2580,6 +2747,10 @@ def _iter_config_paths(cfg) -> list[tuple[str, Path]]:
         value = getattr(cfg, name, None)
         if isinstance(value, Path):
             out.append((name, value))
+        elif name in _PATH_VALUED_STR_FIELDS and isinstance(value, str) and value != "ALL":
+            # A str field that names a file (the solver reads it by path) is invisible to the Path test above, so a
+            # file kept on a node-local filesystem would pass the guard and be unreadable on the compute node.
+            out.append((name, Path(value)))
         elif isinstance(value, list | tuple):
             out.extend((f"{name}[{i}]", v) for i, v in enumerate(value) if isinstance(v, Path))
     return out

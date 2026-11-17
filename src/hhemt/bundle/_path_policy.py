@@ -89,6 +89,7 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "TRITON_initial_depth_raster": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "TRITON_initial_qx_raster": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "TRITON_initial_qy_raster": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "manhole_table": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "analysis_dir": PathPolicy.FORCED_DOT,
     "experiment_cfg_yaml": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "brand_theme": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
@@ -211,6 +212,14 @@ _EXCLUDABLE_CATALOG: dict[str, ExcludableInput] = {
         reproducibility_cost=(
             "As large as the processed DEM. Excluding it makes a reproduced run start with no flow, which is a "
             "different experiment; exclude it only with a fetch route for the file."
+        ),
+    ),
+    "manhole_table": ExcludableInput(
+        description="Per-node manhole table: each coupling node's manhole diameter and loss coefficient.",
+        reproducibility_cost=(
+            "Tiny, and it defines the per-node values. A bundle without the table cannot reproduce the per-node "
+            "manhole values, so a reproduced run takes the constants or is refused; exclude it only with a fetch "
+            "route for the file."
         ),
     ),
     "weather_events_to_simulate": ExcludableInput(

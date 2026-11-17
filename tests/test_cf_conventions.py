@@ -214,6 +214,13 @@ def test_no_phantom_swmm_keys_in_cf_variable_map() -> None:
         "coupling_exchange_time_of_peak_to_network",
         "coupling_exchange_time_of_peak_to_surface",
         "coupling_exchange_duration_to_surface",
+        # The coupling-diagnostics per-node path-3 account, computed from the solver's swmm_node_path3.bin.
+        "path3_volume_pos",
+        "path3_volume_neg",
+        "nonconverged_steps",
+        # The coupled node store's per-node manhole values, read back from the scenario's manhole_table.txt.
+        "manhole_diameter",
+        "manhole_loss_coefficient",
         # The stored numeric variables the report column registries above do not name. SWMM node and
         # link time series, with the `_last` / `_max` reductions `summarize_swmm_simulation_results` derives.
         "depth",

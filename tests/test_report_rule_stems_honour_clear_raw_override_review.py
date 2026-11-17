@@ -174,6 +174,7 @@ def _submit_stand_in(*, sensitivity: bool, applied: list, reconciled: list) -> S
         _refuse_coupled_system_with_no_coupling_candidate=lambda: None,
         _refuse_coupling_nodes_outside_triton_grid=lambda **_k: None,
         _refuse_coupling_the_triton_build_would_not_read=lambda: None,
+        _refuse_manhole_table_mismatch=lambda: None,
         _workflow_builder=SimpleNamespace(
             _acquire_submit_driver_claim=lambda *_a, **_k: None,
             submit_workflow=_stop,

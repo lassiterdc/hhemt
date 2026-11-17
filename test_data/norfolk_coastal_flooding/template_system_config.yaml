@@ -9,8 +9,8 @@ landuse_lookup_file: '${DATA_DIR}/external/landuse_lookup_tables.csv'
 landuse_raster: '${DATA_DIR}/external/landuse_clipped_to_triton_extent.tif'
 TRITONSWMM_software_directory: '${PACKAGE_DIR}/triton'
 SWMM_software_directory: '${PACKAGE_DIR}/swmm'
-TRITONSWMM_git_URL: 'https://code.ornl.gov/hydro/triton.git'
-TRITONSWMM_branch_key: 'faba223212408f04b7a3dbf6580adedf4a4e6b13'  # the head of the triton-swmm branch at ORNL (git ls-remote, 2026-11-15); its src/config_utils.h reads swmm_coupling_nodes
+TRITONSWMM_git_URL: 'https://github.com/lassiterdc/triton.git'
+TRITONSWMM_branch_key: 'deefa6e6fcb26184a60eb8242dc82dcc3cab9618'  # the head of the develop branch of the triton fork (git ls-remote, 2026-11-16); its src/config_utils.h reads swmm_coupling_nodes
 SWMM_git_URL: 'https://github.com/USEPA/Stormwater-Management-Model.git'
 SWMM_tag_key: 'v5.2.4' 
 SWMM_model: '${DATA_DIR}/external/hague_model.inp'  # one runnable SWMM model; the toolkit derives the coupled, hydrology and standalone models from it
