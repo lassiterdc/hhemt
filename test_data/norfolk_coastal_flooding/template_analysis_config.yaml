@@ -5,7 +5,7 @@ weather_time_series_timestep_dimension_name: 'timestep'
 weather_time_series_spatial_mean_rainfall_datavar: 'mm_per_hr'  # Step-0 TBD: confirm via Rivanna weather NetCDF schema dump
 weather_timeseries: '${DATA_DIR}/external/obs_event_tseries_from_yrs_with_complete_coverage.nc'
 # weather_event_summary_csv: '${DATA_DIR}/external/observed_event_events.csv'
-external_boundary_gis: '${DATA_DIR}/external/variable_bc.shp'
+external_boundary_gis: '${DATA_DIR}/external/variable_bc.gpkg'
 external_boundary_type_attribute: 'type'  # layer column naming each record's type
 water_level_boundary_outfall_attribute: 'outfalls'  # layer column naming the SWMM outfalls each water_level record replaces
 water_level_boundary_series_source: 'weather_time_series'

@@ -6,8 +6,8 @@ builds a Norfolk-shaped input in ``tmp_path`` or reads tracked text. None runs a
 
 The Norfolk model (``hague_model.inp``, 29,309 lines) and the published layer are not in the repository. The
 coordinates of its two outfalls below were read from the ``[COORDINATES]`` rows of the copy whose sha256 is the
-``hague_model.inp`` value of ``case.yaml`` (``26b76336...``), and the line of the layer is the one of the cached
-``variable_bc.shp`` whose sha256 is the ``variable_bc.shp`` value of ``case.yaml`` (``aae93594...``).
+``hague_model.inp`` value of ``case.yaml`` (``26b76336...``), and the line of the layer is the one of the published
+``variable_bc.gpkg`` whose sha256 is the ``variable_bc.gpkg`` value of ``case.yaml`` (``d0dd01c8...``).
 """
 
 from __future__ import annotations
@@ -39,8 +39,7 @@ _REPO = Path(__file__).resolve().parents[1]
 _CASE_DIR = _REPO / "test_data" / "norfolk_coastal_flooding"
 _DOCS = _REPO / "docs" / "how-to" / "using-a-runnable-swmm-model.md"
 _CACHED_LAYER = (
-    Path.home()
-    / ".local/share/hhemt/examples/norfolk_coastal_flooding/data/contents/shp_boundary_condition/variable_bc.shp"
+    Path.home() / ".local/share/hhemt/examples/norfolk_coastal_flooding/data/contents/external/variable_bc.gpkg"
 )
 
 # The two Norfolk outfalls read a series named ``water_level``; their positions are in EPSG:32147 meters.
@@ -62,7 +61,8 @@ water_level 01/01/2020 01:00 0.5
 E143250 3696719.162 1060291.312
 E147007 3696713.791 1060298.456
 """
-# The line of the cached layer: a 2-vertex LineString, 46.9 m, with the columns Id, tseries and length_m.
+# The line of the published layer: a 2-vertex LineString, 46.9 m, with the columns Id, tseries and length_m, and
+# the two columns ``type`` and ``outfalls`` that the published layer added.
 _LINE = [(3696703.8335999995, 1060295.0697782936), (3696704.0515120127, 1060248.124152198)]
 _PRINTED = "record 0: E143250 15.3 m, E147007 10.5 m"
 
@@ -73,7 +73,10 @@ def _write_layer(directory: Path, *, kind="water_level", outfalls="E143250 E1470
         data["type"] = [kind]
         data["outfalls"] = [outfalls]
     gdf = gpd.GeoDataFrame(data, geometry=[LineString(_LINE)], crs="EPSG:32147")
-    path = directory / "variable_bc.shp"
+    path = directory / "variable_bc.gpkg"
+    # A second write onto an existing GeoPackage replaces the layer inside the SQLite file, which costs about twice a
+    # first write; removing the file first gives every call the first-write cost.
+    path.unlink(missing_ok=True)
     gdf.to_file(path)
     return path
 
@@ -204,38 +207,60 @@ def test_the_norfolk_node_depths_on_both_grids_are_the_ones_the_docs_and_the_sha
     assert full == {"E147007": pytest.approx(1.3065)}
 
 
-def test_the_case_manifest_marks_the_changed_layer_digest_provisional_and_only_that_one():
-    """Property: the ``variable_bc.dbf`` value sits under a PROVISIONAL comment and is not the pre-chunk digest.
+def test_the_case_manifest_pins_the_published_layer_and_marks_nothing_provisional():
+    """Property: the ``variable_bc.gpkg`` row holds the published layer's digest and no comment calls it provisional.
 
-    The pre-chunk value was ``548af5bd...`` (the sha256 of the cached three-column ``.dbf``). A manifest that kept
-    it would fail the fetch-side integrity check against the published layer once the layer has the two columns.
+    The layer gained the columns ``type`` and ``outfalls``, so a manifest that kept the digest of the layer without
+    them would fail the fetch-side integrity check against the published layer. The earlier manifest held a locally
+    written digest under a PROVISIONAL comment until the new resource version existed; that version exists, so the
+    comment has no referent.
+    What kills it: a missing ``.gpkg`` row, a digest other than the published one, a PROVISIONAL comment left behind.
+    A second correct implementation: the digest compared after reading the manifest through ``CaseManifest``.
     """
-    lines = (_CASE_DIR / "case.yaml").read_text().splitlines()
-    (at,) = [i for i, line in enumerate(lines) if "variable_bc.dbf:" in line]
-    above = "\n".join(lines[max(0, at - 6) : at])
-    assert "PROVISIONAL" in above and "variable_bc" in above
-    digest = lines[at].split(":", 1)[1].strip()
-    assert re.fullmatch(r"[0-9a-f]{64}", digest)
-    assert digest != "548af5bd32481b0fba31357a3bdff0e25e6a43b80585eb83dab47c0782358483"
-    # Control: the layer's other four files carry no marker of their own, so the marker above is about the .dbf.
-    assert not any("PROVISIONAL" in line for line in lines[at + 1 :])
+    text = (_CASE_DIR / "case.yaml").read_text()
+    manifest = yaml.safe_load(text)["manifest"]
+    assert manifest["data/contents/external/variable_bc.gpkg"] == (
+        "d0dd01c87c2d3b3312d51117b4d72711e7357f4e1ec1293adcb97c96484b10b8"
+    )
+    assert "PROVISIONAL" not in text
+    # Control: the matcher fires on the marker the earlier manifest carried.
+    assert "PROVISIONAL" in "# PROVISIONAL: the layer variable_bc gains the columns"
 
 
-@pytest.mark.skipif(not _CACHED_LAYER.is_file(), reason="the cached Norfolk example layer is not on this machine")
-def test_the_published_layer_gains_exactly_the_two_columns_the_analysis_template_names(tmp_path):
-    """Property: the cached layer has Id, tseries and length_m; adding ``type`` and ``outfalls`` makes it valid."""
+@pytest.mark.skipif(not _CACHED_LAYER.is_file(), reason="the fetched Norfolk example layer is not on this machine")
+def test_the_published_layer_carries_exactly_the_two_columns_the_analysis_template_names(tmp_path):
+    """Property: the fetched layer has Id, tseries, length_m, type and outfalls, and the whole boundary pass accepts it.
+
+    Reachability: the layer is read through geopandas by the boundary validators exactly as a run reads it.
+    What kills it: a published layer that lacks ``type`` or ``outfalls``, or is not in EPSG:32147.
+    A second correct implementation: the layer read with ``pyogrio.read_dataframe`` instead of ``gpd.read_file``.
+    """
     _, analysis = _templates()
-    original = gpd.read_file(_CACHED_LAYER)
-    assert [c for c in original.columns if c != "geometry"] == ["Id", "tseries", "length_m"]
-    assert list(LineString(_LINE).coords) == list(original.geometry.iloc[0].coords), "the literal line is the layer's"
-    original["type"] = "water_level"
-    original["outfalls"] = "E143250 E147007"
-    layer = tmp_path / "variable_bc.shp"
-    original.to_file(layer)
+    published = gpd.read_file(_CACHED_LAYER)
+    assert [c for c in published.columns if c != "geometry"] == ["Id", "tseries", "length_m", "type", "outfalls"]
+    assert published.crs.to_epsg() == 32147
+    assert list(LineString(_LINE).coords) == list(published.geometry.iloc[0].coords), "the literal line is the layer's"
     assert analysis["external_boundary_type_attribute"] == "type"
     assert analysis["water_level_boundary_outfall_attribute"] == "outfalls"
-    report = _preflight(tmp_path, layer)
+    report = _preflight(tmp_path, _CACHED_LAYER)
     assert report.problems == [] and report.lines == [_PRINTED]
+
+
+def test_the_docs_name_the_layer_files_the_norfolk_templates_name():
+    """Property: the page names, by basename, the file each Norfolk template gives to a map layer.
+
+    Reachability: the page's Norfolk section is the one place a reader learns what the boundary layer file is called.
+    What kills it: a template pointing at a layer file the page does not name, or a page naming one the templates
+    do not.
+    A second correct implementation: the page generated from the templates, in which case the property holds by
+    construction.
+    """
+    system, analysis = _templates()
+    names = {Path(system["watershed_gis_polygon"]).name, Path(analysis["external_boundary_gis"]).name}
+    text = _DOCS.read_text()
+    assert names and {name for name in names if name in text} == names
+    # Control: the matcher fires on a basename the page does not hold.
+    assert "no_such_layer.gpkg" not in text
 
 
 def test_the_docs_distance_example_for_the_norfolk_outfalls_is_what_the_norfolk_layer_prints(tmp_path):

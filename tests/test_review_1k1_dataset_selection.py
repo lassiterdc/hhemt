@@ -1,25 +1,25 @@
 """Reviewer tests for chunk 1k.1: the Norfolk case dataset chosen from a reprex bundle.
 
 The dataset itself lives outside the repository. What a laptop run can hold is the
-dataset's FILE LIST, measured by the reviewer on the staged tree (20 files under
-``data/contents/external/``), against the two production surfaces that name dataset
-files: the Norfolk config templates and the shapefile sidecar rule of the bundle emitter.
+dataset's FILE LIST (12 files under ``data/contents/external/``: the two map layers are
+GeoPackage files), against the production surfaces that name dataset files: the Norfolk config
+templates and every tracked text file under ``tests``, ``docs``, ``src`` and ``test_data``.
 Nothing here compiles or runs a solver and nothing reads the dataset's bytes.
 """
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
-from hhemt.bundle._emit import SHAPEFILE_REQUIRED_SIDECARS
-
-_CASE_DIR = Path(__file__).resolve().parents[1] / "test_data" / "norfolk_coastal_flooding"
+_REPO = Path(__file__).resolve().parents[1]
+_CASE_DIR = _REPO / "test_data" / "norfolk_coastal_flooding"
 
 # The staged dataset's members by basename, as listed by `find <stage> -type f -printf "%f\n"`
-# over the staged tree (20 entries). Basenames, not relative paths, so the pin survives the folder
+# over the staged tree (12 entries). Basenames, not relative paths, so the pin survives the folder
 # layout the case fetch path settles on.
 _STAGED_BASENAMES = frozenset(
     {
@@ -30,19 +30,11 @@ _STAGED_BASENAMES = frozenset(
         "hurricane_irene_event_index.csv",
         "landuse_clipped_to_triton_extent.tif",
         "landuse_lookup_tables.csv",
-        "norfolk_wshed_epsg32147_state_plane_m.cpg",
-        "norfolk_wshed_epsg32147_state_plane_m.dbf",
-        "norfolk_wshed_epsg32147_state_plane_m.prj",
-        "norfolk_wshed_epsg32147_state_plane_m.shp",
-        "norfolk_wshed_epsg32147_state_plane_m.shx",
+        "norfolk_wshed_epsg32147_state_plane_m.gpkg",
         "observed_event_events.csv",
         "observed_events_named_subset.csv",
         "obs_event_tseries_from_yrs_with_complete_coverage.nc",
-        "variable_bc.cpg",
-        "variable_bc.dbf",
-        "variable_bc.prj",
-        "variable_bc.shp",
-        "variable_bc.shx",
+        "variable_bc.gpkg",
     }
 )
 
@@ -80,23 +72,89 @@ def test_every_template_data_dir_path_names_a_staged_dataset_file(template_name:
     assert not absent, f"{template_name} names dataset files the staged dataset lacks: {absent}"
 
 
-def test_every_staged_shapefile_carries_the_sidecars_the_emitter_requires() -> None:
-    """Quantifies over: every ``.shp`` member of the staged dataset.
+def test_the_two_template_layer_fields_name_geopackage_files() -> None:
+    """Quantifies over: the template fields that name a vector layer.
 
-    Each must sit with the reader sidecars the bundle emitter's own rule names
-    (``SHAPEFILE_REQUIRED_SIDECARS``), because a ``.shp`` without them cannot be read by
-    geopandas. Two earlier bundles carried the ``.shp`` alone, and that is why the newest bundle
-    was chosen. The assertion reads the production rule rather than a copy of it, so it turns on
-    the sidecar contract in both the current and any widened state of that rule.
+    Those are ``watershed_gis_polygon`` and ``external_boundary_gis``.
 
-    Killed by: dropping a required sidecar from the dataset's file list, or widening the
-    emitter's required set to an extension the dataset does not carry.
+    Each must name a ``.gpkg`` file, because both Norfolk layers are projected in EPSG:32147 and a GeoPackage
+    carries that projection in one file, where a shapefile needs four sidecars and a reprojecting GeoJSON would
+    move the coordinates the boundary validators compare against the model.
+
+    Why required: the published resource holds the layers as ``.gpkg`` only, so a template naming any other
+    suffix resolves to nothing at the first existence check of config load.
+
+    Killed by: pointing either field back at a shapefile.
+    A second correct implementation: any other layer format the resource gains later, with this suffix tuple
+    widened, since the assertion turns on the suffix and not on the folder.
     """
-    shapefiles = sorted(n for n in _STAGED_BASENAMES if n.endswith(".shp"))
-    assert shapefiles, "the staged dataset lists no shapefile, so the matcher read nothing"
-    missing = {
-        shp: [ext for ext in SHAPEFILE_REQUIRED_SIDECARS if Path(shp).with_suffix(ext).name not in _STAGED_BASENAMES]
-        for shp in shapefiles
+    fields = {
+        "template_system_config.yaml": "watershed_gis_polygon",
+        "template_analysis_config.yaml": "external_boundary_gis",
     }
-    missing = {shp: exts for shp, exts in missing.items() if exts}
-    assert not missing, f"staged shapefiles lack required sidecars: {missing}"
+    named = {
+        field: Path(yaml.safe_load((_CASE_DIR / template).read_text())[field]).suffix
+        for template, field in fields.items()
+    }
+    assert named == {"watershed_gis_polygon": ".gpkg", "external_boundary_gis": ".gpkg"}
+
+
+_LAYER_STEMS = ("variable_bc", "norfolk_wshed_epsg32147_state_plane_m")
+_REMOVED_SHAPEFILE_SUFFIXES = ("shp", "shx", "dbf", "prj", "cpg")
+# Rendered bundle reports are historical records, and the zarr reference stores record the paths of the run that
+# produced them; neither is edited.
+_HISTORICAL = (":!docs/reference/bundles", ":!test_data/swmm_refactoring_reference/*.zarr/*")
+
+
+def _layer_file_mentions(suffixes: tuple[str, ...]) -> list[tuple[str, str]]:
+    """Every ``(tracked path, "<stem>.<suffix>")`` mention of a Norfolk layer file, one per occurrence.
+
+    One fixed-string ``git grep -o`` call (a regex alternation measured 2.5 times slower) over ``tests``, ``docs``,
+    ``src`` and ``test_data`` less the historical records, so the population is the tracked text of those trees and
+    the unit is the occurrence.
+    """
+    names = [f"{stem}.{ext}" for stem in _LAYER_STEMS for ext in (*suffixes, "gpkg")]
+    found = subprocess.run(
+        [
+            "git",
+            "grep",
+            "-I",
+            "-o",
+            "-F",
+            *(arg for name in names for arg in ("-e", name)),
+            "--",
+            "tests",
+            "docs",
+            "src",
+            "test_data",
+            *_HISTORICAL,
+        ],
+        cwd=_REPO,
+        capture_output=True,
+        text=True,
+    )
+    if found.returncode == 128:
+        pytest.skip("not a git work tree")
+    return [tuple(line.split(":", 1)) for line in found.stdout.splitlines()]
+
+
+def test_no_tracked_file_names_a_removed_shapefile_of_either_norfolk_layer() -> None:
+    """Quantifies over: every tracked file under ``tests``, ``docs``, ``src`` and ``test_data``, less the records.
+
+    The historical records are the rendered bundle reports and the zarr reference stores.
+
+    None may name a file of either removed layer, that is a stem of the two layers followed by a shapefile
+    suffix, because the resource no longer holds those files and a test, doc or template that names one
+    describes a download that fails. The pattern is built from parts, so this file does not name a removed file.
+
+    Must-fire control: the same call also matches the GeoPackage suffix, and it must name this file and a
+    template for the files that exist, so a zero for the removed suffixes is not an instrument that reads nothing.
+    Killed by: naming ``<stem>.<shapefile suffix>`` in any tracked file of the four trees.
+    A second correct implementation: walking the tracked file list in Python and matching per line.
+    """
+    mentions = _layer_file_mentions(_REMOVED_SHAPEFILE_SUFFIXES)
+    removed = [(path, name) for path, name in mentions if name.rpartition(".")[2] in _REMOVED_SHAPEFILE_SUFFIXES]
+    assert removed == []
+    named_files = {path for path, name in mentions if name.endswith(".gpkg")}
+    assert "tests/test_review_1k1_dataset_selection.py" in named_files
+    assert any(path.startswith("test_data/norfolk_coastal_flooding/") for path in named_files)

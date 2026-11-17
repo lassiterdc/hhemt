@@ -2,7 +2,7 @@
 crs:  # canonical home for horizontal+vertical CRS resolution
   horizontal_epsg: 32147  # NAD83 / Virginia South (meter) — Norfolk coastal area
   vertical_epsg: 5703     # NAVD88 height (m)
-watershed_gis_polygon: '${DATA_DIR}/external/norfolk_wshed_epsg32147_state_plane_m.shp'
+watershed_gis_polygon: '${DATA_DIR}/external/norfolk_wshed_epsg32147_state_plane_m.gpkg'
 system_directory: '${PACKAGE_DIR}/system'
 DEM_fullres: '${DATA_DIR}/external/fullres_dem_m.tif'
 landuse_lookup_file: '${DATA_DIR}/external/landuse_lookup_tables.csv'

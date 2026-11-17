@@ -39,9 +39,9 @@ def _manifest() -> dict[str, str]:
 # --------------------------------------------------------------------------------------------
 
 
-def test_case_yaml_manifest_is_the_20_entry_external_block_with_lowercase_sha256_digests():
+def test_case_yaml_manifest_is_the_12_entry_external_block_with_lowercase_sha256_digests():
     m = _manifest()
-    assert len(m) == 20
+    assert len(m) == 12
     assert all(k.startswith("data/contents/external/") for k in m)
     assert all(re.fullmatch(r"[0-9a-f]{64}", v) for v in m.values())
 
@@ -90,9 +90,60 @@ def test_every_data_dir_path_in_a_template_is_a_manifest_key_or_the_placeholder(
     assert unresolved == {}
 
 
+# The 12 files the public Norfolk resource holds, as manifest keys; the two map layers are GeoPackage files.
+_STORE_FILES = frozenset(
+    "data/contents/external/" + name
+    for name in (
+        "b_sub_ids_and_mrms_rain_col.csv",
+        "event_windows_observed.csv",
+        "fullres_dem_m.tif",
+        "hague_model.inp",
+        "hurricane_irene_event_index.csv",
+        "landuse_clipped_to_triton_extent.tif",
+        "landuse_lookup_tables.csv",
+        "norfolk_wshed_epsg32147_state_plane_m.gpkg",
+        "obs_event_tseries_from_yrs_with_complete_coverage.nc",
+        "observed_event_events.csv",
+        "observed_events_named_subset.csv",
+        "variable_bc.gpkg",
+    )
+)
+
+
+def test_the_manifest_lists_exactly_the_files_the_store_holds_at_the_published_digests():
+    """Property: ``case.yaml`` lists the store's files and no other, at the digests the store reports.
+
+    Class: REGRESSION, red on the tree before this change (the manifest listed ten retired layer files, held no
+    ``.gpkg`` row and carried a PROVISIONAL comment over a locally written digest).
+    Reachability: the fetch verifies exactly the manifest keys, so a key the store lacks fails the download and a
+    store file the manifest omits is never integrity-checked.
+    Both-states anchor: the assertion compares the key set and three values, not wording.
+    What kills it: a row for a retired file, a missing row, either layer's digest changed, a stale
+    ``resource_version``, or a PROVISIONAL marker left in the file.
+    A second correct implementation: a manifest read through ``CaseManifest`` instead of ``yaml.safe_load``.
+    """
+    case = yaml.safe_load((_CASE / "case.yaml").read_text())
+    manifest = case["manifest"]
+    assert set(manifest) == _STORE_FILES
+    assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in manifest.values())
+    assert manifest["data/contents/external/variable_bc.gpkg"] == (
+        "d0dd01c87c2d3b3312d51117b4d72711e7357f4e1ec1293adcb97c96484b10b8"
+    )
+    assert manifest["data/contents/external/norfolk_wshed_epsg32147_state_plane_m.gpkg"] == (
+        "ffd624e1d7b0bafac5941f444665d937ef30328867376684fa0f52452cb9129b"
+    )
+    assert manifest["data/contents/external/hague_model.inp"] == (
+        "26b763364db60e14e64647bac6d9c530c5e413a9710bccd7787a8585bfc81efb"
+    )
+    assert case["resource_version"] == "2026-11-16T20:16:33.457544Z"
+    assert "PROVISIONAL" not in (_CASE / "case.yaml").read_text()
+    # Control: the key-set comparison fires on a manifest that still lists a retired file.
+    assert set(manifest) | {"data/contents/external/hague_full_model_template.inp"} != _STORE_FILES
+
+
 def test_the_resolution_check_is_live_an_old_layout_path_is_not_a_manifest_key():
     # varies the PROPERTY (path layout), not the token: the retired folder layout must not resolve
-    assert _key("${DATA_DIR}/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.shp") not in _manifest()
+    assert _key("${DATA_DIR}/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.gpkg") not in _manifest()
     assert _key("${DATA_DIR}/swmm/hague_full_model_template.inp") not in _manifest()
 
 
@@ -217,7 +268,7 @@ def test_pinned_arm_does_not_content_check_a_payload_file_the_manifest_does_not_
 
     The bag lists table.csv; the pinned manifest declares only the DEM. Corrupting table.csv used to be
     caught by bagit's md5 arm; under the pinned arm it passes. The manifest is the content pin, so the
-    manifest must declare every file whose content matters (the Norfolk manifest declares 20 files).
+    manifest must declare every file whose content matters (the Norfolk manifest declares 12 files).
     """
     z = _make_bag_zip(tmp_path, multipart_etag_on=None, corrupt="table.csv")
     partial = {"data/contents/external/fullres_dem_m.tif": _MANIFEST["data/contents/external/fullres_dem_m.tif"]}

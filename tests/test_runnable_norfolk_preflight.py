@@ -191,8 +191,7 @@ def test_manifest_lists_the_runnable_model_and_none_of_the_retired_template_file
     manifest = yaml.safe_load((_CASE_DIR / "case.yaml").read_text())["manifest"]
     model_key = "data/contents/" + _system_template()["SWMM_model"].removeprefix("${DATA_DIR}/")
     assert re.fullmatch(r"[0-9a-f]{64}", manifest[model_key])
-    for suffix in ("shp", "shx", "dbf", "prj", "cpg"):
-        assert re.fullmatch(r"[0-9a-f]{64}", manifest[f"data/contents/external/variable_bc.{suffix}"]), suffix
+    assert re.fullmatch(r"[0-9a-f]{64}", manifest["data/contents/external/variable_bc.gpkg"])
     assert not {f"data/contents/external/{name}" for name in _RETIRED_TEMPLATE_FILES} & set(manifest)
     # Control: the matcher fires on a manifest that still lists a removed file.
     assert {f"data/contents/external/{name}" for name in _RETIRED_TEMPLATE_FILES} & {
