@@ -912,14 +912,18 @@ class TRITONSWMM_analysis_post_processing:
                 for d in ds.dims
             }
             prepared = ds.chunk(chunks)
-            append_zarr(
-                prepared,
-                store,
-                group=group,
-                consolidate=False,
-                mode="w",
-                encoding=return_dic_zarr_encodings(prepared, compression_level),
-            )
+            # The caller's block already holds this store open, and a block opened on a held store leaves the one
+            # index rebuild to the outer block; stating the block here keeps the `consolidate=False` write inside
+            # its own, which is what the write discipline checks.
+            with deferred_consolidation(store):
+                append_zarr(
+                    prepared,
+                    store,
+                    group=group,
+                    consolidate=False,
+                    mode="w",
+                    encoding=return_dic_zarr_encodings(prepared, compression_level),
+                )
             written.append(group)
         return written
 
