@@ -111,6 +111,11 @@ _CHECK_VOCABULARY: dict[str, tuple[str, str]] = {
         "The producing solver build carries no defect from the resume-defect registry that "
         "applies to this run's model selection.",
     ),
+    "coupling diagnostics captured": (
+        "Coupling diagnostics",
+        "Every coupling-diagnostics capture the analysis asked for is present for each coupled scenario, "
+        "either as its own store holding records or as a group in the consolidated tree.",
+    ),
     "Known solver defects": (
         "Known solver defects",
         "The solver build that produced each coupled run carries no defect from the solver-defect "

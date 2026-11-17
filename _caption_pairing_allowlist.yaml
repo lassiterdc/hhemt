@@ -390,7 +390,14 @@ unpaired_allowlist:
       exemption expires on the next change to this renderer.
   - renderer: errors_and_warnings
     caption: src/hhemt/report_templates/captions/errors_and_warnings.rst
-    renderer_sha256: 9416c1b58049f211aaa34a9343cd4378577cd2874638de271d6e1d267cde327e
+    renderer_sha256: 2808af30e9f9a088cae81f3c630463075a9fa549a2ebd44ff2b5ce167d581359
+    justification_2026_11_17_coupling_diagnostics: >-
+      Re-read 2026-11-17 against this renderer's diff. The only hunk adds one _CHECK_VOCABULARY row for the
+      aggregate-level check 'coupling diagnostics captured', which validate_analysis now runs. The caption is five
+      lines: it says the page lists the validation results of the checks run once the workflow completed and names
+      the sources; it names no individual check, so the new row falsifies, weakens and leaves ambiguous none of its
+      sentences, and there is no caption edit to make. Digest recorded at the post-change renderer, so this
+      exemption expires on the next change to the renderer.
     justification_2026_11_02_develop_integration: >-
       Merge of origin/develop (fa98781e) into this run: against develop's version of this renderer the merged diff is that one vocabulary entry is added for the consolidated-metadata check.
       Caption RE-READ in full by a reviewer who is not the author and reads true (scratch 2026-11-01_2248_hhemt-specialist_build-reviewer.md, Resume Round 8, Part 2).
