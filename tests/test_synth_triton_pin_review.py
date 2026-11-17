@@ -40,7 +40,9 @@ _OLD_PIN_ALLOWED = frozenset({"src/hhemt/model_defects.py", "src/hhemt/scenario.
 
 #: The only tracked tests/src files that may carry the full sha of the pin before the live one (`faba2232`): the
 #: registry and the sets, the re-pin and registration reviews, the set-membership guard, the cross-solver renderer's
-#: recorded-solver fixture, and this file's own outgoing-pin literal.
+#: recorded-solver fixture, this file's own outgoing-pin literal, and the review of the move to the live pin, which
+#: names the outgoing pin to assert its relation to the live one (the commit count between them, the files they
+#: differ in).
 _FABA_ALLOWED = frozenset(
     {
         "src/hhemt/model_defects.py",
@@ -50,6 +52,7 @@ _FABA_ALLOWED = frozenset(
         "tests/test_scenario_boundary_guards.py",
         "tests/test_cross_solver_renderer.py",
         "tests/test_synth_triton_pin_review.py",
+        "tests/test_pin_deefa6e6_review.py",
     }
 )
 
