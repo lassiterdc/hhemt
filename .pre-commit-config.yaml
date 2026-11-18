@@ -82,9 +82,14 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+      # The range entry carries NO REF, as check-b's does: the pushed range arrives in the
+      # PRE_COMMIT_FROM_REF/PRE_COMMIT_TO_REF that pre-commit exports to a pre-push hook, and a
+      # literal base here would override it. A literal `HEAD~1` graded the last commit of the tree
+      # the push ran from, so a push was refused for a jump in a commit it did not carry (change
+      # 1117-HOOK; the measurement is in tests/test_check_layout_version.py).
       - id: check-layout-version-a-range
         name: check pushed LAYOUT_VERSION bump implies migration + fixtures
-        entry: scripts/hook_env.sh python scripts/check_layout_version.py check-a --range HEAD~1
+        entry: scripts/hook_env.sh python scripts/check_layout_version.py check-a --range
         language: system
         pass_filenames: false
         always_run: true

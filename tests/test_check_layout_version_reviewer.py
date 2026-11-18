@@ -446,8 +446,8 @@ def _mp_bump(repo: Path, version: int) -> None:
 
 def _mp_make_branches(repo: Path, branches: dict[str, int]) -> None:
     """`main` at v26, then one branch per entry forking from it and bumping one version at a time
-    (each bump carrying its module and fixtures) up to its target; a branch targeting v26 gets one
-    marker commit so it still has a commit of its own."""
+    (each bump carrying its module and fixtures, ONE COMMIT PER BUMP) up to its target; a branch
+    targeting v26 gets one marker commit so it still has a commit of its own."""
     (repo / _MP_CONSTANTS).parent.mkdir(parents=True)
     _mp_set_version(repo, _MP_BASE_VERSION)
     (repo / MANIFEST_NAME).write_text(
@@ -462,8 +462,11 @@ def _mp_make_branches(repo: Path, branches: dict[str, int]) -> None:
             (repo / f"{name}.txt").write_text(f"{name}\n")
         for v in range(_MP_BASE_VERSION + 1, target + 1):
             _mp_bump(repo, v)
-        _mp_git(repo, "add", "-A")
-        _mp_git(repo, "commit", "-qm", f"{name} at {target}")
+            _mp_git(repo, "add", "-A")
+            _mp_git(repo, "commit", "-qm", f"{name} bump to {v}")
+        if target == _MP_BASE_VERSION:
+            _mp_git(repo, "add", "-A")
+            _mp_git(repo, "commit", "-qm", f"{name} at {target}")
 
 
 def _mp_start_merge(repo: Path, into: str, others: list[str]) -> None:
