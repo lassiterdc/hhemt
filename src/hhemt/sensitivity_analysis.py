@@ -767,9 +767,9 @@ class TRITONSWMM_sensitivity_analysis:
                 # == primary ensemble; this is a no-op-same-value today, gated to keep the
                 # "runner never mutates the compile target's gpu fields" invariant explicit).
                 if is_main_orchestrator:
-                    self._system.gpu_hardware = _fast_hw
-                    self._system.gpu_compilation_backend = _fast_backend
-                    self._system.additional_modules = resolve_additional_modules(self.experiment.cfg_hpc_system)
+                    self._system.assign_gpu_target(
+                        _fast_hw, _fast_backend, resolve_additional_modules(self.experiment.cfg_hpc_system)
+                    )
                 _fast_target_partition = _primary_partition
             self.unique_system_targets = [
                 _UniqueSystemTarget(
@@ -3249,9 +3249,7 @@ class TRITONSWMM_sensitivity_analysis:
         # target's arch (a100 -> primary a6000). sys_paths is frozen at construction and
         # is NOT rebuilt by this assignment, so the runner MUST keep its constructed pair.
         if is_main_orchestrator:
-            self._system.gpu_hardware = _gpu_hardware
-            self._system.gpu_compilation_backend = _gpu_backend
-            self._system.additional_modules = _modules
+            self._system.assign_gpu_target(_gpu_hardware, _gpu_backend, _modules)
 
         targets: list[_UniqueSystemTarget] = []
         for target_id, group in enumerate(groups.values()):

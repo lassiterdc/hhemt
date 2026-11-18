@@ -83,6 +83,22 @@ def _write_row_system_yaml(tmp_path: Path, dst: Path, *, target_dem_resolution: 
     return dst
 
 
+def _with_assign_gpu_target(system):
+    """Give a stub primary the ``assign_gpu_target`` interface of ``TRITONSWMM_system``.
+
+    Like the real method it sets ``gpu_hardware``, ``gpu_compilation_backend`` and
+    ``additional_modules``; it carries no ``sys_paths`` because these stubs read none.
+    """
+
+    def assign_gpu_target(gpu_hardware, gpu_compilation_backend, additional_modules):
+        system.gpu_hardware = gpu_hardware
+        system.gpu_compilation_backend = gpu_compilation_backend
+        system.additional_modules = additional_modules
+
+    system.assign_gpu_target = assign_gpu_target
+    return system
+
+
 def _make_stub_system(target_dem_resolution: float, gpu_hardware, gpu_compilation_backend, system_config_yaml: Path):
     """Build a stub TRITONSWMM_system with just the attrs the dedup logic reads."""
     _fields = {
@@ -99,7 +115,7 @@ def _make_stub_system(target_dem_resolution: float, gpu_hardware, gpu_compilatio
     # over the stub's own fields gives discriminating equality for the short-circuit.
     cfg_system.model_dump = lambda **_kwargs: dict(_fields)
     cfg_system.model_dump_json = lambda **_kwargs: json.dumps(_fields, sort_keys=True)
-    return SimpleNamespace(cfg_system=cfg_system, system_config_yaml=system_config_yaml)
+    return _with_assign_gpu_target(SimpleNamespace(cfg_system=cfg_system, system_config_yaml=system_config_yaml))
 
 
 def _make_member_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, tuple], tmp_path: Path):

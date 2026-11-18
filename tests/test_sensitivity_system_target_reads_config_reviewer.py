@@ -117,6 +117,22 @@ def _write_yaml(base: Path, name: str, payload: dict) -> Path:
     return dst
 
 
+def _with_assign_gpu_target(system):
+    """Give a stub primary the ``assign_gpu_target`` interface of ``TRITONSWMM_system``.
+
+    Like the real method it sets ``gpu_hardware``, ``gpu_compilation_backend`` and
+    ``additional_modules``; it carries no ``sys_paths`` because these stubs read none.
+    """
+
+    def assign_gpu_target(gpu_hardware, gpu_compilation_backend, additional_modules):
+        system.gpu_hardware = gpu_hardware
+        system.gpu_compilation_backend = gpu_compilation_backend
+        system.additional_modules = additional_modules
+
+    system.assign_gpu_target = assign_gpu_target
+    return system
+
+
 def _stub(master_cfg, analysis_dir: Path) -> SimpleNamespace:
     """Duck-typed stand-in exposing exactly the attributes ``_build_unique_system_targets`` reads.
 
@@ -129,10 +145,12 @@ def _stub(master_cfg, analysis_dir: Path) -> SimpleNamespace:
     the reuse branch here.
     """
     return SimpleNamespace(
-        _system=SimpleNamespace(
-            cfg_system=master_cfg,
-            gpu_hardware=None,
-            gpu_compilation_backend=None,
+        _system=_with_assign_gpu_target(
+            SimpleNamespace(
+                cfg_system=master_cfg,
+                gpu_hardware=None,
+                gpu_compilation_backend=None,
+            )
         ),
         experiment=SimpleNamespace(
             cfg_analysis=SimpleNamespace(
