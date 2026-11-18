@@ -153,6 +153,11 @@ OPEN_WATER_OUTFALL_NODE_VARIABLES: tuple[str, ...] = ("outfall_stage_m", "outfal
 #: The flag the coupled node store carries on ``node_id`` when ``swmm_open_water_outfalls`` lists any outfall: 1 at each
 #: listed outfall, whichever representation it takes, else 0.
 OPEN_WATER_OUTFALL_FLAG = "is_open_water_outfall"
+#: The scalar integer the coupled node store carries whenever the per-node path-3 capture is attached: how many of the
+#: solver's print-interval records ended after the last report time and were left unattached (0 when none). A data
+#: variable and not a dataset attribute, because the count differs by event and consolidation's
+#: ``combine_attrs="drop_conflicts"`` deletes an attribute whose value differs between events.
+PATH3_UNATTACHED_VARIABLE = "path3_records_unattached_after_last_report"
 #: The capture the solver writes for the driven outfalls and the name list beside it that fixes its width.
 OUTFALL_STAGE_FILE = "outfall_stage.bin"
 OUTFALL_STAGE_NODES_FILE = "outfall_stage.nodes"
@@ -2432,12 +2437,28 @@ class TRITONSWMM_sim_post_processing:
         each record lands on its own row and with a coarser report step several are summed. A report interval
         that no record ends in stays NaN. All three quantities are additive, so the sum is the interval's value.
 
+        The coupled SWMM output can hold one report period fewer than the event length, so the solver's final
+        print-interval record then ends one report step after the last report time and no report interval
+        contains it. Such a record (ending no more than one report step, the difference of the last two report
+        times, after the last report time) is left unattached: a warning names the count and the first end time, and
+        the scalar integer data variable ``path3_records_unattached_after_last_report`` holds the count (0 when every
+        record landed), so a reader can see that the final interval is missing instead of reading it as zero. It is a
+        data variable and not an attribute because the count differs by event, and consolidation deletes an attribute
+        whose value differs between events; it is present whenever the per-node capture is attached, so a mixed
+        analysis consolidates to one value per ``event_iloc``.
+
+        The capture must start at the first report row: a first record ending later than the first report time (plus
+        1e-6 s) is refused, and one ending at or before it is accepted. This narrows but does not close the case of a
+        capture shifted late by whole print intervals: when the report step is two or more print intervals the
+        shifted first record still ends inside the first report row and is not seen.
+
         Nothing is attached when the analysis does not ask for the per-node capture.
 
         Raises
         ------
         ProcessingError
-            If a recorded node is absent from the SWMM output, or a record ends after the last report time.
+            If a recorded node is absent from the SWMM output, the first record ends after the first report time, or
+            a record ends more than one report step after the last report time.
         """
         if not any(c.name == "swmm_node_path3" for c in self._coupling_captures_expected()):
             return ds_nodes
@@ -2466,18 +2487,39 @@ class TRITONSWMM_sim_post_processing:
             t_end = np.asarray(ds_diag["time_s"].values, dtype="float64")
             row = np.searchsorted(report_times_s, t_end - 1e-6, side="left")
             beyond = np.flatnonzero(row >= len(report_times_s))
-            if beyond.size:
+            if t_end.size and t_end[0] - report_times_s[0] > 1e-6:
                 raise ProcessingError(
                     "attach the coupling per-node path-3 account",
                     store,
-                    f"{beyond.size} print-interval record(s) end after the last report time "
-                    f"{report_times_s[-1]} s (first at {t_end[beyond[0]]} s)",
+                    f"the first print-interval record ends at {t_end[0]} s, after the first report time "
+                    f"{report_times_s[0]} s; the capture must start at the first report row",
                 )
+            # With a single report time there is no step to measure, so every record past it stays a refusal.
+            report_step_s = float(report_times_s[-1] - report_times_s[-2]) if len(report_times_s) > 1 else 0.0
+            stray = beyond[t_end[beyond] - report_times_s[-1] > report_step_s + 1e-6] if beyond.size else beyond
+            if stray.size:
+                raise ProcessingError(
+                    "attach the coupling per-node path-3 account",
+                    store,
+                    f"{stray.size} print-interval record(s) end after the last report time "
+                    f"{report_times_s[-1]} s (first at {t_end[stray[0]]} s)",
+                )
+            keep = np.ones(t_end.size, dtype=bool)
+            keep[beyond] = False
+            if beyond.size:
+                warnings.warn(
+                    f"{beyond.size} print-interval record(s) of the per-node path-3 capture end within one report "
+                    f"step ({report_step_s} s) after the last report time {report_times_s[-1]} s (first at "
+                    f"{t_end[beyond[0]]} s) and have no report interval to land in; they are not attached.",
+                    stacklevel=2,
+                )
+            ds_nodes[PATH3_UNATTACHED_VARIABLE] = ((), np.int64(beyond.size))
+            row = row[keep]
             hit = np.zeros(len(report_times_s), dtype=bool)
             hit[row] = True
             for name in COUPLING_NODE_DIAGNOSTIC_VARIABLES:
                 added = np.zeros((len(report_times_s), len(names)))
-                np.add.at(added, row, np.asarray(ds_diag[name].values, dtype="float64"))
+                np.add.at(added, row, np.asarray(ds_diag[name].values, dtype="float64")[keep])
                 full = np.full((len(report_times_s), len(node_ids)), np.nan)
                 full[:, slots] = np.where(hit[:, None], added, np.nan)
                 ds_nodes[name] = xr.DataArray(

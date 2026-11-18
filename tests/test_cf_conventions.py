@@ -218,6 +218,7 @@ def test_no_phantom_swmm_keys_in_cf_variable_map() -> None:
         "path3_volume_pos",
         "path3_volume_neg",
         "nonconverged_steps",
+        "path3_records_unattached_after_last_report",
         # The coupled node store's open-water outfall outputs: the flag from the analysis's list, the stage and
         # discharge computed from the solver's outfall_stage.bin.
         "is_open_water_outfall",

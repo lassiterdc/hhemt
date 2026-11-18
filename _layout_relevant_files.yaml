@@ -5556,3 +5556,11 @@ non_breaking_allowlist:
     layout_signature: 3bd7209286c60626569e73921a26feb3673044ad42641c0ad3eb3e02a85b69a8
     justification: |-
       the driver now injects the GPU pair through a system method that recomputes the system's build paths instead of assigning attributes after construction; no path, filename, log field, zarr group or fingerprint changes
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 4dd8e1511226faaf3160acc8ef6cf83891fcea51ac6eca706e94c1058fdf83b9
+    justification: |-
+      attach per-node path-3 account tolerates a missing last SWMM report period; non-breaking, no on-disk layout change
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 636f44ac404aa85f6c34caed423811659970b5cc14e341239f530d71cbd14fd6
+    justification: |-
+      adds a CF registry entry for the path-3 unattached-record count variable; non-breaking, no on-disk layout change

@@ -278,6 +278,13 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
         "1",
         cell_methods="time: sum",
     ),
+    # How many of the solver's print-interval records ended after the last report time and were left unattached by
+    # `_attach_coupling_node_diagnostics`: a per-event scalar, so a data variable
+    # (consolidation deletes an attribute whose value differs between events).
+    "path3_records_unattached_after_last_report": _cf(
+        "Number of per-node path-3 print-interval records that ended after the last report time and were not attached",
+        "1",
+    ),
     # SWMM node report columns (Node Inflow Summary and Node Flooding Summary), read as SWMM printed them
     "max_lateral_inflow": _cf(
         "Maximum lateral inflow to the node (Node Inflow Summary)", "m3 s-1", cell_methods="time: maximum"
@@ -1810,6 +1817,13 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
                 "(1/R) sum_k q_k |(t_k-1, t_k] ∩ (τ-R, τ]|",
             ),
         )
+    },
+    "path3_records_unattached_after_last_report": {
+        "spatial_representation": "whole domain (scalar)",
+        "source_variables": "swmm_node_path3.bin record end times against the SWMM report times",
+        "operation": "count of the print-interval records ending later than the last report time",
+        "operation_expr": "sum_k [t_k > t_last_report]",
+        "reduced_coordinate": "none",
     },
     # Coupling-diagnostics per-node path-3 account, decoded from the solver's swmm_node_path3.bin
     **{
