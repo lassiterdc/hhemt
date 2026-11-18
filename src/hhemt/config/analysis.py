@@ -631,8 +631,11 @@ class analysis_config(cfgBaseModel):
         gt=0,
         description=(
             "Time allocation, in minutes, for the analysis-level `consolidate` SLURM rule whose MEMORY is "
-            "set by hpc_mem_allocation_for_analysis_output_consolidation_mb. The default 30 reproduces the "
-            "value that the rule carried as a hardcoded literal, so an analysis config that omits this "
+            "set by hpc_mem_allocation_for_analysis_output_consolidation_mb. The same value is the time "
+            "of the per-member consolidation rule of a sensitivity master, each member's own value "
+            "applying to that member's rule, whose memory is set by "
+            "hpc_mem_allocation_for_sim_output_processing_mb. The default 30 reproduces the "
+            "value that both rules carried as a hardcoded literal, so an analysis config that omits this "
             "field is unchanged. Raise the value when the consolidation fan-in is large, because the cost "
             "of the rule is dominated by whole-population walks whose length scales with the number of "
             "scenarios and not with the size of any single scenario. The field is a plain number and no "
