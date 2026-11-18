@@ -13,11 +13,13 @@ solver).
 
 The solver is NOT the synthetic tier's pin. `driven_stage` needs a solver that reads the cfg key
 `swmm_driven_outfalls` and `crown_rim` under `swmm_node_rim_from_dem` needs one that reads
-`swmm_dem_rim_exempt_nodes`; the commit pinned in `_OUTFALL_SOLVER_SHA` is the tip of a pushed work branch of the
-solver that reads both. Its arms point their system config at that commit and at their own software directory, so
-the shared build of the synthetic pin (`TRITON_PIN`) is neither replaced nor rebuilt. The one arm that runs on the
-synthetic pin is the reference of the byte-identity test and builds in the shared tier through
-`tritonswmm_cpu_compiled`.
+`swmm_dem_rim_exempt_nodes`; the commit pinned in `OUTFALL_SOLVER_SHA` (`tests/fixtures/outfall_tier.py`) is the tip
+of a pushed work branch of the solver that reads both. Its arms point their system config at that commit and at their
+own software directory, so the shared build of the synthetic pin (`TRITON_PIN`) is neither replaced nor rebuilt. The
+one arm that runs on the synthetic pin is the reference of the byte-identity test and builds in the shared tier
+through `tritonswmm_cpu_compiled`. The work-branch tier is provisioned by the harness's warm step
+(`tests/test_synth_00_compile_models.py::test_provision_the_open_water_outfall_solver_tier`), because a suite chunk
+never provisions a shared tier; a standalone session provisions it itself when the first arm builds its case.
 
 Every arm runs ONE coupled scenario of the synthetic model with the matched outfall `SYNTH_OUTFALL` as the single
 listed outfall (the synthetic model's other outfall, `dummy_outfall`, has no conduit, so it has no outlet to size
@@ -51,6 +53,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 import xarray as xr
+
+from tests.fixtures import outfall_tier
 
 pytestmark = [pytest.mark.compile_tier, pytest.mark.shared_runs_root, pytest.mark.slow]
 
@@ -100,11 +104,6 @@ def test_the_node_store_series_integrate_to_the_capture_they_were_read_from(outf
     assert abs(capture_q) > 1.0, f"the capture's net discharge integral is {capture_q} m3; the sign is not exercised"
     assert stored_q == pytest.approx(capture_q, rel=1e-9, abs=1e-9)
     assert stored_h == pytest.approx(capture_h, rel=1e-9, abs=1e-9)
-
-
-#: The tip of the solver's pushed work branch `solver-work/open-water-outfall-driven-stage`: it reads both
-#: `swmm_driven_outfalls` and `swmm_dem_rim_exempt_nodes`.
-_OUTFALL_SOLVER_SHA = "0f4d1039094219776c4f0919a9474fcf3af17622"
 
 
 _OUTFALL = "SYNTH_OUTFALL"
@@ -205,14 +204,6 @@ class _Arm:
     store: xr.Dataset  # the coupled SWMM node store, loaded: it outlives the zarr handle
 
 
-def _own_software_directory(label: str) -> Path:
-    """A software directory of this file's own, beside (never inside) the shared slug `_software` tier."""
-    from tests.fixtures import worktree_slug
-    from tests.fixtures._triton_source_cache import slug_runs_root
-
-    return slug_runs_root(worktree_slug()) / f"_software_open_water_outfall_{label}" / "triton"
-
-
 def _build_case(root: Path, name: str):
     """Build one coupled synthetic case; the work-branch arms point at the solver that reads the new keys."""
     from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
@@ -220,8 +211,8 @@ def _build_case(root: Path, name: str):
     system_extra: dict = {}
     if name in _ON_OUTFALL_SOLVER:
         system_extra = {
-            "TRITONSWMM_branch_key": _OUTFALL_SOLVER_SHA,
-            "TRITONSWMM_software_directory": str(_own_software_directory("work_branch")),
+            "TRITONSWMM_branch_key": outfall_tier.OUTFALL_SOLVER_SHA,
+            "TRITONSWMM_software_directory": str(outfall_tier.outfall_software_directory()),
         }
     return retrieve_synth_TRITON_SWMM_test_case(
         analysis_name="open_water_outfall",

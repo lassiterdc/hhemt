@@ -5548,3 +5548,7 @@ non_breaking_allowlist:
     layout_signature: b1bacfdb85af616052e033a5c7fff2d8f1b55b771e5d96fd938854e22ba9941a
     justification: |-
       open-water outfalls, CF entries: adds map and provenance entries for is_open_water_outfall, outfall_stage_m and outfall_discharge_m3s beside coupling_exchange_flow, and their sign comments in the coupled node mode. Map entries only: no existing entry, no attribute of an existing variable and no on-disk path changes, and the three names exist only in a node store of an analysis that lists open-water outfalls. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 1bf0b82924d65ac02a457cf4684cb942cc9078c9a798192edb24410f3a226bfc
+    justification: |-
+      description strings of swmm_open_water_outfalls and open_water_outfall_representation reworded for the docs style rules; they are published to docs/reference/config-schema.md at build time, a derived artifact; no path, filename, log field, zarr group or fingerprint changes

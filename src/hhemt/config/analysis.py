@@ -1021,12 +1021,12 @@ class analysis_config(cfgBaseModel):
         description="Outfalls of SWMM_model that drain to open water, where backflow from the water into the "
         "sewer may occur. Each name is an [OUTFALLS] row of SWMM_model. Every listed outfall receives the "
         "representation open_water_outfall_representation names, so in one simulation all of them are treated "
-        "alike. A listed outfall may also be named by a water-level record of the external boundary, whose "
-        "record then drives TRITON's boundary line as it does for any outfall. A listed outfall may not also "
-        "be listed in swmm_outfalls_to_couple or swmm_outfalls_to_keep, and may not have a row in "
+        "alike. A water-level record of the external boundary may also name a listed outfall, and the record "
+        "then drives TRITON's boundary line as the record of any other outfall does. A listed outfall may not "
+        "also be listed in swmm_outfalls_to_couple or swmm_outfalls_to_keep, and may not have a row in "
         "manhole_table. With the list empty, the default, no outfall is treated differently and every file "
-        "the toolkit writes is the file it wrote before the field existed. A non-empty list changes hydraulic "
-        "results.",
+        "the toolkit writes is identical to the file written before the field existed. A non-empty list "
+        "changes hydraulic results.",
     )
     open_water_outfall_representation: Literal["driven_stage", "crown_rim"] = Field(
         default="driven_stage",
@@ -1035,17 +1035,18 @@ class analysis_config(cfgBaseModel):
         json_schema_extra=field_meta(
             options={
                 "driven_stage": "The outfall stays a SWMM outfall and becomes a head boundary whose stage "
-                "TRITON sets before every SWMM step, to the water-surface elevation of the TRITON cell that "
-                "holds the node (or to the outfall's invert when the cell is dry). Water the stage pushes into "
-                "the sewer is taken from that cell. Water the sewer discharges at the outfall leaves the "
-                "modelled domain. Needs a TRITON build that reads the cfg key swmm_driven_outfalls, and "
-                "preparation refuses a build that lacks the key.",
-                "crown_rim": "The outfall is converted to a coupled junction whose rim is the crown of its "
-                "outlet conduit, the lowest rim SWMM allows, and which has the diameter of a circle of the "
-                "same area as the outlet conduit's total flow area (all barrels) and the loss coefficient "
-                "manhole_loss_coefficient. The toolkit writes the node's manhole-table row itself. When "
-                "swmm_node_rim_from_dem is set, preparation also exempts the node from the DEM-rim route, and "
-                "needs a TRITON build that reads the cfg key swmm_dem_rim_exempt_nodes.",
+                "TRITON sets before every SWMM step. The stage is the water-surface elevation of the TRITON "
+                "cell that holds the node, or the outfall's invert when the cell is dry. Water the stage "
+                "pushes into the sewer is taken from that cell. Water the sewer discharges at the outfall "
+                "leaves the modelled domain. Needs a TRITON build that reads the cfg key "
+                "swmm_driven_outfalls, and preparation refuses a build that lacks the key.",
+                "crown_rim": "The outfall is converted to a coupled junction. The rim of the junction is the "
+                "crown of the outfall's outlet conduit, the lowest rim SWMM allows. The diameter of the "
+                "junction is that of a circle of the same area as the total flow area of the outlet conduit, "
+                "counting all barrels, and the loss coefficient is manhole_loss_coefficient. The toolkit "
+                "writes the node's manhole-table row itself. When swmm_node_rim_from_dem is set, "
+                "preparation also exempts the node from the DEM-rim route, and needs a TRITON build that "
+                "reads the cfg key swmm_dem_rim_exempt_nodes.",
             }
         ),
     )
