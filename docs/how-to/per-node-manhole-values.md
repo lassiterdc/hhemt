@@ -63,7 +63,7 @@ The toggle defaults to `false`, and the config check refuses the toggle when `ma
 
 ## 4. Check the file the solver reads
 
-Scenario preparation writes `manhole_table.txt` beside `coupling_nodes.txt`. The file holds 1 line per coupling node, in the order of `coupling_nodes.txt`, as `name diameter loss`. A node filled from the constants carries both constants on the line of the node, so the solver always reads a complete table. The generated TRITON cfg gains one `swmm_manhole_table` line that holds the path of the file. With no table, the toolkit writes no such line and the cfg is the cfg of a run without the feature.
+Scenario preparation writes `manhole_table.txt` beside `coupling_nodes.txt`. The file holds 1 line per coupling node, in the order of `coupling_nodes.txt`, as `name diameter loss`. A node filled from the constants carries both constants on the line of the node, so the solver always reads a complete table. The generated TRITON cfg gains one `swmm_manhole_table` line that holds the path of the file. With no table and no `crown_rim` open-water outfall, the toolkit writes no such line and the cfg is the cfg of a run without the feature. A `crown_rim` list of [open-water outfalls](open-water-outfalls.md) makes the toolkit write the file and the line even with no table, and each listed outfall takes the diameter and the loss that the toolkit sizes from the outlet conduit of the outfall.
 
 The coupled node store of the consolidated outputs then carries `manhole_diameter` and `manhole_loss_coefficient` on `node_id`, with a missing value at every node that is not a coupling node.
 

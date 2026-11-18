@@ -538,14 +538,19 @@ def outfall_decision_problems(
     matched: Sequence[str],
     to_couple: Sequence[str],
     to_keep: Sequence[str],
+    open_water: Sequence[str] = (),
 ) -> list[Problem]:
     """V6, V9 and V13: every outfall of the coupled model is matched, coupled or kept, in exactly one place.
 
     ``matched`` are the outfalls the ``water_level`` records name, ``to_couple`` is ``swmm_outfalls_to_couple`` of
-    the system config and ``to_keep`` is ``swmm_outfalls_to_keep`` of the analysis config.
+    the system config and ``to_keep`` is ``swmm_outfalls_to_keep`` of the analysis config. ``open_water`` are the
+    outfalls ``swmm_open_water_outfalls`` lists: each is a decision of its own, so an outfall listed there needs no
+    other (a listed outfall that is also coupled or kept is refused by ``swmm_utils.open_water_outfall_problems``,
+    which owns the rules of that list).
     """
     problems: list[Problem] = []
     matched_f, couple_f, keep_f = ({_fold(n) for n in group} for group in (matched, to_couple, to_keep))
+    open_water_f = {_fold(n) for n in open_water}
     both = sorted(n for n in matched if _fold(n) in couple_f)
     if both:
         problems.append(
@@ -595,7 +600,7 @@ def outfall_decision_problems(
                 fix_hint="Remove the name from one of the places",
             )
         )
-    undecided = [o for k, o in outfalls.items() if k not in matched_f | couple_f | keep_f]
+    undecided = [o for k, o in outfalls.items() if k not in matched_f | couple_f | keep_f | open_water_f]
     variable = [o for o in undecided if o.kind in _VARIABLE_OUTFALL_KINDS]
     plain = [o for o in undecided if o.kind not in _VARIABLE_OUTFALL_KINDS]
     if variable:
@@ -1278,19 +1283,28 @@ def preflight_problems(cfg_system, cfg_analysis) -> PreflightReport:
             )
         )
 
+    from hhemt.swmm_utils import open_water_outfalls
+
     keep = list(cfg_analysis.swmm_outfalls_to_keep)
+    open_water = open_water_outfalls(cfg_analysis)
     coupled = bool(getattr(cfg_system, "toggle_tritonswmm_model", True))
     # V9 is asked of a coupled model only, because only a coupled model reads the disposition; V6 and V13 stay always.
     problems.extend(
         p
-        for p in outfall_decision_problems(outfalls, matched, list(cfg_system.swmm_outfalls_to_couple), keep)
+        for p in outfall_decision_problems(
+            outfalls, matched, list(cfg_system.swmm_outfalls_to_couple), keep, open_water=open_water
+        )
         if coupled or p.code != "V9"
     )
     if toggle and records:
         _, distances = matched_outfall_problems(records, outfalls, coordinates, None)
         lines.extend(distance_lines(distances))
 
-    converted = [*cfg_system.swmm_outfalls_to_couple, *matched]
+    # An outfall listed in swmm_open_water_outfalls takes no depth from the DEM whatever its representation: a
+    # driven_stage outfall stays an outfall, and a crown_rim node's depth is written as 0 and raised by SWMM to the
+    # crown of its outlet conduit. Both are therefore left out of the nodes the DEM gives a depth.
+    open_water_f = {_fold(n) for n in open_water}
+    converted = [*cfg_system.swmm_outfalls_to_couple, *(n for n in matched if _fold(n) not in open_water_f)]
     uses_dem = coupled and (bool(converted) or bool(cfg_analysis.swmm_node_rim_from_dem))
     if uses_dem and cfg_analysis.dem_rim_resolution is None:
         problems.append(

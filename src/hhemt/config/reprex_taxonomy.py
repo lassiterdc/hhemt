@@ -181,6 +181,10 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "water_level_boundary_unequal_outfall_series": "experiment",
     "water_level_boundary_outfall_max_distance_m": "experiment",
     "swmm_outfalls_to_keep": "experiment",
+    # "experiment": the list and its representation decide what an open-water outfall does with the water it
+    # exchanges with the surface, so they are part of what was modelled and a reproducer keeps them.
+    "swmm_open_water_outfalls": "experiment",
+    "open_water_outfall_representation": "experiment",
     "dem_rim_resolution": "experiment",
     "subcatchment_raingage_mapping_gage_id_colname": "experiment",
     "swmm_coupling_mode": "experiment",

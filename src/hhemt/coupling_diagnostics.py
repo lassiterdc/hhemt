@@ -27,7 +27,12 @@ Units. The SWMM capture files (path-3 and link volumes, link flows) are stored u
 the engine's ft3 and cfs and are converted on read with ``FT3_TO_M3_FACTOR``, except the lazy
 ``swmm_node_path3_step.bin`` view, which keeps ft3 and states the factor as an attribute. The
 TRITON-side files are SI on disk and are not converted: ``edge_flux.bin`` in m3/s,
-``domain_balance.csv`` terms in m3, ``dt_limiter.bin`` depth in m, celerity in m/s and dt in s.
+``domain_balance.csv`` terms in m3, ``dt_limiter.bin`` depth in m, celerity in m/s and dt in s, and
+``outfall_stage.bin`` stage in m and flows in m3/s.
+
+``outfall_stage.bin`` is written only when the analysis lists a driven-stage open-water outfall (the solver key
+``swmm_driven_outfalls``). Its ``n_items`` is the number of driven outfalls, checked against the sidecar
+``outfall_stage.nodes`` written beside it, which names them in list order.
 """
 
 from __future__ import annotations
@@ -47,9 +52,12 @@ __all__ = [
     "DIAG_HEADER_BYTES",
     "DT_LIMITER_REASONS",
     "DiagHeader",
+    "OutfallIntervalMeans",
+    "outfall_stage_interval_means",
     "read_dt_limiter",
     "MAGIC_DT_LIMITER",
     "MAGIC_EDGE_FLUX",
+    "MAGIC_OUTFALL_STAGE",
     "MAGIC_SWMM_LINK_FLOW_DIAG",
     "MAGIC_SWMM_NODE_PATH3",
     "MAGIC_SWMM_NODE_PATH3_STEP",
@@ -58,6 +66,7 @@ __all__ = [
     "read_domain_balance",
     "read_edge_flux",
     "read_node_names",
+    "read_outfall_stage",
     "read_swmm_link_flow_diag",
     "read_swmm_node_path3",
     "read_swmm_node_path3_step",
@@ -77,6 +86,7 @@ MAGIC_SWMM_NODE_PATH3_STEP = 0x44505333
 MAGIC_SWMM_LINK_FLOW_DIAG = 0x444C4631
 MAGIC_EDGE_FLUX = 0x44454631
 MAGIC_DT_LIMITER = 0x44444C31
+MAGIC_OUTFALL_STAGE = 0x444F5331  # "DOS1"
 
 # Reason codes of a ``dt_limiter.bin`` record: why the step took the length it took.
 DT_LIMITER_REASONS: dict[int, str] = {
@@ -103,6 +113,9 @@ _DT_LIMITER_DTYPE = np.dtype(
 )
 
 _WET_CELLS_COLUMNS = ("print_id", "simtime", "rank", "wet_mean", "wet_at_print")
+# The two terms the solver adds to ``domain_balance.csv`` when a driven-stage outfall is listed, after
+# ``swmm_exchange_m3`` and before the edge terms. With none listed the header has neither.
+_OUTFALL_BALANCE_COLUMNS = ("outfall_backflow_m3", "outfall_backflow_deficit_m3")
 _DOMAIN_BALANCE_TIME_COLUMN = "t_end"
 _DOMAIN_BALANCE_COLUMNS = (
     "t_end",
@@ -117,6 +130,11 @@ _DOMAIN_BALANCE_COLUMNS = (
     "edge_south_m3",
     "edge_north_m3",
     "residual_m3",
+)
+_DOMAIN_BALANCE_COLUMNS_WITH_OUTFALL = (
+    *_DOMAIN_BALANCE_COLUMNS[: _DOMAIN_BALANCE_COLUMNS.index("swmm_exchange_m3") + 1],
+    *_OUTFALL_BALANCE_COLUMNS,
+    *_DOMAIN_BALANCE_COLUMNS[_DOMAIN_BALANCE_COLUMNS.index("swmm_exchange_m3") + 1 :],
 )
 
 
@@ -526,21 +544,201 @@ def read_dt_limiter(path: str | Path) -> xr.Dataset:
     return ds
 
 
-def _read_percent_header_csv(path: Path, columns: tuple[str, ...]) -> pd.DataFrame:
-    """Read a capture csv whose first line is ``%name, name, ...`` and require exactly ``columns``.
+def read_outfall_stage(path: str | Path, nodes_file: str | Path) -> xr.Dataset:
+    """Decode ``outfall_stage.bin``: per SWMM step, the stage TRITON set at each driven outfall and its flows.
+
+    Each record is ``{f64 simtime, f64 dt, f64[n] stage_m, f64[n] q_out_m3s, f64[n] q_back_applied_m3s}`` for the
+    ``n`` driven outfalls ``nodes_file`` lists (``outfall_stage.nodes``, in list order). ``simtime`` is the END time
+    of the step (the stamp of the exchange side-file) and ``dt`` its length. ``q_out_m3s`` is the outfall conduit's
+    flow toward the open water, so a negative value is backflow into the sewer; ``q_back_applied_m3s`` is the part of
+    that backflow the surface actually gave up, never negative. Every value is SI on disk and is returned as written.
+    Returns a Dataset on ``(swmm_step, node_id)``.
 
     Raises
     ------
     ProcessingError
-        If the first line does not start with ``%`` or its names differ from ``columns``.
+        If the magic, version or value width differs, the header's ``n_items`` is zero or differs from the name count,
+        or the file ends inside a record.
+    """
+    path = Path(path)
+    header = read_diag_header(path, MAGIC_OUTFALL_STAGE)
+    names = read_node_names(nodes_file)
+    _check_sidecar_width(path, header, names)
+    if not names:
+        raise ProcessingError(
+            "decode outfall stage", path, "the file lists no outfall; a driven run lists at least one"
+        )
+    n = len(names)
+    dtype = np.dtype(
+        [
+            ("simtime", "<f8"),
+            ("dt", "<f8"),
+            ("stage_m", "<f8", (n,)),
+            ("q_out_m3s", "<f8", (n,)),
+            ("q_back_applied_m3s", "<f8", (n,)),
+        ]
+    )
+    n_records = _check_regular_body(path, DIAG_HEADER_BYTES, dtype.itemsize)
+    records = np.memmap(path, dtype=dtype, mode="r", offset=DIAG_HEADER_BYTES, shape=(n_records,))
+    ds = xr.Dataset(
+        {
+            "outfall_stage_m": (("swmm_step", "node_id"), np.asarray(records["stage_m"])),
+            "outfall_discharge_m3s": (("swmm_step", "node_id"), np.asarray(records["q_out_m3s"])),
+            "outfall_backflow_applied_m3s": (("swmm_step", "node_id"), np.asarray(records["q_back_applied_m3s"])),
+        },
+        coords={
+            "swmm_step": np.arange(n_records),
+            "node_id": np.asarray(names, dtype=object),
+            "simtime": ("swmm_step", np.asarray(records["simtime"])),
+            "dt": ("swmm_step", np.asarray(records["dt"])),
+        },
+    )
+    ds["outfall_stage_m"].attrs.update(
+        units="m", long_name="Water-surface elevation TRITON set as the stage of the driven outfall before the step"
+    )
+    ds["outfall_discharge_m3s"].attrs.update(
+        units="m3 s-1",
+        long_name="Flow of the driven outfall's conduit toward the open water in the step; negative is backflow",
+    )
+    ds["outfall_backflow_applied_m3s"].attrs.update(
+        units="m3 s-1", long_name="Backflow into the sewer the surface gave up at the driven outfall in the step"
+    )
+    ds["simtime"].attrs.update(units="s", long_name="End time of the SWMM step, seconds since the start of the run")
+    ds["dt"].attrs.update(units="s", long_name="Length of the SWMM step")
+    return ds
+
+
+# A step that does not start where the one before it ended, by more than this many seconds, is a hole or an overlap
+# in the record and not rounding of the solver's running time.
+_STEP_CONTIGUITY_TOLERANCE_S = 1e-6
+# The record must reach the last report time to within this fraction of the interval, the tolerance the exchange
+# reader (``coupling_exchange.to_reporting_intervals``) holds its own coverage to.
+_INTERVAL_COVERAGE_TOLERANCE_FRACTION = 1e-3
+
+
+@dataclass(frozen=True)
+class OutfallIntervalMeans:
+    """The driven-outfall stage and discharge averaged over the model's reporting intervals.
+
+    Interval ``i`` is ``(report_times_s[i] - R, report_times_s[i]]`` and is labelled at its end. Each value is the time
+    integral of the stepwise series over the interval divided by ``R``, so ``discharge_m3s * R`` summed over the
+    intervals is exactly the volume the step series carries.
+
+    Attributes
+    ----------
+    node_ids : tuple of str
+        Outfall names, in column order.
+    stage_m, discharge_m3s : numpy.ndarray
+        Shape ``(n_intervals, n_outfalls)``. The mean stage in m and the mean signed flow toward the open water in m3/s.
+    report_interval_s : float
+        The interval length ``R`` in seconds.
+    """
+
+    node_ids: tuple[str, ...]
+    stage_m: np.ndarray
+    discharge_m3s: np.ndarray
+    report_interval_s: float
+
+    @property
+    def cell_methods(self) -> str:
+        """CF ``cell_methods`` text saying each value is a mean over the preceding interval."""
+        interval = self.report_interval_s
+        text = str(int(interval)) if float(interval).is_integer() else repr(float(interval))
+        return f"time: mean (interval: {text} s)"
+
+
+def outfall_stage_interval_means(ds_stage: xr.Dataset, report_times_s: np.ndarray) -> OutfallIntervalMeans:
+    """Average the stepwise stage and discharge of :func:`read_outfall_stage` over each reporting interval.
+
+    A step may be longer than an interval or straddle a reporting time; it contributes to each interval in proportion
+    to the time it spends in it, the rule the exchange flow follows, so no step is sampled and none is counted twice.
+    The integral is taken as a running sum over the steps that is read at each interval edge, which makes the means of
+    adjacent intervals telescope onto the whole record.
+
+    Parameters
+    ----------
+    ds_stage : xarray.Dataset
+        The result of :func:`read_outfall_stage`.
+    report_times_s : numpy.ndarray
+        Reporting times in seconds since the start of the run, finite, strictly increasing and evenly spaced, at least
+        two; each is the END of its interval.
+
+    Raises
+    ------
+    ProcessingError
+        If the record is empty, a step length is not positive and finite, the steps do not run back to back, the
+        report times are not even, the first interval would begin before the run, or the record does not cover the
+        first and last interval.
+    """
+    ends = np.asarray(ds_stage["simtime"].values, dtype="float64")
+    dt = np.asarray(ds_stage["dt"].values, dtype="float64")
+    node_ids = tuple(str(n) for n in ds_stage["node_id"].values)
+    times = np.asarray(report_times_s, dtype="float64")
+    operation = "average the driven outfall stage over reporting intervals"
+    if times.ndim != 1 or times.size < 2 or not np.isfinite(times).all():
+        raise ProcessingError(operation, None, "report times must be a finite 1-D sequence of at least two times")
+    interval = float(times[1] - times[0])
+    if not interval > 0.0 or not np.allclose(np.diff(times), interval, rtol=1e-9, atol=0.0):
+        raise ProcessingError(operation, None, f"report times are not evenly spaced at a positive {interval} s")
+    edges = np.concatenate(([times[0] - interval], times))
+    if edges[0] < -1e-9 * interval:
+        raise ProcessingError(operation, None, f"the first interval begins at {edges[0]} s, before the run starts")
+    if ends.size == 0:
+        raise ProcessingError(operation, None, "the record holds no step")
+    if not (np.isfinite(ends).all() and np.isfinite(dt).all() and (dt > 0.0).all()):
+        raise ProcessingError(operation, None, "a step end time or length is not finite, or a length is not positive")
+    starts = ends - dt
+    seam = starts[1:] - ends[:-1]
+    if seam.size and np.abs(seam).max() > _STEP_CONTIGUITY_TOLERANCE_S:
+        first = int(np.argmax(np.abs(seam)))
+        raise ProcessingError(
+            operation,
+            None,
+            f"step {first + 1} starts {seam[first]} s after step {first} ends; the steps are not back to back",
+        )
+    slack = _INTERVAL_COVERAGE_TOLERANCE_FRACTION * interval
+    if starts[0] > edges[0] + slack or ends[-1] < edges[-1] - slack:
+        raise ProcessingError(
+            operation,
+            None,
+            f"the record spans {starts[0]} s to {ends[-1]} s and the reporting intervals span {edges[0]} s to "
+            f"{edges[-1]} s",
+        )
+    at = np.searchsorted(ends, edges, side="left")
+    inside = at < ends.size
+    partial_s = np.zeros(edges.size)
+    partial_s[inside] = np.clip(edges[inside] - starts[at[inside]], 0.0, dt[at[inside]])
+
+    def mean_over_intervals(values: np.ndarray) -> np.ndarray:
+        running = np.concatenate([np.zeros((1, values.shape[1])), np.cumsum(values * dt[:, None], axis=0)])
+        integral = running[at].copy()
+        integral[inside] += values[at[inside]] * partial_s[inside, None]
+        return np.diff(integral, axis=0) / interval
+
+    return OutfallIntervalMeans(
+        node_ids=node_ids,
+        stage_m=mean_over_intervals(np.asarray(ds_stage["outfall_stage_m"].values, dtype="float64")),
+        discharge_m3s=mean_over_intervals(np.asarray(ds_stage["outfall_discharge_m3s"].values, dtype="float64")),
+        report_interval_s=interval,
+    )
+
+
+def _read_percent_header_csv(path: Path, accepted: tuple[tuple[str, ...], ...]) -> pd.DataFrame:
+    """Read a capture csv whose first line is ``%name, name, ...`` and require exactly one of the ``accepted`` columns.
+
+    Raises
+    ------
+    ProcessingError
+        If the first line does not start with ``%`` or its names are none of the ``accepted`` lists.
     """
     lines = path.read_text().splitlines()
     if not lines or not lines[0].startswith("%"):
         raise ProcessingError("decode diagnostic csv", path, "the first line is not a header row starting with '%'")
     names = tuple(n.strip() for n in lines[0][1:].split(","))
-    if names != columns:
-        raise ProcessingError("decode diagnostic csv", path, f"header names {list(names)}, expected {list(columns)}")
-    return pd.read_csv(path, skiprows=1, header=None, names=list(columns), skipinitialspace=True)
+    if names not in accepted:
+        expected = " or ".join(str(list(columns)) for columns in accepted)
+        raise ProcessingError("decode diagnostic csv", path, f"header names {list(names)}, expected {expected}")
+    return pd.read_csv(path, skiprows=1, header=None, names=list(names), skipinitialspace=True)
 
 
 def read_domain_balance(path: str | Path) -> xr.Dataset:
@@ -551,13 +749,20 @@ def read_domain_balance(path: str | Path) -> xr.Dataset:
     every term but ``t_end`` is a volume in m3 summed over the interval, signed positive into the
     domain. Returns a Dataset on ``timestep`` with ``time_s`` the interval end.
 
+    When the analysis lists a driven-stage open-water outfall the solver writes two more columns,
+    ``outfall_backflow_m3`` (signed positive into the domain, so the negative of the backflow taken from the cells) and
+    ``outfall_backflow_deficit_m3`` (the backflow volume the surface could not supply, positive, kept out of the
+    residual), between ``swmm_exchange_m3`` and ``edge_west_m3``. They are read by those names and the Dataset gains the
+    two variables; without them the header is the list above and the Dataset is the one it always was.
+
     Raises
     ------
     ProcessingError
-        If the header row is missing or its names differ from the list above.
+        If the header row is missing or its names are neither the list above nor that list with both outfall columns
+        (one of the two alone is refused).
     """
     path = Path(path)
-    frame = _read_percent_header_csv(path, _DOMAIN_BALANCE_COLUMNS)
+    frame = _read_percent_header_csv(path, (_DOMAIN_BALANCE_COLUMNS, _DOMAIN_BALANCE_COLUMNS_WITH_OUTFALL))
     values = frame.drop(columns=[_DOMAIN_BALANCE_TIME_COLUMN])
     ds = xr.Dataset(
         {c: ("timestep", values[c].to_numpy(dtype="float64")) for c in values.columns},
@@ -568,6 +773,15 @@ def read_domain_balance(path: str | Path) -> xr.Dataset:
     )
     for c in values.columns:
         ds[c].attrs.update(units="m3", cell_methods="time: sum")
+    if _OUTFALL_BALANCE_COLUMNS[0] in ds.data_vars:
+        ds["outfall_backflow_m3"].attrs["long_name"] = (
+            "Volume the backflow into the driven open-water outfalls added to the surface domain, signed positive into "
+            "the domain, so zero or negative because backflow takes water from the cells"
+        )
+        ds["outfall_backflow_deficit_m3"].attrs["long_name"] = (
+            "Backflow volume the surface could not supply at the driven open-water outfalls, positive and not in the "
+            "residual"
+        )
     ds["time_s"].attrs.update(units="s", long_name="End of the print interval, seconds since the start of the run")
     return ds
 
@@ -586,7 +800,7 @@ def read_wet_cells(path: str | Path) -> xr.Dataset:
         If the header row is missing or wrong, or the ``(rank, print_id)`` grid has a hole or a repeat.
     """
     path = Path(path)
-    frame = _read_percent_header_csv(path, _WET_CELLS_COLUMNS)
+    frame = _read_percent_header_csv(path, (_WET_CELLS_COLUMNS,))
     ranks = np.sort(frame["rank"].unique())
     prints = np.sort(frame["print_id"].unique())
     if len(frame) != len(ranks) * len(prints) or frame.duplicated(["rank", "print_id"]).any():

@@ -145,6 +145,17 @@ COUPLING_NODE_DIAGNOSTIC_VARIABLES: tuple[str, ...] = ("path3_volume_pos", "path
 #: Variables of the coupled node store that record the manhole values the solver read: the diameter in meters and the
 #: loss coefficient, on ``node_id`` alone. Present only when the analysis sets ``manhole_table``.
 MANHOLE_TABLE_NODE_VARIABLES: tuple[str, ...] = ("manhole_diameter", "manhole_loss_coefficient")
+#: Variables of the coupled node store a driven-stage open-water outfall adds on ``(date_time, node_id)``: the stage
+#: TRITON set at the outfall and the flow of its conduit toward the open water, each the mean over the report interval
+#: and NaN at every node that is not a driven outfall. Each carries ``date_time``, so the consolidated ``timeseries``
+#: group picks them up, and the per-scenario summary drops them (see ``summarize_swmm_simulation_results``).
+OPEN_WATER_OUTFALL_NODE_VARIABLES: tuple[str, ...] = ("outfall_stage_m", "outfall_discharge_m3s")
+#: The flag the coupled node store carries on ``node_id`` when ``swmm_open_water_outfalls`` lists any outfall: 1 at each
+#: listed outfall, whichever representation it takes, else 0.
+OPEN_WATER_OUTFALL_FLAG = "is_open_water_outfall"
+#: The capture the solver writes for the driven outfalls and the name list beside it that fixes its width.
+OUTFALL_STAGE_FILE = "outfall_stage.bin"
+OUTFALL_STAGE_NODES_FILE = "outfall_stage.nodes"
 
 
 def read_written_manhole_table(table_file: Path, coupling_nodes: list[str]) -> tuple[np.ndarray, np.ndarray]:
@@ -2125,13 +2136,15 @@ class TRITONSWMM_sim_post_processing:
         uncoupled nodes). When the analysis sets ``manhole_table``, the scenario's ``manhole_table.txt`` is
         decoded and added as ``manhole_diameter`` (meters) and ``manhole_loss_coefficient`` (dimensionless) on
         ``node_id``, the values the solver read at each coupling node and NaN at uncoupled nodes; with no table
-        neither variable is added.
+        neither variable is added. When the analysis lists open-water outfalls, ``_attach_open_water_outfall_outputs``
+        adds the flag ``is_open_water_outfall`` and, for a driven outfall, its stage and discharge.
 
         Raises
         ------
         ProcessingError
             If a listed coupling node is missing from the SWMM output, the table file is absent or unreadable
-            (see ``read_written_manhole_table``), or the flux is requested and the
+            (see ``read_written_manhole_table``), an open-water outfall input is missing or unreadable (see
+            ``_attach_open_water_outfall_outputs``), or the flux is requested and the
             side-file is absent. A store is never written with the flux variable silently missing:
             ``_clear_raw_outputs`` reclaims the side-file once the node store is written, so a missing
             file means the reclaim ran too early or the run did not couple.
@@ -2161,6 +2174,7 @@ class TRITONSWMM_sim_post_processing:
                 full[slots] = column
                 ds_nodes[variable] = ("node_id", full)
         ds_nodes = self._attach_coupling_node_diagnostics(ds_nodes)
+        ds_nodes = self._attach_open_water_outfall_outputs(ds_nodes, f_inp)
         if not self._coupling_exchange_flow_on():
             return ds_nodes
 
@@ -2187,6 +2201,98 @@ class TRITONSWMM_sim_post_processing:
             column = np.full(len(node_ids), np.nan)
             column[slots] = values
             ds_nodes[name] = ("node_id", column)
+        return ds_nodes
+
+    def _attach_open_water_outfall_outputs(self, ds_nodes: xr.Dataset, f_inp: Path) -> xr.Dataset:
+        """Put the open-water outfall flag, and a driven outfall's stage and discharge, on the coupled node dataset.
+
+        Nothing is added when the analysis lists no open-water outfall (``swmm_open_water_outfalls``). Otherwise
+        ``is_open_water_outfall`` (int8 on ``node_id``) is 1 at each listed outfall, whichever representation it takes,
+        and 0 elsewhere. Under ``driven_stage`` the solver's ``outfall_stage.bin`` is decoded as well and added as
+        ``outfall_stage_m`` (the stage TRITON set, m) and ``outfall_discharge_m3s`` (the flow of the outfall's conduit
+        toward the open water, m3/s, negative for backflow) on ``(date_time, node_id)``: the time-weighted mean over
+        each report interval, NaN at every node that is not a driven outfall. Names are matched the way SWMM matches
+        them, upper-casing ASCII letters only, because the solver reads the list through SWMM's case fold and the
+        spelling it writes back is not pinned here.
+
+        Raises
+        ------
+        ProcessingError
+            If a listed outfall is absent from the SWMM node output, the scenario holds no ``driven_outfalls.txt``, the
+            capture or its name list is absent beside it, the capture names other outfalls than the scenario's list, or
+            the capture does not cover the report intervals. A store is never written with the series silently missing.
+        """
+        from hhemt.coupling_diagnostics import outfall_stage_interval_means, read_outfall_stage
+        from hhemt.scenario import _swmm_fold, driven_outfalls_file_for
+        from hhemt.swmm_utils import driven_stage_outfalls, open_water_outfalls
+
+        cfg_analysis = getattr(self._analysis, "cfg_analysis", None)
+        listed = open_water_outfalls(cfg_analysis)
+        if not listed:
+            return ds_nodes
+        node_ids = [str(n) for n in ds_nodes["node_id"].values]
+        position = {_swmm_fold(n): i for i, n in enumerate(node_ids)}
+        absent = [n for n in listed if _swmm_fold(n) not in position]
+        if absent:
+            raise ProcessingError(
+                "attach open-water outfall outputs",
+                f_inp,
+                f"{len(absent)} listed open-water outfall(s) are absent from the SWMM node output: {absent[:5]}",
+            )
+        flag = np.zeros(len(node_ids), dtype="int8")
+        flag[[position[_swmm_fold(n)] for n in listed]] = 1
+        ds_nodes[OPEN_WATER_OUTFALL_FLAG] = ("node_id", flag)
+        if not driven_stage_outfalls(cfg_analysis):
+            return ds_nodes
+
+        driven_file = driven_outfalls_file_for(f_inp)
+        if not driven_file.is_file():
+            raise ProcessingError(
+                "attach open-water outfall outputs",
+                driven_file,
+                "the analysis lists driven_stage open-water outfalls and the scenario holds no driven_outfalls.txt; "
+                "scenario preparation writes it beside coupling_nodes.txt",
+            )
+        driven = [line.strip() for line in driven_file.read_text().splitlines() if line.strip()]
+        raw = self._find_capture_file(OUTFALL_STAGE_FILE)
+        if raw is None:
+            raise ProcessingError(
+                "attach open-water outfall outputs",
+                self.scen_paths.out_tritonswmm,
+                f"the analysis lists driven_stage open-water outfalls and the run wrote no {OUTFALL_STAGE_FILE}. "
+                "Check that the solver at the pinned commit reads swmm_driven_outfalls; a solver that predates it "
+                "ignores the line without error.",
+            )
+        sidecar = raw.parent / OUTFALL_STAGE_NODES_FILE
+        if not sidecar.is_file():
+            raise ProcessingError(
+                "attach open-water outfall outputs",
+                raw,
+                f"the name list {OUTFALL_STAGE_NODES_FILE} that fixes the file's width is absent beside it",
+            )
+        ds_stage = read_outfall_stage(raw, sidecar)
+        recorded = [str(n) for n in ds_stage["node_id"].values]
+        if [_swmm_fold(n) for n in recorded] != [_swmm_fold(n) for n in driven]:
+            raise ProcessingError(
+                "attach open-water outfall outputs",
+                raw,
+                f"the capture names the outfalls {recorded} and the scenario's driven_outfalls.txt lists {driven}",
+            )
+        slots = np.array([position[_swmm_fold(n)] for n in driven], dtype=int)
+        report_times_s = self._report_times_seconds(ds_nodes, "attach open-water outfall outputs")
+        means = outfall_stage_interval_means(ds_stage, report_times_s)
+        ds_stage.close()
+        for variable, values in zip(
+            OPEN_WATER_OUTFALL_NODE_VARIABLES, (means.stage_m, means.discharge_m3s), strict=True
+        ):
+            full = np.full((len(report_times_s), len(node_ids)), np.nan)
+            full[:, slots] = values
+            ds_nodes[variable] = xr.DataArray(
+                full,
+                dims=("date_time", "node_id"),
+                coords={"date_time": ds_nodes["date_time"], "node_id": ds_nodes["node_id"]},
+                attrs={"cell_methods": means.cell_methods},
+            )
         return ds_nodes
 
     def _report_times_seconds(self, ds_nodes: xr.Dataset, operation: str) -> np.ndarray:
@@ -4601,7 +4707,14 @@ def summarize_swmm_simulation_results(ds, event_iloc, tstep_dimname="date_time")
     # per-interval path-3 account series of the coupling diagnostics are dropped likewise: a maximum or a last value
     # of a per-interval volume or count would be a named summary no one asked for, and the series themselves are
     # consolidated through the `timeseries` group.
-    ds = ds.drop_vars([v for v in ("coupling_exchange_flow", *COUPLING_NODE_DIAGNOSTIC_VARIABLES) if v in ds.data_vars])
+    # The two interval series a driven open-water outfall adds are dropped on the same ground.
+    ds = ds.drop_vars(
+        [
+            v
+            for v in ("coupling_exchange_flow", *COUPLING_NODE_DIAGNOSTIC_VARIABLES, *OPEN_WATER_OUTFALL_NODE_VARIABLES)
+            if v in ds.data_vars
+        ]
+    )
     lst_time_variant_vars = []
     for var in ds.data_vars:
         if var not in quality_series and tstep_dimname in ds[var].coords:

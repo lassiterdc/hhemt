@@ -250,6 +250,17 @@ _CF_VARIABLE_MAP: dict[str, dict[str, str | None]] = {
     "coupling_exchange_duration_to_surface": _cf(
         "Time during which water ran from the sewer onto the street at the coupling node", "s", cell_methods="time: sum"
     ),
+    # The open-water outfalls of an analysis that sets `swmm_open_water_outfalls`: the flag on every listed outfall, and
+    # for a driven-stage one the stage TRITON set and the flow of its conduit toward the open water, decoded from the
+    # solver's `outfall_stage.bin` (`coupling_diagnostics.read_outfall_stage`) and attached to the coupled node store by
+    # `_attach_open_water_outfall_outputs`. The flag carries no CF `flag_values`: the map entries of the other
+    # variables may not (`test_cf_variable_map_is_sound`), and its two meanings are in the comment of the coupled mode.
+    "is_open_water_outfall": _cf("Whether the node is an open-water outfall the analysis lists", "1"),
+    "outfall_stage_m": _cf("Water-surface elevation TRITON set as the stage of the driven open-water outfall", "m"),
+    "outfall_discharge_m3s": _cf(
+        "Flow of the driven open-water outfall's conduit toward the open water, negative for backflow into the sewer",
+        "m3 s-1",
+    ),
     # The coupling-diagnostics per-node path-3 account (`coupling_diagnostics.read_swmm_node_path3`), one value per
     # report interval, attached to the coupled node store by `_attach_coupling_node_diagnostics`.
     "path3_volume_pos": _cf(
@@ -1284,6 +1295,24 @@ _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
                     "coupling_exchange_volume_net",
                     "Positive when more water went from the street surface into the sewer than came back out of it.",
                 ),
+                (
+                    "is_open_water_outfall",
+                    "1 at each outfall named in swmm_open_water_outfalls, whichever representation it takes (a driven "
+                    "stage or a crown-height rim), and 0 at every other node.",
+                ),
+                (
+                    "outfall_stage_m",
+                    "The stage TRITON sets before each SWMM step: the water-surface elevation of the cell that holds "
+                    "the outfall, or the outfall's invert where the cell is below the solver's wet threshold. Each "
+                    "value is the mean over the report interval ending at its time; the interval is stated in "
+                    "cell_methods. NaN at nodes that are not driven outfalls.",
+                ),
+                (
+                    "outfall_discharge_m3s",
+                    "Positive when the sewer discharges to the open water, negative when the stage pushes water into "
+                    "the sewer. Each value is the mean over the report interval ending at its time; the interval is "
+                    "stated in cell_methods. NaN at nodes that are not driven outfalls.",
+                ),
             )
         },
     },
@@ -1749,6 +1778,36 @@ _QUANTITY_PROVENANCE: dict[str, dict[str, str]] = {
                 "coupling_exchange_duration_to_surface",
                 "total length of the steps whose flow is negative",
                 "sum_k dt_k [q_k < 0]",
+            ),
+        )
+    },
+    # Open-water outfalls: the flag from the analysis's list, the stage and discharge from `outfall_stage.bin`
+    "is_open_water_outfall": {
+        "spatial_representation": "point (node)",
+        "source_variables": "analysis swmm_open_water_outfalls",
+        "operation": "1 where the node's name is a listed open-water outfall (SWMM's case fold), else 0",
+        "operation_expr": "id in swmm_open_water_outfalls",
+        "reduced_coordinate": "none",
+    },
+    **{
+        _name: {
+            "spatial_representation": "point (node)",
+            "source_variables": "outfall_stage.bin, one record per SWMM step",
+            "operation": _operation,
+            "operation_expr": _expr,
+            "reduced_coordinate": "none (time series)",
+        }
+        for _name, _operation, _expr in (
+            (
+                "outfall_stage_m",
+                "time-weighted mean over each report interval of the stage TRITON set at the driven outfall, in m",
+                "(1/R) sum_k s_k |(t_k-1, t_k] ∩ (τ-R, τ]|",
+            ),
+            (
+                "outfall_discharge_m3s",
+                "volume-conserving mean over each report interval of the flow of the driven outfall's conduit toward "
+                "the open water, in m3/s",
+                "(1/R) sum_k q_k |(t_k-1, t_k] ∩ (τ-R, τ]|",
             ),
         )
     },

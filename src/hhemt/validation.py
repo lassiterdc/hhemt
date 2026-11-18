@@ -1594,6 +1594,7 @@ def _validate_external_boundaries(
     _add_boundary_problems(result, report.warnings, warnings=True)
     for line in report.lines:
         print(f"[external boundaries] {line}", flush=True)
+    _validate_open_water_outfalls(cfg_system, cfg_analysis, result)
 
     converted = converted_outfalls(cfg_system, cfg_analysis)
     if not converted or not Path(cfg_system.SWMM_model).is_file():
@@ -1618,6 +1619,63 @@ def _validate_external_boundaries(
         _add_boundary_problems(result, problems)
 
 
+def _validate_open_water_outfalls(
+    cfg_system: system_config, cfg_analysis: analysis_config, result: ValidationResult
+) -> None:
+    """Every rule of ``swmm_open_water_outfalls`` that run entry can judge, one issue per kind with each offender named.
+
+    The rules are ``swmm_utils.open_water_outfall_problems``, the function scenario preparation asks again against
+    the scenario's exact coupling nodes. A ``driven_stage`` outfall is also asked to lie inside the TRITON grid and
+    to have a ``[COORDINATES]`` row, because the solver reads the DEM cell that holds it and refuses a node it
+    cannot place. Called from ``_validate_external_boundaries``, so it adds no direct callee to
+    ``preflight_validate``.
+    """
+    from hhemt import water_level_boundary as wlb
+    from hhemt.swmm_utils import driven_stage_outfalls, open_water_outfall_problems
+
+    if not getattr(cfg_analysis, "swmm_open_water_outfalls", None):
+        return
+    problems = open_water_outfall_problems(cfg_system, cfg_analysis)
+    _add_boundary_problems(result, problems)
+    driven = driven_stage_outfalls(cfg_analysis)
+    if (
+        problems
+        or not driven
+        or not getattr(cfg_system, "toggle_tritonswmm_model", True)  # an uncoupled system reads no TRITON grid
+        or not Path(cfg_system.SWMM_model).is_file()
+        or not Path(cfg_system.DEM_fullres).is_file()
+    ):
+        return
+    from hhemt.scenario import _swmm_fold, nodes_outside_triton_grid
+    from hhemt.swmm_runnable import _parse
+    from hhemt.swmm_utils import _read_model_text, processed_dem_grid
+    from hhemt.system import triton_grid_header
+
+    coordinates = wlb.model_coordinates(_parse(_read_model_text(Path(cfg_system.SWMM_model))))
+    unplaced = [n for n in driven if _swmm_fold(n) not in coordinates]
+    if unplaced:
+        result.add_error(
+            field="analysis.swmm_open_water_outfalls",
+            message=f"driven_stage outfall(s) {unplaced} have no [COORDINATES] row in SWMM_model, so TRITON cannot "
+            "place them on its grid",
+            current_value=list(driven),
+            fix_hint="Give each listed outfall a [COORDINATES] row",
+        )
+    grid, _provisional = processed_dem_grid(cfg_system)
+    outside = nodes_outside_triton_grid(
+        [(n, *coordinates[_swmm_fold(n)]) for n in driven if _swmm_fold(n) in coordinates], triton_grid_header(grid)
+    )
+    if outside:
+        result.add_error(
+            field="analysis.swmm_open_water_outfalls",
+            message="driven_stage outfall(s) "
+            + "; ".join(f"{name} ({x}, {y})" for name, x, y in outside)
+            + " lie outside the TRITON grid",
+            current_value=list(driven),
+            fix_hint="Move the node into the DEM extent, or remove it from swmm_open_water_outfalls",
+        )
+
+
 def _validate_converted_outfalls_are_coupled(
     cfg_system: system_config, cfg_analysis: analysis_config, converted: tuple[str, ...], result: ValidationResult
 ) -> None:
@@ -1639,8 +1697,11 @@ def _validate_converted_outfalls_are_coupled(
         junctions = coupling_candidate_junction_coordinates(cfg_system, cfg_analysis)
     except (ConfigurationError, ProcessingError, OSError):
         return  # the checks that name the cause (V4, V9, V13) report it
+    from hhemt.swmm_utils import crown_rim_outfalls
+
+    crown_f = {_swmm_fold(n) for n in crown_rim_outfalls(cfg_analysis)}
     if mode == "legacy":
-        refused = [n for n in converted if n in matched]
+        refused = [n for n in converted if n in matched or _swmm_fold(n) in crown_f]
         how = "swmm_coupling_mode is legacy, which couples the nodes that carry a FLOW inflow, and a matched outfall carries none"  # noqa: E501
         fix = "Set swmm_coupling_mode to all_junctions, or list the outfall in swmm_outfalls_to_keep"
     else:

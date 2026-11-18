@@ -2966,6 +2966,7 @@ class TRITONSWMM_analysis:
             require_valid_manhole_table,
             swmm_role_inp,
         )
+        from .swmm_utils import crown_rim_outfalls
 
         for cfg_analysis, system in _analysis_system_pairs_run_by(self):
             cfg = system.cfg_system
@@ -2986,6 +2987,7 @@ class TRITONSWMM_analysis:
                     model=str(cfg.SWMM_model),
                     diameter_constant=cfg_analysis.manhole_diameter,
                     loss_constant=cfg_analysis.manhole_loss_coefficient,
+                    crown_rim_nodes=crown_rim_outfalls(cfg_analysis),
                 ),
             )
 

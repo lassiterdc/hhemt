@@ -218,6 +218,11 @@ def test_no_phantom_swmm_keys_in_cf_variable_map() -> None:
         "path3_volume_pos",
         "path3_volume_neg",
         "nonconverged_steps",
+        # The coupled node store's open-water outfall outputs: the flag from the analysis's list, the stage and
+        # discharge computed from the solver's outfall_stage.bin.
+        "is_open_water_outfall",
+        "outfall_stage_m",
+        "outfall_discharge_m3s",
         # The coupled node store's per-node manhole values, read back from the scenario's manhole_table.txt.
         "manhole_diameter",
         "manhole_loss_coefficient",

@@ -5516,3 +5516,35 @@ non_breaking_allowlist:
     layout_signature: 20fed8c954aa446dc55e2a5cc048727c2739bd25bb11216cd20b78993e1a66b1
     justification: |-
       non-breaking: the append_zarr call is wrapped in deferred_consolidation, same arguments and same data written
+  - path: src/hhemt/config/analysis.py
+    layout_signature: efb0f0792296028d4b63553d3e4a23b782236fb3277cfcfae4d87d83b309aef4
+    justification: |-
+      open-water outfalls: adds the optional config fields swmm_open_water_outfalls (default empty list) and open_water_outfall_representation (default driven_stage, read only when the list is non-empty), and no on-disk layout change an existing analysis reads. An older config loads unchanged and an analysis with the list empty writes the bytes it wrote before. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 3dea1d9f57e5da2c8ed7d1e66c27c70e3d955f7f19cf7c298784296bab6d5053
+    justification: |-
+      open-water outfalls: classifies the two new analysis fields swmm_open_water_outfalls and open_water_outfall_representation as experiment in the reprex taxonomy, a static classifier table that holds no on-disk state. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/scenario.py
+    layout_signature: 0c40ca7a5a32be1362464c111bd0332b458997fa68486f3982ddc5e0eef81b9f
+    justification: |-
+      open-water outfalls: adds the optional cfg keys swmm_driven_outfalls and swmm_dem_rim_exempt_nodes with their build guards and setters, and the manhole-table fixed rows of a crown_rim node. Each key line is written only when swmm_open_water_outfalls is non-empty (the exemption key only while the DEM-rim key is written), and a crown_rim list writes manhole_table.txt although no manhole_table is set. A scenario prepared with the list empty is byte-identical, and an older scenario reads unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/scenario_inputs.py
+    layout_signature: 7328d51d4f8fb7a767791a8a48f4673b4b4cdf5dfbde82e09cd00149efe1fd6b
+    justification: |-
+      open-water outfalls: adds the optional per-scenario files driven_outfalls.txt, dem_rim_exempt_nodes.txt and crown_rim_outfalls.json beside coupling_nodes.txt, each written only when swmm_open_water_outfalls is non-empty, and the toolkit-sized rows of manhole_table.txt for a crown_rim node. No existing analysis carries them and no reader of an older scenario needs them, so a scenario prepared with the list empty is byte-identical. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/water_level_boundary.py
+    layout_signature: 023c24b74ce5ddc12deb9ff137ed2fc888d3cf7105e19e9ec7b69a865b2507ab
+    justification: |-
+      open-water outfalls: counts an outfall listed in swmm_open_water_outfalls as a decision in the outfall-decision pass and leaves such an outfall out of the nodes the DEM gives a depth; it changes no name of the swmm_model_series extraction directory, its COMPLETE marker or its {index}.dat files, which are the reason this file is layout-relevant. With the list empty the pass is unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/scenario_inputs.py
+    layout_signature: 397f7b326965f4d9c41c4a9f4b5046fdb9c46d7192f89713a6104546bca15246
+    justification: |-
+      open-water outfalls: adds the optional per-scenario files driven_outfalls.txt, dem_rim_exempt_nodes.txt and crown_rim_outfalls.json beside coupling_nodes.txt, each written only when swmm_open_water_outfalls is non-empty, and the toolkit-sized rows of manhole_table.txt for a crown_rim node. No existing analysis carries them and no reader of an older scenario needs them, so a scenario prepared with the list empty is byte-identical. Non-breaking, no LAYOUT_VERSION bump. Re-stamped after a docstring was added to one helper of the same change.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: cceda7848f8447768ec6a16f6b178be67c8f02c23db35403d45d4b44bceacc19
+    justification: |-
+      open-water outfalls, ingestion: adds to the coupled node store the flag is_open_water_outfall (on node_id, at each outfall swmm_open_water_outfalls lists) and, for a driven_stage outfall, the two interval series outfall_stage_m and outfall_discharge_m3s on (date_time, node_id), decoded from the solver outfall_stage.bin; the per-scenario summary drops the two series like the path-3 series. Each is added only when swmm_open_water_outfalls is non-empty, so a scenario processed with the list empty writes the bytes it wrote before and an older scenario or tree reads unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: b1bacfdb85af616052e033a5c7fff2d8f1b55b771e5d96fd938854e22ba9941a
+    justification: |-
+      open-water outfalls, CF entries: adds map and provenance entries for is_open_water_outfall, outfall_stage_m and outfall_discharge_m3s beside coupling_exchange_flow, and their sign comments in the coupled node mode. Map entries only: no existing entry, no attribute of an existing variable and no on-disk path changes, and the three names exist only in a node store of an analysis that lists open-water outfalls. Non-breaking, no LAYOUT_VERSION bump.

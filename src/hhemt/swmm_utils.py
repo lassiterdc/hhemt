@@ -6,6 +6,7 @@ These functions are used across multiple SWMM model creation modules to avoid co
 """
 
 import os
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -222,15 +223,318 @@ def _cached_series_pointers(path: str, mtime_ns: int, system_directory: str) -> 
     return tuple(extract_model_series(Path(path), Path(system_directory)).items())
 
 
+def open_water_outfalls(cfg_analysis) -> tuple[str, ...]:
+    """The outfalls ``swmm_open_water_outfalls`` lists, a repeated name once, in the order listed.
+
+    Empty when the analysis has no such field or lists none. Read by attribute and by type: the configuration
+    stand-ins of the tests carry only the fields their cases set.
+    """
+    names = getattr(cfg_analysis, "swmm_open_water_outfalls", None) if cfg_analysis is not None else None
+    return tuple(dict.fromkeys(names)) if isinstance(names, list | tuple) else ()
+
+
+def open_water_representation(cfg_analysis) -> str:
+    """``driven_stage`` or ``crown_rim``: how each listed open-water outfall is represented."""
+    value = getattr(cfg_analysis, "open_water_outfall_representation", "driven_stage")
+    return value if value in ("driven_stage", "crown_rim") else "driven_stage"
+
+
+def driven_stage_outfalls(cfg_analysis) -> tuple[str, ...]:
+    """The listed open-water outfalls that stay outfalls and take a stage TRITON sets (empty under ``crown_rim``)."""
+    return open_water_outfalls(cfg_analysis) if open_water_representation(cfg_analysis) == "driven_stage" else ()
+
+
+def crown_rim_outfalls(cfg_analysis) -> tuple[str, ...]:
+    """The listed open-water outfalls converted to coupled junctions at the outlet conduit's crown (empty under
+    ``driven_stage``)."""
+    return open_water_outfalls(cfg_analysis) if open_water_representation(cfg_analysis) == "crown_rim" else ()
+
+
 def converted_outfalls(cfg_system, cfg_analysis=None) -> tuple[str, ...]:
-    """The outfalls that become coupled junctions: ``swmm_outfalls_to_couple`` plus those a water_level record names."""
+    """The outfalls that become coupled junctions.
+
+    ``swmm_outfalls_to_couple``, plus those a water_level record names, except that a record does not convert an
+    outfall listed in ``swmm_open_water_outfalls`` while the representation is ``driven_stage`` (the outfall stays
+    an outfall whose stage TRITON sets), plus every listed outfall while the representation is ``crown_rim``.
+    With no listed outfall the result is what it was before the list existed.
+    """
+    from hhemt.swmm_runnable import _fold
     from hhemt.water_level_boundary import boundary_records_for, matched_outfall_names
 
     matched: tuple[str, ...] = ()
     if cfg_analysis is not None:
         records, _problems = boundary_records_for(cfg_analysis, cfg_system)
         matched = matched_outfall_names(records)
+    listed = open_water_outfalls(cfg_analysis)
+    if listed:
+        if open_water_representation(cfg_analysis) == "driven_stage":
+            driven = {_fold(n) for n in listed}
+            matched = tuple(n for n in matched if _fold(n) not in driven)
+        else:
+            matched = (*matched, *listed)
     return tuple(dict.fromkeys([*cfg_system.swmm_outfalls_to_couple, *matched]))
+
+
+#: One foot in meters: a US-unit SWMM model (flow units CFS, GPM or MGD) gives its cross-sections in feet.
+_FEET_TO_METERS = 0.3048
+
+
+@dataclass(frozen=True)
+class CrownRimOutfall:
+    """The comparison representation of one listed open-water outfall, sized from its outlet conduit.
+
+    ``conduit`` is the ``[CONDUITS]`` row whose outlet node is the outfall, ``barrels`` its barrel count, ``shape``
+    its cross-section keyword. ``area_m2`` is the full flow area of every barrel together (``scenario.calc_area``,
+    which multiplies by the barrels), ``diameter_m`` the diameter of the circle of that area, ``crown_m`` the
+    height of the conduit's crown above the outfall's invert (outlet offset plus full height), which is the depth
+    SWMM raises the node to, or None when the offset is not a number. ``loss_coefficient`` is
+    ``manhole_loss_coefficient``.
+    """
+
+    name: str
+    conduit: str
+    barrels: float
+    shape: str
+    area_m2: float
+    diameter_m: float
+    crown_m: float | None
+    loss_coefficient: float
+
+
+def _outlet_conduit_sizing(sections, name: str, length_scale: float, loss: float) -> "CrownRimOutfall | str":
+    """The sizing of the one conduit whose outlet node is ``name``, or the reason there is none to read."""
+    import math
+    from types import SimpleNamespace
+
+    from hhemt.scenario import calc_area
+    from hhemt.swmm_runnable import _fold, _node_rows
+
+    key = _fold(name)
+    into = [t for t in _node_rows(sections, "CONDUITS") if len(t) > 2 and _fold(t[2]) == key]
+    if not into:
+        return f"{name} has no conduit whose outlet node is {name}, so there is no pipe to size it from"
+    if len(into) > 1:
+        return (
+            f"{name} has {len(into)} conduits whose outlet node is {name} ({', '.join(t[0] for t in into)}); "
+            "the rule reads one outlet conduit"
+        )
+    conduit = into[0]
+    rows = {_fold(t[0]): t for t in _node_rows(sections, "XSECTIONS") if len(t) > 2}
+    xs = rows.get(_fold(conduit[0]))
+    if xs is None:
+        return f"conduit {conduit[0]} (the outlet conduit of {name}) has no [XSECTIONS] row, so it has no size"
+
+    def number(tokens, i):
+        """The ``i``-th token as a float, or None when the row is shorter or the token is not a number."""
+        try:
+            return float(tokens[i])
+        except (IndexError, ValueError):
+            return None
+
+    area = calc_area(
+        SimpleNamespace(
+            Shape=xs[1],
+            Geom1=number(xs, 2),
+            Geom2=number(xs, 3),
+            Geom3=number(xs, 4),
+            Geom4=number(xs, 5),
+            Barrels=number(xs, 6),
+        )
+    )
+    if area is None or not math.isfinite(float(area)) or float(area) <= 0:
+        return (
+            f"conduit {conduit[0]} (the outlet conduit of {name}) has the cross-section {xs[1]} with "
+            f"dimensions {xs[2:6]}, whose flow area the toolkit cannot size"
+        )
+    height = number(xs, 2)
+    offset = number(conduit, 6)
+    # The crown above the outfall's invert, which is the depth SWMM raises the node to (``fullDepth = offset + yFull``).
+    # Under LINK_OFFSETS ELEVATION the offset is an elevation, and SWMM first converts it to a height above the node's
+    # invert (``link_convertOffsets``, ``offset -= node invert``, link.c), so the invert is subtracted here too.
+    # Informational: written to the crown_rim_outfalls.json record and used in no cfg line, manhole row or refusal.
+    elevation_offsets = any(
+        len(t) > 1 and _fold(t[0]) == "LINK_OFFSETS" and _fold(t[1]).startswith("ELEV")
+        for t in _node_rows(sections, "OPTIONS")
+    )
+    invert = next((number(t, 1) for t in _node_rows(sections, "OUTFALLS") if t and _fold(t[0]) == key), None)
+    crown = None
+    if height is not None and len(conduit) > 6 and conduit[6] == "*":
+        crown = height * length_scale  # a '*' offset is 0 above the node's invert in either mode
+    elif height is not None and offset is not None:
+        if not elevation_offsets:
+            crown = (offset + height) * length_scale
+        elif invert is not None:
+            crown = ((offset - invert) + height) * length_scale
+    area_m2 = float(area) * length_scale**2
+    return CrownRimOutfall(
+        name=name,
+        conduit=conduit[0],
+        barrels=number(xs, 6) or 1.0,
+        shape=str(xs[1]).strip().upper(),
+        area_m2=area_m2,
+        diameter_m=math.sqrt(4.0 * area_m2 / math.pi),
+        crown_m=crown,
+        loss_coefficient=float(loss),
+    )
+
+
+def crown_rim_sizing(cfg_system, cfg_analysis, skip=()) -> "tuple[dict[str, CrownRimOutfall], list[str]]":
+    """Size each ``crown_rim`` open-water outfall from its outlet conduit: ``({name: sizing}, [reason, ...])``.
+
+    The diameter is the area-equivalent one, ``d = sqrt(4 A / pi)`` with ``A`` the total flow area of every barrel
+    of the outlet conduit, and the loss is ``manhole_loss_coefficient``. A US-unit model (flow units CFS, GPM or
+    MGD) holds its cross-sections in feet and the diameter is returned in meters. The reasons name every listed
+    outfall that cannot be sized. Empty for a ``driven_stage`` analysis. ``skip`` names outfalls left out of the
+    sizing (the ones the caller has already refused as no ``[OUTFALLS]`` row).
+    """
+    from hhemt.swmm_runnable import _fold, _parse
+    from hhemt.swmm_runoff_modeling import _US_FLOW_UNITS, flow_units_from_inp_text
+
+    skipped = {_fold(n) for n in skip}
+    listed = [n for n in crown_rim_outfalls(cfg_analysis) if _fold(n) not in skipped]
+    if not listed:
+        return {}, []
+    text = _read_model_text(Path(cfg_system.SWMM_model))
+    sections = _parse(text)
+    scale = _FEET_TO_METERS if flow_units_from_inp_text(text) in _US_FLOW_UNITS else 1.0
+    sized: dict[str, CrownRimOutfall] = {}
+    reasons: list[str] = []
+    for name in listed:
+        result = _outlet_conduit_sizing(sections, name, scale, cfg_analysis.manhole_loss_coefficient)
+        if isinstance(result, str):
+            reasons.append(result)
+        else:
+            sized[name] = result
+    return sized, reasons
+
+
+def open_water_outfall_problems(cfg_system, cfg_analysis) -> list:
+    """Every rule the open-water outfall list breaks, as ``Problem`` rows naming each offender.
+
+    The one function the run-entry validation (``validation._validate_open_water_outfalls``) and scenario
+    preparation (``require_valid_open_water_outfalls``) both ask, so the two cannot apply different rules:
+
+    * a listed name is an ``[OUTFALLS]`` row of ``SWMM_model`` and appears once (after SWMM's case fold);
+    * a listed outfall is not also in ``swmm_outfalls_to_couple`` or ``swmm_outfalls_to_keep`` (one disposition per
+      outfall);
+    * a listed outfall has no row in ``manhole_table`` (a driven outfall has no exchange slot, and a ``crown_rim``
+      node's row is the toolkit's);
+    * under ``crown_rim``, a listed outfall has exactly one conduit whose outlet node it is, and that conduit's
+      cross-section has a flow area the toolkit can size.
+
+    A listed outfall named by a water-level record is allowed: the record drives TRITON's boundary line. An
+    unreadable model returns ``[]`` (its existence is judged elsewhere).
+    """
+    from hhemt.swmm_runnable import _fold, _parse
+    from hhemt.water_level_boundary import Problem, model_outfalls
+
+    raw = getattr(cfg_analysis, "swmm_open_water_outfalls", None)
+    if not isinstance(raw, list | tuple) or not raw:
+        return []
+    field = "analysis.swmm_open_water_outfalls"
+    problems: list[Problem] = []
+    folded = [_fold(n) for n in raw]
+    repeated = sorted({n for n, f in zip(raw, folded, strict=True) if folded.count(f) > 1})
+    if repeated:
+        problems.append(
+            Problem(
+                "CFG",
+                field,
+                f"outfall(s) {repeated} are listed more than once in swmm_open_water_outfalls (SWMM folds case)",
+                list(raw),
+                fix_hint="List each outfall once",
+            )
+        )
+    for other_field, group, where in (
+        ("system.swmm_outfalls_to_couple", getattr(cfg_system, "swmm_outfalls_to_couple", None), "system config"),
+        ("analysis.swmm_outfalls_to_keep", getattr(cfg_analysis, "swmm_outfalls_to_keep", None), "analysis config"),
+    ):
+        names = {_fold(n) for n in group} if isinstance(group, list | tuple) else set()
+        both = sorted(n for n in dict.fromkeys(raw) if _fold(n) in names)
+        if both:
+            leaf = other_field.split(".", 1)[1]
+            problems.append(
+                Problem(
+                    "CFG",
+                    field,
+                    f"outfall(s) {both} are listed in swmm_open_water_outfalls and also in {leaf} ({where}); "
+                    "an outfall has one disposition",
+                    list(raw),
+                    fix_hint=f"Remove each name from swmm_open_water_outfalls or from {leaf}",
+                )
+            )
+    table = getattr(cfg_analysis, "manhole_table", None)
+    if table is not None and Path(table).is_file():
+        from hhemt.exceptions import ConfigurationError
+        from hhemt.scenario import read_manhole_table
+
+        try:
+            table_rows = read_manhole_table(table)
+        except ConfigurationError:
+            table_rows = []  # the table's own check names its defect
+        in_table = sorted(r.node_id for r in table_rows if _fold(r.node_id) in set(folded))
+        if in_table:
+            representation = open_water_representation(cfg_analysis)
+            why = (
+                "a driven outfall is not a coupling node and has no exchange slot"
+                if representation == "driven_stage"
+                else "the toolkit writes a crown_rim node's diameter and loss itself, from its outlet conduit"
+            )
+            problems.append(
+                Problem(
+                    "CFG",
+                    "analysis.manhole_table",
+                    f"manhole_table {table} has row(s) for open-water outfall(s) {in_table}; {why}",
+                    str(table),
+                    fix_hint="Remove those rows from manhole_table",
+                )
+            )
+    try:
+        text = _read_model_text(Path(cfg_system.SWMM_model))
+        sections = _parse(text)
+    except Exception:  # unreadable or malformed model: swmm_model_problems names it
+        return problems
+    known = model_outfalls(sections)
+    unknown = [n for n in dict.fromkeys(raw) if _fold(n) not in known]
+    if unknown:
+        problems.append(
+            Problem(
+                "CFG",
+                field,
+                f"{unknown} {'is' if len(unknown) == 1 else 'are'} not an [OUTFALLS] row of {cfg_system.SWMM_model}",
+                list(raw),
+                fix_hint="List only names that appear in the [OUTFALLS] section of SWMM_model",
+            )
+        )
+    if open_water_representation(cfg_analysis) == "crown_rim":
+        _sized, reasons = crown_rim_sizing(cfg_system, cfg_analysis, skip=unknown)
+        if reasons:
+            problems.append(
+                Problem(
+                    "CFG",
+                    "analysis.open_water_outfall_representation",
+                    "crown_rim sizes each listed outfall from the one conduit that ends at it, and "
+                    + "; ".join(reasons),
+                    "crown_rim",
+                    fix_hint="Use driven_stage, which needs no conduit, or list only outfalls with one sizable "
+                    "outlet conduit",
+                )
+            )
+    return problems
+
+
+def require_valid_open_water_outfalls(cfg_system, cfg_analysis) -> None:
+    """Refuse, naming the field and every offender, an open-water outfall list that breaks a rule of
+    ``open_water_outfall_problems``. The scenario-preparation form of the run-entry check."""
+    from hhemt.exceptions import ConfigurationError
+
+    problems = open_water_outfall_problems(cfg_system, cfg_analysis)
+    if problems:
+        raise ConfigurationError(
+            field="swmm_open_water_outfalls",
+            message="swmm_open_water_outfalls is refused:\n    - " + "\n    - ".join(p.message for p in problems),
+            fix_hint="; ".join(p.fix_hint for p in problems if p.fix_hint),
+        )
 
 
 @lru_cache(maxsize=2)
@@ -319,20 +623,28 @@ def _node_depths(path: Path, converted: tuple[str, ...], cfg_system, cfg_analysi
     DEM chosen, every coupling node does too, and the TRITON key is not written (TRITON would overwrite the rims from
     the processed grid).
     """
-    from hhemt.swmm_runnable import _parse
+    from hhemt.swmm_runnable import _fold, _parse
     from hhemt.water_level_boundary import converted_node_depths
 
     resolution = getattr(cfg_analysis, "dem_rim_resolution", None)
     all_nodes = bool(getattr(cfg_analysis, "swmm_node_rim_from_dem", False)) and resolution == "full"
-    if (not converted and not all_nodes) or resolution is None:
+    # A crown_rim open-water outfall takes no depth from the DEM: its SWMM depth is written as 0 and SWMM raises it to
+    # the outlet conduit's crown, so the DEM check (V23) is not asked of it, and of no other node.
+    crown = {_fold(n) for n in crown_rim_outfalls(cfg_analysis)}
+    depth_names = [n for n in converted if _fold(n) not in crown]
+    if (not depth_names and not all_nodes) or resolution is None:
         return {}, [], False
     sections = _parse(_read_model_text(path))
-    names = list(converted)
+    names = list(depth_names)
     if all_nodes:
         from hhemt.scenario import InpText, coupling_candidates
 
         base = InpText(derive_role_model(_read_model_text(path), "hydraulics", converted))
-        names.extend(coupling_candidates(cfg_system, inp_path=base, cfg_analysis=cfg_analysis))
+        names.extend(
+            n
+            for n in coupling_candidates(cfg_system, inp_path=base, cfg_analysis=cfg_analysis)
+            if _fold(n) not in crown
+        )
     nodes = _junction_nodes(sections, dict.fromkeys(names))
     if not nodes:
         return {}, [], False
@@ -397,6 +709,7 @@ def swmm_role_text(
         tuple(sorted(_series_pointers(cfg_system).items())) if externalize else (),
         str(dem),
         dem_mtime,
+        driven_stage_outfalls(cfg_analysis) if role == "hydraulics" else (),
     )
 
 
@@ -411,9 +724,14 @@ def _derived_role_text(
     pointers: tuple[tuple[str, str], ...],
     dem: str,
     dem_mtime_ns: int,
+    driven: tuple[str, ...] = (),
 ) -> str:
-    """The cached derivation. ``dem`` and ``dem_mtime_ns`` are part of the key so a changed DEM re-derives."""
-    return derive_role_model(
+    """The cached derivation. ``dem`` and ``dem_mtime_ns`` are part of the key so a changed DEM re-derives.
+
+    ``driven`` names the open-water outfalls the hydraulics role writes as FIXED outfalls (empty for every other
+    role and for every analysis that lists none, which leave the derived text untouched).
+    """
+    text = derive_role_model(
         _read_model_text(Path(path)),
         role,
         outfalls,
@@ -421,6 +739,48 @@ def _derived_role_text(
         series_pointers=dict(pointers),
         stage_series=dict(stage),
     )
+    return fixed_outfall_text(text, driven) if driven else text
+
+
+def fixed_outfall_text(role_text: str, names: tuple[str, ...]) -> str:
+    """``role_text`` with each outfall of ``names`` rewritten as a FIXED outfall whose stage is its invert.
+
+    TRITON overwrites a driven outfall's stage before every SWMM step (the solver key ``swmm_driven_outfalls``), so
+    the value written here is only the stage a step would read before TRITON's first write: the outfall's invert,
+    which the solver also uses for a dry cell. The row keeps its name, invert, gate flag and route-to; a FREE or
+    NORMAL row gains the stage token and a TIDAL, TIMESERIES or FIXED row has its stage token replaced. Every other
+    line is untouched, line endings included.
+
+    Raises
+    ------
+    ConfigurationError
+        A name of ``names`` is not an ``[OUTFALLS]`` row of ``role_text``.
+    """
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.swmm_runnable import _all, _fold, _is_data_row, _parse, _prefix_match, _render, _tokens
+
+    wanted = {_fold(n) for n in names}
+    sections = _parse(role_text)
+    found: set[str] = set()
+    for section in _all(sections, "OUTFALLS"):
+        for i, line in enumerate(section.lines):
+            toks = _tokens(line) if _is_data_row(line) else []
+            if len(toks) < 3 or _fold(toks[0]) not in wanted:
+                continue
+            found.add(_fold(toks[0]))
+            has_stage = any(_prefix_match(toks[2], kind) for kind in ("FIXED", "TIDAL", "TIMESERIES"))
+            rest = toks[4:] if has_stage else toks[3:]
+            eol = line[len(line.rstrip("\r\n")) :]
+            tail = (" " + " ".join(rest)) if rest else ""
+            section.lines[i] = f"{toks[0]:<16} {toks[1]:<10} {'FIXED':<10} {toks[1]}{tail}{eol}"
+    missing = [n for n in names if _fold(n) not in found]
+    if missing:
+        raise ConfigurationError(
+            field="swmm_open_water_outfalls",
+            message=f"{missing} {'is' if len(missing) == 1 else 'are'} not an [OUTFALLS] row of the SWMM model.",
+            fix_hint="List only names that appear in the [OUTFALLS] section of SWMM_model.",
+        )
+    return _render(sections)
 
 
 def write_swmm_role_model(scenario: "TRITONSWMM_scenario", role: str, destination: Path) -> None:
