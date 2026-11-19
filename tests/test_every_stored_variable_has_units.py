@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Annotated, Literal, Optional
 
 import numpy as np
 import pytest
@@ -419,20 +420,135 @@ def test_parameter_units_refuse_a_numeric_field_dropped_from_the_table(monkeypat
         stamp_parameter_units(_parameters({"analysis.manhole_diameter": [1.2, 1.2]}), _parameter_column_field)
 
 
-def test_every_scalar_numeric_analysis_field_has_a_unit():
-    """A new numeric analysis_config field must be added to the unit table, or it fails here."""
+def _annotation_stores_a_number(annotation) -> bool:
+    """True when a field with this annotation can write a numeric column into the experiment ``parameters`` dataset.
+
+    The census walks the annotation instead of comparing it to ``int`` and ``float`` because a value reaches the
+    dataset as a number whatever the annotation spells: ``Literal[0, 1]`` holds integers, ``int | None`` and
+    ``Optional[Annotated[int, ...]]`` hold one behind a wrapper. ``bool`` is excluded because a bool column is not
+    ``np.number`` and ``stamp_parameter_units`` leaves it alone. A container (``tuple[int, ...]``, ``dict[str,
+    float]``) is not a scalar column and is not counted, as the unit table's own comment states.
+    """
+    import types
     import typing
 
-    from hhemt.cf_conventions import _ANALYSIS_FIELD_UNITS
+    origin = typing.get_origin(annotation)
+    if origin is typing.Annotated:
+        return _annotation_stores_a_number(typing.get_args(annotation)[0])
+    if origin is typing.Literal:
+        return any(isinstance(v, (int, float)) and not isinstance(v, bool) for v in typing.get_args(annotation))
+    if origin in (typing.Union, types.UnionType):
+        return any(_annotation_stores_a_number(a) for a in typing.get_args(annotation))
+    return annotation in (int, float)
+
+
+def _numeric_analysis_fields() -> set[str]:
+    """The names of the analysis_config fields whose annotation stores a number."""
     from hhemt.config.analysis import analysis_config
 
-    numeric = set()
-    for name, field in analysis_config.model_fields.items():
-        args = [field.annotation] if typing.get_origin(field.annotation) is None else typing.get_args(field.annotation)
-        if any(a in (int, float) for a in args) and bool not in args:
-            numeric.add(name)
+    return {
+        name for name, field in analysis_config.model_fields.items() if _annotation_stores_a_number(field.annotation)
+    }
+
+
+def test_every_scalar_numeric_analysis_field_has_a_unit():
+    """Property: every analysis_config field whose annotation stores a number has an entry in the unit table, and
+    the table names no field that stores none.
+
+    Class: REGRESSION. On the tree before the unit of ``swmm_coupling_lag`` (a ``Literal[0, 1]``) was added, the
+    first assertion fails naming it; the earlier census compared the annotation to ``int`` and ``float`` and so never
+    saw an integer ``Literal``. Why it is required: ``stamp_parameter_units`` raises for the first numeric column
+    whose field is absent from the table, which stopped the experiment consolidation of a whole bundle. What kills
+    it: deleting any table entry, or adding a numeric field without one. A second correct implementation: a census
+    that reads the pydantic JSON schema's ``type`` and ``enum`` keys instead of the Python annotation.
+    """
+    from hhemt.cf_conventions import _ANALYSIS_FIELD_UNITS
+
+    numeric = _numeric_analysis_fields()
     assert numeric - set(_ANALYSIS_FIELD_UNITS) == set()
     assert set(_ANALYSIS_FIELD_UNITS) - numeric == set()
+
+
+@pytest.mark.parametrize(
+    ("annotation", "stores_a_number"),
+    [
+        (int, True),
+        (float, True),
+        (Literal[0, 1], True),
+        (Literal[0, "auto"], True),
+        (int | None, True),
+        (Optional[float], True),  # noqa: UP045 -- the typing spelling is the property under test
+        (Annotated[float, "m"], True),
+        (Optional[Annotated[int, "m"]], True),  # noqa: UP045 -- the typing spelling is the property under test
+        (bool, False),
+        (bool | None, False),
+        (Literal[True, False], False),
+        (Literal["a", "b"], False),
+        (str | None, False),
+        (tuple[int, ...] | None, False),
+        (dict[str, float] | None, False),
+    ],
+    ids=lambda v: str(v).replace("typing.", ""),
+)
+def test_the_numeric_field_census_reads_every_annotation_spelling_that_stores_a_number(annotation, stores_a_number):
+    """Property: the census returns True for each spelling that can hold a number and False for one that cannot.
+
+    Class: NEW CAPABILITY. The plausible wrong implementation is the earlier census, which compared the annotation
+    (or the arguments of its outermost generic) to ``int`` and ``float``: it is red here on ``Literal[0, 1]``,
+    ``Literal[0, "auto"]`` and ``Optional[Annotated[int, "m"]]``. Each True row is the
+    must-fire control for the census over the real model, so a census that returned nothing could not pass; each
+    False row bounds it from above (a bool column is not ``np.number``). A second correct implementation: one that
+    builds a one-field pydantic model per spelling and asks whether its JSON schema carries a numeric ``type``.
+    """
+    assert _annotation_stores_a_number(annotation) is stores_a_number
+
+
+def test_the_census_names_swmm_coupling_lag_as_a_numeric_field():
+    """Property: the census over the real model includes the one field annotated ``Literal[0, 1]``.
+
+    Class: REGRESSION, red on the tree before the fix of the earlier census. Why: this is the field whose missing
+    unit failed the experiment consolidation of the Phase B bundles. What kills it: reverting the census to an
+    ``int``/``float`` comparison. A second correct implementation: reading the field's default (an ``int``).
+    """
+    assert "swmm_coupling_lag" in _numeric_analysis_fields()
+
+
+def test_stamping_a_column_for_every_numeric_analysis_field_stamps_a_unit_and_raises_for_none():
+    """Property: ``stamp_parameter_units`` over one column per numeric analysis field, in the ``analysis.`` overlay
+    spelling a Phase B matrix writes, raises for none and leaves a non-empty ``units`` string on every column.
+
+    Class: REGRESSION. Before the fix it raises ``ValueError`` naming ``analysis.swmm_coupling_lag``, the message of
+    the failed consolidation. This runs the writer's own function over the whole census population, so it fails for
+    a table that agrees with the census yet is spelled wrongly for the writer. What kills it: dropping any table
+    entry. A second correct implementation: stamping a dataset built from the field defaults of a real
+    ``analysis_config``.
+    """
+    from hhemt.sensitivity_analysis import _parameter_column_field
+
+    fields = sorted(_numeric_analysis_fields())
+    assert fields, "control: the census found no numeric field, so the loop below would assert nothing"
+    ds = stamp_parameter_units(_parameters({f"analysis.{f}": [1.0, 2.0] for f in fields}), _parameter_column_field)
+    for field in fields:
+        unit = ds[f"analysis.{field}"].attrs.get("units")
+        assert isinstance(unit, str) and unit.strip(), field
+
+
+def test_parameter_units_refuse_an_integer_literal_field_dropped_from_the_table(monkeypatch):
+    """Property: the refusal fires for the integer-``Literal`` field too, naming its column.
+
+    Class: NEW CAPABILITY. The control for the population test above: with ``swmm_coupling_lag`` removed from the
+    table the stamping of its column raises, so a green population test cannot come from a stamp that never refuses.
+    What kills it: a stamp that skipped integer columns whose field is a ``Literal``. A second correct
+    implementation: a stamp that reads each unit from the field's own metadata instead of a table, provided it still
+    refuses a field that declares none.
+    """
+    import hhemt.cf_conventions as cf
+    from hhemt.sensitivity_analysis import _parameter_column_field
+
+    kept = {k: v for k, v in cf._ANALYSIS_FIELD_UNITS.items() if k != "swmm_coupling_lag"}
+    monkeypatch.setattr(cf, "_ANALYSIS_FIELD_UNITS", kept)
+    with pytest.raises(ValueError, match=r"analysis\.swmm_coupling_lag"):
+        stamp_parameter_units(_parameters({"analysis.swmm_coupling_lag": [0, 1]}), _parameter_column_field)
 
 
 # ---------------------------------------------------------------------------------------------------------

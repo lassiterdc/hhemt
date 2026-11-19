@@ -3178,6 +3178,8 @@ _ANALYSIS_FIELD_UNITS: dict[str, str] = {
     "TRITON_domain_decomposition_check_factor": "1",
     "TRITON_progress_print_iterations": "1",
     "swmm_coupling_interval": "1",
+    # A count of TRITON steps (0 or 1) by which the exchange reads SWMM behind, so dimensionless like the interval.
+    "swmm_coupling_lag": "1",
     "swmm_report_step_s": "s",
 }
 
