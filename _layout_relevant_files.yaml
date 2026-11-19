@@ -5580,3 +5580,7 @@ non_breaking_allowlist:
     layout_signature: c7da5cd6a9a3c4fcd1d34a6bc7feeeb4413b1051f4a12c8401b9e58ef94c7cc1
     justification: |-
       series group copy into the experiment master is lazy and refuses a master written with another chunk layout; no stored value or layout change for new masters, equal decoded values measured
+  - path: src/hhemt/scenario.py
+    layout_signature: 3e61a0cad918b23aca7548278c332ce646dd800e04544ee7e0d21eb8dcc7b045
+    justification: |-
+      standalone-SWMM systems are gated on the SWMM build in scenario preparation; no stored value or on-disk layout change

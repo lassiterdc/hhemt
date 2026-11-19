@@ -2329,7 +2329,8 @@ class TRITONSWMM_scenario:
 
     def _verify_native_build_or_skip_in_container(self) -> None:
         """Native mode: raise CompilationError if the backend build required by
-        self.backend is not compiled. Container mode: no-op.
+        self.backend is not compiled. Container mode: no-op. A standalone-SWMM
+        system (only ``toggle_swmm_model``) requires the SWMM build and no TRITON build.
 
         Mirrors setup_workflow.py's container compile-skip (_native_compile). In
         container mode setup skips the on-cluster compile (the SIF carries the
@@ -2341,10 +2342,16 @@ class TRITONSWMM_scenario:
             return
 
         # Validate backend is available. The compilation marker depends on
-        # whether the coupled TRITONSWMM model is enabled — TRITON-only mode
-        # compiles into build_triton_cpu/ (no swmm5 target) and must not be
-        # gated on the TRITONSWMM-coupled markers.
-        is_tritonswmm = self._system.cfg_system.toggle_tritonswmm_model
+        # which model the system runs — TRITON-only mode compiles into
+        # build_triton_cpu/ (no swmm5 target) and must not be gated on the
+        # TRITONSWMM-coupled markers, and a standalone-SWMM system compiles only
+        # the SWMM build, so it must not be gated on either TRITON build.
+        cfg_sys = self._system.cfg_system
+        if cfg_sys.toggle_swmm_model and not cfg_sys.toggle_tritonswmm_model and not cfg_sys.toggle_triton_model:
+            self._verify_swmm_only_build()
+            return
+
+        is_tritonswmm = cfg_sys.toggle_tritonswmm_model
         model_label = "tritonswmm" if is_tritonswmm else "triton_only"
         if self.backend == "gpu":
             gpu_ok = (
@@ -2396,6 +2403,55 @@ class TRITONSWMM_scenario:
                     logfile=_log,
                     return_code=1,
                 )
+
+    def _verify_swmm_only_build(self) -> None:
+        """Native mode, standalone-SWMM system: raise unless the SWMM build is compiled.
+
+        A system that runs only standalone SWMM compiles the SWMM build alone (setup's
+        ``--compile-swmm``), so demanding a TRITON-only or coupled build here refused
+        every scenario of such a system with "No triton_only CPU build is present".
+        Standalone SWMM has no GPU backend, so ``self.backend`` does not change the
+        requirement, and a failed gate always names ``backend="cpu"`` like ``compile_SWMM``.
+
+        Raises
+        ------
+        ConfigurationError
+            No SWMM compilation log exists, so no build was attempted here (CLI exit 2).
+        CompilationError
+            A SWMM compilation log exists but does not record a successful build (exit 3).
+        """
+        if self._system.compilation_swmm_successful:
+            return
+        swmm_build_dir = self._system.sys_paths.SWMM_build_dir
+        if swmm_build_dir is None:
+            raise ConfigurationError(
+                field="SWMM_software_directory",
+                message=(
+                    "The SWMM software directory is not configured, so there is no SWMM build "
+                    "to find. Set SWMM_software_directory in the system config to the SWMM "
+                    "source checkout, then run the setup phase with --compile-swmm; or set "
+                    "execution_environment='container' if the binary is supplied by a SIF."
+                ),
+                config_path=self._system.system_config_yaml,
+            )
+        logfile = swmm_build_dir / "compilation.log"
+        if not logfile.exists():
+            raise ConfigurationError(
+                field="SWMM_software_directory",
+                message=(
+                    f"No SWMM build is present: expected a compilation log at {logfile}, "
+                    "which does not exist. No build was attempted here (this is not a "
+                    "compile failure). Run the setup phase with --compile-swmm, or set "
+                    "execution_environment='container' if the binary is supplied by a SIF."
+                ),
+                config_path=self._system.system_config_yaml,
+            )
+        raise CompilationError(
+            model_type="swmm",
+            backend="cpu",
+            logfile=logfile,
+            return_code=1,
+        )
 
     def _link_native_builds_into_sim(self) -> None:
         """Native mode: symlink the compiled build folders into the sim dir,
