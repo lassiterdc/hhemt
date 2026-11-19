@@ -299,25 +299,69 @@ def _write_group_verified(
         )
 
 
+def _refuse_other_chunk_layout(piece: "xr.Dataset", dst_store, dst_group: str, member_id: str) -> None:
+    """Raise ``ProcessingError`` when a write into the master's existing group would straddle its stored chunks.
+
+    An append along ``event_iloc`` and a region rewrite must not cross a stored chunk, and xarray refuses it when
+    they do. A master written by an earlier toolkit holds its own layout (the Phase A master: (1, 61, 107, 219)
+    against the member tree's (1, 3, 1707, 1751)); rechunking the lazy slice to it holds memory that follows the
+    slice (the reviewer measured about 0.45 of it), so the master is refused instead, before anything is written,
+    and has to be rebuilt. Called only for a slice that has to be written: an equal slice is left alone and never
+    reaches it.
+    """
+    import zarr
+
+    from hhemt.exceptions import ProcessingError
+
+    stored = zarr.open_group(dst_store, mode="r")[dst_group]
+    for name, da in piece.data_vars.items():
+        if da.chunks is None or name not in stored:
+            continue
+        mine = tuple(max(c) for c in da.chunks)
+        theirs = tuple(stored[name].chunks)
+        if len(theirs) == da.ndim and theirs != mine:
+            raise ProcessingError(
+                "write a member's series slice into the sensitivity master",
+                str(dst_store),
+                f"member {member_id}: {dst_group}/{name} was written with another chunk layout by an earlier toolkit "
+                f"(stored chunks {theirs}, this slice {mine}) and cannot take an appended or rewritten slice without "
+                "holding it in memory; the master must be rebuilt. Nothing was written",
+            )
+
+
 def _copy_series_group(
     src_store, src_group: str, dst_store, dst_group: str, compression_level: int, *, member_id: str
 ) -> None:
     """Copy one member ``timeseries`` group into the master one ``event_iloc`` slice at a time, reading each back.
 
-    Memory stays at one event's slice, which is what bounds a gridded group. An event already in the master and
+    The slice is LAZY, chunked as the member's own store is, so the write and the read-back hold a few chunks (and
+    one verification span, ``_TIMESERIES_VERIFY_SPAN_BYTES``) and never the whole slice: a gridded event is about
+    46 GB on the Norfolk grid, and loading it (the earlier ``.load()``) peaked at 89.98 GB for one member.
+
+    An event already in the master and
     equal to the member's slice is left alone (``verified``); one present but unequal is rewritten in place from the
     member's tree, which is still the source here; a new one is appended along ``event_iloc``. A slice that does not
     read back equal raises ``ProcessingError`` naming the member and the group.
+
+    Layout: a NEW master group takes the member tree's own chunk shape (the block layout
+    ``_TIMESERIES_BLOCK_BYTES`` documents). A group the master already holds keeps ITS stored layout: a slice that is
+    equal is left alone, and one that has to be appended or rewritten into a different layout is refused
+    (``_refuse_other_chunk_layout``) and the master rebuilt.
+
+    "Equal stored values" means equal DECODED values: a lazy time coordinate is encoded by xarray as nanoseconds
+    since 1970 where the earlier eager copy stored days since the first start, and appending to a master that holds
+    the days encoding with a start that is not a whole number of days raises xarray's ``ValueError`` (the earlier
+    copy stored the wrong day silently); this repair does not change that.
     """
     from hhemt.exceptions import ProcessingError
     from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing as _post
     from hhemt.utils import append_zarr, deferred_consolidation
 
     src = xr.open_zarr(
-        src_store, group=src_group, consolidated=zarr_store_has_index(src_store), chunks=None, decode_timedelta=True
+        src_store, group=src_group, consolidated=zarr_store_has_index(src_store), chunks={}, decode_timedelta=True
     )
     for position, event_iloc in enumerate(int(v) for v in src["event_iloc"].values):
-        piece = src.isel(event_iloc=[position]).load().drop_encoding()
+        piece = src.isel(event_iloc=[position]).drop_encoding()
         state = _post._timeseries_group_state(dst_store, dst_group)
         # String coordinates take the master group's stored width (a narrower older group refuses, saying rebuild).
         piece = _post._widen_event_strings(piece, dst_group)
@@ -327,6 +371,7 @@ def _copy_series_group(
             if state is not None and event_iloc in state[1]:
                 if _post._stored_slice_equals(dst_store, dst_group, piece, event_iloc):
                     continue
+                _refuse_other_chunk_layout(piece, dst_store, dst_group, member_id)
                 at = state[1].index(event_iloc)
                 append_zarr(
                     piece.drop_vars([c for c in piece.coords if "event_iloc" not in piece[c].dims]),
@@ -346,7 +391,15 @@ def _copy_series_group(
                         f"member {member_id} event_iloc {event_iloc} differs from {dst_group} in its variables: "
                         f"missing {missing}, not in the master {extra}; nothing was written",
                     )
-                append_zarr(piece, dst_store, group=dst_group, consolidate=False, mode="a", append_dim="event_iloc")
+                _refuse_other_chunk_layout(piece, dst_store, dst_group, member_id)
+                append_zarr(
+                    piece,
+                    dst_store,
+                    group=dst_group,
+                    consolidate=False,
+                    mode="a",
+                    append_dim="event_iloc",
+                )
             else:
                 append_zarr(piece, dst_store, group=dst_group, consolidate=False, mode="a")
         if not _post._stored_slice_equals(dst_store, dst_group, piece, event_iloc):

@@ -5572,3 +5572,11 @@ non_breaking_allowlist:
     layout_signature: 87b0b9df70ae007e8842a2a9fd7142485ba3c3949154734de92637560651feae
     justification: |-
       consolidation verification compares per persisted span and writes coupling captures in chunks under the codec limit; no stored value or layout change, equal values shown over 255 variables
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 5051f30224c6fe2696f2c774a8f4eb1819b5fdb03fa03d14d6eef2814d86d5ac
+    justification: |-
+      series group copy into the experiment master is lazy and refuses a master written with another chunk layout; no stored value or layout change for new masters, equal decoded values measured
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: c7da5cd6a9a3c4fcd1d34a6bc7feeeb4413b1051f4a12c8401b9e58ef94c7cc1
+    justification: |-
+      series group copy into the experiment master is lazy and refuses a master written with another chunk layout; no stored value or layout change for new masters, equal decoded values measured

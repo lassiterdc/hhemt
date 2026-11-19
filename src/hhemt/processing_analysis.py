@@ -2380,6 +2380,13 @@ class TRITONSWMM_analysis_post_processing:
                         # Evaluated once for the whole span: each block's slice of it is then a lookup, where the
                         # lazy graph would re-read the scenario's own store for every block.
                         want_piece = want_piece.copy(data=want_piece.data.persist())
+                    # The stored side is read once per span too, as dask chunks of its own stored shape: a master
+                    # written by an earlier toolkit stores a gridded group as (1, 61, 107, 219), so reading it two
+                    # steps at a time decompresses a whole 61-step chunk per block.
+                    stored_chunks = got.encoding.get("chunks")
+                    if stored_chunks and len(stored_chunks) == got.ndim:
+                        got_piece = got_piece.chunk(dict(zip(got.dims, stored_chunks, strict=True)))
+                        got_piece = got_piece.copy(data=got_piece.data.persist())
                 blocks = (
                     [{}]
                     if piece is None
