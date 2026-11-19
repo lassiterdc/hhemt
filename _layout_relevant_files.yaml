@@ -5568,3 +5568,7 @@ non_breaking_allowlist:
     layout_signature: e9bca249671e36a19b0c6e968b9d35935ec67de8fe2e4a7d153a2238c607f2f9
     justification: |-
       sizes the per-member consolidation rule from an existing analysis config field; non-breaking, no on-disk layout change
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 87b0b9df70ae007e8842a2a9fd7142485ba3c3949154734de92637560651feae
+    justification: |-
+      consolidation verification compares per persisted span and writes coupling captures in chunks under the codec limit; no stored value or layout change, equal values shown over 255 variables
