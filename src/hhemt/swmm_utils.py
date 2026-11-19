@@ -662,6 +662,211 @@ def node_depth_problems(cfg_system, cfg_analysis):
     return problems, provisional
 
 
+#: How far below SWMM's depth a DEM rim may sit and still pass, in meters. A DEM is stored in single precision, whose
+#: spacing at an elevation of 10 to 100 m is 1e-6 to 8e-6 m, so a cell authored to give exactly SWMM's depth reads
+#: back off it by that much; 1e-5 m is above that noise and far below any shortfall a pipe could feel.
+DEM_RIM_TOLERANCE_M = 1e-5
+
+
+@dataclass(frozen=True)
+class SwmmNodeDepth:
+    """The minimum depth SWMM allows one node, in meters, or the reason the toolkit cannot compute it.
+
+    ``depth_m`` is the crown floor: the highest ``offset + yFull`` over the link ends that SWMM extends the node to
+    (``link_validate``, link.c). The authored ``[JUNCTIONS]`` ``MaxDepth`` is not part of it.
+    ``depth_m`` is None, and ``reason`` set, when a link
+    end that counts has a cross-section or offset the toolkit does not read.
+    """
+
+    name: str
+    invert_m: float | None
+    depth_m: float | None
+    reason: str | None
+
+
+def swmm_assigned_node_depths(text: str, names) -> dict[str, SwmmNodeDepth]:
+    """The depth SWMM assigns each of ``names``, read from the model ``text``, in meters.
+
+    Mirrors the floor SWMM forces on every node, the minimum viable rim (``link_validate`` raises the node's depth to
+    ``offset + yFull`` of every conduit end at the node, whatever the authored ``MaxDepth``; the ``MaxDepth`` token is
+    deliberately not read, since a node whose DEM rim is below an authored ``MaxDepth`` but above its crown is viable),
+    and of the upstream end of an orifice, weir or outlet,
+    where ``yFull`` is the first geometry of the cross-section. Under ``LINK_OFFSETS ELEVATION`` an offset is an
+    elevation and SWMM first subtracts the node's invert (``link_getOffsetHeight``, never below 0); a ``*`` offset is
+    0. A US-unit model is converted to meters by 0.3048, as the solver does.
+
+    Not computable, so reported with a reason and never guessed: a node that is no ``[JUNCTIONS]`` row, a conduit
+    end whose offset is not a number or whose cross-section is IRREGULAR, DUMMY or has a non-positive or non-numeric
+    first geometry, and the upstream end of an orifice, weir or outlet (not a bottom orifice), whose ``yFull`` the
+    toolkit does not read. A pump never raises a node.
+    """
+    from hhemt.swmm_runnable import _fold, _node_rows, _number, _parse
+    from hhemt.swmm_runoff_modeling import _US_FLOW_UNITS, flow_units_from_inp_text
+
+    sections = _parse(text)
+    scale = _FEET_TO_METERS if flow_units_from_inp_text(text) in _US_FLOW_UNITS else 1.0
+    elevation_offsets = any(
+        len(t) > 1 and _fold(t[0]) == "LINK_OFFSETS" and _fold(t[1]).startswith("ELEV")
+        for t in _node_rows(sections, "OPTIONS")
+    )
+    inverts = {
+        _fold(t[0]): _number(t[1])
+        for sec in ("JUNCTIONS", "OUTFALLS", "STORAGE", "DIVIDERS")
+        for t in _node_rows(sections, sec)
+        if len(t) > 1
+    }
+    junctions = {_fold(t[0]): t for t in _node_rows(sections, "JUNCTIONS") if len(t) > 1}
+    conduits = [t for t in _node_rows(sections, "CONDUITS") if len(t) > 2]
+    xsections = {_fold(t[0]): t for t in _node_rows(sections, "XSECTIONS") if len(t) > 2}
+    upstream_only = [
+        (kind, t)
+        for kind, section in (("orifice", "ORIFICES"), ("weir", "WEIRS"), ("outlet", "OUTLETS"))
+        for t in _node_rows(sections, section)
+        if len(t) > 2
+    ]
+
+    def height(token: str | None, invert: float | None) -> float | None:
+        """An offset as a height above the node's invert (SWMM's ``link_getOffsetHeight``), None if unreadable."""
+        if token is None or token == "*":
+            return 0.0
+        value = _number(token)
+        if value is None:
+            return None
+        if elevation_offsets:
+            if invert is None:
+                return None
+            value -= invert
+        return max(value, 0.0)
+
+    depths: dict[str, SwmmNodeDepth] = {}
+    for name in names:
+        key = _fold(name)
+        row = junctions.get(key)
+        invert = inverts.get(key)
+        if row is None or invert is None:
+            depths[name] = SwmmNodeDepth(name, None, None, f"{name} is not a [JUNCTIONS] row of the model")
+            continue
+        full = 0.0  # the crown floor only: an authored MaxDepth above the crown does not raise the minimum
+        reason: str | None = None
+        for link in conduits:
+            for end, offset_index in ((1, 5), (2, 6)):
+                if _fold(link[end]) != key:
+                    continue
+                xs = xsections.get(_fold(link[0]))
+                y_full = _number(xs[2]) if xs is not None and len(xs) > 2 else None
+                shape = _fold(xs[1]) if xs is not None else None
+                rise = height(link[offset_index] if len(link) > offset_index else None, invert)
+                if y_full is None or y_full <= 0 or shape in ("IRREGULAR", "DUMMY") or rise is None:
+                    reason = (
+                        f"conduit {link[0]} ends at {name} with "
+                        + (
+                            f"the cross-section {shape} (first geometry {None if xs is None else xs[2]})"
+                            if rise is not None
+                            else f"the offset {link[offset_index]!r}"
+                        )
+                        + ", whose crown rise the toolkit cannot read"
+                    )
+                    continue
+                full = max(full, rise + y_full)
+        for kind, link in upstream_only:
+            if _fold(link[1]) == key and not (kind == "orifice" and len(link) > 3 and _fold(link[3]) == "BOTTOM"):
+                reason = f"{kind} {link[0]} leaves {name}, and its crown rise is not one the toolkit reads"
+        depths[name] = SwmmNodeDepth(
+            name,
+            invert * scale,
+            None if reason else full * scale,
+            reason,
+        )
+    return depths
+
+
+@dataclass(frozen=True)
+class DemRimFinding:
+    """One coupled node whose DEM rim the solver would not take as it is.
+
+    ``cell_m`` is the DEM cell elevation (None when the cell is off the grid), ``dem_rim_m`` the cell minus the invert
+    (None when the cell gives no rim), ``swmm_depth_m`` the depth SWMM assigns (None when not computable) and
+    ``shortfall_m`` that depth minus the DEM rim, set only when both exist. ``reason`` is one sentence naming why.
+    """
+
+    name: str
+    invert_m: float | None
+    swmm_depth_m: float | None
+    cell_m: float | None
+    dem_rim_m: float | None
+    shortfall_m: float | None
+    reason: str
+
+
+def dem_rim_findings(text: str, names, rds_dem) -> list[DemRimFinding]:
+    """The nodes among ``names`` whose DEM rim is not at or above the depth SWMM assigns, in the order of ``names``.
+
+    For each node, with ``text`` the model the solver reads and ``rds_dem`` the DEM it loads: the DEM rim the solver
+    would set is ``cell elevation - invert`` (the cell is TRITON's own, ``dem_cell_elevations``), and the node is
+    returned when the cell is off the grid, no-data, not finite or at or below the invert (the cases the solver
+    refuses at run start), when SWMM's depth is not computable, or when the DEM rim is below SWMM's depth by more than
+    ``DEM_RIM_TOLERANCE_M`` (the band the solver accepts silently, where the rim becomes shallower than the node's own
+    pipe). A node at exactly SWMM's depth, or above it, is not returned.
+    """
+    import math
+
+    from hhemt.swmm_runnable import _fold, _parse
+    from hhemt.water_level_boundary import dem_cell_elevations, model_coordinates
+
+    names = list(names)
+    if not names:
+        return []
+    assigned = swmm_assigned_node_depths(text, names)
+    coordinates = model_coordinates(_parse(text))
+    located = {
+        n: (*coordinates[_fold(n)], assigned[n].invert_m if assigned[n].invert_m is not None else 0.0)
+        for n in names
+        if _fold(n) in coordinates
+    }
+    cells = dem_cell_elevations(rds_dem, located)
+    nodata = rds_dem.rio.nodata
+    findings: list[DemRimFinding] = []
+    for name in names:
+        depth = assigned[name]
+        invert = depth.invert_m
+        if name not in located:
+            findings.append(
+                DemRimFinding(name, invert, depth.depth_m, None, None, None, f"{name} has no [COORDINATES] row")
+            )
+            continue
+        z = cells[name]
+        if z is None:
+            findings.append(
+                DemRimFinding(name, invert, depth.depth_m, None, None, None, "its coordinates fall outside the DEM")
+            )
+        elif not math.isfinite(z) or (nodata is not None and z == float(nodata)):
+            findings.append(DemRimFinding(name, invert, depth.depth_m, z, None, None, "its DEM cell has no value"))
+        elif invert is None or z <= invert:
+            findings.append(
+                DemRimFinding(name, invert, depth.depth_m, z, None, None, "its DEM cell is at or below the invert")
+            )
+        elif depth.depth_m is None:
+            findings.append(
+                DemRimFinding(
+                    name, invert, None, z, z - invert, None, f"SWMM's depth is not computable: {depth.reason}"
+                )
+            )
+        elif (z - invert) < depth.depth_m - DEM_RIM_TOLERANCE_M:
+            short = depth.depth_m - (z - invert)
+            findings.append(
+                DemRimFinding(
+                    name,
+                    invert,
+                    depth.depth_m,
+                    z,
+                    z - invert,
+                    short,
+                    f"its DEM rim is {short:.4f} m below the depth SWMM assigns",
+                )
+            )
+    return findings
+
+
 def swmm_role_text(
     cfg_system, role: str, cfg_analysis=None, *, strict_depths: bool = False, externalize: bool = True
 ) -> str:

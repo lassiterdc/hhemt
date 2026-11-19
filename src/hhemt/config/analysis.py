@@ -1593,6 +1593,23 @@ class analysis_config(cfgBaseModel):
             "to read the key. The setting changes hydraulic results when True."
         ),
     )
+    swmm_node_rim_swmm_fallback: bool = Field(
+        default=False,
+        description=(
+            "Applies only with swmm_node_rim_from_dem true and dem_rim_resolution processed, and is refused "
+            "otherwise because the field would change no result. Scenario preparation checks the DEM rim of every "
+            "coupled node against the minimum viable rim. The DEM rim is the DEM cell elevation minus the "
+            "invert. The minimum viable rim is the crown of the highest conduit that ends at the node, above "
+            "the invert. An authored MaxDepth above the crown never makes a node fail. When "
+            "False, the default, a node with a lower DEM rim, or with a DEM cell that gives no rim, stops "
+            "preparation with an error that names each node. When True, each such node keeps the SWMM depth in "
+            "place of the DEM rim, and the scenario records the nodes in dem_rim_swmm_fallback.json beside "
+            "dem_rim_exempt_nodes.txt and raises a warning at preparation. The scenario log carries no line. "
+            "The TRITON build must read the cfg key swmm_dem_rim_exempt_nodes. A DEM rim "
+            "that is too low is not corrected under True. The node is no longer set from the DEM at all, so choose "
+            "True deliberately."
+        ),
+    )
     one_coupled_inflow_node_per_dem_cell: bool = Field(
         default=False,
         description=(

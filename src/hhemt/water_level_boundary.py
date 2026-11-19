@@ -958,30 +958,45 @@ def snap_segments(
     return snapped, problems
 
 
+def dem_cell_elevations(rds_dem, nodes: Mapping[str, tuple[float, float, float]]) -> dict[str, float | None]:
+    """The elevation of the DEM cell that holds each node, by TRITON's own cell rule, None off the grid.
+
+    ``nodes`` maps a name to ``(x, y, invert)``. The cell is TRITON's own: ``col = ceil((x - xll)/cell + 1e-16) - 1``
+    and ``row = ceil((nrows - (y - yll)/cell) + 1e-16) - 1`` (``nodes_outside_triton_grid``). The value is returned
+    as stored, so a no-data or non-finite cell is the caller's to classify. The one lookup both the converted-node
+    depths (V23) and the DEM-rim check of ``swmm_node_rim_from_dem`` read, so the two cannot place a node in
+    different cells.
+    """
+    left, bottom, right, top = rds_dem.rio.bounds()
+    nrows, ncols = int(rds_dem.sizes["y"]), int(rds_dem.sizes["x"])
+    cell = (right - left) / ncols
+    values = rds_dem.squeeze().values
+    cells: dict[str, float | None] = {}
+    for name, (x, y, _invert) in nodes.items():
+        col = math.ceil((x - left) / cell + 1e-16) - 1
+        row = math.ceil((nrows - (y - bottom) / cell) + 1e-16) - 1
+        cells[name] = float(values[row, col]) if 0 <= col < ncols and 0 <= row < nrows else None
+    return cells
+
+
 def converted_node_depths(
     rds_dem, nodes: Mapping[str, tuple[float, float, float]]
 ) -> tuple[dict[str, float], list[Problem]]:
     """The SWMM ``MaxDepth`` of each converted node: ground at its cell minus its invert (DR-35, V23).
 
-    ``nodes`` maps a name to ``(x, y, invert)``. The cell is TRITON's own: ``col = ceil((x - xll)/cell +
-    1e-16) - 1`` and ``row = ceil((nrows - (y - yll)/cell) + 1e-16) - 1`` (``nodes_outside_triton_grid``).
+    ``nodes`` maps a name to ``(x, y, invert)``. The cell is TRITON's own (``dem_cell_elevations``).
     A node whose cell is outside the grid, no-data, not finite or at or below the invert is refused with its
     invert and cell elevation.
     """
-    left, bottom, right, top = rds_dem.rio.bounds()
-    nrows, ncols = int(rds_dem.sizes["y"]), int(rds_dem.sizes["x"])
-    cell = (right - left) / ncols
     nodata = rds_dem.rio.nodata
-    values = rds_dem.squeeze().values
+    cells = dem_cell_elevations(rds_dem, nodes)
     depths: dict[str, float] = {}
     refused: list[tuple[str, float, float | None]] = []
-    for name, (x, y, invert) in nodes.items():
-        col = math.ceil((x - left) / cell + 1e-16) - 1
-        row = math.ceil((nrows - (y - bottom) / cell) + 1e-16) - 1
-        if not (0 <= col < ncols and 0 <= row < nrows):
+    for name, (_x, _y, invert) in nodes.items():
+        z = cells[name]
+        if z is None:
             refused.append((name, invert, None))
             continue
-        z = float(values[row, col])
         if not math.isfinite(z) or (nodata is not None and z == float(nodata)) or z <= invert:
             refused.append((name, invert, z))
             continue
@@ -1324,6 +1339,21 @@ def preflight_problems(cfg_system, cfg_analysis) -> PreflightReport:
                 "no outfall is converted and swmm_node_rim_from_dem is false, so no depth is taken from the DEM",
                 cfg_analysis.dem_rim_resolution,
                 fix_hint="Remove dem_rim_resolution",
+            )
+        )
+    # The fallback keeps SWMM's depth for the nodes whose DEM rim the solver would take; with no such rim written a
+    # setting of it changes nothing, and a field that does nothing is refused as dem_rim_resolution is.
+    rim_key_written = bool(cfg_analysis.swmm_node_rim_from_dem) and cfg_analysis.dem_rim_resolution != "full"
+    if getattr(cfg_analysis, "swmm_node_rim_swmm_fallback", False) and not rim_key_written:
+        problems.append(
+            Problem(
+                "CFG",
+                "analysis.swmm_node_rim_swmm_fallback",
+                "swmm_node_rim_swmm_fallback is true but the TRITON cfg writes no DEM rim (swmm_node_rim_from_dem is "
+                "false, or dem_rim_resolution is full), so there is no DEM rim for the fallback to replace",
+                True,
+                fix_hint="Set swmm_node_rim_from_dem to true with dem_rim_resolution processed, or remove "
+                "swmm_node_rim_swmm_fallback",
             )
         )
     if cfg_analysis.dem_rim_resolution == "full" and (converted or cfg_analysis.swmm_node_rim_from_dem):

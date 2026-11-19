@@ -970,22 +970,33 @@ def require_driven_outfalls_capable_triton(
 
 
 def require_dem_rim_exempt_capable_triton(
-    *, execution_environment: str, software_directory, branch_key, recorded_sha
+    *, execution_environment: str, software_directory, branch_key, recorded_sha, swmm_fallback: bool = False
 ) -> None:
-    """Refuse a ``crown_rim`` list under the DEM-rim key unless the build reads ``swmm_dem_rim_exempt_nodes``.
+    """Refuse an exemption under the DEM-rim key unless the build reads ``swmm_dem_rim_exempt_nodes``.
 
     A build that ignores the key overrides each listed node's rim from the DEM (or refuses a cell at or below its
-    invert), while the configuration names the crown-raised depth. A native clone passes when its
+    invert), while the configuration names SWMM's depth: for a ``crown_rim`` list, the crown of the outlet conduit;
+    with ``swmm_fallback``, the depth SWMM assigns each node whose DEM rim fell short. A native clone passes when its
     ``src/config_utils.h`` carries ``SWMM_DEM_RIM_EXEMPT_READ``; a container run is refused.
     """
-    require_triton_reading_key(
-        field="swmm_open_water_outfalls",
-        setting=(
+    if swmm_fallback:
+        field = "swmm_node_rim_swmm_fallback"
+        setting = "swmm_node_rim_swmm_fallback is True and a coupled node's DEM rim is below SWMM's depth"
+        consequence = "take each such node's rim from the DEM, which the check found too low, instead of SWMM's depth"
+        remedy = "set swmm_node_rim_swmm_fallback to False, or use a TRITON build that reads swmm_dem_rim_exempt_nodes"
+    else:
+        field = "swmm_open_water_outfalls"
+        setting = (
             "swmm_open_water_outfalls lists outfalls under open_water_outfall_representation crown_rim "
             "while swmm_node_rim_from_dem is True"
-        ),
-        consequence="take each listed node's rim from the DEM instead of the crown of its outlet conduit",
-        remedy="set swmm_node_rim_from_dem to False, empty swmm_open_water_outfalls or use driven_stage",
+        )
+        consequence = "take each listed node's rim from the DEM instead of the crown of its outlet conduit"
+        remedy = "set swmm_node_rim_from_dem to False, empty swmm_open_water_outfalls or use driven_stage"
+    require_triton_reading_key(
+        field=field,
+        setting=setting,
+        consequence=consequence,
+        remedy=remedy,
         read_text=SWMM_DEM_RIM_EXEMPT_READ,
         execution_environment=execution_environment,
         software_directory=software_directory,
@@ -1252,6 +1263,126 @@ def set_swmm_snapshot_failed_replay(cfg_path: Path, enabled: bool) -> bool:
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
+
+
+def check_dem_rim_against_swmm_depth(scenario, rim_key: bool) -> list[str]:
+    """Judge each coupled node's DEM rim against SWMM's crown floor; return the nodes left at SWMM's depth.
+
+    With ``rim_key`` False nothing is read and ``[]`` is returned, so a configuration that does not write
+    ``swmm_node_rim_from_dem=1`` is unchanged. Otherwise every node of ``coupling_nodes.txt`` that the solver's
+    DEM-rim loop would set (the ``crown_rim`` outfalls are exempt already) is judged by
+    ``swmm_utils.dem_rim_findings`` against the DEM the solver loads. With none failing the result is ``[]``.
+    Failing nodes stop preparation with a ``ConfigurationError`` naming each, unless
+    ``swmm_node_rim_swmm_fallback`` is set: then the nodes are added to ``dem_rim_exempt_nodes.txt``, the solver
+    keeps SWMM's depth for them, and ``dem_rim_swmm_fallback.json`` records the numbers. Runs before any cfg
+    write, so a refusal leaves the scenario's cfg as it was.
+    """
+    if not rim_key or not getattr(scenario._system.cfg_system, "toggle_tritonswmm_model", True):
+        return []
+    import json
+
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.swmm_utils import _read_model_text, crown_rim_outfalls, dem_rim_findings, processed_dem_grid
+
+    hydraulics_inp = scenario.scen_paths.swmm_hydraulics_inp
+    nodes_file = coupling_nodes_file_for(hydraulics_inp)
+    if not nodes_file.is_file():
+        return []
+    cfg_analysis = scenario._analysis.cfg_analysis
+    crown = {_swmm_fold(n) for n in crown_rim_outfalls(cfg_analysis)}
+    names = [n.strip() for n in nodes_file.read_text().splitlines() if n.strip() and _swmm_fold(n.strip()) not in crown]
+    rds_dem, _provisional = processed_dem_grid(scenario._system.cfg_system)
+    findings = dem_rim_findings(_read_model_text(hydraulics_inp), names, rds_dem)
+    exempt_file = dem_rim_exempt_nodes_file_for(hydraulics_inp)
+    record = exempt_file.parent / "dem_rim_swmm_fallback.json"
+    if not findings:
+        # An earlier prepare of this scenario may have overridden nodes: drop its record and the exemption entries it
+        # added, so no record claims an override this prepare did not make. Crown_rim entries are left as written.
+        if record.is_file():
+            import json
+
+            stale = {_swmm_fold(n["name"]) for n in json.loads(record.read_text()).get("nodes", [])}
+            # EXEMPT-DU: transient-intermediate
+            record.unlink()
+            if exempt_file.is_file():
+                kept = [
+                    n for n in exempt_file.read_text().splitlines() if n.strip() and _swmm_fold(n.strip()) not in stale
+                ]
+                if kept:
+                    exempt_file.write_text("".join(f"{n}\n" for n in kept))
+                else:
+                    # EXEMPT-DU: transient-intermediate
+                    exempt_file.unlink()
+        return []
+
+    def row(f) -> str:
+        numbers = ", ".join(
+            f"{label} {value:.4f} m"
+            for label, value in (
+                ("invert", f.invert_m),
+                ("SWMM depth", f.swmm_depth_m),
+                ("DEM cell", f.cell_m),
+                ("DEM rim", f.dem_rim_m),
+                ("shortfall", f.shortfall_m),
+            )
+            if value is not None
+        )
+        return f"{f.name}: {f.reason} ({numbers})"
+
+    if not getattr(cfg_analysis, "swmm_node_rim_swmm_fallback", False):
+        raise ConfigurationError(
+            field="swmm_node_rim_from_dem",
+            message=(
+                f"swmm_node_rim_from_dem is true but the DEM rim of {len(findings)} coupled node(s) is not at or "
+                "above the depth SWMM assigns (the node's MaxDepth raised to the crown of its highest conduit), "
+                "so the solver would set a rim shallower than the node's own pipe or refuse the cell:\n    - "
+                + "\n    - ".join(row(f) for f in findings)
+            ),
+            fix_hint=(
+                "1) set swmm_node_rim_swmm_fallback to true, which keeps SWMM's depth for these nodes and records "
+                "them; 2) set swmm_node_rim_from_dem to false; or 3) amend the DEM and/or the node properties "
+                "(invert, MaxDepth, conduit offsets and sizes) and prepare again"
+            ),
+        )
+    require_dem_rim_exempt_capable_triton(
+        execution_environment=cfg_analysis.execution_environment,
+        software_directory=scenario._system.cfg_system.TRITONSWMM_software_directory,
+        branch_key=scenario._system.cfg_system.TRITONSWMM_branch_key,
+        recorded_sha=scenario._system.log.triton_head_sha.get(),
+        swmm_fallback=True,
+    )
+    kept = [n.strip() for n in exempt_file.read_text().splitlines() if n.strip()] if exempt_file.is_file() else []
+    present = {_swmm_fold(n) for n in kept}
+    overridden = [f.name for f in findings]
+    exempt_file.write_text("".join(f"{n}\n" for n in [*kept, *(n for n in overridden if _swmm_fold(n) not in present)]))
+    record.write_text(
+        json.dumps(
+            {
+                "override": "swmm_node_rim_swmm_fallback",
+                "meaning": "these nodes keep the depth SWMM assigns; the solver does not set their rim from the DEM",
+                "nodes": [
+                    {
+                        "name": f.name,
+                        "invert_m": f.invert_m,
+                        "swmm_depth_m": f.swmm_depth_m,
+                        "dem_cell_elevation_m": f.cell_m,
+                        "dem_rim_m": f.dem_rim_m,
+                        "shortfall_m": f.shortfall_m,
+                        "reason": f.reason,
+                    }
+                    for f in findings
+                ],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    warnings.warn(
+        f"swmm_node_rim_swmm_fallback keeps SWMM's depth, not the DEM rim, for {len(findings)} coupled node(s) of "
+        f"{hydraulics_inp.parent}: {', '.join(overridden)} (numbers in {record.name})",
+        stacklevel=2,
+    )
+    return overridden
 
 
 class TRITONSWMM_scenario:
@@ -1658,6 +1789,9 @@ class TRITONSWMM_scenario:
         return Path(self.scen_paths.swmm_hydraulics_inp)
 
     def _generate_TRITON_SWMM_cfg(self):
+        # Judged first: a node whose DEM rim is too low stops preparation before any cfg line is written.
+        rim_key = swmm_node_rim_key_is_written(self._analysis.cfg_analysis)
+        fallback_nodes = check_dem_rim_against_swmm_depth(self, rim_key)
         use_constant_mannings = self._system.cfg_system.toggle_use_constant_mannings
         dem_processed = self._system.sys_paths.dem_processed
         manhole_diameter = self._analysis.cfg_analysis.manhole_diameter
@@ -1770,7 +1904,6 @@ class TRITONSWMM_scenario:
         # system has none of, so refusing it over the option would stop a run the option does
         # not touch. The line is still appended below whatever the system, so the cfg bytes do
         # not depend on this check; a system that does not say it is uncoupled keeps the check.
-        rim_key = swmm_node_rim_key_is_written(self._analysis.cfg_analysis)
         if rim_key and getattr(self._system.cfg_system, "toggle_tritonswmm_model", True):
             cfg_system = self._system.cfg_system
             require_dem_rim_capable_triton(
@@ -1829,7 +1962,7 @@ class TRITONSWMM_scenario:
             cfg_content = set_swmm_driven_outfalls(
                 cfg_content, driven_outfalls_file_for(self.scen_paths.swmm_hydraulics_inp)
             )
-        if crown_rim_listed and rim_key:
+        if (crown_rim_listed or fallback_nodes) and rim_key:
             cfg_system = self._system.cfg_system
             require_dem_rim_exempt_capable_triton(
                 execution_environment=cfg_analysis_ow.execution_environment,

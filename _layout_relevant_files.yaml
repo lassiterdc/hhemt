@@ -5588,3 +5588,19 @@ non_breaking_allowlist:
     layout_signature: 036d3a6f2238a21c64a13cb773b8ffe33db34c01172273984eba9e7bdd5ef4ff
     justification: |-
       adds the unit of swmm_coupling_lag to the parameters unit table; metadata only, no stored value or layout change
+  - path: src/hhemt/scenario.py
+    layout_signature: c5183a6884bc54a07ea99b63424ce401d0da516b01eb0e25f8f428aca8765079
+    justification: |-
+      DEM rim check and swmm_node_rim_swmm_fallback; no stored-layout change
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 8863816316b63915a0b37e2965be7682469d208bbe676d49fdca3eec77062a38
+    justification: |-
+      DEM rim check and swmm_node_rim_swmm_fallback; no stored-layout change
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 38339881cb840d8ea1fe92438ff9e950a9a643b21ddf5026a493790ecdf43691
+    justification: |-
+      DEM rim check; no stored-layout change
+  - path: src/hhemt/water_level_boundary.py
+    layout_signature: 1f75a9afa84a777e7c38880dc608656d5f391612db6f0d6f4604c39524a2f678
+    justification: |-
+      DEM rim check; no stored-layout change
