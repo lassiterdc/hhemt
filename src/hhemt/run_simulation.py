@@ -17,8 +17,10 @@ allocation's queue time, and parse a checkpoint's reporting step from its filena
 import logging
 import math
 import os
+import re
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -446,6 +448,83 @@ def failed_write_resume_message(f_step: int, n_step: int, failed_replay: bool) -
         f"Snapshot at checkpoint {f_step} failed to write (below unusable checkpoint {n_step}); "
         f"resuming at checkpoint {f_step}, where {then}"
     )
+
+
+#: The solver's refusal when the exchange-replay side-file ends before the checkpoint a coupled resume
+#: asked for (``position_exchange_log`` in the solver's ``swmm_triton.h``). It prints two lines, the
+#: break falling before the first figure, and it prints both times with the default stream precision
+#: (six significant digits, so a million seconds reads ``1.0368e+06``). Builds 3a832f7 and b3820a44 word
+#: the first half ``replayed up to {cum} s`` and later builds ``reached t={cum} s``, so the pattern
+#: anchors on the line's own tail, ``{cum} s but checkpoint_id requires {Y} s``, and takes both figures
+#: from it whatever the wording before the first one. Deliberately NOT keyed on the sentence that
+#: follows, "Re-run this coupled simulation from a clean start": the solver's missing-side-file and
+#: bad-header refusals end with it too, and neither carries a time to decide on.
+_EXCHANGE_REPLAY_REFUSAL_MARKER = "Exchange-replay side-file is incomplete for this checkpoint"
+_EXCHANGE_REPLAY_REFUSAL_RE = re.compile(r"\s(?:t=)?([0-9][^\s]*) s but checkpoint_id requires ([0-9][^\s]*) s")
+
+
+def parse_exchange_replay_refusal(text: str) -> tuple[float, float] | None:
+    """The ``(reached_s, required_s)`` times of the solver's incomplete-side-file refusal, or None.
+
+    ``reached_s`` is how far the side-file's records run and ``required_s`` is the simulated time of
+    the checkpoint the resume asked for. Returns None for any text that is not this refusal, and for
+    a refusal whose figures do not parse: a coverage time that cannot be read is not evidence to
+    rearrange a checkpoint directory on.
+    """
+    marker_at = text.find(_EXCHANGE_REPLAY_REFUSAL_MARKER)
+    match = _EXCHANGE_REPLAY_REFUSAL_RE.search(text, marker_at) if marker_at >= 0 else None
+    if match is None:
+        return None
+    try:
+        return float(match.group(1)), float(match.group(2))
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class ExchangeReplayFallback:
+    """What ``TRITONSWMM_run.fall_back_from_exchange_replay_refusal`` did to the checkpoint tree.
+
+    ``action`` is ``"stepped_back"`` (the uncovered checkpoint cfgs in ``renamed`` were set aside and
+    ``chosen_step`` is the newest covered checkpoint) or ``"fresh_start"`` (no checkpoint was covered, so
+    the whole output directory moved to ``aside_dir`` and ``chosen_step`` is None). ``message`` is the
+    one-sentence record for the runner log: which checkpoint was chosen and why.
+    """
+
+    action: Literal["stepped_back", "fresh_start"]
+    reached_s: float
+    required_s: float
+    resumed_step: int
+    chosen_step: int | None
+    renamed: tuple[Path, ...]
+    aside_dir: Path | None
+    message: str
+
+
+def _checkpoint_time_s(cfg: Path) -> float | None:
+    """The simulated time a checkpoint cfg restarts from: its ``sim_start_time=`` line, or None."""
+    for raw in cfg.read_text(errors="replace").splitlines():
+        line = raw.strip()
+        if line.startswith("sim_start_time="):
+            try:
+                return float(line.split("=", 1)[1])
+            except ValueError:
+                return None
+    return None
+
+
+def _unused_aside_path(path: Path, suffix: str) -> Path:
+    """``path`` with ``suffix`` appended, numbered ``-2``, ``-3`` ... until no such path exists.
+
+    ``Path.rename`` onto an existing name replaces it silently on POSIX, so a second set-aside in the
+    same minute would destroy the first one's data.
+    """
+    candidate = path.with_name(path.name + suffix)
+    n = 2
+    while candidate.exists():
+        candidate = path.with_name(f"{path.name}{suffix}-{n}")
+        n += 1
+    return candidate
 
 
 #: The sentence PMIx 5.0.x prints when its shared-memory data store (``gds/shmem2``) cannot
@@ -1261,6 +1340,130 @@ class TRITONSWMM_run:
         # the analysis scope once PER cfg file inside this loop.
         delete_and_account(to_remove, scope_dir=scenario_dir, scope="scenario")
         return len(to_remove)
+
+    def fall_back_from_exchange_replay_refusal(
+        self,
+        model_logfile: Path,
+        *,
+        resumed_step: int,
+        model_type: Literal["triton", "tritonswmm", "swmm"] = "tritonswmm",
+        stamp: str | None = None,
+    ) -> ExchangeReplayFallback | None:
+        """Repair the checkpoint tree after the solver refused a resume over a short exchange-replay side-file.
+
+        THE PROBLEM. A coupled simulation killed at its wall limit or by a node loss can leave a
+        checkpoint ``config_N.cfg`` whose exchange-replay side-file stops short of it. Every resume
+        then launches at N and the solver aborts with ``Exchange-replay side-file is incomplete for
+        this checkpoint: reached t=X s but checkpoint_id requires Y s``. The resume picker returns
+        the newest complete cfg whatever the side-file holds, so every retry repeats the abort until
+        the failure budget is spent. The refusal is the solver's and is not changed; this is the
+        toolkit's side of it.
+
+        THE RULE, applied to the model log of a resume that just ran (the log is opened ``"w"`` on
+        every exec, so its text is this attempt's alone):
+
+        - Not this refusal, a launch that did not resume (``resumed_step`` 0), a model without the
+          side-file (anything but ``tritonswmm``), or an unreadable log: return None and touch nothing.
+        - Otherwise the side-file reaches ``X``. A checkpoint is UNCOVERED when its ``sim_start_time=``
+          is past ``X`` (the solver prints ``X`` to six significant digits, so the comparison allows
+          half a unit of the sixth), and the cfg the refused launch used is uncovered whatever its
+          time says. Checkpoint times rise with the step, so everything from the lowest uncovered step
+          up is set aside by renaming ``config_N.cfg`` to ``config_N.cfg.stale-resume-{HHMM}``; the
+          picker's ``*.cfg`` glob no longer sees them and the next attempt resumes from the newest
+          covered checkpoint.
+        - When no checkpoint is covered, the whole ``out_tritonswmm`` directory is renamed to
+          ``out_tritonswmm.stale-resume-{HHMM}`` and an empty one is created in its place (the
+          scenario constructor makes the same empty directory), so the next attempt starts at step 0.
+
+        Nothing is deleted. A name already taken, by a repair earlier in the same minute, gets a
+        ``-2``, ``-3`` ... tail rather than being overwritten.
+
+        Deliberately NOT done here: the SWMM state snapshots (``*_state_cp{K}.snapshot``) of the set-aside
+        checkpoints are left in place, because the deterministic solver rewrites the same state when the resumed
+        run reaches them again and ``_pick_resume_cfg_past_unusable_snapshot`` already leaves snapshots above its
+        step-back target; the cfg files are not rewritten, the side-file is not read, and
+        the retry is not launched in-process. The caller returns the attempt as failed as it always
+        did, so the failure budget counts it as it counted it before and the existing retry re-launches
+        from the repaired tree. Not established: that one refusal is the only repair a tree needs.
+        A checkpoint inside the rounding of ``X`` that the solver in fact rejects is caught by the
+        refusal of the next attempt, which sets it aside in turn; each round removes at least the
+        cfg it resumed from, so the sequence ends.
+        """
+        if model_type != "tritonswmm" or resumed_step <= 0:
+            return None
+        try:
+            text = Path(model_logfile).read_text(errors="replace")
+        except OSError:
+            return None
+        parsed = parse_exchange_replay_refusal(text)
+        if parsed is None:
+            return None
+        reached_s, required_s = parsed
+
+        cfg_dir = self._hotstart_cfg_dir(model_type)
+        out_dir = self._scenario.scen_paths.out_tritonswmm
+        if cfg_dir is None or out_dir is None or not cfg_dir.is_dir():
+            return None
+
+        suffix = f".stale-resume-{stamp or time.strftime('%H%M')}"
+        tolerance_s = max(1e-6, 0.5 * 10 ** (math.floor(math.log10(reached_s)) - 5)) if reached_s > 0 else 1e-6
+        checkpoints: list[tuple[int, Path, float | None]] = []
+        for f_cfg in cfg_dir.glob("*.cfg"):
+            try:
+                step = return_the_reporting_step_from_a_cfg(f_cfg)
+            except (ValueError, IndexError):
+                continue  # unparseable name: leave it alone rather than guess
+            checkpoints.append((step, f_cfg, _checkpoint_time_s(f_cfg)))
+        checkpoints.sort(key=lambda c: c[0])
+
+        first_uncovered = min(
+            [resumed_step, *(step for step, _, t in checkpoints if t is not None and t > reached_s + tolerance_s)]
+        )
+        covered = [c for c in checkpoints if c[0] < first_uncovered]
+        uncovered = [c for c in checkpoints if c[0] >= first_uncovered]
+        times = f"the side-file reaches t={reached_s:.10g} s but the checkpoint requires t={required_s:.10g} s"
+
+        if covered:
+            renamed = []
+            for _, f_cfg, _ in uncovered:
+                aside = _unused_aside_path(f_cfg, suffix)
+                f_cfg.rename(aside)
+                renamed.append(aside)
+            chosen_step, _, chosen_t = covered[-1]
+            at = f" (t={chosen_t:.10g} s)" if chosen_t is not None else ""
+            return ExchangeReplayFallback(
+                action="stepped_back",
+                reached_s=reached_s,
+                required_s=required_s,
+                resumed_step=resumed_step,
+                chosen_step=chosen_step,
+                renamed=tuple(renamed),
+                aside_dir=None,
+                message=(
+                    f"Exchange-replay side-file refusal resuming from checkpoint {resumed_step}: {times}. "
+                    f"Set aside {len(renamed)} checkpoint cfg(s) the side-file does not cover "
+                    f"({', '.join(c[1].name for c in uncovered)}, renamed with the {suffix} suffix); "
+                    f"the next resume starts from checkpoint {chosen_step}{at}, the newest it covers."
+                ),
+            )
+
+        aside_dir = _unused_aside_path(out_dir, suffix)
+        out_dir.rename(aside_dir)
+        out_dir.mkdir()
+        return ExchangeReplayFallback(
+            action="fresh_start",
+            reached_s=reached_s,
+            required_s=required_s,
+            resumed_step=resumed_step,
+            chosen_step=None,
+            renamed=(),
+            aside_dir=aside_dir,
+            message=(
+                f"Exchange-replay side-file refusal resuming from checkpoint {resumed_step}: {times}, and no "
+                f"checkpoint is covered. Renamed {out_dir.name} to {aside_dir.name}; the next attempt starts "
+                "fresh from step 0."
+            ),
+        )
 
     def wait_with_deterministic_checkpoint_kill(
         self,
