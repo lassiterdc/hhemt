@@ -227,6 +227,11 @@ def test_build_unique_system_targets_dedups_by_compile_tuple(monkeypatch, tmp_pa
     assert collapsed.system_config_yaml.is_file()
 
 
+def _dump_with(dump, name, row_cfg):
+    """A ``model_dump`` stand-in that adds ``name`` with the value ``row_cfg`` carries to the stub's own fields."""
+    return lambda **kwargs: {**dump(), name: row_cfg.model_dump(**kwargs)[name]}
+
+
 def test_build_unique_system_targets_falls_back_to_master_on_null(monkeypatch, tmp_path):
     """A null cell uses the master system's YAML and participates in dedup."""
     master_yaml = (tmp_path / "master_cfg_system.yaml").resolve()
@@ -244,6 +249,11 @@ def test_build_unique_system_targets_falls_back_to_master_on_null(monkeypatch, t
     }
     instance = _make_member_instance_for_unit_test(monkeypatch, yaml_to_attrs, tmp_path)
     instance._system = _make_stub_system(10.0, None, None, master_yaml)
+    # The row's YAML is a real config, so its compile key carries the checkout fields; the stub master carries the same
+    # values, or the two would differ in the key only because the stub omits them.
+    _row_cfg = load_system_config(yaml_d)
+    for _name in ("TRITONSWMM_git_URL", "TRITONSWMM_branch_key", "TRITONSWMM_software_directory"):
+        instance._system.cfg_system.model_dump = _dump_with(instance._system.cfg_system.model_dump, _name, _row_cfg)
 
     df = pd.DataFrame(
         {

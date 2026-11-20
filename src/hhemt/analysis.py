@@ -323,16 +323,23 @@ def _capture_binary_provenance(sub: "TRITONSWMM_analysis") -> dict | None:
 
 
 def _systems_run_by(analysis) -> list:
-    """Every system a run of ``analysis`` executes: the primary's, or each sensitivity target's.
+    """Every system a run of ``analysis`` executes: the primary's, or each sensitivity target's and its members'.
 
     A sensitivity analysis runs the systems of ``sensitivity.unique_system_targets`` rather
     than the primary's alone, because a ``system.*`` overlay column can switch a model on, or
-    name another template, for one row. The run-entry checks share this one enumeration so
-    they cannot disagree about which systems a run reads. A module function rather than a
-    method so the checks can be exercised on a stand-in analysis object.
+    name another template, for one row. A member whose own row config differs from its target's
+    runs on its own system (``member_systems``), so those are enumerated too, each system once.
+    The run-entry checks share this one enumeration so they cannot disagree about which systems
+    a run reads. A module function rather than a method so the checks can be exercised on a
+    stand-in analysis object.
     """
     if analysis.cfg_analysis.toggle_sensitivity_analysis:
-        return [target.system for target in analysis.sensitivity.unique_system_targets]
+        systems: list = []
+        for target in analysis.sensitivity.unique_system_targets:
+            for system in (target.system, *getattr(target, "member_systems", {}).values()):
+                if not any(system is seen for seen in systems):
+                    systems.append(system)
+        return systems
     return [analysis._system]
 
 

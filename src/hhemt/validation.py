@@ -770,10 +770,126 @@ def _validate_sensitivity_file_readable(cfg_analysis: analysis_config, result: V
         )
 
 
+def _validate_rows_do_not_diverge_on_setup_shared_fields(
+    df,
+    cfg_analysis: analysis_config,
+    effective_by_member: dict[str, system_config],
+    result: ValidationResult,
+    cfg_hpc_system=None,
+):
+    """Refuse rows of one compile target that differ in a field the target's one setup reads from its first row.
+
+    ``effective_by_member`` holds the effective system config of every row that names no ``system_config_yaml`` (the
+    master for a row with no overlay, the master with the row's ``system.*`` overlay otherwise); a row with a
+    ``system_config_yaml`` is checked by the canonical-YAML arm of the caller. Rows are grouped as the builder groups
+    them (``_SYSTEM_COMPILE_KEY_FIELDS`` plus the GPU hardware and backend the row's ensemble partition resolves to with
+    ``resolve_gpu_target`` and ``cfg_hpc_system``, ``None`` meaning no hardware), so two rows the builder puts on one
+    target are compared whatever their partition names are.
+
+    A field outside ``_SYSTEM_COMPILE_KEY_FIELDS`` and outside ``_SYSTEM_SETUP_SHARED_FIELDS`` reaches each member
+    through its own system (``_UniqueSystemTarget.member_systems``) and is not refused. A field in
+    ``_SYSTEM_SETUP_SHARED_FIELDS`` is read once per target from the target's first row, so a different value on a
+    later row would be discarded without a word: that is the case this refuses, naming the field and both rows.
+    """
+    from hhemt.config.hpc_system import resolve_gpu_target
+    from hhemt.sensitivity_analysis import (
+        _SYSTEM_SETUP_SHARED_FIELDS,
+        _resolve_row_ensemble_partition,
+        _system_compile_key,
+    )
+
+    primary_partition = getattr(cfg_analysis, "hpc_ensemble_partition", None)
+    first_of_group: dict[tuple, tuple[str, dict]] = {}
+    for member_id, row in df.iterrows():
+        member_id_str = str(member_id)
+        cfg = effective_by_member.get(member_id_str)
+        if cfg is None:
+            continue
+        partition = _resolve_row_ensemble_partition(row, primary_partition)
+        key = (*_system_compile_key(cfg), *resolve_gpu_target(cfg_hpc_system, partition))
+        dump = cfg.model_dump()
+        if key not in first_of_group:
+            first_of_group[key] = (member_id_str, dump)
+            continue
+        first_member, first_dump = first_of_group[key]
+        diverging = [name for name in sorted(_SYSTEM_SETUP_SHARED_FIELDS) if dump.get(name) != first_dump.get(name)]
+        if diverging:
+            detail = "; ".join(
+                f"system.{name} is {dump.get(name)!r} here and {first_dump.get(name)!r} on member_id={first_member}"
+                for name in diverging
+            )
+            result.add_error(
+                field=f"sensitivity_analysis.row[{member_id_str}]",
+                message=(
+                    f"member_id={member_id_str} shares a compile target with member_id={first_member} but differs in "
+                    f"{len(diverging)} field(s) that are read once per compile target, from the first row, so this "
+                    f"row's value would be discarded: {detail}."
+                ),
+                current_value=", ".join(diverging),
+                fix_hint=(
+                    "Give the field the same value on both rows, or differentiate a compile-key field "
+                    "(target_dem_resolution, TRITONSWMM_extra_c_flags, TRITONSWMM_git_URL, TRITONSWMM_branch_key, "
+                    "TRITONSWMM_software_directory) so the rows build separately."
+                ),
+            )
+
+
+def _validate_distinct_checkouts_have_distinct_build_directories(
+    df,
+    cfg_analysis: analysis_config,
+    effective_by_member: dict[str, system_config],
+    result: ValidationResult,
+    cfg_hpc_system=None,
+):
+    """Refuse two rows that name different checkouts but build in one directory.
+
+    A build directory is ``TRITONSWMM_software_directory`` plus ``build_tritonswmm_cpu``, or
+    ``build_tritonswmm_gpu`` with the hardware suffix, as ``TRITONSWMM_system`` derives it from the row's resolved
+    hardware. Two rows whose ``TRITONSWMM_git_URL`` or ``TRITONSWMM_branch_key`` differ build as two targets, and
+    would compile one after the other into the same directory, so the second target would run the first's binary
+    or overwrite it. Rows with no software directory are not compared (the constructor refuses them).
+    """
+    from hhemt.config.hpc_system import resolve_gpu_target
+    from hhemt.sensitivity_analysis import _resolve_row_ensemble_partition
+
+    primary_partition = getattr(cfg_analysis, "hpc_ensemble_partition", None)
+    first_at: dict[Path, tuple[str, tuple]] = {}
+    for member_id, row in df.iterrows():
+        member_id_str = str(member_id)
+        cfg = effective_by_member.get(member_id_str)
+        if cfg is None or cfg.TRITONSWMM_software_directory is None:
+            continue
+        hardware, backend = resolve_gpu_target(cfg_hpc_system, _resolve_row_ensemble_partition(row, primary_partition))
+        build_name = "build_tritonswmm_cpu"
+        if backend:
+            build_name = f"build_tritonswmm_gpu_{hardware}" if hardware else "build_tritonswmm_gpu"
+        build_dir = Path(cfg.TRITONSWMM_software_directory) / build_name
+        checkout = (cfg.TRITONSWMM_git_URL, cfg.TRITONSWMM_branch_key)
+        if build_dir not in first_at:
+            first_at[build_dir] = (member_id_str, checkout)
+            continue
+        first_member, first_checkout = first_at[build_dir]
+        if checkout != first_checkout:
+            result.add_error(
+                field=f"sensitivity_analysis.row[{member_id_str}]",
+                message=(
+                    f"rows {first_member} and {member_id_str} name different checkouts but one software directory "
+                    f"({cfg.TRITONSWMM_software_directory}): TRITONSWMM_git_URL/TRITONSWMM_branch_key are "
+                    f"{first_checkout!r} and {checkout!r}, and both would build in {build_dir}."
+                ),
+                current_value=str(cfg.TRITONSWMM_software_directory),
+                fix_hint=(
+                    "Give each checkout its own system.TRITONSWMM_software_directory, or give the rows the same "
+                    "system.TRITONSWMM_git_URL and system.TRITONSWMM_branch_key."
+                ),
+            )
+
+
 def _validate_per_member_system_configs(
     cfg_system: system_config,
     cfg_analysis: analysis_config,
     result: ValidationResult,
+    cfg_hpc_system=None,
 ):
     """Validate per-member system configs declared in the sensitivity CSV.
 
@@ -787,16 +903,21 @@ def _validate_per_member_system_configs(
        the same model-type toggles as the master ``cfg_system``. The Snakefile
        is generated against the master's enabled model; a mismatch would
        silently route the wrong runner script.
-    4. **Canonical-YAML correctness (post-dedup)** — YAMLs whose
-       compile-relevant tuple ``(target_dem_resolution, gpu_hardware,
-       gpu_compilation_backend, TRITONSWMM_extra_c_flags)`` matches must agree on every other
-       ``cfg_system`` field. The dedup picks one canonical YAML
-       lexicographically; divergent non-key fields would silently disappear.
+    4. **Canonical-YAML correctness (post-dedup)** — YAMLs whose compile key
+       (``sensitivity_analysis._SYSTEM_COMPILE_KEY_FIELDS``) matches must agree on every other
+       ``cfg_system`` field.
+    5. **Setup-shared divergence of overlay rows** — rows with no ``system_config_yaml`` (the master, or the master with
+       ``system.*`` overlay columns) that share a compile key must agree on every field in
+       ``sensitivity_analysis._SYSTEM_SETUP_SHARED_FIELDS`` (see
+       :func:`_validate_rows_do_not_diverge_on_setup_shared_fields`). This check runs on overlay-only matrices.
+    6. **One build directory per checkout** — rows that name different ``TRITONSWMM_git_URL`` or
+       ``TRITONSWMM_branch_key`` must not share a build directory (see
+       :func:`_validate_distinct_checkouts_have_distinct_build_directories`).
 
-    Skipped silently when the gate conditions don't apply (no sensitivity
-    analysis, no CSV path, missing CSV file, no ``system_config_yaml`` column,
-    or unreadable CSV). An unreadable CSV is reported by
-    ``_validate_sensitivity_file_readable``, and the other upstream issues by their own validators.
+    Everything is skipped silently when no sensitivity analysis, no CSV path, a missing CSV file or an unreadable CSV
+    makes the matrix unavailable; an unreadable CSV is reported by ``_validate_sensitivity_file_readable``, and the
+    other upstream issues by their own validators. Checks 1-4 also need the ``system_config_yaml`` column, and the
+    ``system.*`` overlay rows are checked (the overlay value validates, and check 5 runs) with or without it.
     """
     import pandas as pd
 
@@ -819,11 +940,15 @@ def _validate_per_member_system_configs(
 
     # Phase 1 gates fire regardless of system_config_yaml column presence.
     from hhemt.sensitivity_analysis import (
+        _SYSTEM_COMPILE_KEY_FIELDS,
         _is_system_overlay_column,
         _strip_system_prefix,
     )
 
     overlay_columns_present = sorted(c for c in df.columns if c.startswith("system.") and _is_system_overlay_column(c))
+    # The effective system config of every row that names no system_config_yaml, for the setup-shared divergence check
+    # below: the master's own config for a row with no overlay, the master with the overlay for a row with one.
+    effective_by_member: dict[str, system_config] = {}
     for member_id, row in df.iterrows():
         member_id_str = str(member_id)
         yaml_cell = row.get("system_config_yaml") if "system_config_yaml" in df.columns else None
@@ -845,7 +970,7 @@ def _validate_per_member_system_configs(
             import pydantic
 
             try:
-                system_config.model_validate(
+                effective_by_member[member_id_str] = system_config.model_validate(
                     {
                         **cfg_system.model_dump(),
                         **overlay_cells,
@@ -861,6 +986,8 @@ def _validate_per_member_system_configs(
                     current_value=None,
                     fix_hint="Correct the overlay-column value(s).",
                 )
+        elif not yaml_specified:
+            effective_by_member[member_id_str] = cfg_system
 
     if "gpu_hardware_override" in df.columns:
         result.add_error(
@@ -872,6 +999,11 @@ def _validate_per_member_system_configs(
             current_value=None,
             fix_hint="Rename the column to `system.gpu_hardware`.",
         )
+
+    _validate_rows_do_not_diverge_on_setup_shared_fields(df, cfg_analysis, effective_by_member, result, cfg_hpc_system)
+    _validate_distinct_checkouts_have_distinct_build_directories(
+        df, cfg_analysis, effective_by_member, result, cfg_hpc_system
+    )
 
     if "system_config_yaml" not in df.columns:
         return
@@ -949,17 +1081,15 @@ def _validate_per_member_system_configs(
     # Phase-4 (4c): gpu_hardware/gpu_compilation_backend were retired off system_config
     # (now partition-axis-derived), so they are no longer per-sub-YAML consistency
     # dimensions here — the compile-dedup gpu pairing lives in
-    # sensitivity_analysis._build_unique_system_targets. The remaining system_config
-    # dedup dimensions are target_dem_resolution and TRITONSWMM_extra_c_flags, the same two
-    # system_config fields the builder keys on.
+    # sensitivity_analysis._build_unique_system_targets. The remaining dedup dimensions are
+    # the system_config fields in sensitivity_analysis._SYSTEM_COMPILE_KEY_FIELDS, the same
+    # ones the builder keys on.
+    from hhemt.sensitivity_analysis import _system_compile_key
+
     groups: dict[tuple, list[tuple[Path, system_config]]] = {}
     for path, loaded in loaded_by_path.items():
-        key = (loaded.target_dem_resolution, loaded.TRITONSWMM_extra_c_flags)
-        groups.setdefault(key, []).append((path, loaded))
-    dedup_key_fields = {
-        "target_dem_resolution",
-        "TRITONSWMM_extra_c_flags",
-    }
+        groups.setdefault(_system_compile_key(loaded), []).append((path, loaded))
+    dedup_key_fields = set(_SYSTEM_COMPILE_KEY_FIELDS)
     for entries in groups.values():
         if len(entries) < 2:
             continue
@@ -2734,7 +2864,7 @@ def preflight_validate(
     # here at the preflight_validate level rather than from inside
     # _validate_toggle_dependencies_analysis (which lacks cfg_system).
     _validate_sensitivity_file_readable(cfg_analysis, result)
-    _validate_per_member_system_configs(cfg_system, cfg_analysis, result)
+    _validate_per_member_system_configs(cfg_system, cfg_analysis, result, cfg_hpc_system)
     # Re-parented here from _validate_water_level_boundary_data: this is a whole-analysis
     # check and needs BOTH configs to resolve the rule-(1) forcing variable set.
     _validate_selected_event_forcing_extent(cfg_analysis, cfg_system, result)

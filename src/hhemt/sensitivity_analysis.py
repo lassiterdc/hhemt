@@ -61,13 +61,15 @@ __all__ = ["TRITONSWMM_sensitivity_analysis"]
 @dataclass
 class _UniqueSystemTarget:
     """One compile target, shared by every member whose resolved system config agrees on
-    the compile-relevant key, the tuple of target_dem_resolution, gpu_hardware,
-    gpu_compilation_backend, and TRITONSWMM_extra_c_flags.
+    the compile-relevant key: ``_SYSTEM_COMPILE_KEY_FIELDS`` plus gpu_hardware and
+    gpu_compilation_backend.
 
-    The build is done once per target (``compile_and_preprocess_all_targets``), and every
-    member in ``analysis_ids`` runs with ``system``. On the primary fast path (no per-row
-    system config and no per-row partition variation) there is exactly one target, the
-    primary system.
+    The build is done once per target (``compile_and_preprocess_all_targets``). Every member
+    in ``analysis_ids`` runs on ``system`` unless ``member_systems`` names it: a member whose
+    own row config differs from the target's (a non-key ``system.*`` overlay) runs on a
+    system built from that row's config, which shares the target's build artefacts because
+    every compile-key field is equal. On the primary fast path (no per-row system config and
+    no per-row partition variation) there is exactly one target, the primary system.
     """
 
     target_id: int
@@ -82,6 +84,67 @@ class _UniqueSystemTarget:
     # target (not the primary partition). It is also what a by-hand compile of this
     # target must pass to build for that hardware.
     target_partition: str | None = None
+    # member_id -> the system built from that member's own row config; absent for a member that
+    # runs on ``system`` itself.
+    member_systems: dict[str, "TRITONSWMM_system"] = field(default_factory=dict)
+
+
+# The ``system_config`` fields that name a distinct build or a distinct set of system-level inputs: two rows that
+# differ in any of them are two compile targets. ``TRITONSWMM_git_URL``, ``TRITONSWMM_branch_key`` and
+# ``TRITONSWMM_software_directory`` each name a different checkout and so a different build. The key is read from
+# ``cfg.model_dump()`` so a config object and a stand-in that dumps its fields key identically.
+_SYSTEM_COMPILE_KEY_FIELDS: tuple[str, ...] = (
+    "target_dem_resolution",
+    "TRITONSWMM_extra_c_flags",
+    "TRITONSWMM_git_URL",
+    "TRITONSWMM_branch_key",
+    "TRITONSWMM_software_directory",
+)
+
+# The ``system_config`` fields read ONCE per compile target, by the target's own setup from the target's FIRST row
+# (the build, the processed DEM, the Manning's file, the model-type routing of the generated Snakefile), outside
+# ``_SYSTEM_COMPILE_KEY_FIELDS``. A member whose row differs from its target's first row in one of these cannot be
+# honoured by giving the member its own system: the artefacts it would read are the target's. Preflight refuses that
+# divergence (``validation._validate_per_member_system_configs``).
+# Matcher for the membership: the ``cfg_system.<name>`` reads of ``src/hhemt/system.py`` (``grep -o
+# "cfg_system\.[A-Za-z_]*" src/hhemt/system.py``), less the compile-key fields above. Every other ``system_config``
+# field is read from the member's own ``cfg_system`` by scenario preparation and so reaches the member.
+_SYSTEM_SETUP_SHARED_FIELDS: frozenset[str] = frozenset(
+    {
+        "crs",
+        "system_directory",
+        "DEM_fullres",
+        "processed_xllcorner",
+        "processed_yllcorner",
+        "nrows",
+        "ncols",
+        "landuse_raster",
+        "landuse_lookup_file",
+        "landuse_lookup_class_id_colname",
+        "landuse_lookup_mannings_colname",
+        "toggle_use_constant_mannings",
+        "toggle_triton_model",
+        "toggle_tritonswmm_model",
+        "toggle_swmm_model",
+        "SWMM_software_directory",
+        "SWMM_git_URL",
+        "SWMM_tag_key",
+    }
+)
+
+
+def _system_compile_key(cfg) -> tuple:
+    """The compile-key fields of one system config, in ``_SYSTEM_COMPILE_KEY_FIELDS`` order."""
+    dumped = cfg.model_dump()
+    return tuple(dumped.get(name) for name in _SYSTEM_COMPILE_KEY_FIELDS)
+
+
+def _write_member_system_yaml(member_yaml: Path, member_cfg) -> None:
+    """Write one member's own system config to ``member_yaml`` by temp-file rename (PID-keyed, as the target YAMLs)."""
+    tmp_yaml = member_yaml.parent / f"{member_yaml.stem}.{os.getpid()}.tmp.yaml"
+    with tmp_yaml.open("w") as fh:
+        yaml.safe_dump(member_cfg.model_dump(mode="json"), fh, sort_keys=False)
+    tmp_yaml.rename(member_yaml)
 
 
 _SYSTEM_COLUMN_PREFIX = "system."
@@ -3169,6 +3232,11 @@ class TRITONSWMM_sensitivity_analysis:
         Mutual exclusion: a single row may use mechanism 1 OR mechanism 2, never both;
         violation raises ``ConfigurationError``.
 
+        Rows are grouped into compile targets by ``_SYSTEM_COMPILE_KEY_FIELDS`` plus the row's GPU hardware and
+        backend: one build per group. A row whose own config differs from its group's first row (a non-key
+        ``system.*`` overlay) keeps its own system, in ``_UniqueSystemTarget.member_systems``, so the group's first
+        row's config is never read in its place.
+
         ``is_main_orchestrator=True`` purges ``_generated/`` before emission.
         Runner subprocesses pass ``False`` to skip the purge.
         """
@@ -3265,17 +3333,15 @@ class TRITONSWMM_sensitivity_analysis:
                 self.experiment.cfg_hpc_system,
                 _row_partition,
             )
-            # TRITONSWMM_extra_c_flags is part of the coupled compile's identity: two rows that differ only
-            # in it are two different builds, so they must not collapse to one target.
-            key = (
-                cfg.target_dem_resolution,
-                _gpu_hardware,
-                _gpu_backend,
-                cfg.TRITONSWMM_extra_c_flags,
-            )
+            # The compile key (``_SYSTEM_COMPILE_KEY_FIELDS``) is the coupled compile's identity: two rows that
+            # differ in one of its fields are two different builds, so they must not collapse to one target.
+            key = (*_system_compile_key(cfg), _gpu_hardware, _gpu_backend)
             if key not in groups:
-                groups[key] = {"cfg": cfg, "member_ids": [], "partition": _row_partition}
+                groups[key] = {"cfg": cfg, "member_ids": [], "member_cfgs": {}, "partition": _row_partition}
             groups[key]["member_ids"].append(member_id_str)
+            # The row's OWN config, kept beside the group's first row's: a member whose config differs from its
+            # target's runs on a system built from this one, not on the target's.
+            groups[key]["member_cfgs"][member_id_str] = cfg
 
         # GPU hardware/backend + modules are injected into each target system (they
         # are no longer system_config fields), resolved here from the primary ensemble
@@ -3343,6 +3409,24 @@ class TRITONSWMM_sensitivity_analysis:
                     # native mode keeps the link line byte-identical.
                     execution_container_mode=(self.experiment.cfg_analysis.execution_environment == "container"),
                 )
+            # A member whose own row config differs from the target's (a non-key overlay) gets its own system, built
+            # from its own config: the target's first row's config would otherwise stand in for every member of the
+            # group. Its compile-key fields equal the target's, so it shares the target's build artefacts.
+            member_systems: dict[str, TRITONSWMM_system] = {}
+            target_cfg_json = cfg.model_dump_json()
+            for member_id_str, member_cfg in group["member_cfgs"].items():
+                if member_cfg.model_dump_json() == target_cfg_json:
+                    continue
+                member_yaml = generated_dir / f"member_{member_id_str}.yaml"
+                if is_main_orchestrator:
+                    _write_member_system_yaml(member_yaml, member_cfg)
+                member_systems[member_id_str] = TRITONSWMM_system(
+                    member_yaml,
+                    gpu_hardware=_t_hw,
+                    gpu_compilation_backend=_t_backend,
+                    additional_modules=_t_modules,
+                    execution_container_mode=(self.experiment.cfg_analysis.execution_environment == "container"),
+                )
             targets.append(
                 _UniqueSystemTarget(
                     target_id=target_id,
@@ -3350,6 +3434,7 @@ class TRITONSWMM_sensitivity_analysis:
                     system=target_system,
                     analysis_ids=member_ids,
                     target_partition=_target_partition,
+                    member_systems=member_systems,
                 )
             )
 
@@ -3377,8 +3462,16 @@ class TRITONSWMM_sensitivity_analysis:
         """
         analysis_dir = self.experiment.analysis_paths.analysis_dir
         generated_dir = (analysis_dir / "_generated").resolve()
-        for target in self.unique_system_targets:
-            yaml_path = Path(target.system_config_yaml)
+        # A per-member system (a member whose own row config differs from its target's) is written beside the target
+        # YAMLs and is read by the member's runner subprocesses, so it is re-materialized the same way.
+        systems_to_write = [(target.system_config_yaml, target.system) for target in self.unique_system_targets]
+        systems_to_write += [
+            (member_system.system_config_yaml, member_system)
+            for target in self.unique_system_targets
+            for member_system in target.member_systems.values()
+        ]
+        for system_config_yaml, system in systems_to_write:
+            yaml_path = Path(system_config_yaml)
             try:
                 under_generated = yaml_path.resolve().is_relative_to(generated_dir)
             except (OSError, ValueError):
@@ -3389,7 +3482,7 @@ class TRITONSWMM_sensitivity_analysis:
             # Atomic temp-file rename (PID-keyed; mirrors the construction-time write).
             tmp_yaml = generated_dir / f"{yaml_path.stem}.{os.getpid()}.tmp.yaml"
             with tmp_yaml.open("w") as fh:
-                yaml.safe_dump(target.system.cfg_system.model_dump(mode="json"), fh, sort_keys=False)
+                yaml.safe_dump(system.cfg_system.model_dump(mode="json"), fh, sort_keys=False)
             tmp_yaml.rename(yaml_path)
 
     def _master_states_clearing_explicitly(self) -> bool:
@@ -3411,7 +3504,7 @@ class TRITONSWMM_sensitivity_analysis:
         member_id_to_system: dict = {}
         for target in self.unique_system_targets:
             for member_id in target.analysis_ids:
-                member_id_to_system[member_id] = target.system
+                member_id_to_system[member_id] = target.member_systems.get(member_id, target.system)
 
         from hhemt.config.analysis import analysis_config
 
