@@ -2452,7 +2452,11 @@ class TRITONSWMM_sim_post_processing:
         capture shifted late by whole print intervals: when the report step is two or more print intervals the
         shifted first record still ends inside the first report row and is not seen.
 
-        Nothing is attached when the analysis does not ask for the per-node capture.
+        Nothing is attached when the analysis does not ask for the per-node capture. Nothing is attached either, with
+        a warning that names both intervals, when the first record ends after the first report time and the print
+        interval (the median difference of the record end times, from at least two records) is coarser than the
+        report step: a record then covers several report rows and cannot be allotted to one, so the member is
+        processed without the per-node account instead of failing after its other outputs are written.
 
         Raises
         ------
@@ -2488,6 +2492,26 @@ class TRITONSWMM_sim_post_processing:
             row = np.searchsorted(report_times_s, t_end - 1e-6, side="left")
             beyond = np.flatnonzero(row >= len(report_times_s))
             if t_end.size and t_end[0] - report_times_s[0] > 1e-6:
+                # A capture whose print interval is coarser than the report step cannot be aligned to the report
+                # rows: its first record legitimately ends one print interval in, after the first (finer) report
+                # time. That is a property of the run's configuration, not a shifted capture, so the member is
+                # processed without the per-node account. Needs two records to measure the print interval; a lone
+                # late record cannot be told from a shifted capture and is still refused below.
+                print_interval_s = float(np.median(np.diff(t_end))) if t_end.size > 1 else None
+                report_interval_s = (
+                    float(np.median(np.diff(report_times_s))) if len(report_times_s) > 1 else float(report_times_s[0])
+                )
+                if print_interval_s is not None and print_interval_s - report_interval_s > 1e-6:
+                    member = getattr(getattr(self, "_scenario", None), "event_iloc", None)
+                    warnings.warn(
+                        f"The per-node path-3 account is not attached for member {member!r} ({store}): the capture's "
+                        f"print interval is {print_interval_s} s and the SWMM report step is {report_interval_s} s, "
+                        "and a record cannot be split across finer report rows. The variables "
+                        f"{', '.join(COUPLING_NODE_DIAGNOSTIC_VARIABLES)} and {PATH3_UNATTACHED_VARIABLE} are absent "
+                        "from this member's node dataset; every other output is written.",
+                        stacklevel=2,
+                    )
+                    return ds_nodes
                 raise ProcessingError(
                     "attach the coupling per-node path-3 account",
                     store,
