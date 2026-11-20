@@ -5612,3 +5612,7 @@ non_breaking_allowlist:
     layout_signature: 94bfed692b89dd27f89c639574f909141041e63b11a2f851c4f0f2a45345d6fc
     justification: |-
       removed two unused helpers and validation check; no stored-layout change
+  - path: src/hhemt/scenario.py
+    layout_signature: e2f8089d5a3c21de23502f9cbedcd4c768cc022dcad259e2023592aef029ab08
+    justification: |-
+      SWMM-only systems skip the coupled cfg; no stored-layout change

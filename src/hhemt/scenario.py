@@ -1789,6 +1789,19 @@ class TRITONSWMM_scenario:
         return Path(self.scen_paths.swmm_hydraulics_inp)
 
     def _generate_TRITON_SWMM_cfg(self):
+        """Write the coupled TRITON-SWMM cfg for this scenario, after judging the TRITON build and the DEM rim for it.
+
+        Does nothing, and judges nothing, for a system that runs no TRITON model at all (``toggle_triton_model`` and
+        ``toggle_tritonswmm_model`` both False, the standalone-SWMM system): such a bundle has no TRITON checkout
+        because nothing builds a solver for it, so the guards below that read that build (``driven_stage`` outfalls,
+        the manhole table, the DEM-rim keys) would refuse a system that never runs the solver, and every prepare job
+        of the bundle failed that way. A TRITON-only system keeps this cfg and every guard, because its cfg bytes must
+        not move, and a system that does not say it runs no TRITON model keeps them too.
+        """
+        if not getattr(self._system.cfg_system, "toggle_tritonswmm_model", True) and not getattr(
+            self._system.cfg_system, "toggle_triton_model", True
+        ):
+            return
         # Judged first: a node whose DEM rim is too low stops preparation before any cfg line is written.
         rim_key = swmm_node_rim_key_is_written(self._analysis.cfg_analysis)
         fallback_nodes = check_dem_rim_against_swmm_depth(self, rim_key)
