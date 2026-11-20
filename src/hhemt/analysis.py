@@ -364,6 +364,36 @@ def _coupled_system_configs(analysis) -> list:
 #: How many incomplete sim names the resume banner prints before it collapses the rest into a count.
 _RESUME_BANNER_MAX_NAMED_SIMS = 20
 
+#: First sentence of the message ``snakemake --cleanup-metadata`` prints, with exit 1, when a requested
+#: record has no metadata. The wording is Snakemake's; it is matched as a substring of the output.
+_CLEANUP_METADATA_ABSENT_MESSAGE = (
+    "Failed to clean up metadata for the following files because the metadata was not present."
+)
+#: A traceback or an ``...Error`` line marks a real failure, except the bare ``WorkflowError:`` header line
+#: that Snakemake prints immediately before this very message.
+_CLEANUP_METADATA_REAL_FAILURE = re.compile(
+    r"^(Traceback \(most recent call last\)|(?!WorkflowError:\s*$)\w*Error\b)", re.MULTILINE
+)
+
+
+def _files_with_absent_cleanup_metadata(output: str) -> list[str] | None:
+    """Return the files Snakemake reported as having no metadata, or ``None`` if the output is anything else.
+
+    ``snakemake --cleanup-metadata`` exits 1 when a requested record was never written, and that is the
+    state the cleanup wants, so the message is a success. The output is forgiven only when it holds that
+    message and no traceback or ``...Error`` line (the bare ``WorkflowError:`` header Snakemake prints
+    before the message is not one); a different failure, or this message beside one, returns ``None`` and
+    the caller raises. Snakemake prints the message, two prose sentences, a ``Files:`` label and then one
+    path per line, so the files are the non-empty lines after the ``Files:`` line.
+    """
+    if _CLEANUP_METADATA_ABSENT_MESSAGE not in output or _CLEANUP_METADATA_REAL_FAILURE.search(output):
+        return None
+    after = output.split(_CLEANUP_METADATA_ABSENT_MESSAGE, 1)[1].splitlines()
+    labels = [i for i, line in enumerate(after) if line.strip() == "Files:"]
+    if not labels:
+        return []
+    return [line.strip() for line in after[labels[0] + 1 :] if line.strip()]
+
 
 class TRITONSWMM_analysis:
     """Orchestrates one ensemble of coupled TRITON-SWMM simulations.
@@ -919,16 +949,62 @@ class TRITONSWMM_analysis:
                 orphans.append(f"plots/sensitivity/benchmarking/{ind_var}_vs_total.svg")
         return orphans
 
+    def _unlock_stale_snakemake_locks_when_no_driver_is_live(
+        self, *, dry_run: bool, verbose: bool, override_live_driver: str | None = None
+    ) -> list[str]:
+        """Remove stale Snakemake lock files when no live driver holds this analysis directory.
+
+        A driver killed mid-run leaves ``.snakemake/locks/*.lock``, and the lock check inside the
+        workflow builder refuses a batch submit over them ("stdin is not a TTY"). This asks the same
+        orchestrator-liveness gate the driver claim uses, and unlocks only when it reports no live or
+        indeterminate driver; otherwise the locks stay and the claim that follows refuses with its own
+        message. Never touches a tree on ``dry_run``. ``override_live_driver`` is the operator's
+        assertion that one named sentinel is dead, and it is passed to the gate so the assertion is
+        honoured here as it is by the claim.
+
+        Not established: a driver that claims the directory between this check and the claim is not
+        seen here; its locks would be removed, and Snakemake's own lock then re-forms on its next start.
+
+        Returns the names of the lock files removed (empty when nothing was unlocked).
+        """
+        if dry_run:
+            return []
+        locks_dir = self.analysis_paths.analysis_dir / ".snakemake" / "locks"
+        lock_files = sorted(locks_dir.glob("*.lock")) if locks_dir.exists() else []
+        if not lock_files:
+            return []
+        gate_err = self._workflow_builder._orchestrator_liveness_gate(
+            analysis_dir=self.analysis_paths.analysis_dir,
+            exclude_driver_id=override_live_driver,
+            phase_label="submit",
+        )
+        if gate_err is not None:
+            return []
+        names = [f.name for f in lock_files]
+        for lock_file in lock_files:
+            # EXEMPT-DU: lock-file-cleanup
+            lock_file.unlink(missing_ok=True)
+        print(
+            f"[Snakemake] No live driver holds {self.analysis_paths.analysis_dir}; unlocked {len(names)} stale "
+            f"lock file(s) in {locks_dir}: {', '.join(names)}",
+            flush=True,
+        )
+        return names
+
     def _invoke_snakemake_cleanup_metadata(self, orphan_paths: list[str]) -> None:
         """Subprocess-invoke ``snakemake --cleanup-metadata`` against orphan paths.
 
         Snakemake's ``cleanup_metadata`` is idempotent (no-op without error on
         non-existent records), so passing paths that have no record on disk is
         safe — the cost is one subprocess call per ``analysis.run()`` when the
-        gate fires.
+        gate fires. Snakemake nevertheless exits 1 with "the metadata was not
+        present" for such a record; that exact message is treated as success and
+        a warning names the files. Any other output with a non-zero exit is a
+        failure.
 
-        Raises ``WorkflowError`` on non-zero subprocess exit, capturing the
-        last 50 lines of combined stdout+stderr in the ``stderr`` field.
+        Raises ``WorkflowError`` on non-zero subprocess exit that is not that
+        message, capturing the last 50 lines of combined stdout+stderr in the
+        ``stderr`` field.
         """
         import subprocess
 
@@ -952,6 +1028,19 @@ class TRITONSWMM_analysis:
             # there is no metadata to interpret without a Snakefile, but
             # there is also no harm in skipping cleanup in that case.
             if "No Snakefile found" in combined:
+                return
+            # Snakemake exits 1 when a requested record has no metadata, which is the
+            # state this cleanup is trying to reach; it says so itself ("If this is
+            # expected, there is nothing to do"). Only that message is forgiven: the
+            # same text beside a traceback or an error line is still a failure.
+            absent_files = _files_with_absent_cleanup_metadata(combined)
+            if absent_files is not None:
+                print(
+                    "[cleanup-stale-metadata] WARNING: snakemake --cleanup-metadata found no metadata to "
+                    f"clean for {len(absent_files)} file(s), which is expected for a record that was never "
+                    "written; continuing. Files: " + ", ".join(absent_files),
+                    flush=True,
+                )
                 return
             raise WorkflowError(
                 phase="cleanup_stale_metadata",
@@ -4712,6 +4801,14 @@ class TRITONSWMM_analysis:
         # self.sensitivity.submit_workflow, which owns the primary-keyed claim on this
         # same analysis_dir. A claim taken here would run first, so that later claim
         # would find this frame's live sentinel and refuse the run.
+        # Stale Snakemake locks from a killed driver would stop the lock check inside the
+        # builder with "stdin is not a TTY (batch submission)". Unlock them here, and only
+        # while no live driver holds the directory. This runs BEFORE the claim below: the
+        # claim writes this driver's own sentinel, which the gate would read as a live driver.
+        self._unlock_stale_snakemake_locks_when_no_driver_is_live(
+            dry_run=dry_run, verbose=verbose, override_live_driver=override_live_driver
+        )
+
         _driver_id = None
         _eff_mode = self.cfg_analysis.multi_sim_run_method
         if not self.cfg_analysis.toggle_sensitivity_analysis:
