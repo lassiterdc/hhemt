@@ -5608,3 +5608,7 @@ non_breaking_allowlist:
     layout_signature: a1b729d5e4d24c2e00f5be8996560c7aaf2357158216f15d1c3d8771a8885417
     justification: |-
       per-member system overlay; no stored-layout change (_generated is rewritten each construction)
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 94bfed692b89dd27f89c639574f909141041e63b11a2f851c4f0f2a45345d6fc
+    justification: |-
+      removed two unused helpers and validation check; no stored-layout change

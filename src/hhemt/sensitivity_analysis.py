@@ -64,7 +64,7 @@ class _UniqueSystemTarget:
     the compile-relevant key: ``_SYSTEM_COMPILE_KEY_FIELDS`` plus gpu_hardware and
     gpu_compilation_backend.
 
-    The build is done once per target (``compile_and_preprocess_all_targets``). Every member
+    The build is done once per target. Every member
     in ``analysis_ids`` runs on ``system`` unless ``member_systems`` names it: a member whose
     own row config differs from the target's (a non-key ``system.*`` overlay) runs on a
     system built from that row's config, which shares the target's build artefacts because
@@ -3875,69 +3875,6 @@ class TRITONSWMM_sensitivity_analysis:
         fingerprint_path.parent.mkdir(parents=True, exist_ok=True)
         fingerprint_path.write_text(new_text)
         return True
-
-    def compile_and_preprocess_all_targets(
-        self,
-        overwrite_system_inputs: bool = False,
-        recompile_if_already_done_successfully: bool = False,
-        verbose: bool = True,
-    ):
-        """Process system-level inputs and compile TRITON-SWMM for each unique target.
-
-        Iterates ``self.unique_system_targets``, populated in ``__init__``, and runs
-        ``process_system_level_inputs()`` + ``compile_TRITON_SWMM()`` once per target.
-        In the no-per-member-config case the list contains a single target
-        wrapping the primary system, so this method is the unified entry point for
-        non-Snakemake direct execution regardless of whether per-member configs are used.
-        """
-        for target in self.unique_system_targets:
-            if verbose:
-                print(
-                    f"[Setup] Processing target {target.target_id} ({len(target.analysis_ids)} members)",
-                    flush=True,
-                )
-            target.system.process_system_level_inputs(
-                overwrite_outputs_if_already_created=overwrite_system_inputs,
-                verbose=verbose,
-            )
-            target.system.compile_TRITON_SWMM(
-                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-                verbose=verbose,
-            )
-        self._update_experiment_log()
-
-    def compile_TRITON_SWMM_for_sensitivity_analysis(
-        self,
-        verbose: bool = False,
-        recompile_if_already_done_successfully: bool = False,
-    ):
-        """Compile the solver once per distinct build.
-
-        Direct-execution helper. The emitted workflow skips the helper, because the
-        per-target setup rules assert an existing build and avoid building.
-
-        The compile-relevant tuple is target_dem_resolution, gpu_hardware,
-        gpu_compilation_backend, and TRITONSWMM_extra_c_flags. Members that agree on
-        the tuple share one compile target -- one per distinct build, used by every member that
-        needs the target -- so this compiles once per DISTINCT target and not once per
-        row. A sweep whose rows differ only in rank count therefore compiles once.
-
-        Parameters
-        ----------
-        verbose : bool
-            Stream compiler output.
-        recompile_if_already_done_successfully : bool
-            Rebuild even when the compilation log already records success.
-            Compilation success is detected by log markers and not by exit
-            code, so a partially-failed build can exit 0 and be skipped.
-        """
-        for target in self.unique_system_targets:
-            target.system.compile_TRITON_SWMM(
-                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-                verbose=verbose,
-            )
-        self._update_experiment_log()
-        return
 
     @property
     def scenarios_not_created(self):

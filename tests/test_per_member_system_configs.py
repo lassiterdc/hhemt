@@ -15,7 +15,6 @@ multi-target run end to end is not covered by this file.
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -375,50 +374,6 @@ def test_create_members_assigns_system_per_target(monkeypatch, tmp_path):
     assert system_of_member["member_0"] is sys_a
     assert system_of_member["member_1"] is sys_a
     assert system_of_member["member_2"] is sys_c
-
-
-def test_compile_and_preprocess_all_targets_iterates_unique_targets():
-    """Calls process_system_level_inputs and compile_TRITON_SWMM once per target."""
-    instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
-    sys_a = MagicMock()
-    sys_c = MagicMock()
-    instance.unique_system_targets = [
-        _UniqueSystemTarget(0, Path("/fake/A.yaml"), sys_a, ["0", "1"]),
-        _UniqueSystemTarget(1, Path("/fake/C.yaml"), sys_c, ["2"]),
-    ]
-    instance._update_experiment_log = MagicMock()
-
-    instance.compile_and_preprocess_all_targets(
-        overwrite_system_inputs=True,
-        recompile_if_already_done_successfully=False,
-        verbose=False,
-    )
-
-    sys_a.process_system_level_inputs.assert_called_once_with(overwrite_outputs_if_already_created=True, verbose=False)
-    sys_a.compile_TRITON_SWMM.assert_called_once_with(recompile_if_already_done_successfully=False, verbose=False)
-    sys_c.process_system_level_inputs.assert_called_once_with(overwrite_outputs_if_already_created=True, verbose=False)
-    sys_c.compile_TRITON_SWMM.assert_called_once_with(recompile_if_already_done_successfully=False, verbose=False)
-    instance._update_experiment_log.assert_called_once()
-
-
-def test_compile_TRITON_SWMM_for_sensitivity_analysis_iterates_unique_targets():
-    """Invokes compile_TRITON_SWMM on each target's system, not on self._system."""
-    instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
-    sys_a = MagicMock()
-    sys_c = MagicMock()
-    instance._system = MagicMock()  # must NOT be called
-    instance.unique_system_targets = [
-        _UniqueSystemTarget(0, Path("/fake/A.yaml"), sys_a, ["0", "1"]),
-        _UniqueSystemTarget(1, Path("/fake/C.yaml"), sys_c, ["2"]),
-    ]
-    instance._update_experiment_log = MagicMock()
-
-    instance.compile_TRITON_SWMM_for_sensitivity_analysis(verbose=False, recompile_if_already_done_successfully=True)
-
-    sys_a.compile_TRITON_SWMM.assert_called_once_with(recompile_if_already_done_successfully=True, verbose=False)
-    sys_c.compile_TRITON_SWMM.assert_called_once_with(recompile_if_already_done_successfully=True, verbose=False)
-    instance._system.compile_TRITON_SWMM.assert_not_called()
-    instance._update_experiment_log.assert_called_once()
 
 
 def test_attributes_varied_filters_system_config_yaml():

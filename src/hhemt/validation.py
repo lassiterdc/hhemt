@@ -779,9 +779,10 @@ def _validate_rows_do_not_diverge_on_setup_shared_fields(
 ):
     """Refuse rows of one compile target that differ in a field the target's one setup reads from its first row.
 
-    ``effective_by_member`` holds the effective system config of every row that names no ``system_config_yaml`` (the
-    master for a row with no overlay, the master with the row's ``system.*`` overlay otherwise); a row with a
-    ``system_config_yaml`` is checked by the canonical-YAML arm of the caller. Rows are grouped as the builder groups
+    ``effective_by_member`` holds the effective system config of every row: the master for a row with no overlay, the
+    master with the row's ``system.*`` overlay otherwise, and the loaded config of a row's ``system_config_yaml``
+    (``_load_yaml_row_system_configs``), so a YAML row is compared with a master or overlay row of its target and not
+    only with another YAML. Rows are grouped as the builder groups
     them (``_SYSTEM_COMPILE_KEY_FIELDS`` plus the GPU hardware and backend the row's ensemble partition resolves to with
     ``resolve_gpu_target`` and ``cfg_hpc_system``, ``None`` meaning no hardware), so two rows the builder puts on one
     target are compared whatever their partition names are.
@@ -885,6 +886,40 @@ def _validate_distinct_checkouts_have_distinct_build_directories(
             )
 
 
+def _load_yaml_row_system_configs(df) -> dict[str, system_config]:
+    """The loaded system config of every row that names a readable ``system_config_yaml``, by member id.
+
+    The setup-shared comparison (``_validate_rows_do_not_diverge_on_setup_shared_fields``) needs a config for every row
+    of a compile target, and a YAML row's config is the file's. A cell that is empty, is not a path, names a missing
+    file or fails the loader gives no entry here: the YAML-loading loop of ``_validate_per_member_system_configs``
+    reports each of those by name, and a row with no config cannot be compared. Each file is read once.
+    """
+    import pandas as pd
+
+    from hhemt.config.loaders import load_system_config
+
+    if "system_config_yaml" not in df.columns:
+        return {}
+    loaded_by_path: dict[Path, system_config | None] = {}
+    by_member: dict[str, system_config] = {}
+    for member_id, raw_path in df["system_config_yaml"].items():
+        if pd.isna(raw_path) or str(raw_path).strip() == "":
+            continue
+        try:
+            yaml_path = Path(raw_path).resolve()
+        except (TypeError, ValueError):
+            continue
+        if yaml_path not in loaded_by_path:
+            try:
+                loaded_by_path[yaml_path] = load_system_config(yaml_path) if yaml_path.is_file() else None
+            except Exception:
+                loaded_by_path[yaml_path] = None
+        loaded = loaded_by_path[yaml_path]
+        if loaded is not None:
+            by_member[str(member_id)] = loaded
+    return by_member
+
+
 def _validate_per_member_system_configs(
     cfg_system: system_config,
     cfg_analysis: analysis_config,
@@ -906,8 +941,8 @@ def _validate_per_member_system_configs(
     4. **Canonical-YAML correctness (post-dedup)** — YAMLs whose compile key
        (``sensitivity_analysis._SYSTEM_COMPILE_KEY_FIELDS``) matches must agree on every other
        ``cfg_system`` field.
-    5. **Setup-shared divergence of overlay rows** — rows with no ``system_config_yaml`` (the master, or the master with
-       ``system.*`` overlay columns) that share a compile key must agree on every field in
+    5. **Setup-shared divergence of rows** — every row (the master, the master with ``system.*`` overlay columns, or a
+       row's ``system_config_yaml``) that shares a compile key with another must agree with it on every field in
        ``sensitivity_analysis._SYSTEM_SETUP_SHARED_FIELDS`` (see
        :func:`_validate_rows_do_not_diverge_on_setup_shared_fields`). This check runs on overlay-only matrices.
     6. **One build directory per checkout** — rows that name different ``TRITONSWMM_git_URL`` or
@@ -1000,7 +1035,12 @@ def _validate_per_member_system_configs(
             fix_hint="Rename the column to `system.gpu_hardware`.",
         )
 
-    _validate_rows_do_not_diverge_on_setup_shared_fields(df, cfg_analysis, effective_by_member, result, cfg_hpc_system)
+    # Every row is compared on the setup-shared fields, YAML rows included: a YAML row that shares a target with a
+    # master or overlay row would otherwise have its setup-shared values discarded in favour of the first row's,
+    # unreported. The checkout check below keeps its own population (rows with no YAML).
+    _validate_rows_do_not_diverge_on_setup_shared_fields(
+        df, cfg_analysis, {**effective_by_member, **_load_yaml_row_system_configs(df)}, result, cfg_hpc_system
+    )
     _validate_distinct_checkouts_have_distinct_build_directories(
         df, cfg_analysis, effective_by_member, result, cfg_hpc_system
     )

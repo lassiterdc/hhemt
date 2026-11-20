@@ -435,8 +435,9 @@ def test_refusal_names_the_direct_invocation_as_the_remedy(model_key: str) -> No
     assert "--analysis-config" in message
     assert flag in message, "the direct invocation's own compile flag is valid and must be named"
     assert "not specified" not in message
-    # Item 1b has not hardened this route; naming it would re-commit the GPU-path defect.
-    assert "compile_and_preprocess_all_targets" not in message
+    # An in-process compile off a sensitivity target's system carried the GPU-path defect; the message names the
+    # command line only.
+    assert "target.system" not in message
 
 
 @pytest.mark.parametrize("model_key", _MODEL_KEYS)
