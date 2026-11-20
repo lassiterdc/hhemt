@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:e95966d8b10991e07a779bb9f64a8f266b03961e5cf9ba364f414aaa3cf0f873",
+  "claims": [
+    {
+      "id": "claim_966ed46410344115aa1d34f7a0a24b19",
+      "statement": "Case-study acquisition fills case templates and requires an explicit hhemt_sha, while DOI and local bundle ingestion share a post-extraction reconstitution path.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/experiments.py#L208-L305",
+          "version": "repo-lines-v1:sha256:81474455f8853e36fa76b795d9abb5ab2da7af1449b44b6efe1bbe1ab3da9333:eyJzZWxlY3RlZExpbmVDb3VudCI6OTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxYTM0YWU0MDNiMTU3NjlkNjFlMmQ5NTMzMDYwMWQ2NWY0NTc2YThlMzI1NmViZDgyMDcyZWQzZDY0NzA4YjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhMGI2OWEyMzhhZmJiNjI3NzJiMmJmMTAxOGRjOGRmMTU0MGQwN2IzNjEyODkzZmIyMmY1N2Q2NjdhMTgwY2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIzZTdlN2NkZGI5ZWZlOTk0MjIwNDZkNmRlZjdmMmRkNTliZmYyYTEzMWU0ZjI5NGM5YmU1NThjNDc0NTNiYTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmNDAwZjY5NTU4NmUzMzNhMDI5ZTZiZWVkMDYyMGJkMWY1M2ZlNDMzOWU5N2EwMjllOTRkNTY0MGU4NDdiODYifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/experiments.py#L492-L502",
+          "version": "repo-lines-v1:sha256:3bc3683204c63a6031a08aa68c49252dfc0c0c7850d1c49f1d7b243c338466e3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJjMWJiZWE1ODM2ODBhZDViYzE2ZWJlOGMyMzEyN2JiZmU2ZTNkYzA0ODYzOTU5OWNlYzNiMzQ5ZDk5NTRkYWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU2YWEyOTI5YjM5OTdjNjI2NzhhMGYxZmVkZmJkMzMzNDkzMDRiYzE1MjdjNGMyZGNmOWI5OWUyNzZkNTc3ZTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdjY2Q0YTg3N2RhZjEzOTQ1N2IwYTY0MGJjY2RhNjkzMzk2MmY5MjMwYmEzZWU1NzJhMmFjMjU1NDdkNjgyY2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM4NTc2NTU5NGMxNDhlZGFlOWJiNDk5YWYzNjQzNGYxNTQyOTNiNjRiYjBhMTJhZGZhMTRkOTZkODhkMDZlMzEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_61e7a8b341744c9db11ef84da09743ae",
+      "statement": "DOI acquisition validates host and identifier, fetches a bundle with optional hash pin, and then reconstitutes it rather than submitting the ensemble.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/experiments.py#L399-L437",
+          "version": "repo-lines-v1:sha256:bab257825ad26dc3c0d1c828be4d07b5a6f58ec0a84768bbca588d9821297424:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2ZjI3MmQyNDg2MTNhOTlhZThlZGU3MjQ0NTIxYzI0OGEwNjZmZGEwMGU0OGNlMWMzMzMxMjhlMDE2MWJkNjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5MDlhNTNhNjE4ZDAyOGUxZDMwMDBjMGE3YWJjZWVjYmU1ZmIzN2Y0ZTUxMWVmZTQ2NjQzZmFkNmU2Njg3MmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBkZmJlYTc4NDE2YjQzZTU3YWJkOWI4M2UyN2FhMjZmOTE2ZjA3MmI3NTI0YThkNjM0MGU1NmY3OTM1NmEyMDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZlNDJlOTM4MmIyNzk0MGRmZTEyYzdlMDA4YTViODBiZWY4OGVkMjdmYzM2ZDJiNTk4NjU0OGQ3ZmE4MGRkOGUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/experiments.py#L774-L820",
+          "version": "repo-lines-v1:sha256:babf56fc781b7434d4c6f590ba0d9e11f56f4721f77501d514f063818abd50b6:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhlYzhmNDM4YWMyOTI2ZDY1MjUzNWZkMjZhODhkZjI5ZGVjZGNhZjcyZjQ5NWQ2OGJiNjVjOTIyNzQyOWJjYjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1MDMyZTk2NGQwOTMyMzUxZTVkMTg1MjY5MjgxYjE3MWEzYTA5YjA4YjI4NmU2NjFlYTQ3MDMyM2M4MmViNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIyOWZlNGQ0YmNkZDM2ODE4NWFkM2ExYjg4Y2Y1NTZiMTg0NWNkYjAxMjA1ZWQwMjllNzRlYTY4NzJjMDliNWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhiNTIyZjkyMmQ0OGQyNzQ0YTgzYTkzYzg3ZGQ2MjlkYzYwZjVlNjI4NGI3NTJkYjMzOGQ0MzQyNGU2YTcxNmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0b781aebb2124d7d9a391f7feb44a6e9",
+      "statement": "Reconstitution checks schema and workflow mainEntity before rebasing configs, materializing declared inputs, resolving external HPC config, and optionally running analysis validation.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/experiments.py#L509-L613",
+          "version": "repo-lines-v1:sha256:b78f442cfa784f079e624abf125690b9f7e1af63a436bfb76ab8367b043321fb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1NWJlMDY4NDExZWRiOWExYmQwNzVhOGI5OGZkYTEzMDBmZGY2NTRlY2ZhNmFmZjM3YjlmOWVjYzdiZGZlYzY4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1MmJhZTcxMTA0MjVmYTIzYzc3ODBiNzY3MWI2MjhjN2NkMTAwNmUwOGU1NzVhM2YwODY2NzQ0Yzk0NTg0OTFjIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjNmU1MTM4MTFjNzEzMzFlNmNjYTYyY2RlNmQxNWI1NjgzNzhkOTg0MDEwNDFlMzM0M2MyOTIzNWM3MTAyZDllIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhNDM4ZDA1NGFmZDUwMjc2MDI3NjY5OWU4NDhjNThlOGYwMTlmMzM0M2RiNTUzYmI0ZDZlMjhjZGVjOTUyN2YyIn0"
+        },
+        {
+          "resource": "repo://src/hhemt/experiments.py#L874-L925",
+          "version": "repo-lines-v1:sha256:5351d26f94cbc7efd8d5bb6b5be73b92a3e5b1dfaec123e7cee02c9d87e169e8:eyJzZWxlY3RlZExpbmVDb3VudCI6NTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyNDc0ZGM2NDRhMmVmMzhlODE1MjEwNTg5OTEwNzQyNWRlM2VjMzc4MmZiZGJkMzhiOGE1MWM3YzNkZDY3ZTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlZjBmMmZkZTc3MmZiOWMyOWIyZDgxOTI2NDZjNDEwYTYyY2NlZTdiOTM3NDczYzkzMzRiNzlmODIwYmZkNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIyOWZlNGQ0YmNkZDM2ODE4NWFkM2ExYjg4Y2Y1NTZiMTg0NWNkYjAxMjA1ZWQwMjllNzRlYTY4NzJjMDliNWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVlZTlkOGIxMWQxNGFlMzZlYmE2NjNjZTY1ZDQ3ZTIwODFmYjkwZjUyOTI1MTgwYThhOWE3M2QxYWU5ZWJhNTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_342325c6558b4720b9810f26eca19352",
+      "statement": "HPC profiles are explicit external inputs; container ingest requires carried image manifests and matching target matrix hardware families, and writes a derived profile pointing to the SIF root.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/experiments.py#L533-L596",
+          "version": "repo-lines-v1:sha256:709716ca0b687a3cd3869d29c5c6e3c8337a472bb61575880ef77470726e298b:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyMTljMjA4MzlkZjM0ZWMwYTBjYTg5ZDA1MTg0YjgzOGI5MTIyODA4MzliMDE1MmM0YzBmNDdlMjQ2M2M3OWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1MDMyZTk2NGQwOTMyMzUxZTVkMTg1MjY5MjgxYjE3MWEzYTA5YjA4YjI4NmU2NjFlYTQ3MDMyM2M4MmViNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhjZDkwODdiNjc1YTc0OGRhYjMzNDk1NjYwODBiNzNiMTNhNjA3YzhmMmUwM2QzODE4MGZkODFiMWRjOTdjYTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjliOTE5ZGU2ZDIyZDczY2M3NTk3Y2IwZmJjMTU5MjZiZjA0ZDE2NjdkMzgzMDcyNjc1MzI0NzAzZjZlZWJlMmUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/experiments.py#L616-L650",
+          "version": "repo-lines-v1:sha256:d6123066b87a02402390f8b1df1d14b41fc97ece052cfd2d05e44fb197a27c19:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkzYmQ1YmZkMjg2YzdhZjYyMGNmMzgwODA4YmQxNjY2NDQ0MzQ5NGJkZTQ3ZjFiMjhhODIyMWJmNTMxYjYxNzUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNjMjE2NjM3MGFkNWFjZDFmODNmZjQ5NjQ3ZTYxOWY4NTE5YTUyYzA2MTJhNzljMzZjNjE3NWFjNjEzYzBkZTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY4Y2NlNWMzN2RjZmJjMjRlNjkxNDczOGY2ZThjY2E2ZWZjNTIxODgzMWMyMGQyOWE0MTY4OTMxZGIzMGM3YzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjcyN2Y3M2YxMmNiMjU4MjE2MTJlODU2NTk5ZDA5NTRiYTJmOTVmOTNiY2FjYTY2YmZkYzYyOWU4NzIxM2YyMWQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/experiments.py#L659-L695",
+          "version": "repo-lines-v1:sha256:8a6e7aa1edf14de18a159290574b8cbc491eaabcb84cf0ea650b468941cea6d9:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjYmM3OGQ3NDAxY2M0ZDc1MTQ1YWVmNjU2ODkxNDM0ZGY2ZThlMzg2ZmM3YTYxNTllMTczMTFiOTU0ZDRkNmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1MDMyZTk2NGQwOTMyMzUxZTVkMTg1MjY5MjgxYjE3MWEzYTA5YjA4YjI4NmU2NjFlYTQ3MDMyM2M4MmViNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY2NjBlZGE0ZWNkYWIxMjVkOGU3MGZjOGE0NTVhZGIyMzQ0YjdiYTY5ZDg4ODYyNGM3YzM2OTlhMDAwMzJkNjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQyZWZhMjE2NmZhYTJmMzEyMzg1NmQxNzQxMDA2ZjVkYWIxMmIyODI4MzEzOWFjY2JlYjRiMzhlM2IwMjViM2IifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ccf46a2d72cf43999071ed6025b4d94e",
+      "statement": "Ingest reuses images based on manifest digest or rebuilds with a matching carried toolkit commit, explicit build config and no live producer; build failure or missing output manifests refuses ingestion.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/experiments.py#L698-L771",
+          "version": "repo-lines-v1:sha256:b2aedc8aba972ae0d06cdb6f7425bdbb53570d1ce5aa66bb9f15c57826d8f88c:eyJzZWxlY3RlZExpbmVDb3VudCI6NzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgzMjFmNjU3NTZmMjc4YTIzMzYxNjc0N2RkNDE2ZDc3MTVlNGRlODIwMDRlYTYxNjE3N2ZlZWEwODM4Mjc5MGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1MDMyZTk2NGQwOTMyMzUxZTVkMTg1MjY5MjgxYjE3MWEzYTA5YjA4YjI4NmU2NjFlYTQ3MDMyM2M4MmViNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIyOWZlNGQ0YmNkZDM2ODE4NWFkM2ExYjg4Y2Y1NTZiMTg0NWNkYjAxMjA1ZWQwMjllNzRlYTY4NzJjMDliNWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRjNzIzNWQ5MWI3YjAxZWUyNjQ0YmUwOWIzYmU0ZTk0YmE1NjlhNDgzMzE3MTMyZjVmYTI3YWNiOGNmYThmN2QifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2cbd13689ea14fa9b92a80c1c26ed423",
+      "statement": "Reprex extraction refuses unsafe replacement destinations, while threaded ZIP extraction preserves standard-library sanitized target semantics and its optional same-size optimization is not content verification.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/bundle/_archive.py#L283-L387",
+          "version": "repo-lines-v1:sha256:07fe42cadc1e2e88ca056101073df744d669185794a94c3c4a2b77ac7d65e92a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyNzNmOTA0NTRkYzAwN2I3NTFiNGMwZDhjZDgwMjRiODY5OTUwZmUyYjYzMGZmOGYyZDg3MTg2ODE5OTdhNjFiIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJiMjljNTI0NDM0YzAwOWFhZjBkN2ZlOWUyZmZlNzIyYjE3MGNmOGViMWM4YzE1NzVlNGUzYmQ1MWU5MjZjNzFiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxYWEyOGZiMmQ3ZTdhNTgyZTMzOWFkZTg0OGRlMWJlNTA0NTM0ZmMyNjM3OWI2M2RhZTkyZmIxZjI4ZWVkOWU4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        },
+        {
+          "resource": "repo://src/hhemt/bundle/_reprex.py#L201-L247",
+          "version": "repo-lines-v1:sha256:fe9cff6c397fe9d5cf25776c14890228623fccdd7ab85440c59253158a7b078a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3NGE3MTlmYTM1MzQ4YWU1NGFjZWIyY2MwYzViZTcxMGQ2MjU1ODU5ZTYxMmI5MjVjODVlNWI0ZDZhYmU3ZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI4ZDVjYzllNjM1OTc5NmVmNzE4MjAzZDU2NjA3YjBlY2QxMmRlZmY4Y2YzNDE4MDE0NDQxYjVmNDYwMTZmMjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNlZTMzMWNhNmRmZjhjOTZlMzZmN2MyODk2ZDYyM2I5NDkwZTM3MTA4MThlMTRhMDQ3Y2MwOWQwNWUwZjU5YTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ5N2FjZGJlZTUxMWI4MGRlMTRlZTE5YzdmMjIxYTlkM2UxOTNhMjIyYmEzMTU5MDU2ZDRlMmMwN2FkOGVmZmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b70f042ffdd9425d9b8daba7565e4c54",
+      "statement": "Reprex hashes referenced SIF bytes and fails on mismatch without checking signatures; absent references have distinct container-unverified and vacuous-pass states.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/bundle/_reprex.py#L100-L168",
+          "version": "repo-lines-v1:sha256:807b3ca614b0ee53267d811166fdbbe90e8511899f0b49b31829a506c1b514b8:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFiMjU1YmViMzBkNDY3N2MyNzcxOGQxZjNkYzg0ZjEzOTE5M2IwNWY1MmQwZTQxMmI1YWE4MmUyZDdhOTJiNzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRkNTU3OGQ3YzFjOTNlYzFhZmI0NDlhOWQyYjkzY2MwOWNkMDc5NDQ5ZWE2OWUzMGI1ZmYwZDUyNGIwNGRmZGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjEyMjQ3NWZjMzBlYzllM2VmZmZiMDVhZjdmNGJmY2UxY2UwYzJjOTRiYmZmYjExODM1MDczNzgwODE3YmYwOGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUyYmUyYzljNzQ1MjZkZjJlMjQ3N2JhMjQwMjgyY2I3ODNiNjkyNWQzN2UzNjhhNmUwMjc5YjE5MWFmMGU0ODEifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/bundle/_reprex.py#L280-L292",
+          "version": "repo-lines-v1:sha256:0303fc20426eb2e637c65a44141b3f031bf6575ba44b8af8966a8d167eb99f46:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMzMzgwNTgxMjJlNjgzYTNjNTFmOTBlZjBkMDUxMmE1MzkxY2ZkY2I5ZTk0YjI1NmJjMDVkMDIyNjBlZTQzNDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ0MmEzMTZhY2EzZjI5MzFhMjZiMzg1Njk1YTk3NTg1M2JkZDhhYjIyNmUzMDRlYWRjNmM3NWMxNzhhOTk3NDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY1NWJmNTIyZTE3NWQzNTdmNGQzOGE0YmUzMDNiYWI5N2ZhNWQxZjMzZjZhMDE5YWE5YmQwMzM4ZDhhODg1ZTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFiMDFlYzBiZTk3ZjE4NmQ2YzRmOTQzNjE5M2VmNjI4OWU4Yzc3OWI2YWRhMWNkNjg5MzliODBkNTM1YjI2ZjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_adbd501b32e64b1e9b8b6b3c0e98c35d",
+      "statement": "Reprex overlays target partition selectors and may fall back from full preflight to row-cap validation; runnable reports absence of row-cap problem pairs, not completed execution.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/bundle/_reprex.py#L294-L345",
+          "version": "repo-lines-v1:sha256:7b600a0e850a665573ceb2a67fe4e9fd888fcb0091a33891be420ccd8922b616:eyJzZWxlY3RlZExpbmVDb3VudCI6NTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcwYTIxODg0OGY3MjViZjdkZjBlNmRlYTg3MTc2ODdkYWFlMmY3NzNkYzQ3NWM1OGQ1M2RlNjQ1NzliYzU0N2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM4MmJlYzVlMDBmMjQ4NGIwZTk3YzAxZGE5MGVmZGQ0ZTQ0NWQyZjlhOWMwODdjZjhhY2M4Yzk3YWQwZTNmMWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZhOTMyMjUzZDI1Y2U5NmIwM2QwM2QyNWViNWM2MjA1ZTk5MTQ4YTVjYzQwYWQ2MTliZTk0ZmIwMmUwMzYwM2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE1ZDliY2U1ZjhjNzMwMmJiOTg3ZWY2YmViZTE0Zjg0OTljYjQzMmY0YzkzNGI0MDJiODM4NjBlNzg5M2Q1NzAifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/bundle/_reprex.py#L350-L428",
+          "version": "repo-lines-v1:sha256:b06eaee1ee623764d9422043dcdfcdcd797a17998a19e63a325dde29457267a8:eyJzZWxlY3RlZExpbmVDb3VudCI6NzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcyMTUwZjQ5OTFjY2ExZDQ4MGYxNTliNWRkMWE0OWJmN2EzMDAzN2M1OWY2MmI4OTY2NDVmY2UzMDVjM2E1ZDciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5MDlhNTNhNjE4ZDAyOGUxZDMwMDBjMGE3YWJjZWVjYmU1ZmIzN2Y0ZTUxMWVmZTQ2NjQzZmFkNmU2Njg3MmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhjYzRhN2QxY2M3OTZhYmEzZTQ2NzIzMzI3ZjUxN2U5ZjgxMTk4MmQyNTBmMDcwMjk4NmU0YjU3NjRhZDk1ODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNhMDY0YTdiMjllMTQyZWVkZWRhNWEwNDNkNTIyNWMyZTMxMjBjMGEyNTJmNjg4NWExZGMwMzhlNGI1Y2I5N2UifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_23749d5f95994ad9b3f937eaef210beb",
+      "statement": "Emit-time user-information scanning has generic, producer-derived and optional private-list layers, while consume-side scanning is informational and scans decoded text arrays and supported binary containers as well as text.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/bundle/_reprex.py#L171-L198",
+          "version": "repo-lines-v1:sha256:07ebf273f4c9caf74a2ac90fbfc523852537ced9b77f7c7e3a589ea3acdbbce7:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1YTgzYmU2NTkwZjUwNGFhZjM3MGE5NDgxMDhhZTcyYzNiNzQyNWY5ZTM5M2E5NDRiMjU2YmNkOTY2NzljYWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlYjRmNmIwNDlkZDkzYmQ3ZGRhZjQ0OTYxNWUwZTQyMmNmNDE1NjQxZWI2M2IwMmQ2MzA4NGJmNWM5MGE3YzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAzNjY4MDc5ZjgwYjQwN2Y1Y2ZmZDNkNjUwNTVjMDEwYzFjNDZhYmU4ZGZlNWVmY2ZkMWFmMjQwMWFjNzhmZjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZiOTNlMDMzZjM3YjAyZjVhMTA2MDEyOTY1NzZmZGU4Yzk5ZTA3YTE4YmU4MjdiNjcyYzUyNzFmNjkwMjQ4MjEifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/bundle/_reprex_gate.py#L1-L18",
+          "version": "repo-lines-v1:sha256:5d5e19ff8a89ef4c33175dffa30ab251d9ff120d0d1e68646729849ece5cca15:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxMTAzOGEzYTBiMmU2ZWQ2MWEwYWM3ZjgwYmZlZmU4OGZlYjg2MGMzMmUyNmEzYjMzMjE3ZTY2YmNkYTI2NjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJmN2IzYjgzYjE5NzViZjA4MWY0ZGQyYjE0ZmQ0ODkzMThkODM5NGM5ZmE5MzkwOGY4NjNkMjRhZGJkOGQ1MDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhYWY3NjM3Y2I2ZTdlNWRiODVkNjM0Mjc0NjAxNGRmMDQxY2NkNTU4YTkyMGIyOWViNmFjNzE5ZDdiYWY1YzIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/bundle/_reprex_gate.py#L179-L258",
+          "version": "repo-lines-v1:sha256:d805f09f379a186aada2cf0397565901cca47957f5831b5834502a7a12344d78:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYzMTg3YzU4MDc4YTZiOTc1YzdjMTc0NjA3OWY4ZTg0ZjRkNmNiZTEyOGE0OTZkNmU1MGVjZTdiYTVkY2Y5NjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY0MjFhYWQwNzFhN2ZhZjQyOTBmYTVhNWYyZjkzNGIzODljMDJmZmRiM2JlMmZmYWQ5YjQ2OGQzMDgwZGI5NTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjEwNTYzM2E2MGU0ZGEwYjM4ZjVhMjBhNDg2NjE4OGI1NGMwOTE1MzEyMTRlZmJiZTczYTVhOTFiY2UxZWFjZDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU1MjFmY2E3NGU1YzE4NzAzZmRhZTU3YTczYmRjNDAwYjdhZGMzY2FkYzkzNmVlNjIyNjM5OTU2YzgwMjljMDIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/bundle/_reprex_gate.py#L77-L111",
+          "version": "repo-lines-v1:sha256:52ff4623a3fb5a90b9714df7d6290484f548cd5d52ddc2b5f88e1e75845b2228:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhlMDZhZjlmNjU0M2YzZDdlZTE3NDFkMWIzZDY3NTE3M2NkZmM1ZDkzYjAyOGVlYzMwNWQ1YzQwNmVlNGMyMWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ5N2JkZDFiNmJiZWFhOWU4MzQwOGRhMjljNGU2M2RmNjRhZDQ2ZmFkZGI3M2FhMWQ4ZTZlM2Q3N2E3Nzk2NDUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhjYzRhN2QxY2M3OTZhYmEzZTQ2NzIzMzI3ZjUxN2U5ZjgxMTk4MmQyNTBmMDcwMjk4NmU0YjU3NjRhZDk1ODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3ZjY4Mzg2YzQyODZiNDhiNDVmZTE1NWYwNzYxZThiYjAwYzMxYjc5ZDMyYWE5OTQ0NDY3ZjM0YmEwNWQ5MTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5941696674a446e488e2dcf6c22cd954",
+      "statement": "The operator DOI workflow requires matching sandbox fetch/deposit URLs, target-local HPC configuration for batch execution, and treats SHA-256 as integrity rather than execution trust.",
+      "evidence": [
+        {
+          "resource": "repo://docs/how-to/doi-roundtrip-e2e.md#L102-L107",
+          "version": "repo-lines-v1:sha256:a6fa7a3223a5d5b0a888b8e638d0018b85caccb2f63a5f0e4bab4173caae336a:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2UyNjMwMTJkMGU1YTc0MTJhNWQ4ZDIzYjUyYzRiMzM3NjJmYTE2MzJkOWM2MjkxNzZmMTlkMzIwNmI1MGUyOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWIyZThhMmViYmVjZmY0MmIzNTJmN2E3YzdjNWZjZmY0N2I3MWFkZDE4OTM1M2MwMDcyNTkwNTAwNThiY2RiZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTllYWM3OWJiZjZmN2RhZDMwNGNlNjlhY2FjODU0ZWJjZmZlM2NhZWMyMjkwOTdjNWJkM2NmNTZiN2EyMDUwNSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://docs/how-to/doi-roundtrip-e2e.md#L33-L54",
+          "version": "repo-lines-v1:sha256:3a7ddb2b87c9ce4ca7991bf59aba452f16935e891dabab61c93c477ae1e2d1b1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIyODMyMWRhMTQyZGE0NjYyNTU1ZDdiZGIxYWUyZDE2YzgxN2ViYmQyYmM5MjI1M2EzNDZhNGQzYjI3ZGI2NjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ0MjJhNjkwMmVkNzExNjNkZDUyZTNjOWFmNzM5YzIxZjY3N2Y5MjdkYTA0MDNlNTc0YjM0OGJiZjdkYmI0ZjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU3NWY4NzljOWQ0NmMzYjk3ZDBiZjVmYTJkZTYwYmVlZWM3NGYyNjk3MTI1YjUyNWE1ZDY1MzY3NDJiNzY0OGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU3NDIzNzA2YjVlNmQxYzhjNDJiODU2ZjMxM2M1YmQ4NWYxZTlkNWY4YTk4ZDJlMmI4ZjNiZjgxYTllMWNmMzMifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

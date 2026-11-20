@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:1e853a483238ca44c5928375e13dac7f1c2b56f1a59cd7ea039222472e12dbca",
+  "claims": [
+    {
+      "id": "claim_7f667261753f437689f77eb13ec7d880",
+      "statement": "Native workflow setup asserts compiled models unless direct compile flags are passed; container mode skips native compilation and its verification while leaving input preprocessing independent.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/setup_workflow.py#L344-L391",
+          "version": "repo-lines-v1:sha256:71064779ca82be0543a966e1476d6560e4c04cbe94c47cb35ad1eb54f6aded3c:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdjM2U3OGZmN2EwM2EzYjAzNmJkNDY4YjkzMjBmZGJkNzM4YzVjODNiZWU4ZGYwNmJhYTAxMmVmODdjYWRkMDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFhN2UyOTBiNzllOGM0Nzg2YTNiZGRlYWEzNjc4OWQ0NzJkMjFkNGVjN2NjYjg4ZDhlN2IwYmU2YWRhOTg0NjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY1OWRiOTQwY2YxMGZjOGI2ZDA2YzU2ZTI2NzFjNWMxNTAxYzgzOWRiYWJmYTU5YjA2YWJkNzQwNDdkYjdkYjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVmODMzMWU1MmI2YTFmMjliNjNlMzZkODcwODk2NTA4ZjQ3ZTY4MWMwNDY4NmYzNGNlMTVlOWNiMjI4ZGVlOWQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/setup_workflow.py#L617-L649",
+          "version": "repo-lines-v1:sha256:7f6e003c3df1159a1e51924c9b49cc2dd89fa3ec36fa1d37f9f7f4a0c17ea6c2:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQxM2MxMDA0YjUyY2Q4ZjhlOWYzNjk4NTRlNmE5MDJmNDMzMjZlYmRhMDg4ZGZjNjFkZGRmN2VhODZjYjQzYjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZkNGU3OGUxZTgwMDBiOTkzMzk4NTNhZmMzNGVkYWI4YTc4NDMxMTJiZWJiMDRmNjA0MTEzOWYwMTMyZjE3NWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdjMWFmM2RlMjc2MThlOTA2ZDc0MDkyYjdkZjY1MGQ1ZGIxMmI5NTMxZWI4ODExY2Y5NjA4NmNhMWNlZDI2OTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBkYzE1YThlZTJiNTRiN2M0ZTc1NzE4OGMwMzUwNGEzMTg5MzdiNTU4ZTJhMmMxNGQxNDc3YjM5NDRhMmM2OWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c1108e65b9cf46a98a8b71dd70342846",
+      "statement": "GPU target hardware/backend resolve from the HPC partition, and setup refuses a GPU request without a resolved backend.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/config/hpc_system.py#L343-L364",
+          "version": "repo-lines-v1:sha256:25c30ca74f6639f177ae16657979ff31eb0a2c22c250f3ccc8182fe13871d06a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1NWEwMjcyNDNhMDc4ZjI3OTU2NzEwZTRlYTE5MDNiZjJhNTYzN2UxMmZmM2Y4MTJjMjNiOTNkYTRmNWRjNTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ1ZGE2MTAxMDE5MjgwOTdlN2NhZWFjYjIzM2YyYWFlZDJhMDY4NzE3MzI0ZGJhNmM4YTRjOTA2NzIwMzcyNmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU2ZGZiZjQ1M2Y3ZjFiZWJhYjcyODM2MWIwZjM5M2VlYjRjMWZiNjY4ZjllYTIyYjkxNmRhY2Y1ZGZmODFkODMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZmMGRhOTY4MWU4ZjBmOGEyODQ3MWY2NGY3ZjljODJmODMxYTNhNDNmNTZiZjViZmVhZWQyOTM5NmI2NTViODAifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/setup_workflow.py#L329-L343",
+          "version": "repo-lines-v1:sha256:db7919359029e0ab85f8d4ed59a451e209cea60d564e63900fc8f21fd14bbe43:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkMDc0MjEyNTU0NjNhN2NmYzY1NzEzOGQwMzYzZjlmMDIzMDA4OGQ0MTUzMjc1NDkzZmZjNWJlYjdhMTVmMGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1MDMyZTk2NGQwOTMyMzUxZTVkMTg1MjY5MjgxYjE3MWEzYTA5YjA4YjI4NmU2NjFlYTQ3MDMyM2M4MmViNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ5NTNjYjMzOTUwZjIxNjg4YWI3Y2QzZjFkMTc0YjEyNmIxYzExNDliYmU3M2E1NWQ4NDA1YjcyZjFkZWE2NjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRhOWQ0NGM0NmM1MmYyMDBjNWFmMzMyZGRlMDNjMDdlOGVmY2U3MWUyNjVhZjIyOGQ2YmVjYWMyMGY5NmJmZGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8c9b8627e3cd4ddc88c91d2fa277638f",
+      "statement": "Native TRITON-only compilation checks the pin and provenance, builds CPU/GPU targets, and uses per-build-directory locking; successful marker reuse is not general automatic source/config invalidation.",
+      "evidence": [
+        {
+          "resource": "repo://docs/how-to/compiling-the-solver.md#L74-L83",
+          "version": "repo-lines-v1:sha256:62006ffa448356f72601636cbe079615d630d213cfde6c5beebeab689a791a1e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2MjY4ZjQyNDJmODNjOWUzNWY4YTU0ZTE2MDBlYWY0NTdiYTg0YmU1ZTk2NzFiZDAwN2I2OGU5NmE5NWYzZjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4NmE4M2EyYmJjMDhlMTkwZTYyODkxZGY5NzVjM2M2MDNmM2QwMTdlZjdlNmZkNTdkY2IzZjdmOTVmYjkxMWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQxN2Q3ZWY1MmU1MWRlNDY2OGQxNTk1YzcwOTQxYmQxNjQ3NjZiMDA2OWRhYTU5NjNiMTEwOTMxNTYwNzkzMTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY3MGIxYmQ1ZDhhNzQwNTRiOTBiYzMzNGU0YWI2NDZiNjNhYzgyN2NmNDc5OTk5Mzg4ZjE0MDI4OWY4NmE5ZGEifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/system.py#L1694-L1790",
+          "version": "repo-lines-v1:sha256:145e10ff181020d9650dfb2fff7a924bb981c0ca22028dea51bd820663309469:eyJzZWxlY3RlZExpbmVDb3VudCI6OTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwNTliOTNlNTZmM2E3N2Q3NTA4ZjAyZTI4ZDUyZGUyZTBkYmQ3ZTU5Yjc3YjkxN2IyYWY1OTM5YWZjMDgxMmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZmNjM1OTRmNmZjMGQ2MWEwMDgyZmZjMmVmMmM3MGExOWQ1ZDU5YzhhODIxOWM5ZDNlMzc5Zjc0Yzc1NmFlYzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVjZDUyYTgzM2RiYWY5MDdkYzUzYzkxMzMyZThjMmNkZGE0MThmODk1ODI2NGQ5ZWYyMjRkODJlNjQ4ZmNjNTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYzZjdmNTg1NzI0YTA3NmRhZDI1YzJkZjhkYjY0ZWZiZjRkMzI2NjE2NzA4NTExYzkyNjc0NWVmMDNiODNlZWMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a383eb2777a64bd2a31be7af0a19fad5",
+      "statement": "SIF identity hashes MPI, accelerator, architecture, source pins, toolkit SHA and recipe/base digests, while filename stems encode only a subset; identity derivation requires a full running toolkit Git SHA.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/sif/identity.py#L128-L175",
+          "version": "repo-lines-v1:sha256:e89179b6e657b5b8a1302dd05fe224cbcbf7462bd74463a87458fd44ea12053f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlhMWZjZDY5ZjI5YjBlNzBmNWNjNGUyNjM4MzExOTg0N2RiYzEyMTQ5NGFkMTNiYzQwNDY0ODlhZmRjNzBjZTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmZTFiZGE4OWVjYWNmN2U1MGE3OTNhNWM3OGY2YWI2ZWVjYjIyMzRjODE1MzFlMGU0MDEzOTUyYTUwZTYyMWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ1ZTkxYTgyNWRjNTBhMzk3MWE2NzBhMjcyMDI3YjMzZTQ1ZWE0NWE4ZDY0NDYzMzBkMTUwMGMzZGJiYjVhY2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYyMGQ3MmQ5NWQ3ZTYzZDBhOWIwMjQxMjM2Yzg0ZmMyMzBiOGYxMmQ4YmM4MjhjN2YzYzlhYzQzOGU4NTdhZGMifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/sif/identity.py#L53-L95",
+          "version": "repo-lines-v1:sha256:cd4a746399b69e027652d066f7c5036b2b2dbdc8a84024131ea6b3c9272d2e20:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc3MWFhYzBhOGM3MjZkMjcyMWFjOGIxNDk2MGNiN2ZjMDYyNmVkOWU2Njk2NDNkNGJiOTlmOGVmN2E1MmZjZjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVlMDJjZTUzZGRhNDYxNzI0NDZhZGY0YTJjZWVkZTZlZDA1MDE4ZDNmNDJlODIxNzZkNzM1NjZmMGQ4NjUxYjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI3YWMxMTU2Y2I5ZGM3MTZmMjU5M2IzMjNkMDg5YjNjYmQyNzMxOGUxNDgxMmYwMjZhMWU0YTk4NzhmNmU5NTIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_37bbe58829174c43a67ae2becefe5ce2",
+      "statement": "SIF planning deduplicates required partition identities and refuses dirty toolkit trees, non-container experiments, incompatible pins and live producers; existing image plus manifest is a planning reuse gate.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/sif/plan.py#L53-L107",
+          "version": "repo-lines-v1:sha256:10b6c2bf892425abf31001448c83ade1009bfe482b80f08a510428307d0964d6:eyJzZWxlY3RlZExpbmVDb3VudCI6NTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjMzdlYTUzNDcxMDI1MTRlYWEzMTE4ZGJkZjc5NDEwNTRhZjA4MWRiNzkyMDcxZjA0ZGVkMzE1MWM3MjJmN2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2ODg2NjJlZDhlMTNiMTFiNmQ2Y2UzNTlmN2U4MWU4NmFjMjZmMmQ3NjUzYmM4YzIzOGZjNWIwOGY2YTJjZWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk0MWIzYjEyYWVjZWUxYWEzODc4MDFlNDY0N2VjYWVjYjMzYWM1NDU4NGI4NzEyYzNlOWJkYzlkYTU5NTlmNjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_aa636762ccdd48eb874f91189620c49b",
+      "statement": "SIF build transactions require a SLURM job step, stage the exact toolkit archive, build temporary images, reject read-back label mismatches, and publish image, checksum and manifest in that order with the manifest last.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/sif/transaction.py#L52-L161",
+          "version": "repo-lines-v1:sha256:6b93018744987b39e28e154ba232fc500afa50ce9d98bec1533cd5d9e67b299c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5ZWI5NTMxZGI0ODVmNWFiODBjODY3YjUxMzIzMTYyMGFjYWMzNWU4Mjk1NjJkMDBkM2RlODJjNzE1YzU4MjRlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1ZTNkMmNkOThlNjVlNDhlYTA1YTY0YTNlNTE3OGZiZDIxYTA4MWZkZTM4MGRhODc3NDgyOWQxMzUzNDNkNDMxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlMTJkMDE4YzYyYjE4NGI4YzcwYzIzY2FjNzljYmMxOTBiZDAxMzIwM2Y3MWI3ZmFjZmRjZWM3NjA4ZWE0YTNkIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_388253f6ac9f4932b140218198e78f7a",
+      "statement": "Container preflight requires matching manifest identity, image digest and recorded labels per partition; build_sifs only relaxes missing-image errors to warnings.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/sif/preflight.py#L33-L117",
+          "version": "repo-lines-v1:sha256:0ea98e18e2a9cb6af271865dc3126b4958f0a3d095a2fb18db6a5db0f64adc05:eyJzZWxlY3RlZExpbmVDb3VudCI6ODUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmNjRlYTI3MDc5MzZlYWQ4ZWY1Nzg2ZjM1YWY3NWEzNjE1NTJkNGExMTU1NTBlMzUzNDc1NjAzNjRkOWE2NWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUxMDM0ODFjNTdkMGYwZGMwZjc2Y2QyY2M4YjM2MDRjNGU4Mjk2ZGE0MTIyYWRkMTllODE3NDVkYzdlMzMxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYwNWE4NzE5ZGYxMTgxMzI5MzFjYzQwN2NhYzAzNDQxNmIzOTMzODJlYzkxY2RlOGEyNWJmNDNiNWM3ZGUyZWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhkNjk0NjY5OWQ2ZmVhYWJhYTVlZDRkNWQ4ZTA5M2ZlNDRiYmJlZGUyNzllYjNhNjkzNDQyMGI0OGNhYTY0MGMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_25202b035e9a47a18e7f09e841b0c390",
+      "statement": "Container simulation resolves the partition image, applies GPU flags only for GPU modes, binds model-specific writable output, and injects host profile modules, libraries and system/analysis binds.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/run_simulation.py#L1471-L1520",
+          "version": "repo-lines-v1:sha256:e6e68265230e37fdb83fc9597f84f4f4af747f52c6ec01994209a76c5ba90959:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAyY2UwYWViOTVkNTVkOTRlYzAyMWYyZGM5Y2U1NWVmOTAwNmE3Y2JlYTEwYzRkOTM4YjEzMWYzNDI3NWEyOGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY3YTIyNDI2Yzg4NzhkMzdmYTlhMDQ3YTU2MmRlOWNhZWRkZDMzMzVkMzA5MmQxNDU0NDJiMDk4NmMzY2RmYmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY4ZjdhNzQxY2Y4ZTFkYjNhNGNkYTQxN2ViMDc4YzdhZmYxMTEwYTE4MzkzNTEzZDY3YmYwZWE0ODZjNDVlZWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJjYTQ3YzVkZTAxNDYzZWIxM2VhZGE5YjQ5MGU1Y2RhM2M5YjVlY2IxYTAxZjU3NjFkMzYwYTNiM2Q0YWVjYTkifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/run_simulation.py#L2173-L2198",
+          "version": "repo-lines-v1:sha256:5db4f07888117b9fc9a4f788c2bee7497ce36d7946d370db767ecb071bdd44fa:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU0NjI5YjBmNjlmMjEyODI3NmVmNDVmODI4NDM5YmE2YWM3ODFkZmY5MjUxN2E4ZjU5NzYyMmZkNDA2MjlmOGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlZDA5MWM4MThjNWZjMGRhNDcxZjY4NTZmMTJlOGEzMDEzMmUxYTgyNTgwNWZjMjM2MWY0MjdmOTMwZWU3NmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMyZWIwN2E0NjFkNWU2MDUxNTczNmRlM2UwOGEyMjZkNzZhNWQzNjRkZDMxMTk2NTA0YTE4OGJjNDZhOTUzMGIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMxMjFiNmUxNTQ3N2E3MmQ5YjM3MDdiZWZkMDk4Y2UwZjEwNjNmZjFjNjE4MDUzOGIyMTFiMmM4ZDU4ZTIzNjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b06d9fb5ea4c4fc3ac8b470a37484b9c",
+      "statement": "The four SIF family recipes are packaged under src/hhemt/sif/recipes rather than containers.",
+      "evidence": [
+        {
+          "resource": "repo://containers/README.md#L3-L7",
+          "version": "repo-lines-v1:sha256:e3661659f5ab32c87e4bb6a1148aab5ac585c9cf7ebaeb332c2d87b182596197:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGYzMjhjNjYyYzY1MTE4NGE4MDk4Y2VhYzliYmZkMWMxM2Q5OTVjOTM1NGM4NjFmNjc3YTY2MzA1Mzc4YWZmZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzdlZWM5MDI1NTk2NzNhYWMxMzM2MGJjZTRjMzMzNDZmY2I5Y2JhZjI3Y2E2M2ZlNzNhZjgwZmU3OTdhNmE1YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjIsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMWNmNWY0MTBlYmNiYjVlYzZjZTVlMDNhNzU3YmY0OTkwYTJmM2NkYjg1NzdiOWRhNDQ1YWYyOWI4MzRjMmVmNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNmE1NTkxYjQ0NjRjNGU3NDcxNjRiNjFhNjBiMzFjYTc4YTgwOGUzZGQ3Y2ZiMmZiZjE5MmYzNDA4MjM3MjhlMyJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

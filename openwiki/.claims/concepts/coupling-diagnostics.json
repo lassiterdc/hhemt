@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:51ec1e29d9d44025f700d86574807cdcf99aafc2c420ee985ac3755e788491c2",
+  "claims": [
+    {
+      "id": "claim_eb3f1c2c7856423f9d954b204b25b50a",
+      "statement": "Coupling selection writes nodes in model order, refuses unplaced candidates and limits one-per-cell reduction to legacy mode.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/scenario.py#L3579-L3645",
+          "version": "repo-lines-v1:sha256:32996cca023ec8e041a439b56542ed77e51e4625274f75dd773d074fe9a0f54f:eyJzZWxlY3RlZExpbmVDb3VudCI6NjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2N2RhY2U4MTEwYmY4YzkxY2FkNmMzOTliZDE0MWZhZTUyYTNlZjg2YjdhZGYxYTgwMjhkYmE3MTA1NmVlNTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExOTg5Mjk1NzllM2I4Mzg5ODQ1ZWYzZGE0YWU5M2UxY2IzMzAwNDEzY2FkMTllY2E1MTlhZTA5ZGUzNmUxNzIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEwOWYzYjcwMDliMjdlNTYwZGE5N2ZkMmZhMWExOTE1ZDhiOWQxOGY4ZTE4MDUzZTU2OTNlZmU2MzA2Y2Q1NzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM4OTkwYmJmZWI0OWI0NjlhZTQ0MmE0ZmMyZjA5YmE4NTM2OWU4NjVjMjFlYzViZjA1OTFjMGNiYjkyMzMzZWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_61a67fcf700b4050a9bbac8cca8dcd58",
+      "statement": "The exchange decoder requires a width-bearing SWM2 header, matching unique node identities and whole nonempty records; exchange uses signed cfs on disk, positive to sewer, converted with 0.028316847.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/coupling_exchange.py#L11-L25",
+          "version": "repo-lines-v1:sha256:e997e0c4fdd8b28b3de90fe7a7f4181e399a07578be16d32464f64f1a9c3f565:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhZWFkNTJkMjIxYzM0ZmMxOWU1NWYxZmI5NTA1NTcyZjE4OGE4YTg5NGMzOTcxYzgyN2JmZDU3NTBjMzdmOGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg2YzI5MTI2Y2M2NzFhZTdlNDk1YjIwOWMxOTBjY2NhNzk1ZDVlNjRmMzc3ZWJjY2JjOTgzNDcwYjEyZmQ1OWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNmYTY1MTY5OTk0YWUyZDFmMDVhNDJkNzNkYWJmYTk1NTdmODJjNDU4NDRkODRlOWE5OTFmNjg2ZmViZTRiMTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE2NDUxMzkyOTIyMmI4ZDI2NDM5ZjhiODczNWFmMjc2NDY4OWJjNGFmYjJiNmVlYjNmMGExMDBlNDYwNGIwMjAifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/coupling_exchange.py#L282-L352",
+          "version": "repo-lines-v1:sha256:6475aca13a926caa60f449b5c4e66acfc40d565a338f696cfd56a5aba543fb54:eyJzZWxlY3RlZExpbmVDb3VudCI6NzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg3NGY2MDhmZDZkZjI0OGMxNWViMDg3MjUwZGE4ODdmY2IxNWUyZGM3ZjExZTg3YjFmZGNiYWMwN2M1ZWMzMmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJlMjJmZThiMGExY2I4YTU1OWU4OTNiZTc2NzEyNWYwZTczZmJjNzFlZWM3OWRiM2ZiOGM4ZTg4ZmQ4MTk1YjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY0ZTQ3NDlkNmVjODNiNjcwMDE4Y2E5YzhkYzRjYmRlMGM1YmI3MTJlMjg4MTNjMTZkNjA2OTU5OGEwYzc2MzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImExYThiMmVjYjNlM2MzYjliN2NiZjE0YjdkZjVmY2JkYTA3NjIxOGRjZmM1OTUxNmFhN2Y3Y2UxYTQxMGFmNjAifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/coupling_exchange.py#L62-L72",
+          "version": "repo-lines-v1:sha256:81f630f072e73a3272cca424350560b24337412b42a89e4f6a188e88f16f1226:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM4ZWU2Yjg0YjBiMzE0Y2Y3NDcxYjI1MTY0YjcyNzRjNDNkNzI3NThlZGI0YTg4YTU4MjhlMzBjNTkxOTg4ZTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4ZGU0ZDZmMDEzZDAxZWFjNzYxZTkwMzVhNmM0ODhmYTljOWM2OTYxYjc5Y2ZiYThkYWY4ZmY3OGNhZDI5MjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRjMWI4ZTU0YmM5NmVlY2Y3YTJmOGFkY2FiMWMwMzljN2RiNWUwOGUzNzQ3M2ZkMTRjYzg3ZWJmM2YxMjViNDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMzOWExN2JmMTgwM2QwOGIwZDQ2OWQxZjViNzU2MGQxZTI5NTIyZmMzOGUyZjk0Y2NlNzYxODYxNDg4Y2QzNmUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_db67c75ec2ef432fa124aacda055834a",
+      "statement": "Exchange statistics integrate signed and directional volumes over timestep lengths, preserve first directional peak times, and return peak times in minutes and surcharge duration in seconds.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/coupling_exchange.py#L369-L404",
+          "version": "repo-lines-v1:sha256:2c72a6e1641fce21ecd6ab6c57a156a824dbfe5077de8967bcc283aa3509ea7d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMxZDYzMWRlMDEyOGI0OWI5OWYyMmQ2MzY4MzFkNmM0YWZjNjJhNGQ3MjVhZDZiOWZhZTQxYjQ2OWJkZDlhZWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM2MWJhNDkzMTFiZWUwODQ5MDVlNTk1NjVmZDdjNjRkMmY0OTNiZWFlYTY5ZGZkOGVjNGUwNzNhNjNjOWZmYjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUyZWNmOWFjZGJhNzJlMTJjYzhmMjQ5Njk1NDRlMjM0NDAxNWYzNTlhZmZlYjBiOTRmMTRmNDQxZGI5MTU1MWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ce1c75ae2d9e4323ab5f0ee38c97d61f",
+      "statement": "Reporting interval reduction apportions overlapping step volumes rather than sampling flows and uses a guessed 1e-3 interval-fraction final-coverage tolerance, not a demonstrated solver accuracy bound.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/coupling_exchange.py#L447-L510",
+          "version": "repo-lines-v1:sha256:2d82eb8d97b681480fb01a2011e5f6b418bf7960817ddaf95e4b6eb2e06080f2:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRlOTdiZTEyNTkwZTQ1ZTEzZWQ3MmFjNDkzNjFmYTg3Mjk1MDZmMWIzZTFlODVmNWRlNGI5YjBiYjYzNzMzNzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk4MzBmYzE3OTNmZTc4NWY5ZDliNTQzYmUxOTBlOGU5OTI0Zjc3NTVkMmY1M2VkMTdkMmE4MmU1MzAzNTlkN2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/coupling_exchange.py#L78-L82",
+          "version": "repo-lines-v1:sha256:0408b7610544a51a2d1aec79a548e013aafcad6213b4273375d447c666e484ac:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjU0NjgxYzc2NWU4MzE1YTI1YWI1MzM3MmRlNDM2NzE0ODBhMTg4OWZhZjljMGFkYWI3NDgxYzQ5ZWYzMzAyZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzU2NjVkN2I4NmJkMDRiOTg4N2ZkMzdhYWNlMWY4MTVlYjZjOTZkMzQ1MGQxMDRhYzRjODE1NWI2NDNhYTMzOSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWUxYjljNDI3YjFlZDI4NjYxNzRmYzNhZmUwNDhkZjk3YmI4MGU5ODBjMzEzOWMwMGJjMjYxMTQ0ZDk5ZmE0YiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzQxMGIwMTM5YTYzOWYwOGY1ZWIwZGNkNDAyZDVjMTUyYTllOTkxNmUwNDFhNzQzN2JkMzM3MWY3Yjc1ODZiYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_f99803a221e04e54874644655312005e",
+      "statement": "Processing requires exactly one exchange sidefile when enabled and maps interval means/statistics to node outputs with NaN for uncoupled nodes and a separate membership flag.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/process_simulation.py#L2142-L2190",
+          "version": "repo-lines-v1:sha256:84f3c765b3e8929cfa1567ede7d7acb1fffd3ab7d8655a3cf0d79312cb1504ce:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM1YTg3NTFmZjg4MjQyZmRiZTk1OWU0NDA2N2RlOGU0ZmViZjFiMTU0NTg3Yjk1ZjliMGU0M2UzNWQzMzY2MmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM2ZGZkNTQ5MDlkMTk3OTA2ZmQ5MDBhYTM2ZDEwMmE5ODQyOGI3NGZmNWQ3MjZlY2FiOWIwNDE3NTNlYzY0NjUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc1OWJjZWEzYmM4MGU3OGU0OTdlZjBjNGFjMjAyNzViZWQ5MTgzZGNkYzZmNGNkOGRkZTcwNjIyYTlmNzllNmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM0NzI2ZjQxNTJkY2U4OGU2YmM4YTQ0OTRhOTkwMTNmZWYyZWJkZWVhZjQ0OTY0MTU0MGZkZGNlMjYwNGI2YTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_850131585b914bf590de86a06a04534d",
+      "statement": "Diagnostic binary readers enforce format identity/version/width and sidecar identities, converting SWMM captures to SI except the lazy per-step path-3 view, while surface files are already SI.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/coupling_diagnostics.py#L11-L30",
+          "version": "repo-lines-v1:sha256:c5981de4d04d3f88713a4cd16c54ae88fc473dd21d80fedce0a05c8768dac361:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3ZmMwZTlhMGJkMTYxMDNlNzdkMmRkZTg2NDAxOTE4NzliYjZkZGJkODVkYWNhNDI1MTczZjY5YzdjNzVmMTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE2ZWZiNGQ3MDFhNWM4YzE3Yzg2NTY3ZGViNzQ0NmUwYzA1YWI5YzYyZDNkMTE4MTFjNzFhNzhiMmQ4Yjg1NjgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJhNDU1YzQ5MzVjMzY1Nzc1N2I3YTAzODc1YTM1ZTFjMDA2NGYzZDQ0OWRlZjFiYTc3NzFlZjRhOWJkN2FiOWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhYWY3NjM3Y2I2ZTdlNWRiODVkNjM0Mjc0NjAxNGRmMDQxY2NkNTU4YTkyMGIyOWViNmFjNzE5ZDdiYWY1YzIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/coupling_diagnostics.py#L139-L175",
+          "version": "repo-lines-v1:sha256:ff2d0ba0f6d721c4b6c659c124f62c359a8a1e9c5152b4ad34e5264d72727846:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA5Mjk2MDliNThjZThiMDdhYjI1OGE2N2JjNTBkOTMwOTk0Y2RlNDE2ODM2ZTJhMmIyZWQ4NmZlODIwZmFhNjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA1NzU3NGNmYzVjZTgxNGExYzM4NjdmMGE2NTNmZmUzMGJiZDU1ODI1YjVkOTc4OGJhY2QxNjViODhmNjUwOTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImViNDA2OTNkMjIyYmU5NmRkZGU4OTk2OTIzNGM3NGQyY2UyNDUzZTZjMzQwYzgzN2I5ZDg3YTQ2OGZiYjYzYmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYxYzczYjMyNDNmYmE0NTBiNDVjZGMwOWUyMTcwMjRiYTVlNTZmZjg0YzMyODI4MTcxOTk3MGU4ZjMwMTM4NzQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6f1f769e597e4d0e8228a346e9bac032",
+      "statement": "Expected diagnostics are persisted separately and reused when recorded written, missing requested captures fail, raw-only path-3 is validated without ingestion, and consolidated captures occupy tritonswmm/coupling_diagnostics groups.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/process_simulation.py#L2243-L2316",
+          "version": "repo-lines-v1:sha256:c085384b813c9ce6045162c80debd8e3094f0402f45444bc5b9fae12bc4f4027:eyJzZWxlY3RlZExpbmVDb3VudCI6NzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwOTE3N2YzNGJjY2YwMjNlY2UzNWJjYmU2YmFiMmUwZDdmZjkzZTllMDJmYWUzNjU5ZmZmNzA4MTYyMTBhMGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZkZGViZTNhYjExNDBmOWEwNDQ2MWYyZTdjNjRhNTY5ZTg3N2MxNDRmNDJmYjZkOGQ2MDYwMTU1ZjllNTliN2EiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVlMjU1ZDIxYjUxNDk1YWIyMzljNWQ4OTZkMTdkMGQ3NzIxN2Y0ZTgyYmExOTU2OWM4MTUwZWUzZTUyYzNiYmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY3NWUwY2FlZDhiYTY4NWZjNGNmYzUyZjhlZGMxMzAzMTkzZTZjMzRjMjA3NWNmNjljMTc2ZjkzYmUyNzg5MGIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L845-L853",
+          "version": "repo-lines-v1:sha256:229ea6b8ef0661ad4952db8bcf7b86cb6e42645bd4b6ee8df581a22257037b9f:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMGI4YTk3YzM5M2JlNjFmZDA3ODE1NGU0ZDdlZDAwMDc3ZTIxOTIyMWViODhkN2QxMWRhOTIxNTk1Mjg3ODMzNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODk3ZTc3NzRjYjJjYzg3YmJjZDZhZjM0M2QzNTk1ZTc2MDlhYmU4Mjk3YzlmYTdjM2E3Y2VjMGVmNTI0YjkzMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjQ4MGU4NTcxYjM0ODBkMjYzZjBiZjVmNGNkMjFmNWQ5ODViMTVhY2Y3MTNmOTc5MDZiODM2OTBlMjJiZThmYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2ZhYjFiODhiNThkYjc1NDhkZDRlYTkzZmEzZTJhOTRlMTY4NDRiNzY2NzkxNzQ1MjZjMjBlOThmZmU5ZDMwZCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_0c8b116396cc48c697831ac9e39492ec",
+      "statement": "Per-node manhole tables require valid complete values or explicit constant filling, are written in coupling-node order, and processing attaches the written values rather than guessing them from current configuration; current container capability admission for this key is empty.",
+      "evidence": [
+        {
+          "resource": "repo://docs/how-to/per-node-manhole-values.md#L28-L68",
+          "version": "repo-lines-v1:sha256:26f42fdebf676bbbc6ff5e88808c9d74ca312cce105104254de0f5a652a2c5e5:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJlOTgyZWIwM2NhYTEyNDZkYWUwZjNiYTc5ZjI2YjlkMWFjZTc3ZjgwN2JlZjZhNjBkN2VkYTU2M2IzMzExMWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2YmI5MjFlMzA5MTJiYjlmNGVlZDNhZjllNDM4YjMxNGIzZjUwNmRiNTdiZmJlNzE3MzU5MDg0NmFkZDJhMWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM1MDkwZTgzZThkN2YyNDI4MWEzOTNkNTA3MGUzZjkxODczZmMwMDU3NDRjODIxZDE3MGIyMzZhNzEwN2U4ZTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkzNzNjNDJhMGQ3ZWViM2JlNzEzNWQyN2ExMWE5MGNiY2Y2NTU2NzYyN2M5ZGRjOWU0ZDIxZjgxNTUyMWY5YmYifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/process_simulation.py#L2157-L2162",
+          "version": "repo-lines-v1:sha256:8efb51c5a155c2da24894999c5e47fa08e4e4caa31103e059eb77a6f50c115ae:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTI3MWMyM2M5ZWU2NjdiOWY0ODcwOWNmZjk1OTY1YWQ0ZDIxMWFjYjJiZDcyNzEzNzlkODQxZmY1NGNmZDQ0NSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYjIzYWYyNDMwZjY0YmVmOTViMThiZWJjZGNhZGMxYmEzMTgyMGNjM2MzMmE2MzI4NWJjZjI2MDA2MmNhNzIzZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmY1ZTE2MjcwMDgwNTA2MzgxZjZmMzQzOWYxMzVjNDAwOWE2MzUzZTIyNWNhYTI4Y2YwZWI1MzliNzY2ODhhMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWRiZGY2YTdlYmM3NjUwZWMxYzg3YjJlNWQxMmNiMjMwYmViNmE3OGU0YmZmNzU1NTM1NTQwYTFlNDI5YmZlNCJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/scenario.py#L863-L884",
+          "version": "repo-lines-v1:sha256:ca6b52905de16888fc8b1ba32b6b301ce2bd27be9ca695ae3ca16f237e4d0e8d:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQzZWRkYjU0ZTI3MGQ1ZGYwM2Y5Yzc3Njg4ZDMyYmRlMzY4OWU4OTIxYTNhZjEzNjZhOTZhMmFkNTczOTQ3ZDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhjYzRhN2QxY2M3OTZhYmEzZTQ2NzIzMzI3ZjUxN2U5ZjgxMTk4MmQyNTBmMDcwMjk4NmU0YjU3NjRhZDk1ODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRlOTVkZjRjODE0ODlhNzM3ODM0OGU0Y2FkZDkwNzJiYjg5MzIzN2NkYzY2OTM4YTcyYTg0ODJkYzcxMDllYmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c78ce74cce764ebd9b3b7e2cf1cb4100",
+      "statement": "Generic SWMM summary reduction drops exchange flow and time-dependent coupling-node diagnostics, and replay reclamation is delayed until the enabled node-output consumer has processed it.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/process_simulation.py#L2079-L2086",
+          "version": "repo-lines-v1:sha256:c75705c8c38b59e6992905898fb7b4046ff26c891dc02792f803c18aa7e842a4:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2VmNjI3MGM5MzJmNTI0ZWZkYWMxZDhiZWI0MjU0YjBiOTliZGNmYjRhMmRjOWUwM2IwZGU4MzlmOTZjYWI4NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYjdiMjY3NDQxNzgzNzcyZTdiNzlhZWI3OTEwYTk0MjQxYTBjN2ZiMmQ4NmM2NjYzNzA1MTc5YzdjMGE3YjkxNSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDU4YjVjYWY3MGNlNmYxODI3ODE2MzhmZDM0ZmUwODU2ODBkYTZiYzdlODljNWEwNTY5NGRiZGJhYzU0NGE0MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzg2YjQ2YWMzMGQ2NzIzYTZkYTI4MzU2YjAzNGJjNGY5OWM0NWNjNzQxZmYxODA0NDE2NDlhYWY1Mjc2MDNkNiJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/process_simulation.py#L4600-L4604",
+          "version": "repo-lines-v1:sha256:8230e7bda0605d8e3d5a8ba78c1a793c9335fb22b3f070753d6c9c31ca250b5a:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2ZmZDI1MzhmMWQ1NzgzZjdlNzNiZWRlNGEwZDM3MTAyYTAzMjkyNmIzNTk2OTNmODhmMmFkN2QzM2EzNzY0YSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGE0OTU2YTNhNmYwZGJhYTY2NjhlMThkOGE2MTE1OTFkNTc0ZjUyMjE5MzVhM2JlNzk4MmE1YThhMjhhMmU2MyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjJkNWEyYmM4YTI2ODcwNzQ3MmQ1ZjgzZTIyNGYwMDk0YzEzNTc0YWUzOTM4MjJlYjMxZDMxZWNjZjAzNzRmZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzQyZmRkMWIzNjFiMWI0ZDE5YTJlNWYxNTdjZTcxZjEyYWYzMGM5YTM0Mjk2MjNjNzQ3MTY1YThjODExNTcxYiJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

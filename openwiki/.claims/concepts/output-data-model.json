@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:8d6d6ca032282713224297b01ba6645a0ef2dece967581d154bd275fc35513be",
+  "claims": [
+    {
+      "id": "claim_4252b04304d44fbbadb7fed27bc70c58",
+      "statement": "Scenario outputs are flat Zarr or NetCDF datasets while analysis/experiment tiers are Zarr DataTrees; sensitivity primaries bind experiment rather than analysis tree paths and system aggregation is explicit-call only.",
+      "evidence": [
+        {
+          "resource": "repo://docs/reference/output-data-model.md#L5-L38",
+          "version": "repo-lines-v1:sha256:674c3975d4d565a0f6eb313d480f9a546573f04e7961f16a8a2bf55caf737842:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlZWY5ZjZmMzM4MmEzYzc0MzY3YjRmMTY5Njc1YmZmOWJjMjhmYWI2NmU5NjM3YzFkZTAxNDBiOTFlNWIwOGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM1NDhiOGMyNzEyNmQ0YjUxMDlkYzhmMWE0MTViZTE2ODM1M2YyOWU4NTUwOGI0YjkwNzZiZTYyODdkOTdkMWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY4NDRhNTMxYWI2Y2YzZWVlZWYzY2I4NDg5Mzg5NWIxODUwYTg2YWZmNGQ5NTZjYTIxNGIwY2ExNDcwZGJiOTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg4NTY5Y2JlZTQ0YzZkNDFhOGU1Y2NiNzgzNGNiYTVlN2Y1N2RmNGNlM2JhZTEzODExMWY5NGM0NmUxYTc4NzQifQ"
+        },
+        {
+          "resource": "repo://docs/reference/output-data-model.md#L54-L57",
+          "version": "repo-lines-v1:sha256:35505b6c7f767e6714f83373b957f274678fc10f19b4bb61e6205e57855edf82:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGMyZDlmODA2MDM4ZGRjYjgxYzIzMjZhODY3NDIxOGFkMDg1N2JkODgzODc4MGI1MWQ4Zjg5MGRkN2YzNDg1OCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTkzNmNlYWYzMzZkM2JiMzk1ZmM3MzBmY2E0NWYzZjkwNzMyNzdjYTA2MWM3YWY2ZWEwODlkNTE5YmM1YTk1ZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmI4MGViOTk3MjRjZjQzYzY4YzhjZWExNmVkZDdhMDIyMzJmOWE1YTVjNzI1NjBhMTgwMTk5YzZkM2IzMmU2NiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOThhZTI5NzU3ZGNkYjNmMDQ5N2E1YjA5MWJjNjlkZjQ3ZWU0N2ZkZWIwMmM2NmEwNDRkYTM4ZDY4Y2FmODY5YiJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L561-L574",
+          "version": "repo-lines-v1:sha256:c80a0f953e554bb6d51f20b7d543c83619c2d60fb97e87dbf1ac310de095e0d4:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlOGQyYTljNjI1MjUxYjBlNDg3ODQxNTZhMTc0MGY5NmQ5ZTM2NWY5MTA1ZGZjMWI1ZDMwNWE2Yjc2NTFlN2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwZjFjZjNkYzFjMDFjYTYwMjVlZTJlMTE1YTMzMDc5Y2IzNmIxMjMxNWRlNTAyMWY3NTNmYTkwNWFlZjRiYTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFkZjRlYjdkMjRjNzIyNTFkM2U2ZmE2NDU2MmZkMmZiMDhkOWYzYjJhZjY1YjhiYzcyNzgxNjI3Y2E5MzNmYTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFiOTU2Njg0ZDJiZDZjNjI5M2I2YmY0OTQyNTdmYzk3M2UyOGNiOGI5YWY4MDgyZDQyOWYyMWEwZmRmMmQ5N2YifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_40b034fed71c428f985a5b79c55b9c18",
+      "statement": "The processed output writer applies mode-specific CF metadata, attaches producing SHA/version on event_iloc, records timestamps and writes the configured Zarr or NetCDF format.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/process_simulation.py#L1819-L1879",
+          "version": "repo-lines-v1:sha256:86996bdadff4a193b769d34ba6ad3c8ad7c1b80a2248e109c036623000abf8a6:eyJzZWxlY3RlZExpbmVDb3VudCI6NjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJjMTk4Y2IyZTAzOWY3OTA4OWUwMjc2ZjQ4YjdiOGNjYmFjYWY3NDYxODE0M2Y0Y2JiZWU4NzBiMWU0YTk0NjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiNWM4MjYzMmZjODJkNGIyYzM0MGY0MjU1OGJhM2RmYTMxYzc2NTVkZjZmY2MxNjhiNGZkY2U1N2ZhYzYwNDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIzM2FlY2VjYTgzYzQ1NTkwOWQxNTNlMDZjOTRjZmI1ODNhNWEyYTkwYjFlODA5ZWU1ZjQxYWZkYTliOTgxZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5OTUyMjkyMDVlYWYyNDY0ZGMxZjQ4MTM1NTMyNWVjZmE0Mzc4OWExMmI5ZGFiOGEzODUzOTVmN2NjNDU5YzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8280ca18ed144d168eb6b2c8845137c0",
+      "statement": "Analysis summary groups are organized by model family and artifact, with event_iloc and relevant spatial identity; standalone system reductions are separated from their shared node-summary source and current source also consolidates performance time series.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L154-L251",
+          "version": "repo-lines-v1:sha256:9683f2bc3e2c5053565b54073af0e61e16c8416f8da61d681442f514c0779d54:eyJzZWxlY3RlZExpbmVDb3VudCI6OTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkxYmFmMzAyNTAzZGIwNWI5ODdlNjFkNTQxZDI2YTdmYTY0MjZlZTdhYTdmYjhkMmQzYjZhYWM0MzAyZjgxMWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM2YTViNWVkYjBmMGVmMTE4MDRjMjgxMGQzM2IyNjk4OGUwZTU2ODJhYWE4MWQ4NTBlMDQ3ZDA3OWY1NDU1ZGIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ3NTA1NDNiZTU0YzM3M2IzMjMxZTc3OGQ2ZDE3ZTE0NzRkZDhkYTg0Y2U3NzNjNzEwMjFmMWU3MmM1YjhjZDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBlMjdjNTAwMjBlZDIwNTBlMzc1ODk3OWU5MWJiMTU4ZTFmMjNhZjFhOTY1ZDQ0MTQ3YWZkMDBiMjZhYWY2OGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_23b7cb80216b4a6581fd4cae6597b4c3",
+      "statement": "Consolidated timeseries axes are established from configured event durations and report intervals, and the owned DataTree reader refreshes completion state before opening lazily.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L1725-L1754",
+          "version": "repo-lines-v1:sha256:e010b5cff8c3c7731b892ae161fd644ea5ee7c0fd8bace1cf3775abde63e9ef0:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImExN2QzMjY1YjgyYjQxMWFmOWMwNjc4Mzk4NzU4MmI3ZTRkZWQ2MDRhYWU2ZjVlMDc2YWFiNjU5ZGNhMDFjZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2MzAyMTUxOWQxMWZhYzcwY2NiNzhiNmY2ZjQ0ZjVkZjJiMDQzMDAwYWZhMTdkZGIyZTYxZTEwY2JiZWQ0YTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVmODZiNDBkMTgwODk1ZGNlNWU5ZjZjYWU5ZWRiYjA5YjVhZWRhOGY4NGVlM2FkMWJlYWUxOTAyNDJkNmJlZTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA5NDA2NjJiZDQ5NjZhN2NkZDgyOTVlMTZhYWFlY2IzYmQ2MmQ1YmEyMjkzODQ2ZjYyYmY3NDBkYzRhOWY5MzAifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L1791-L1824",
+          "version": "repo-lines-v1:sha256:2dca24a61278afbf3b2b13cc7eb6253d163621bfd670f1aa0bbd1cdc9085417c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4ZjQ1YWNkYzdmOWNlYWI3NjUxZDFkYWU3MmUzODBlMjE3MDdmZDdhYmFlZjA3YzViMDdjZmJlNGU2NTAzZWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlMmU3NmRhNTQyYTNmMzgzYTliNmVmYzFmNDIwMTk3MmIzZTIwY2YxMmJjYzZmNjE4MDE0Yzg5OTc1MDcyZTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjljZGE2ZWM4Mjc2NWEyNmUwMWQxYzk5YzdmNzg3Y2M0ODM5NmEyNjc2NzhiYzg3ZjI2YjY2NmYzY2VkZjU1MjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBmNTE0YjFiZTU4NmNlYjM0M2NhOGY1MjNmZGMyOTcxYjk2Nzc0NGM4MGViOGVjN2QxYjk0OTI2YTdhZDQyMTIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c685cfdbd9904a769fe9be623e2c31be",
+      "statement": "Gridded series resume uses covered timestep coordinates, Zarr merging refuses noncontiguous chapter indexes, and unified completion flags follow publication before chapter cleanup; NetCDF uses the same publish-flag-cleanup ordering.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/process_simulation.py#L4413-L4416",
+          "version": "repo-lines-v1:sha256:c40f4d91fa1820a006e46df3535c26e3f81e35fbcef37708ad8bda460461696c:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGZlODk1ODNjNGJiZDVkOWZiY2U4OWJlNzFmNTc4Y2U1YjAwN2I5NDNhMDZhNzNjOTg2N2NmYjU3NzNlNzAxYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjA1YzExMzllNjkyNGVmOTgxZjZjNTJiNjZhNzE1M2Y0YTk5MjA4NzIzNTVkZGI4MzAzY2MwNTJkZmUzOTBhMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmU3MzI3NDg4NDMxODk1ODIyZjQwN2I4YmQyODQ3MDY5YTBlMDcwMTFhMjk3ZDA3NjEwYzg3ZjIwNjI0NGU2YSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDBlNmE4ZTM4OWM2Yzg2MzFlMTlhYzg2YTZjYmJhZDc0ZTZlMTMxOGM1ZDY2NGM4NTQ1OGZiODk3ODk2MThiYSJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/process_simulation.py#L586-L600",
+          "version": "repo-lines-v1:sha256:0ce9b40b385792b422f973e3c49be2f8b41361cfdc086bf3f7155085bd0038e6:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1Nzc1MzFlYTI2Mjc1NTQ1MWI5NzY5NDFlM2RhMjRkZTFhYjhkOTgxMmI4Y2MyNDAyYzMwOGU0YzViNDBiOTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1NzMxNGNjNjMzMGRiNWM1ODViOWY3OWIzZTRlZjU1YzcxYjJjMjAxMDQxYjFiMDViOWFiODYzY2U1MTFhZTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0NzhlMjA0YWZhNTgwM2Y3NTNmYzNiMWZiOGVkNzg4N2Q5MDUzYzQ0YjEyYzg3N2YyMDg0ZDU2YWQ0Nzk1YjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjliNTRiMjVlNjkxYzE2ZDlmOWZiNDM4MjEzMjcwYmNiNTFlMjkyMjNkZWNmNGI3OGE5NDdjODRmYzBhNTJhMzQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/utils.py#L737-L744",
+          "version": "repo-lines-v1:sha256:ad2da5cb106afaf109e89f85ed79c44f8b420b39234baa1359a4e579a0532db7:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWVhZDU0NzEwNjBlNjcwMWM3ODAyMzU3NzgxYjcxZjJlNjI1YzBhYzhmZjY1ZjQ1ODkwZjU1MTRjMTMwZmQ1YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTY2NmJlNzM4OTZlMDlhNDVkNTA3YmJmMzM3NzE5NWI0ZTk3NzcxMGM3NjU5OWRmZGRiYzAwMjExMDU2ZWUxNCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDBkMGJiZDUxMjgwNjc3ZmEwYWMyODVmYTczYmJhZmIxZjVhZTZhZTMxNzEzMzBmYzNkNDkzNDUwNDVlNzFkOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTY3NGVmZjUxYjc0MmM3NGI1NDEyNWU0YTFjZGNhZThkMjE1ZmU3NmM2M2Y3YzlkODcyMWFkN2VlMjBlNGUxNSJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/utils.py#L982-L1023",
+          "version": "repo-lines-v1:sha256:f200ccf1a0c06996aa0427dc3204b58ad674ef39943328ca75384df622210d03:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwYjI2NzE3ZmFjNzYwNTdhZWZiMGZkNDZlZGQxYTI5YzU0Y2FjZTUzOTlhZTY0ODk5YmM5ODM0Mzk3NThhZWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ5MmE1OWU3ZmM5NDFmMTk4YjY3NzI1MjY0NTg4Mzc2NWY3MmUwNTY5MDMwYmM3ZDVhNzc0NjhkYTdhMmU0ZTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAzMDdhYTRlNzUzMGE5YzY4ODI1YjI4NDJjMDY2MGFlYzgyNDJiZjMzMjYzNTNlYmRiY2UzZjRmMDQwYWZlMmUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0121c7ce290b42628a86c1b694fdb02f",
+      "statement": "Analysis consolidation updates the store in place to preserve append-only series, removes the root stamp before writing, restores it last, rebuilds the metadata index and refuses loss of cleared events; reuse also checks completion, input fingerprint and build stamp.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L505-L537",
+          "version": "repo-lines-v1:sha256:62b6e3b5c9b454b5ced7169660ed95761c7e3f27a37afdc9d0d3e538a4113072:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3N2IzOGEwYjg0OWI4MmE0OWM2MzBmNTkwMGZlMWY0NGY1NTc0ZTA0YzA0MWY3NDJhMDcxNzY1YjM5ZGE5MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjZjQ0MWU2MDdjZTAyMDVmMWEyNmE4OGYzZGVhM2FkNjg1MGQyMDc4ZmE1Y2MwNzI4YzU4YmQ1NTgwYjFjM2MiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRhMTMxZTZmOTg5NWZmM2Q5YjljNmQ0MDBjNTM4NjdlMDk5YjI0NTUzMTIyMmY5OGY0MDQzNDU5NDYyNjFhOWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUwMjVhM2FlZjIyYWIxNjlkYmRhNDRlMjc5NmQ2ZWFiNWY3MTU2YmUxNzA4OTljMTU2NmIyZGUzNWZjMTRiNDEifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L682-L683",
+          "version": "repo-lines-v1:sha256:fcdb8253335cdc1fbd3d741df69db6cd233bae00a709e06c8b0bd450d9c2d778:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTY4MTgzMWI5MmI5ZWIwMzY0ZjFhMDRhYmQzMjMwNTIwMmI2NGRmYzYxYWM3MjA2ZDI4YzJiOGY0MGUwMDZmZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYjU5YWRjNjU5NDFkZDlkYTlhZjFjMmI5YmE3M2E5YmQ1MTIzODRiZGZlNDNkYzlhYjljZjZmZmNjYTQ2MjhlYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMGQzMjljNWIyODBkOTQ0ZjhlODA2Njg4ZjM3MmI0YzU2ZmRjZjVkZTgxNDMzY2FlOWMzZTk0Mzg2MGRlYjBiZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNWI4YzBmZjE1NDI2OGEwMmFhZDQ2OWQzODZmYmU4OWQ2MWZmN2Q5MjIyODRlZDMzYWY2MmNkNzIyMjBkZjRlOSJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L774-L839",
+          "version": "repo-lines-v1:sha256:3de7a5da49d0ff48dc00103cadc2eb2394179e5b2cac457c89f6d9a8cb4f9b30:eyJzZWxlY3RlZExpbmVDb3VudCI6NjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3NDU4MmViMDVjYjg0Y2I4ZGY5OThlYjYxYmNhYjFmMDVhMjU3MjI1YTI4MDg3ZjQ2YmExOGE5ZTBhMGQ0ODEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg2NDExMDBmZjY3ZTkwZjY4ZmZhZDkyMGM5MDhkMTcwYjEzN2EzN2M3ODE4MTcxYjNiMjE3NTYxZWEwY2MwOTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY0MDk5ZmRhYjY3ZTA3MjE2ZmY0ZDI5Nzg1MjdmNTE2OTIwMDQwN2MzZWQ4NDY0MGU0NGQ4Nzc1Y2VlNzYwZjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ4MTQzZDFjOGU2MDcyYjE2M2RjNjJiOWYwYjI3Njk5MTMyZWNlODhlZGIyOTlmOGVmOGZjOGE2ZWFjYmIzMWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8990f5331023452c84d86c8cd1a7ab8c",
+      "statement": "Timeseries selection is kind/family-specific, blank/all keep everything, pruning follows summaries and records deletion intent first, and static or observation-axis variables are outside the prune.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/timeseries_selection.py#L161-L203",
+          "version": "repo-lines-v1:sha256:6dfb3ffb28e988c56b1c7bcf667c6256c32c23a90c171312690ea6e21d152543:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1YjE5ODRjOWFlZDVhOGIwZTgxMjI0NGZlZGI0ZTgzMDUxYzk4NGIwYjI5NTg0MDAyMDQ0MjE4YmFkNzI0NzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcwZWE5NDFjYzMwOWI3M2U4N2ZlMmNiOTBjMTUzNGQxNjYwNmQzOTIwNGZlZDlmNTg3OGEzYmE1ZTgzZTA2NDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI5ZWUxOTMyODRlODJmYjc2YWY0ZjRmNTgzZTQzZjA1MDdiNWYxMzJiMTY0ZTZkMzUyM2JhZmI5NGMwYzdiMWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNhMjFkODIyMzU4YTJhNjg5M2ZjNTMyZDEyNWRjOTBkYzAzOGQxNTYxNzUzMzU1NzgyNjMxZjQ1NjYyMGVmMzAifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/timeseries_selection.py#L2-L39",
+          "version": "repo-lines-v1:sha256:f5e491b33a89eac4825e551518dba51ffcb7fdba0f186af6c7a302726ec92f04:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRlYmQzZDg5MmJjNmE1NzA2ZmFjMWNmOWIzZjNhNDU2MTRmMDI3YjcwYzhhMmI1MjlhMzQ0YTQzZGRhNjhjZDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoxLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJmMjM2NjU4NGZiZDhiM2UzYzZmMWRiODI5NDE1ODc3YTE0NzFmMjNjMjE0MzA0Yzc3MWZkNmIzNWJlMmQzMDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhYWY3NjM3Y2I2ZTdlNWRiODVkNjM0Mjc0NjAxNGRmMDQxY2NkNTU4YTkyMGIyOWViNmFjNzE5ZDdiYWY1YzIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a93d467d99034e6cbe4dd0198eddfd9b",
+      "statement": "Experiment parameters cover all defined members while result nodes cover completed members; incomplete members can be skipped whole, and member trees are cleared only after copied groups read back equal with pending/done records.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/sensitivity_analysis.py#L2078-L2080",
+          "version": "repo-lines-v1:sha256:04c8cdb82b8112b7b8c00b05cc88b85494b349ccf2ea6d98a22f69ecf1fbe493:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDNhZGZiM2ZkOTMwNGJhNDZiMjcyZjk3NzBkYWY5MGUzODBkZGNjMTE4ODViNDFmYjgwN2JlZDY1MjcwNGY4YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNzViOTkyYTliYTc3OThjMWQzZjQ3YjU2Y2RmZTM1YWEyMDJlZGViMGJhMWVkMWNkZTE1Njk2YTY1ZWFjNDNjZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOGQ3ZmExZmM0ZGY5NTFjOTNhODc5NzExYzgxOGFlZWMzNmZmODNkYjlhZGNiODM0MTdlYThlMDYxNTRhZTYxOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMjg1NjZiMzA5OTcyZWZjN2FiM2NiNGI2YTNjYjVhYmUwNjBkMjI4ZWI3YzMyMTIxNWMwM2NkN2IzYjlmYWI1MiJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/sensitivity_analysis.py#L2133-L2151",
+          "version": "repo-lines-v1:sha256:9ab602c0238fd9e0776efc1522981c9d82689eba1858d01084bc61caf324377c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlMDc3YmZkNjdiNzliZTNhYzFmNTg5MTc1NDA4NDU5MzM0ZWZiNDk5OTFjN2UzNjQ4NDcxMjU0Mzc0ODQzZDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJmZjU1OGQxYWZlZWY1YzcxNWNmNTE1MDA3NTkwZjQ4YzFkZTRmY2JhYzM0Mzc0NmM1MWNmMWMxNmM0OWRkYmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY1MTI5YjEyYmQwOGUxNjg0NjcyMDEyZGQ1NmY3ZmQ1ZGRlMzFiMDMwYWU3ZThmNTE3NmJhYzQxMDc1ZmRjZDYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ4Y2ZiY2M5YmJmNWYxYWM2YmE1N2E3NDQ2YzY3ZmFjZjUzZDE1ODRhMDQ2Y2ZhYzU4YjM1N2M1YTAwMzFlMjkifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/sensitivity_analysis.py#L2517-L2546",
+          "version": "repo-lines-v1:sha256:730e68fa8cd48aa517b824cd5115714741b920adb3efe58671965671bc27d812:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJlYjg3MjhkMDVlYmMxMjk4NTcyMTU1MGQzODRhYzRiYTYyMDJlMGUzZGU0NGVjN2VkYWIxZTI3OGI0YTEzOTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZkMDRlMGY5MWIzNWMzZDJlNzU0ODhlN2M0N2JmZjk5YjQ3ZTgyNGRiZDgzMmVjYmFjODRmNDRkZGMwNTRlOWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3ZjdjNjAzNjg0ZTFlODM5MjA2NjFmYTNkYTlkMzRhZWFiODViMzZjODBjZDQ2MzQ0M2ExNDZjZWJmZDc3NjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjBkNTdlMmNkNDVmOWI0MmFiMjgyOWJkNDgxYmVmM2I4YmNmNWM3MjhiYzY5MDllZTc3MDBlYTVmNGNhMmI1NDgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fa165f531a854082bf2f201862a0c99d",
+      "statement": "Variable-set heterogeneity is retained as event-dimensioned evidence, warns that NaN-filled joins yield subset statistics, and attributes solver-build causes only for performance modes.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L51-L77",
+          "version": "repo-lines-v1:sha256:cdcec47a9f7774d18733dc04c79d58ad1df89615fb87b85d3500982f93c65a56:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg2ODY2ODk1MjMwMjJkMGExNTkzYmU1YzliNDczNjU4NzQ2MzU2MDk1MGI2MTgyNTVkNzBhMjM0YjA3ZDY4NzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhkY2Q5YmU4NTI2OGVhYmExNWE5YjZjNjcxNjllOGIwZGViYjYwNTVkNzNiY2U5NzA5ZDczMmYwNjg3ODVjZWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAzY2M5OGM4ZDhiOTIxZGYwYzkwMzUzNGQ1NDgyNTc4YWUwY2MxZTc3ODBkMTMzMzg3MjNmYjZjYTE2MTY4NjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM0NzAxNTViNTQzZjEzOThiM2M4ZTY1MzVlMzJjYWU1YTZmMWNlN2FhNzU3MzVhOWM0NzZiMjBkM2ExNDVjZTkifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L95-L136",
+          "version": "repo-lines-v1:sha256:4f778e3567522b6fa63e7041d7e5f697bf2a1e7d6b933b4639e669fad5dfbbab:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRhYWZlMjFmNjFiY2QyOWYwNDcyM2RkYzVjYzQzOTI4ZmI3NmZmNWM5NDY1MjE0OWY1ODZlOTE4ZjUxNmQxZmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU0NTI2YWZkNzhlMmJiZGM0N2QwODZmNjliOTdhZjYwZTQ5MjAzZDNjNDlhMTAwMDNmNTQxNzEyODlmOTYxZTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhjYzRhN2QxY2M3OTZhYmEzZTQ2NzIzMzI3ZjUxN2U5ZjgxMTk4MmQyNTBmMDcwMjk4NmU0YjU3NjRhZDk1ODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYxZjk4MzQxOTY1MmZmY2MyOWZmMmQwNTgzMTY5OGZjYWMzMzI1ZjQxZjdiMmE0MzJjOGNmOGIzNGZhOWRhYzUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9f48ed0fb95742918899c9d750bb7e04",
+      "statement": "CF attributes are mode-resolved with a label-only fallback for unknown variables, mixed pollutant units use coordinate metadata, and consolidation embeds deterministic RO-Crate core metadata with descriptors derived from assembled stores while retaining per-event producing identity.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/cf_conventions.py#L2680-L2686",
+          "version": "repo-lines-v1:sha256:fc95cc0c53e9d28dad5bb2e941d8123e81ae0abfedb9c92a19dbf07784d93cb2:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjI5OThmMWU3MWUzYTBlMGRjMDRjOTg4M2VjZTJkN2NlOGZlNjgxNDAwYTdhMDQzN2JiNjJlNDdiMTU4NDAzMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzhlODk1YjA4NTdlZmI4ZTc2NjU2NjJlMzUwY2IyODgzMDYzMGQ2YzY0ZjZiMTkyZjg3ZThiYzBhZGEzNjYyNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYmYyMzgyZjc2MzAzY2UzMDE2Mzk3ZmE5Y2MwYzcxNGY5MGEzN2RjZjU0YmQyMjUzNDdkNGM2OTZkNmIzMjA4MSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTdkNDM2NzRiMzJlOTg0ZTA3ZjllMDI2OThkZTI3ZTk1NTE2YWFlNDczY2EyNWU2OTQ1ODAyY2I0MDhjZjRmNyJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/cf_conventions.py#L3202-L3242",
+          "version": "repo-lines-v1:sha256:b8ed2c399f743d13677355753aca3799fc71539a9958ad362fd1a9423f01de8e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJiNmE0MzIyOGY0ZjE1ZDZlYjc1NzExMzI4NmQwNDMyOTMxNGExOGUzMDU3ZDIyZGY1OTI1Zjg1ZjQ2MDRmODQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1ZmQ0YjM4ZjIwOTM2NDA3OWNlYWE5ZTRhN2FhMjg2MzdkZjZjNWY4ODliMWIzNDU3ODk2YjRlZGM3MjRjNDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQxODQ3NzFhNGYyMDExOTIyZGI0YzY4YTY3YzZjOWJiMDc4OGZmYTg5YzgwMTQ2ZTA3ZDhiMTZkY2NlOThiZjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlkMjRjOGMyMTIzNWFlNjlkYWNmMGNjMzkwYzUyN2I2YWZiOGZlNGE4OTkzYmQ1M2EzY2MxNjYxYmE1NWEyMzgifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/cf_conventions.py#L3274-L3282",
+          "version": "repo-lines-v1:sha256:59be7663327eb46964d95feae854bd39ee786b52b46dfbcf06badb0d65c010e4:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2RiZGVjNzA3ZjEyNzBkNTkxMjdhOWY4MTI1ZDJiZTMzYzg3NzdmYmRjM2U2Nzg1MGVkNWIyNTQ1NGE2ZWU2NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMGQ0MWMwMjFhZjRhNzBlODA3MTcyYzk1MjliNWQ1Y2YwODhkOGU2MGIwYjYwZTgxZGFlMDFkN2QzMDFiN2UwYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjM4ZThkMGNhYzg5NGU3MmU3YzA0YmUwMTAyNzBiMTRhMDYxOWQyNTlhNDc1NThmNjM3M2VlOTlhYzlmNDEwYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYWQ1YWE2NzFlZjNjNDMxNTNjYWU0ZGEyODE0NjExNzdmYTMxZDJhYWYyYjdhYmFiYWFlMDE2MTJhZDcxMjRlMSJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L650-L687",
+          "version": "repo-lines-v1:sha256:5530d54cb85b474c2f1990f1418bef2f60e68facd3452645942f10960cc19db0:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA1MWVjNzUzZjMxN2VmZGZjMDlkY2QxNGRmNzdiMDk0Zjc2MTU0ZTk3ZWI0NWMyZjAxYzgyOGE3M2FjNmNiNmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4YzFiYjQxYWUzZGJkNGVhYjk0NTQ3OWQwMjMzMzVkYWY0ZWMxZGM4ZjhiYTgzNmYwM2FmMDU4OTkyM2EwNTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU4NGRkMTk3OGQ5OWY5OWFiNGQ4OTdkMmU4YWRhM2UzMzMyNTQxNjY5NDE4NDRkODQ4M2Y1ZjAyYWRiZmRiNTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZkMTcxYTYxYzFlNDE4MTcwNmE5ZmFiOWUwYTE0M2YwNDAzYzdlOTY2N2RmOGMxNTVhYTA4NTQ3NGVkYzkzNmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c31d41e16e5249afb5a19e7c756ca23c",
+      "statement": "SWMM processing assembles binary output series with report tables, which are distinct from generic signed series reductions and report maximum magnitudes.",
+      "evidence": [
+        {
+          "resource": "repo://docs/reference/output-data-model.md#L163-L178",
+          "version": "repo-lines-v1:sha256:03f17b414892e9d357c981de7bbcfb787ed847b31661041de5fde4cfe2ad4740:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyODI4MDVkYmE2ODdhOTEzOGVjNzkxNWJjMDMyOGUyNzNkMjY0YzA4OGJiN2ZhZGIwNmE5NTc3YzRkODY3MmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE3Y2E2Zjg1MGI1NzYxMGFmYTUxZDk3MDU5MDk0YWUzNTk3Zjk1YWEyMDY0Y2JlODE5YzM5NzIwN2EwZmZlZmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImViMTdlMTU1OGQwM2FjZjZlMDMyNDk3MGNmNmVkMzk0NmIxZWM3MzljNjY0MmUyMzgwMmY2NWIxYmVlZWM4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI4NTE3ZDlhODQ1ZjJkMDdmZjA5Y2RkNGVmZDBmOGVmYzk2MTcxNzFiOGQ4ZTE0YzIzMWUxZjQ2NjZlNjM5NzQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/swmm_output_parser.py#L290-L299",
+          "version": "repo-lines-v1:sha256:e342ae117a417b195aaa6302d7f2f237dad628fabcd110d4fbd66fc40404d869:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVhY2UyOTJmNjYwODU1NDkxMTU3ZmZiY2MzMzY2Zjc0YjJmZTc4ZGNlMGE2MjFlNTk1YmJlMGI4ZDU1MjkxOGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyZTU0ZDYzNzM3NzE4NTViYWZmYTQ0ZDdlMjExNzA2NDg5NGI5OGZjYWM3NDUzYjg0ZTc3ZGYwOWFjMTI3ZDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlmMjM1NGVlMTMwZWZmMWNjOWY1MjRkODc0ZDgzYTllOGNkNWE5ODI5YjliNTQyMTYzMTlkOWFlZTRjYWU2MGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA3MTBkNGQ0NTZkNjdlNTk1ZmVjOWE0NzdjOWUzYTkwNjRjYTllMGYwNWM0OTcwYTI0OTFiZDJiNzhjOWMwMjAifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

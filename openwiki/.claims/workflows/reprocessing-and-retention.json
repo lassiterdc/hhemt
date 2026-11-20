@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:30eb9f2405457a519f37bb5d9e8c025d9ea3cbee38b3585855ea8cc8713ebd63",
+  "claims": [
+    {
+      "id": "claim_e273c98de3734c80a79c6a6c8a73bf36",
+      "statement": "Reprocess never simulates; start_with selects its entry stage and regenerate_existing controls rebuilding existing data, with driver and submitted-work safety gates.",
+      "evidence": [
+        {
+          "resource": "repo://docs/how-to/forcing-reruns.md#L74-L108",
+          "version": "repo-lines-v1:sha256:868f74d1df2e45ed3fd5ba2e1b4291c474daa06002193cd1af41be2a8b9c4076:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyMTZjMWM2OTVmOWI2NTkwMjJkMmUyODhmNzE0M2QwNzMzMTA5ZjA5OGY5YTM0MjFjNmIyYzY3MDBlYjVmMWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhmZWU1ZDA0YzE3ZTNmNjU5MTU4N2NiOGFmOWRjNTE4NTBkODMwOTBkZDY1OTEwNmJiNmRkNWViNzBjOTMwNmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU3ZTk2YTgxZjIyODVjYWMxNGMxNzYzNDk3YmRjNDdlMTFhYTZlM2M3YTIxY2RkZWRkMWNiMjAxM2ExYzhlMTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_11c372d962d240e0b5a232eec3b1db1b",
+      "statement": "Reprocess uses mtime triggers and nolock; dry runs can invalidate flags and report shells while skipping destructive data/figure deletion, and SLURM deletion still requires caller-side log clearing.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L5189-L5258",
+          "version": "repo-lines-v1:sha256:8b0061383999ce9085c9b052cb6bcf17bf3ab0bbb514a9b9280bd9f20cb0ff83:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhYTA4MjYzOTY5NjE1ZWQwMjRjZTE0YzZkZjljYzVjOWQyMjUwYzJlODg1NDdiNWE0Zjg2NWM0NjRjYmJmODUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA5ZjVlOTNjY2ExMjA4OTc3YjQzZmQ0ODRlYTFiMjM3YTRkMzg0YzI3ZjA0YjY4NmQyNWVhZWJlMzhiZDA5YzciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjljNWU0OTVmNDc1ZjBhZjI0MTg3OTVkMGRiMzUwYzBkOWQ2YzAwYTgzMjYyMDhmY2Y1ZWY5ZWFjN2ViNDY4YjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk0NzE0ZTMwZGVlYzNmMDk1MjM5ZjJjOWM0YWE5NWViYTgyZGVhOGFmYjMwNjNmZDhmYmEyNmMyMjY1NjM1ZGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ea2978fd72d643379680ea02406db53c",
+      "statement": "Force-rerun floors invalidate downstream work before DAG planning; simulation/process floors also clear processing completion records and chapter sets, while render scope is global.",
+      "evidence": [
+        {
+          "resource": "repo://docs/how-to/forcing-reruns.md#L46-L52",
+          "version": "repo-lines-v1:sha256:e9989c3185476b8efac69676f9b9d9930c32ecb99663fb66d8adf1d3ec6500e6:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2MyMWNiYWE0ODhiN2E4OTA2NjUzZTViMzMyZWNlMDY5MTE1YmU2NmQ3MjYxY2M0NDU4NTlmNjgyMDEwZGM4MiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDM4YzJjYzUzMGMxNmM1ZDBjM2NiMDIwZGZhYjc5YzVkZGQ0ZjdiNGNjNTg0Nzc1YjU3MjFlZTlhZTI4ZmI3MCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmIyYTFkZWU4MGE0OTM3YmNhMzhmODZiYTE4NTIyZDgyYmQ0MGJkZWZiZmJlNTAzM2YxZjdjYTAwODJkOTg0NiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTgxMzgxNzhkNGFlODAxYjBhMDhlOTYyZGQzYzlmNDI5NjZjODllZjIyOGQwZGYwZTRhZTM5NjMyMmZkY2RjZiJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L5972-L6001",
+          "version": "repo-lines-v1:sha256:41d209657c3f3a3831e1342ccfcbf96be38435906336d58e04b15d4174ccf537:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFjMGNjMzVkNWE4ZGYyMmNkNWY4MWIwOWE1NDY0MTljYTllMTY1M2IwYzcxNWU0MTdmMDdjNTIyYjA5NDkzOGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2NjhhZTNlZGRmZjkyYThlOTMyMmFlYmVmNGU1NWY1NTExMmUyMWM5MzMwN2M1YWNhYzc0MjY2ZmM0YmQ2ZjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMwNWY0ZGY2MjdkNDdlYmEwOTY3N2QyZTI0OTI2MGU1ODVhODY5MzNhMDY0MGFhN2VkNTkyNWE0ZDBhNDQxOTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMDE3NzE0NTFhOTRjOWFhMjJjYTVkMzMzZDY1NTQ1ZjFlOGVmNTZhNzJlNDJhNjUzYmRiNWU4MzEwMjkxODYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_966a977d57854ae091513a136294d2bf",
+      "statement": "Build-stamp and report-settings reconciliation can promote stale render state to a render floor without weakening an already stronger floor.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L5773-L5856",
+          "version": "repo-lines-v1:sha256:10da3556fa7d32e40ea7ee491c055fdcabae1e36b35fe3f1b704e3ae96446fee:eyJzZWxlY3RlZExpbmVDb3VudCI6ODQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMxYzFjNzg4NTM3ZDg3NmZmNGVmMTgxMjFlMWU2MjFmNjU3MTA1YmJiY2M5MzE3NTI3YThkZmJlNzg2MjI5M2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1MGYxNzczZDIxNTIzYmUwZDNlY2RhZjQyOWZmMTFlNzUxNGE1NDcxMjZkNmU4MTM4OWEyZjgwNmE4NzI5MWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1ODk4YWU4OTg2NTQ4ODYxZDU2NGJkZTU2YWZmNTRlZGNkY2MyZTZjY2Q0MDdjMGZjZTdhZGYzMjhlODcwOWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImViYWU4YWM1YWRkZTNjNjJhY2RiNTBjMmMwZjI2ODdmMDdkNzQxMTUzNTE3YTNjZDE2MzgwNTllMWNkZjk2YzAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3de0e0687ec241f0b4d48c849d85ab06",
+      "statement": "Consolidated DataTree reuse requires complete state and matching input/build stamps; source summary stores are deleted only after equality read-back with pending/done clearing records.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L1588-L1636",
+          "version": "repo-lines-v1:sha256:40d030e247724fbda27c26c9753771f4ff98bc78faad03927bcdfadbfb71ce4f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjZTA1Mjc3MDA1NjY2YTY1MDE0ZDcyZTgyMGE5ZmE3MGMzNjgwODM4Y2QwN2IwZjEwY2RlYjU2ZDdjZTJkOWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhhMGFjNjY5ZTE5ZDQ4Y2FjYTYxMzQ4YjM3YWQ2OTJjYTU3NzQ4OWVjYmFhNWZkMzFhN2U4NTY3OWIxMzUzZDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyYTQ4ZGQyYjk1MDJkOTE3YmViNzJlNGYzOGU3NWIyMzZhNjJiMGNkYjYxZTJiMjkzNjQ1N2MzNmY3MzgxOTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE3YmVjMDY1MTZiN2JkOGNhN2E4MDEyM2YxNWQyZTI0YmQ2OWQ1NTBiN2Y5OTljOGRhZTE3YjdkYWM4NDAxZTIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L505-L550",
+          "version": "repo-lines-v1:sha256:977bf433b551eacc8acf59081b14c541ceba6d64c70c69d7334ecb9bce347237:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3N2IzOGEwYjg0OWI4MmE0OWM2MzBmNTkwMGZlMWY0NGY1NTc0ZTA0YzA0MWY3NDJhMDcxNzY1YjM5ZGE5MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5MDlhNTNhNjE4ZDAyOGUxZDMwMDBjMGE3YWJjZWVjYmU1ZmIzN2Y0ZTUxMWVmZTQ2NjQzZmFkNmU2Njg3MmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRhMTMxZTZmOTg5NWZmM2Q5YjljNmQ0MDBjNTM4NjdlMDk5YjI0NTUzMTIyMmY5OGY0MDQzNDU5NDYyNjFhOWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJiODlhNGNlNTdkOTJlODk1Yjc0ZTU4NDE1ODA5OGI2MTEzYWIxMDY0ZWI4MzQ5MGNhMTc3MzZhZDhmNmY1NWMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a24fda12fc42439a8498856ba5b80463",
+      "statement": "Whole scenario removal requires enabled retention switches, model completion, cleared stores, and no remaining processed stores; its transaction records pending before deletion and done afterward.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L934-L976",
+          "version": "repo-lines-v1:sha256:d5ee77e2584055b5e8c30db47e5561ed0980f4f0e2048001927ad2bce4158c74:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViNDExZDg1MDUzNzZlMDAwOGVkNTVhNzk3YjQyOGIyZDdlMzVjNjMyNWE0NzVlZWJmYTM3NzBiYTM5NjdmM2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlkOGE5ZTljMzI1MjgyMGM2NWE4MTY1MjBiOGRiNDkzMjI4MDg0OWVjOGM3ZDJlYjYyNzJhZmRmZWJlMDU5YzMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBmYWZlODBiMWMzZTI3MDZiYjI4ODE4ZmIxMzMyZWMxZGQ1YTJjYTBmYTUxMTI4YTFmNDA5NTRkZDI0MjI3NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY3ODg0MTIwZjUwZGQ0YmNjZjk4YTllMTk3MmVlYmM2MDI3OTY3M2Q0YWI5ZDYzM2FkZGE2NzRlYmQ1Zjg1MTIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/scenario_records.py#L361-L448",
+          "version": "repo-lines-v1:sha256:d534734639db421bcb113bb8e92571a12c12f0659b397e324c9a59ed7a071317:eyJzZWxlY3RlZExpbmVDb3VudCI6ODgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0MzYzZTIwZjk5OTlhYTU1Y2MxOWQxZDgxZTc0NzQzZDhhMjc0MmIwODRjYTYxMTdmYzUxNTljMmFjOWZhZGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc3ZmZhYjc1ZGJkNjQwMDYwZTJhMDYyOTExZjNhODlkZDMzNmI5ZDc4MjdkOGNhOWQwOTA3NmUwZjkyMGMyNjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkwNGE4YjUwMTkzODJkYjFjY2EwMDBmZTBmMzY2MmY5OThkODE0OGQ2NjE5NjcwYWM3NzJhNmUyMzFjNjAxNzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNlMzY0YzJkOTcwNzc5ZjA1MGUzZTk3NjUxMGJiYWY3M2RiZmI5NWIxZjVlOWY5MmYxYTY2OTg5OTc1ZjQ0ZTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e3ae1041a61640c49c969dcdb3c45bca",
+      "statement": "Removed scenario/member facts remain accessible through durable records and read-only handles, and force reopening supersedes scenario records only after flag invalidation.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/scenario_records.py#L31-L42",
+          "version": "repo-lines-v1:sha256:5e13523e8abeb19b46834147601523cb6579925629e6c3b10dcca8862ebe5abc:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhNjllZTM2OTZmOGIxYTQyMzBlNDViNDgzOWFjMDFlZTlhNDI0YWIzZTRmYmU1NmRhNzJlM2U5NjlkZDYzYzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViNjljYThhZDMzYTJjNGNlMjA3YzJiYTQwZjZlODlkZjBlODc3ZjAwMDhjZmYyMWI1MTYxZDliNjhmMWMxODYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU1YzFjNDYyZTJhMzlkNzQ3NTlmNWUxYjEyNmY3NjgzYTJiNzMwMTE4ZTE4ZjUxMjJiMDhjZWRlZWI2NTBlMjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ2Yjk0NDk3NzA3MWIyNGU4N2U1NGQ4MDQ0NzUxMzVlZDU1YWQwZGIwODZjYzZlZGQ5NzNkYTQ5MTEwZGM2ODMifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/scenario_records.py#L411-L424",
+          "version": "repo-lines-v1:sha256:1306d93d400a0e885007fbb4e9c01f8989663900411e64f29f802aaec58dc48f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI2NDgxODJlZjM3YmY2MmE0YjNmOGMxZGJjOGRmZmU2Y2NkMWMwNmJlMzE3NWM0ZGE0NDEwNWYwMTg5ODMzY2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwZTJhNDY1MDA5NWZhOTVkMGUyYmI0MWIyZGIyOTA5NGQzNDA0ZDI4Y2UxMjMzOWVjODhiYjRiNWM1YmU4ZjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYxYzZiMjBmODBiNWIyMDlhZWI3MTQwZTA4OTMwMWE1YWZjZTRmMzU0YzU4YjQyZjg1ODM2Y2E4NjU5N2I5MjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNhYzM5ZDU1YjFjNDA5YWVlN2MzMThhZThmZWU0ZjEyOWVlODM1OWViMjczNjU3NWJlYmI4MDcxN2E1Mzk2OWQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/scenario_records.py#L508-L543",
+          "version": "repo-lines-v1:sha256:ef4668bec852e79c9eac621e09048d964e5439173eeacdce718969322f9d5652:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyMTJiMGU0YTU3MmQ1MzM4NzgxMTY0OTIxMDgwNTI1NGZiYjM3ZTc1MjliOWM2MDBlYjI4OTBhY2RjMTY2MGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyODdjN2E1ZmE3ZWQ0OGU2ODIyMDEzODIzZGVhZDg3YjhiZjNmMDljOTgxNTUwZjZmZDk5ZGYwMDM1ZDJjM2MiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc5M2NlNjljOTBkOWRhMTk1YWVmOWNiZDJiYjE0YzY0NDYwMDY1MmE3NWZjNzlkNjcyNTZiZjY1MDE5MjI1NDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJiNWMzOWQ2ODdiMzM3YmU3Y2Y3NWM1ZjgxZWYxYmJiMGMyZTVkMTJiYzQwN2E0Y2ZhYTU2MTkxNDcwNzczODQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8607bddf0d884923936ca2378baae4a6",
+      "statement": "Recompute uses explicit defect scope and raw-retention state; a scenario-processing defect escalates from reprocess to rerun once raw outputs are gone.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/recompute.py#L48-L100",
+          "version": "repo-lines-v1:sha256:9d447e47ff28fe450a6c3b7ce8909c989c12296c6a476d822c2507f15b2b49b6:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZiMGY3OTU4NTU3MDI1M2FjZTQyZTQ3NzEyMmU4MGQ4NjVhNDBkYzk5M2YxNmI3ZmU0ZTUxNTM3MjFlYmNhN2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4ZmUxZWZlN2I2ZGRkMjg3OTY2NWQzM2E5MjNlZTM5NmJhOTdlYTA5MmRmMmE0YjRhZjA2OWE4ZjdmOWM5ZDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjEyYjdjNTgyMjdkZmU4MDhlM2MzY2ViOTljYzNhMDljYTBkMDdkZmVlNGFhYzU5ODE2ZDhjNDRmZDcxMjFiYjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRhOWJiNGIyM2UxY2ZlN2MyZWYwZjAyZjE1NWM4NzI2ODY0ZDNlMDUxNTQyZmQzNTdjNzhkZjZhMTBhNGMzYWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_da015ed120464e7aaafa50217be99f4b",
+      "statement": "The fresh-run wipe guard refuses existing completed, consolidated, or in-flight work absent a deliberate override that prints the destruction cost.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/wipe_guard.py#L85-L138",
+          "version": "repo-lines-v1:sha256:9330b7f3db8769651ff2f1c35a43fcf07f6b437cc409d73c4352fecfbf718d25:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhkOTY2MTc1MDU2ZmRiYTIyNTgxMDZiODhlYzZkNDQ4ZWZiYzc4ZDQwODUxZTBkOThiMGQ3ODg1ZGYwMmU5MzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMyZTEwMGQ3ZGY4MjFhNGQxOWNmMmZmZWQzYTA2Y2U5YzkyMGYzMjRiNDE3NzBmZDhhNTI4NDA1OTMzYWJmOTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

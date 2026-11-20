@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:8570c5871887c009db43a2b02246ec93f9a1f70a44a081c1213854c36c5dee1f",
+  "claims": [
+    {
+      "id": "claim_f589f5ad178a4abab35e862d521d3e60",
+      "statement": "Log writes lock per log and merge instance-changed fields into current disk state; deferred writes flush on exit and lock timeout raises ProcessingError.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/log.py#L280-L322",
+          "version": "repo-lines-v1:sha256:5670eac5c20d2f851a0acd6729daba55345959b39e7879515e2baae996d02484:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk2N2EwZTAyZTNkMDAzZTU2ZGNmZDYzMTI3YjkyMTU4MTY2OWFlZjg3Yzc1M2M3YTg0ZDA0NGQyMTAyYjlhN2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcyMTBjODkxMTE2NmNjM2UzZGM2NDRkNTJmMDE4NmYxOTcyOGJjZjU3MjMzMWVhZDZjMGViMDcyODVmNGIzYzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY5OTUxOTkzZmRjYjc2MWIyNjYxNTg2NjAxNTIxNTViYzZlZDk3OGQ5MTIwYTEzYzhmMGM2OWJkMmMzNTNmODYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk0OWYxMTk3YTM0NWUxYWVlYWJjYWM5YmJhMDIwZmIxNGU1NGY4MzU2NWIzMDkzOTE5OGZkNTBmNDk0NzM5ZmYifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/log.py#L498-L513",
+          "version": "repo-lines-v1:sha256:e66cddb067df013a1d57182085c9bffe7f725a284eaa83694f1881b98e0f8623:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBiOWI0M2E5ZGVhNDc4MzBmMGJmNzE4MGYyZThkNjE4ZDNjNjA4Mjg0ZWZlNzg4MmEzODQyNDQ2ODZjMDljMDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhMzcwMjU3YzllZDdlYTIxODI2Y2U4YWU1MjU0OWQxODVlZGE3Y2U1ZTJjMzdkMGM3YjJiMGNjZTUxYjY1ODEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiZTFlMjEzY2NjNzliOWNjMzYzYjdmMTY3YjMxNzNjZGE4NzY1NDU0ODI1Y2Y4NWZhMDk5MDg4ZmUwMTkwMGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRmZTgwMDdmY2Y0ZDRlNzA4MjdkMTgzZjI0OWQ2M2I2MmM2ZDc0ODI2MTkwYWQzOGE1Y2I1ODRjZjhiMTlmNGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b718d0c1f4144333aca05f1739e99d5a",
+      "statement": "Status flag writes preserve an existing bare flag's mtime while independently replacing its diagnostic JSON sidecar.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/status_flags.py#L61-L109",
+          "version": "repo-lines-v1:sha256:af4273dbe4ecf99460d3805ba67e10a556797742676d6fa45be542d9a45f9940:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhYjA0NjhmNjhiNGZkM2Y4MTFlMjE1ZTBhYWRhOTBkOTczNjM3ZDA4ZmUwNDUwNjI2YTAyMGEwNzUzYjg2NGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEzYjIyMzQzZTljNzU1OTIzM2RjNDZkY2VhNTg5OTY1OGY2Yzg2YTczMTRmYTQ2MjA5OGYyOTI4YWY2YWQzZjUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkzNWE1YzdkM2NmYTllYzM4MzFiYWE2OTFlZTI1ZmNhMDgwNjJjZTI1NTVlMDAzNmU3MTJhZGQzMjBkYzg2Y2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE3MmY2MGEyZjQzMjU1ZDc4ZDQyMmFiMjFiNWFkMjIxYzRkMTA4Yzg3ZThlNzRlZWMxYjcxNDAyMzc5ZTZmMWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0a7a547e3abc4f4e9576fcaf9cb5896d",
+      "statement": "The simulation runner creates submitted markers only with a SLURM job identity, clears queued and prior failed markers at startup, and normally publishes terminal state before removing submitted state unless terminal handling is deferred.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/run_simulation_runner.py#L1033-L1058",
+          "version": "repo-lines-v1:sha256:9ac3a0f060a8b1e3b892a973e74e60fb28158245050d9d274d610a7e8f69d667:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU3MGRhMDMyZmJmZGJkMWI0MjRlODE0YzIxMmFlNTg0ODRlNzZmNTdkYzU2ZGJmZDEzYmY4MDM3MzZkMzI0YjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZmMDk4YzJmYTY5NTc5ZGZlYzhjNDJkMTc3OTc4Y2Q2MjRhOTEwYzc3Njk1M2ZjYzVmMjVmM2FhOTBiZWZhZGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRlZDczNDdlYmE2YmYwYzkwMzI3MDk4NTQ2NTZkMTVlNDAxMjlkYzJhNzhkMDA2ZDUwMjhiNWIzMGEzNDYwNzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNkNDEzNDBjYzIzOWExNTljZTliNjAyMmU5ZjYzMjI4MzJlMmVhZDc2Y2FlOWU0NzU0ZDIxMGViOGZiNmQ1ZTgifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/run_simulation_runner.py#L503-L588",
+          "version": "repo-lines-v1:sha256:e862ea3e735a5ea30222d5610a33f70fed53c7eb2ca786f0f7a6b71793cfcdd7:eyJzZWxlY3RlZExpbmVDb3VudCI6ODYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFjYTIxYWIzMjIyZGVjNjU2ZDI5YjgwYTJlZWQyYjM1NmViMzExNTdiM2QzODY3YTRhM2JiNGFmZmQxOTIxMDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlNTIzZmQ0YjBiNjExZDEzZTQ5MjNkODQ5NjYwOGJiZGFiMmNkMDkzMzM3NWViYTJjNGZjYWVjNWEwYThjOTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJhNGNiZDBhNjljNmNhZjMzNzgxNzMxMTlkYzEyYWQ0OTc5NzU4YzhkZWRjNzMxM2E3MjkxODc0OGJiMjM4NmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ2YTFmZDkyOWVlNzUxZGY1NWJjOTIzMzM1NGUzMDdjZGVhNWUyMDE3ZjllMDJkZGFhYmE0MTQ0NzQyZTljODgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_14fa82fbf5bc4d78a300b0baceab6ec6",
+      "statement": "The runner uses observer construction for shared logs, skips the native compilation check for container binaries, and derives successful simulation completion from model_run_completed rather than unconditionally marking it complete.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/run_simulation_runner.py#L475-L494",
+          "version": "repo-lines-v1:sha256:366d6eb890c6ba8955c440defb1dde8b20758ba9cee01db86fd6fa77cef31381:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM4MjVlYTRiMWU2ZWM1ZTM0NWY2MzRmNThjZDU3NGQ0YWM1MTVjNDRhNDNiYWNmODI5MzU4ZDBkMDFiNjVhZjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5MDlhNTNhNjE4ZDAyOGUxZDMwMDBjMGE3YWJjZWVjYmU1ZmIzN2Y0ZTUxMWVmZTQ2NjQzZmFkNmU2Njg3MmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNmNGM3MjM0YzJmZjFlMTk1NWZiNjcyMGVjNjRiM2Y1ZWFmYjdiNTgzNDBkNTIzYTQ1MzEwNGUxNjQzNmI5YmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUyYTcyN2ViOTM5NGNkMWI2ODAxNGI2NjFlNDkzZWZmYjk4NWZjM2EyZmJkZDZkYjI5ZWRjODQ0YzQ2N2RkZmQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/run_simulation_runner.py#L598-L611",
+          "version": "repo-lines-v1:sha256:5cc3490ce6fb4d7d35af68f0e5a05547d43869c8c412ebb8baeb4abe33374275:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxY2FmYjU2M2RiMDhjMTJmNTBkZDc4NzgyNTZhNzg0YWMzOGNiMTRlZDRmNjY0ZmRhMDNhNTVkNDZlY2Y3YTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlNzU5NjJjZjg3ZGJiYjM1NjM5NGE3MTczMzkxZDM1ODAxY2U5NDc2YWIyM2U4ZDkzMGQ5Mjg2YzA2ZThhYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0MTI5NzJlYWRhN2Q5MzJkMDJkYjJlMzQ1ODA0OTVkMDNmMmU3MmQwODBjYzIyNzQzYzBjOTdiNzUxMjg5OTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA0YjU2MDgwYmZhMzkxMDU3NGU0YTY5MTNiZjc3MDNhMmUyMWRhYWQ5ZGE3MzMxMzhjNzdhNDlkMzg2ZjdhNzAifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/run_simulation_runner.py#L948-L1021",
+          "version": "repo-lines-v1:sha256:b4ddba42287bbc653fd35920ba75ac1e357f14b82fedf519098c9aa42ea1ee08:eyJzZWxlY3RlZExpbmVDb3VudCI6NzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRjY2FhNTY3OWUwODMwOGIwMWM1Mjk3NmY1YzVmZTJjMzA3YzIzNTUxZGE5NWI0M2Y1YjAzNTQ3MTUyMWE4NDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVhMTY4MDljMDc1ZGIzMDllMDliYmM5YWI3ZWZlZTY5ZWZiNWY0MTliZDRkODkzMGQwMzgwNjYwMmRkMDJmZDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjliZDljZGE2MGY2YTQxZGM0MjMyYWM0M2MxMjVkNjQ5MzA4YzI1Y2NiNjM2ZGJmMDMwZmJiYzEzZGNiMWFiZGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ1ZjVkYjZhYjhjYTExNjNhYjg4MTk0ZTVlZjRlZTk1Y2Q4NGYyZjk5OTIyNDcyYTg4YTBmY2E5NjE4YTg2MjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_719b0598bdc74984b9139dbd468e5524",
+      "statement": "Worker death confirmation requires a terminal sacct result after the squeue live check; missing accounting data is not death confirmation.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/slurm_liveness.py#L205-L233",
+          "version": "repo-lines-v1:sha256:69f60a1212f375a054fa21571f960813a4f93d093a7e959f18b4d324f2991bbc:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OGFjYmU0NDE0MmE5NmQyMTliOTk3ODg2MGY2ZWI4ZjM0ZjUyMTA1NmViNzg4YzkwY2Q1MGI2Mzc4OWMxZDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFhMmFjNmJkNWRjZGZjNjc1NDAwMDRjNzAwZTlhMjc5MWMzYWZhYWI4ZGQ4Y2Q2YmJiZjNlMjBhNjM0YWY4MzQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiNDY4YWQwYWJkNWRmODYyMGJiOTRiZGZmZTg1ZjQyMTEwZWNkYThhZjc2NGE0ZDVjM2JhMDZiYWE1Zjc3M2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_47228b5cb477437e84de43120f79b3c6",
+      "statement": "Reprocess acquires a driver claim before destructive work, refuses live-or-indeterminate drivers, and skips claiming for dry runs.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/workflow.py#L8438-L8506",
+          "version": "repo-lines-v1:sha256:d80d9a4ed5a13fd4dd792d1311e5187d60ee6d2087ee53a0b5976aaee3a77a64:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBkZjdmYTRjNzQ0YTE2ZjQzYjA0NDFkNDkwZjFmMWMyMzJlZmY1MTU0MDhiZTg0MTJmYzNhNjAwYmIwZTRjNTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNiMjM1NzVhZDY3NmU4N2FiNjlkNjNkNjdmZTU3N2FmNDhmZGViMDk1Zjg0Y2M1MjJmZmI0MTg1MmNhZDIzYzgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk2ZmMwN2U0M2YxOTA2ODgzZjFjNjYyOGJlZjYyZTE1ZjgzNzQ5NTdhYmMxNWZmZDgwMWEyNjY4MTE1NGJmYjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAyY2Q4ODIxZjRlNjcxNDI1MTRkZGU5YzY0ZmU1NGZjY2I1NmZmMmRkNWM2YTE5OGNiYjcyMDJlZTVlNjlmZTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b758b7f4a1c945af9eacc99fda25d24b",
+      "statement": "Scenario removal writes pending before deletion and done afterwards, uses pending/done records instead of partial live logs, and requires flags to be removed before superseding the record for forced reruns.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/scenario_records.py#L201-L216",
+          "version": "repo-lines-v1:sha256:7fe140a542b6c1d79f7b8dabb1bff613ec529cbec8423c88849c430ad912ce59:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyYjBiYzdlMDE2YTEyMGJiOTFjY2MxMjc1NWVlYjE1OWQyMjUzOTZhM2IzNDE1MDU1MTJhYzVmMzNkOWU0NjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFhYTBiN2ViNWI2YWM1ZTNhMjc1MDg4NDEyYjA1NTFjNDA1ZWEyODE4MmQ5YmExZTAxOTlhNjE5NmVlODAzNDciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM0ZGE0ODk2ZTg1ZDMzMjE0NDU3M2VkOTQ3NjFkMzMxYTM1NjQ5ZGE0OWZhNzQxYzdjMzZiYTZlMDc1NzBiYTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg3YmUyYTIxM2FkMzg1NWJhODE0Yjg3M2JmNTJiNjFkNDE5NjJiNmYxNDcwMmM1Zjg1NjAyNTE4ZTc1MDkwNmEifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/scenario_records.py#L361-L424",
+          "version": "repo-lines-v1:sha256:2fc671a57b47fdff99c8b1fc17b8842999d41fa87c6ae582b8f3ce2f512cb1f0:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0MzYzZTIwZjk5OTlhYTU1Y2MxOWQxZDgxZTc0NzQzZDhhMjc0MmIwODRjYTYxMTdmYzUxNTljMmFjOWZhZGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwZTJhNDY1MDA5NWZhOTVkMGUyYmI0MWIyZGIyOTA5NGQzNDA0ZDI4Y2UxMjMzOWVjODhiYjRiNWM1YmU4ZjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkwNGE4YjUwMTkzODJkYjFjY2EwMDBmZTBmMzY2MmY5OThkODE0OGQ2NjE5NjcwYWM3NzJhNmUyMzFjNjAxNzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNhYzM5ZDU1YjFjNDA5YWVlN2MzMThhZThmZWU0ZjEyOWVlODM1OWViMjczNjU3NWJlYmI4MDcxN2E1Mzk2OWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5c57f052e3d44cc6bc51d00a054a24dd",
+      "statement": "A done removed member is not constructed again and its retained records support read-only member views.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/scenario_records.py#L496-L505",
+          "version": "repo-lines-v1:sha256:f42c132a796c98b5f04dadbe128c796adb9458420cc0bbb64fc00febb896f32b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIyNzhkNzg0NjJmNGUxN2U3NWIzMzVmYjRmMWM3ZTIyN2EwNjRlNDhmYzljMmM5MmM1YjQxOGVlOWVkODE2MTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmOTQxMWJhOTVkMjI5NDI1ZDFmY2FhNzg2MTg1YTY4YTNjM2M3OTcxN2ZhNzYwNTc3MjhmODkwZmIzNGM2ZDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI5OWEwYmM3ZWI3Mzk4ZDNhZjgzOGQ5YjU1MDVlMjMxMGJmNjAzZGM3NDlkYjM0MGFhZDYwNzBlMjcwNzcwNzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVjZmMxN2M5OTY3N2NkZmZmYmMyNDZkNTBhNGZkZjk0MGQxMGE5MDg4Y2EzYmIzMjFhZmUzOWFmNjE1N2VlMDYifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/scenario_records.py#L542-L543",
+          "version": "repo-lines-v1:sha256:2b60a773a5933647277ac1bb5bee309ddf5f1be6203b780d50528bafdcbdac96:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMWE3Zjg4MjVmZTJmYzk3NDJmMzU5OTk3ZWJhZjM2MDc5OGVlOTkwOGE2YTI3YTk2ZjYyMDczY2ZhNWQyYjA2ZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTI4N2M3YTVmYTdlZDQ4ZTY4MjIwMTM4MjNkZWFkODdiOGJmM2YwOWM5ODE1NTBmNmZkOTlkZjAwMzVkMmMzYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOGNjNGE3ZDFjYzc5NmFiYTNlNDY3MjMzMjdmNTE3ZTlmODExOTgyZDI1MGYwNzAyOTg2ZTRiNTc2NGFkOTU4OSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmI1YzM5ZDY4N2IzMzdiZTdjZjc1YzVmODFlZjFiYmIwYzJlNWQxMmJjNDA3YTRjZmFhNTYxOTE0NzA3NzM4NCJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

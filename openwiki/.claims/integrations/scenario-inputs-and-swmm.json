@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:2699b40eb3e55ead2ca3722c1ad211f9d7d56507219d3a6d82eed211f9a3f3bc",
+  "claims": [
+    {
+      "id": "claim_7ddbd1a227914a9a805d6a42ebde9f76",
+      "statement": "Preparation skips completed scenarios unless overwrite is requested, distinguishes native and container build gates, and prepares forcing, hydraulics, optional standalone and hydrology models, and boundary files.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/scenario.py#L2065-L2133",
+          "version": "repo-lines-v1:sha256:cafca8aa8a7fc96e590c8aa7d8d735fc96a120566a4df70ffdbf98e7daf0569a:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3MmQzMTgyYWU0NGYwNTEzYTM3YzVmZjBjNDdlODZhMzFhZGM5YzJkZjA1MDI1MzJjNmJiN2FjNjVhMDZkZGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM1NjEzMGVkZWU2OTkwYTUyMzEwOGM5NzEyMmMxMDczZTJmOTQ5NzAzMTA5MGNlYWM0ZDYxZmRhZjljYTliODUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRhNDAzNjgyNGExYTYyNGM4MGYwYTdhNzdkMmE1MmZkYmE1Y2I2MmZmMjcxODE5Zjc4Y2VhNDAzYzk2OWVjNWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMwMjIxNTRhOTQ4NjkzZDQ3MTUyMGM3NTQ3Y2VlMDUyZGQ1NWVjZmYzNzNkMTY0YmViYTJjMGY1MmM2ZjEwNTIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_03b30e52903c46988344d38e44d43181",
+      "statement": "The subprocess preparation runner isolates PySWMM preparation, loads partition GPU targets into observer system and analysis objects, and returns success only when the refreshed completion log is true; missing configs return 2 and failures return 1.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/prepare_scenario_runner.py#L123-L204",
+          "version": "repo-lines-v1:sha256:480e43c334bf18a95965b6b94a726e6ab69bdfb2fcef18de507f4bbbffd77d32:eyJzZWxlY3RlZExpbmVDb3VudCI6ODIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlM2NmMjFmYjE0ZmI0ZGY2ZjkxN2ViMDIyOTQ4ZWYxOTYzMjM1MmRhNDRjYmRmOGU2N2FiZjAyYjRlMjVjMzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIzMDg2NmUxYmNjNWFiNzZlM2VmNTkwMTJkMGFkMzlhNjg3YWJlMDAyM2I0MzhhY2IxMTMwYTE4ODI1ZTgxOTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBhN2UxMTU1YWNkYjI3Mzc5ZDBiNzIxZTZlNTg5ZTFiMmEwMzRiM2JjMTQ5ZjU2YzJmZDk0YTQyOTJkNjA1M2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNkNDEzNDBjYzIzOWExNTljZTliNjAyMmU5ZjYzMjI4MzJlMmVhZDc2Y2FlOWU0NzU0ZDIxMGViOGZiNmQ1ZTgifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/prepare_scenario_runner.py#L3-L19",
+          "version": "repo-lines-v1:sha256:6ad5654d0497b38cc0b834830d31c8622b8107bf2c278b4a3348fc54cacd6e57:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMwNTZkZDViZDRmZmMzNmJmMzY0NTAxMjhmMDUwMDg1NWMyOTk4YmNlNWE3OGRkM2ZhNTAwNjk4MGIwYTIxYTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY3ZDMxNzEzYzY0OGE2ODQyZWY2MGUyZTQxM2E4ZjU5ZDBkYWY0OWQwOGE5NjU5NWQzMzllYTIzNDA2MWU0ZjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoyLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjljYjk2NzZhYTM1YTUxOWI2MWEwNDQxOWY1Y2U2NmM1MzgzOTRmNzI0ZGQ0NDliYTFjMTM5Zjg3MzA0ZmZlNzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg0NDgxMzE0NWFlNzI3ZDYwY2U0MWNlMmIzNDkzMTM0ODRmODBhYWNlZDFjNzJhZWFhOWY5ZmUwY2FlZmY1ODMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_57b89a3ea7434249a7811c774ea7f736",
+      "statement": "Event windows use one matching CSV row or full weather-axis endpoints; event IDs join ordered indexer names and values.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/scenario.py#L290-L368",
+          "version": "repo-lines-v1:sha256:20390cf9695726fe55b96309ec49c2cf429a9d1cb6bd2657fd8a5c1ec161fd04:eyJzZWxlY3RlZExpbmVDb3VudCI6NzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwMGU5ODk3NjQzODNkZDFlNTU1ODQwYTRkNGI2NTIyNTJhYmE4YWIwNjIzOTJlOWY5NDAxYWM5M2E4MmVkNzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0ZmEzNjJlZDAzNDcxNWI3OTU0NzZmZWVkNTkzOGE1OThjODM5OWY5MWM3MmRiOTFjMTRkY2FhOTRlMDI0ZjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIzZGYyYWNmMDZlOGMzZjAzYzcxMzVjNmU4YWM1YTljYTU0MzJhYmUwNmE3NGFjYTBmZGQ5YTUzYTAwOGY5ODciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI3M2U5NmJjZjlkMDk3N2VjNzg2ZTc0NzMyZWExYjU4ZGJjYjI0NmUzMzA3YWJmZGMyYzFlMDNiMDY3ZjIzZjYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5cf4459dffac451f8bda6dc09fd78de7",
+      "statement": "Scenario weather rejects empty clips, off-axis CSV endpoints, and missing forcing values even on existing files; forcing time-step validation requires uniform intervals.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/scenario.py#L155-L222",
+          "version": "repo-lines-v1:sha256:258776aaab0938fee34006a1d0c2df9d629fa992353df9ff3ddf5b7a5398c5f3:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4NDMyYzdjNDY5NWZlOWRjMjBiYjMxN2U4ZDZhMzQ3MTMxNjBjMDIzMjBjNjM2MTVmNzI5YzMzN2VjNGI1MTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4ZDA5ZWU0NzdjMjQ4NDQ5ZjMyMDEzNmY4NjZjOThlYjE3M2EyMjliOWFiZDY3MjgxZWYzNGQzNDMyMmE2YzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiNDY4YWQwYWJkNWRmODYyMGJiOTRiZGZmZTg1ZjQyMTEwZWNkYThhZjc2NGE0ZDVjM2JhMDZiYWE1Zjc3M2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIxYzRjNGY0N2U3YTA2ZDAzMDFiMDU4ZTkzOWM4OGIyZGI1YjQ1ZjQ0ZmQ4ZDZmOTM2YjRiOTgxNDkwZGNlN2QifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/scenario.py#L1972-L2063",
+          "version": "repo-lines-v1:sha256:9d964f8f6041b82dea253b63e4b940ceba6cd6023b870e4cedfe9c0a2f49b7e5:eyJzZWxlY3RlZExpbmVDb3VudCI6OTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2ZDljZmY3MzUxN2RmNTRkNzE1ODBlNjlhY2VmYTVlMTkwMDJkNWNmMjlmMmEyMTE5ZDdiMTFiMzhiODEyMGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNjNDQwNmQ1MjVhMjg3ZjcyM2M0OTY1YjUxNDA1MjdiNzU4ZGZiNzQ2NTk1ZGRkZjUzNjM3MTBkMThjMjg5ZjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYxNjE0ZGY2NjYwYjk1YWI1YWM0ZDMzZTdkYjE2NDMzMmU0ZTUxNzNkMTRlM2M1YTRmNzg4YzI4YjIxMTUxMzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc5ZjM1ZmVlNThmODI2YjgyMzg4ZmUyN2E5NzQwMjAzNmQzNGNjYzhjZDFlODBkMWRlMDMxNDI4MjMxN2MzOTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f6377d7b44ba4323bbf0c732680b88f9",
+      "statement": "SWMM role derivation leaves full-model outfalls intact, converts requested outfalls for hydraulic and hydrology roles, sets hydrology routing to KINWAVE, and inserts a dummy outlet chain if no outfall remains.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/swmm_runnable.py#L428-L545",
+          "version": "repo-lines-v1:sha256:5e3c12be01a831c2d9cff193dacb0a42332e49c58427ba5b6df2b5f26bae0948:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjNmIwZjc1ZGRhN2RmMGRmYWYyNjJhMTZlMDQyMjA4NmYzYTJkYTg1MWQ3ODk5Y2UxNDAzNTVmMWU2MWYzMzA4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI5OTI2ODJjMjc5MjVlNzUxZmRhMDljOGI0ZmM3ZDFkZjNjMTMwZDcwZDdmNzBhNzU3NGY1YzE2MTdlNmNiMTVjIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxZDU5YzVjMjJiMzMyYzFlZTg2YzRkZDQ4ZjdlNDEzZTM3MmU5MmIzOGIyODNkYTQ2NGRlNTYxYzA2NzI2MjhlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0NTE3NjA4NGZiNDUzMDg0Nzc4M2M3NmQ5ZDkyYzRlZjEzN2ZlNzNiZDIxZDY3MjMxNjk0OTMyZTY3ZDYwZTc0In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_25dc3267b0e547abbe609cebcec9584b",
+      "statement": "Rainfall dat files use mapped event gauges; optional hydrology execution checks the SWMM stack and test venue and sets completion only after Simulation.execute succeeds.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/swmm_runoff_modeling.py#L140-L186",
+          "version": "repo-lines-v1:sha256:352293c1752b5644147c287185e7899e12ab5771f9e157467ac9f212d37d7852:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ3ZjI2NTg4OTdlYzI1ODk5MzQ4YTc0YjM2Njk5NGU0ZDg0NzcxMmU5ZDUwZDY2ZWRiNDFkZGI3MTk0MzM1YTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiNWM4MjYzMmZjODJkNGIyYzM0MGY0MjU1OGJhM2RmYTMxYzc2NTVkZjZmY2MxNjhiNGZkY2U1N2ZhYzYwNDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZhMDVhMDAxMmMxOTViOWI1YTZhMjFlYjBlMjc0MDY3NGFhMTIxZWFlMTRiZjY1NmVlM2E3OWFjNWRlMjdjNTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjExOWRlZjhkZDgzNDYxYzQxODc3OGUxZTQyN2M1N2E5ODcyYzkyZDU2YzhkMjFkODA5NjgzYmY4OTFhYWZiOTYifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/swmm_runoff_modeling.py#L235-L260",
+          "version": "repo-lines-v1:sha256:a5b3fba7446dd47c4b022e1a436d9e5815c5fdd3e1844a66d34b5600ccd0fa35:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE2YzBlNjhmOWNhZGFmZmZhZjBkNjMyZGU5YjY4MzIzZjM4ZmE4ZWQ2YzkxZTE5OTA3OWQxM2NkOTkwNzBlMzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiNWM4MjYzMmZjODJkNGIyYzM0MGY0MjU1OGJhM2RmYTMxYzc2NTVkZjZmY2MxNjhiNGZkY2U1N2ZhYzYwNDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwOWQ0MzI4NGY1MmVhNjAyYjJlZTYzNjg0OTM2ZTgwNzEwNTc5NDI5MDYzMTdlYWRhY2M0YTc1ODFhY2Y1ZTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZiNDhkZjk1ZTM2YmJhZjAxMDFmYmIwZjYwY2Y2ODQ2MjQ3Mzg2ZThlYWM5OWRiNWM5ZWY0YzNlNmQ3Y2E0MzYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f9ce972736fc4c72839f2fb93611a748",
+      "statement": "Coupling list generation preserves hydraulic INFLOWS, selects candidates against DEM and links, writes the selected list and optional manhole table, and records enabled one-per-cell selection diagnostics.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/scenario_inputs.py#L69-L148",
+          "version": "repo-lines-v1:sha256:132197b6e5e2ba2fff3a1924498571bb48744be7d8884e1d8d210e11da174ea8:eyJzZWxlY3RlZExpbmVDb3VudCI6ODAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVjOGExNDdiNjcxZTU5Y2VmYTcxNjQ1MWVmNjU4NTZmZTY0ZTk1YTkxZjg5ZTFhYzgwN2VmYWJlMTljMjRjOTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiNWM4MjYzMmZjODJkNGIyYzM0MGY0MjU1OGJhM2RmYTMxYzc2NTVkZjZmY2MxNjhiNGZkY2U1N2ZhYzYwNDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVjNGY3OGZkN2ZlZDg5NWFkNDI2ZmI0MGUwNzEyNGU1ZDg1NThlMzdhM2I3MDE0Y2RhYjYzNWQ0OWEyZjBiNDIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY3NDg2ZWQ0NzA5Y2E2MGU4MTA2ZTk0OTYxMWFiNTdmY2VhZTNlM2FiMWJiMmM0ZjI4MTg0OGI4ZDM2MDI3ZTIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_17d147e648384f50ad43c4de9dea858b",
+      "statement": "Boundary generation writes ordered type-specific location rows, meter-valued level series, and logged spatial diagnostics; disabled boundaries write only the location header, while weather-sourced SWMM level files use the shared boundary-level function.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/scenario_inputs.py#L189-L279",
+          "version": "repo-lines-v1:sha256:143bf743fd364552949693b716fe87ed31088cbbb0d45cb922ca018b6e10ea2b:eyJzZWxlY3RlZExpbmVDb3VudCI6OTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0MTU2YTVmNGI3ZDk0ZGE4Nzg3ZDFkMTg2MTQ3ZDU5YzA0ZTdlYjEzOTRiY2NiMDlkNDA3NTdjMjc1MTZkYjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiNWM4MjYzMmZjODJkNGIyYzM0MGY0MjU1OGJhM2RmYTMxYzc2NTVkZjZmY2MxNjhiNGZkY2U1N2ZhYzYwNDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI5NjAzNmViYTY2MmI0MGUwNTBjNDI0YTJlZjIwNDRiNmQ1NTY0YzVlMmM0YzE3OTk1YmVlZTExYzFhZTA3MDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/swmm_runoff_modeling.py#L188-L220",
+          "version": "repo-lines-v1:sha256:1c7f35b14bf73501e7c0aefdc75f601bd59aa25f1af3b6270434869c3f8480af:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkMTQ4ZDYzODBkM2QwZjBjMTAzZWExZGU3MGUyZTgxYWM3YjJhMzU4YzEwNDIzYTdlNTM3OWViY2ExMjZhMmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNlNmI2OWVjN2M0OTc4YWE3ZmE5NjFiZDhkNTMwY2UxMTE1YmFkZDc0YmM3NTQyMDgzMzY2ODFhMTVkNzMzMjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyZGViMmQyNWI0YzZmMDhmN2FkNzdhMDcxMDg5YmQzNzRhM2EyZDBiMjcwYTE1MTE4YjA0YWNmMzVkMDkwOTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc2YWE0MmUwMjkxNzE4NWUxYzdmYjU1ZTFlNTAzYTJiMWVkYmI4N2ZjODRlNWE3ZGI0MTJiNjc2MTFkOWFmNzgifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

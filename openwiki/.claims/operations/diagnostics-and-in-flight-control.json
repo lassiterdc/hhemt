@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:0efad55a21b323085778b1b0b509ac81602df16ba7f40ac72808468c95e155ee",
+  "claims": [
+    {
+      "id": "claim_9d6328c0db414b1a8b7361f741c868f0",
+      "statement": "Failed-run triage uses artifact completion rather than return codes, follows the execution ladder rather than lexical flag ordering, and preserves attempt history in scheduler logs because model logs are overwritten.",
+      "evidence": [
+        {
+          "resource": "repo://docs/how-to/diagnosing-a-failed-run.md#L31-L86",
+          "version": "repo-lines-v1:sha256:1e610972e0275bfbb5ecd004e822bfe74b28e3cac290010fb963b19ba0e1d58c:eyJzZWxlY3RlZExpbmVDb3VudCI6NTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5OGE1NDc2NWQxMWI5NjMzOGVjNWU1YTEyNGRiNmRkMGMwOTkwMzhiODJlMDE0ZjRkM2Q4OThhOWRiNjlmYzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZkMDQzMjU0NTZkMmU4NzUzYzA0NjMzNmJjYjVjNWQyZGI3OTdlNzhlMTgyOWU2NDk4NjE5ZWZjMzJiYzA4MGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE4OGNmNmMyNTgyM2U0MjhlZTQ5OGE2YzFlZDFmYWM5N2E3NTQyOGU1YWZlYzVjZGUzYTdkM2MwOTg0OGRiOTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJmNDFkZDBmZDU4YmMxYjUzNTRhMTZiNTMyYjhhNjlkZGM1OWUzZDFkZWNlZjk3N2MyN2MyYmY0MmI3OGRmNDkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_805aacd32cbf4af8a5002c2042dd81e0",
+      "statement": "Operators should scope repairs to render, consolidate or process when upstream results remain valid, and inspect known invalidating fixes before a full rerun.",
+      "evidence": [
+        {
+          "resource": "repo://docs/how-to/diagnosing-a-failed-run.md#L126-L155",
+          "version": "repo-lines-v1:sha256:57acaa76fd811225e2c87a6348f782b34faa72666202085a2fb3b00320bd0128:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYwZTFkYWZjNmMyMjU3MDBkNWJhODdiYTZmYTljMjEzNDk2YmFlNWIzMGJkYTBhZjQ0ZmQwZWI3NGQ5MzJlZjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg4NTRmNTIwZDQ2ZTI3MTBmNTVjNzI5YjM5OTI1MzUyYzg1N2EwZGMwZWQ3NzZjMzcyMWI4YzBjZDMzZmFkZjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRiOGY2OGQyNDdjMzM5NzBkZWJhNDA3MzY4N2EyMTY4MmRhZjI4ODJiMWVmMjBhYjcyMWRhNzI0MDJlYmYwNjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e54e98de1707441e8723b9f58b5248d2",
+      "statement": "Status CSV export serializes a supplied snapshot or analysis.df_status; validation combines core and persisted EDA checks and atomically persists a stamped validation_report.json for rendering.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis_validation.py#L3358-L3479",
+          "version": "repo-lines-v1:sha256:66ec76a338b54d50e7c02f05b2fa8e8da83d2f427be340d77c94b6d04a1d893e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwYmMxZWJiODAzY2UzMzNiZGI0ZGNiMjM1ZDgyNDRiNTA4ZDM1MzdmZWY2NjM3MTBiNTBmYWNhNmYwOGFiZDBlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1NDUyNmFmZDc4ZTJiYmRjNDdkMDg2ZjY5Yjk3YWY2MGU0OTIwM2QzYzQ5YTEwMDAzZjU0MTcxMjg5Zjk2MWU0IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI4Y2M0YTdkMWNjNzk2YWJhM2U0NjcyMzMyN2Y1MTdlOWY4MTE5ODJkMjUwZjA3MDI5ODZlNGI1NzY0YWQ5NTg5IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwMGY3ZTJiMGQ1MjUxOTEzMWU5NWVhNmU0NDMxNGI3NjE0OTllMjNkY2Y3Y2YzM2Y5ZDE5YmE1YTYwM2FlNjM1In0"
+        },
+        {
+          "resource": "repo://src/hhemt/export_scenario_status.py#L321-L360",
+          "version": "repo-lines-v1:sha256:279fe809b9ae68c0e038a88f27126ad6bc539e1b0d6de9cf70209a3242b41b45:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM1ODRjMGU4Nzg0NzlkZmVmOWQ5YmRiZjJlZWQyMjAwNzBhYTg2YjBlMjYyZTczZDA3NzIxNjNlMGNmMjE3MTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJiZTY3YTM3YmM0YTNhZTgzMmUyM2ViZTk2YmVhNzkzMmE5ZDBjY2NhNjExZmNjOWI0MzY3YjhkZjQxNDVjOTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVlNDRhNTI1ODFjNmE0ZGJmMTFlZmJiYzViNmU1OWVlYzRkN2VkZmU0NTJiMzI3ZjkyMTY2OWEyODQzOThiMTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5M2JkNjZlMmJiNzFmM2I4YTkyNDA2NGJiZjdiMDdjNTkwM2E3NzNmYTRmOGMzNTQ2MDYwMzg2NjcxZDNhNzMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2a4b4e3b128e4fcbbd75eccfbb705506",
+      "statement": "Resource validation summaries disclose unmeasured GPU binding, negative-signature classification and missing SWMM thread measurements separately from failures.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis_validation.py#L549-L616",
+          "version": "repo-lines-v1:sha256:ee55bea7d37b0e451452fd57a1d5a766359a21ea8d1c5d45c175ae4114299b52:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc3OTJlYjk2MGQyZDkyMThkNmE5NjliMjRlZTBjNmUwZTRmMjJhYzk4NDMzM2FmOWQxMTA1NmExYTYyMGEwZmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZkYzA1M2M5NmIxMTljMDA5Yzc5MjgxNjk2Zjk4YjUwMTUwYzhiNDdhY2U4ZjY2ZmFlN2UwYThiOTI5Zjk2NTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI0MGM0YjJjY2M1ZWUxN2VhZWJlZDY0MDYyYThhOTBlMzdlM2JmMjJhMTBiNDM0Njk4ZGEwZWMwOGRkYTYwYmYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0a1ceb05f9164ea9b50e4aa98f82adc2",
+      "statement": "Resume ledger appends record attempt, job and UTC time without raising on failure; the audit treats evidence shortfall as ambiguous and distinguishes stale eras when counters restart.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/resume_events.py#L174-L184",
+          "version": "repo-lines-v1:sha256:53105b4d4d69866e3aa4e9c1e3eff45aef381e3ef814384dfbf2de0b97738b49:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlYjEyMWU1MWMwZWU5YzEyODIwZGMwZDM0MTUwY2QzNTNkMDY2YzNmMzg1MTVlZGYwOTFjYzQ1M2UyMjNhNWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk5NTcxNDYxNTBlOTgyMmNjNzY1MjM2MTMxZTQzNjNhZTRlY2E3MDg3YzUxMzUxMjE4YzM5MTMwN2M1MzM5N2MiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5OGIwNjNkOWI0N2U2NTM3OTYyNTU3MmNjZTE5NzY2OWQ1NzY3ZTEyYzE4YmUwNzU2NTJiOGNkOTgxY2U4ZDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM1YjFkODE1Njc2OGJjZGYxNDBjODlkYzQ5Yjg3ZmM2M2U2YjdhOTBmMDdkMDMwZjQ5OTY1OWJkNmM5OTcxNjQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/resume_events.py#L409-L484",
+          "version": "repo-lines-v1:sha256:f41addcd7451aa98c2edf32f87d8d2dd282fbab4dcd6eb60b63ac3902cdef0ce:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxMDc2NTRmNjdmZThkYTEyMjEyOTM4ODYwMjhmYmI0YTRiYzA3YjJlZmZjZjg1Zjk4MGM3ZGU3NmVkOTgyMDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzMDYwMWFlY2EyZmUwOTFjMDE0MDVjZjc5YTY2OTc3MjNhMTY4YWJmMDVjMzNlZDVmZGI2ZWJhYTVhOGI4YjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlhMzBiOWYyZWFkYTU3ZjU5OWY0MzgwMjUxMmEzY2Y4ZDBhYmMzYWZkNWYwMDk4MDc0Nzc3MDgwNTJlOGU0YWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYyY2Q1MGYyNDM0ZTUwNjBjYTFjY2I5NjJiMmU2MzAyNmIzNmFkOTc0Y2Q3MTdlMTM5NDhhZTY3MGY2ZjBjMGUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/resume_events.py#L531-L569",
+          "version": "repo-lines-v1:sha256:f9badabcb7a38977365d7bd5cd9f2500a850fe368a394f5217dd270d04646445:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJiNDdhM2IzNjBhMjI1Zjg5ZWY4ZmE0YTdmM2Y5NTVkZmFiODY5M2QzNTMzNzM4OTAzZDAwZTBhNzAyZDI2NzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNmZDRiZDFhMWI1YzNiNDFlYzUwYzA2YjVmZWJhODZlY2JhNzBlZGZjNjk3MWEyYmJiYzVjOGJhYmI2MmJlOWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5OGIwNjNkOWI0N2U2NTM3OTYyNTU3MmNjZTE5NzY2OWQ1NzY3ZTEyYzE4YmUwNzU2NTJiOGNkOTgxY2U4ZDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMyZDE5ZGZlZmZlMDhmYThmOGFmZDFkYWJmYjQxMzEyYWM3Yzg5MGM1NDJjMzMzMTc1YWIzMjc3ODI1NTM2OGYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_225900d811064df8bec03b7707c3368c",
+      "statement": "Scheduler recovery unions four ID rosters, queries duplicate sacct instances and step rows, reports partial coverage, stamps RunMethod, and keeps CSV capture if store consolidation fails.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/slurm_job_recovery.py#L289-L358",
+          "version": "repo-lines-v1:sha256:f4a6023ec1777a1466ec77b8c36129ab3e654dfdbcf085aff6c667c6a50a5aab:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNiMTg3NzkyMDNkOThlODdkY2VhM2YwMmVjYmMzMGIwZWU4ZjgxM2VmMzExY2NhZmNhNzA5OTQ4YjQ0MDFkYzUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU0NTI2YWZkNzhlMmJiZGM0N2QwODZmNjliOTdhZjYwZTQ5MjAzZDNjNDlhMTAwMDNmNTQxNzEyODlmOTYxZTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiNDY4YWQwYWJkNWRmODYyMGJiOTRiZGZmZTg1ZjQyMTEwZWNkYThhZjc2NGE0ZDVjM2JhMDZiYWE1Zjc3M2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmMGFhMGU4Yzk5ODUyNDQxYjFkNjMyYjBkM2JlY2FmYWY1MmNjMzFkNDVkZGJiNmIwMTA3MTBmNGViOTA1ODkifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/slurm_job_recovery.py#L433-L513",
+          "version": "repo-lines-v1:sha256:ba5f26fce5b7f3a348d9fdbd03ae4f375ac628fa1f9e0b29a90097976b4a6ef7:eyJzZWxlY3RlZExpbmVDb3VudCI6ODEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMxN2E0ODU4Mjg4Y2M4MjM0ZDA1OGNlYzliNjA0OTZkNmI4NjUxODYxMjg2MzI0OTkzNzkwZDMwOTM4NjBhOGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc5MjNmYTY5MmJjYmNhY2ZjMGVkOTIyYWU4OTQ5ZGI1ZmFiYjkwZGZlNzdhMjJkYzI0YTkzZjBmYTM0MDllYTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM0MTU3NzZhOTlmMTQxNTY1OWRlMjZlYjRkYjI2MTg2M2ZhMTIxOTY2NjBjOTU3ODUzYTYzMTMxOWJmZDliODYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4cf13c00aa54455f9b718881474007c4",
+      "statement": "Orchestrator sentinels govern driver concurrency with local-return cleanup and detached reclamation; alive and unknown block while dead reclaims, with host-local versus job-ID probes and bounded unknown age.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/orchestrator_sentinels.py#L1-L14",
+          "version": "repo-lines-v1:sha256:dbd72da91785692053931b1ecc7249ed102ef77d2ee6ac9d8dce59b93a62a86a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmODc1M2ZlZWNkZjg4OGYzYmI2ZGRhMjdiMDQ4YjMzM2Q4OWVjNWI4NzhkZDE5NTYxNTg4OTgxNDYzYWVkMTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0OGRiZjZmMDQ5OTgyMTQ2ZDgyZTcyZmE1ZjhjMmRjNmE5NTNkNGJjNmU1ODQ2YmYwZDM4NGMzZDE4ZDE1N2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhYWY3NjM3Y2I2ZTdlNWRiODVkNjM0Mjc0NjAxNGRmMDQxY2NkNTU4YTkyMGIyOWViNmFjNzE5ZDdiYWY1YzIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/workflow.py#L8635-L8710",
+          "version": "repo-lines-v1:sha256:14e8e8481b6b31e8bdd4c63b93869ef5e80a36c7a9f6e862232f01a525e39cb7:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiMzNkOGNiMzhhM2I2YWMyODNiOTEyZWI2ODI1MTlkNWZkZTg3N2UxMjdlYzUzOTY5ZTA5NzU1MjY3YWZlYzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwNDhlNDkyZjMxOTA0YWYwZjZjNWUxYzljZmM1ODRiY2VlZmEwMGZkNWFhZTczNWJjNWE1ZDM5ZThkNjY0ZjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI4ZTE2NTU1NmFlODBmYmM3OGIyODM2Mjg5Yzg5ODIwYTFjMTZkNWQ3ODI5MTc3MTMxMmQwYmM0NjExYTkwY2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlhNWFlOTBhNjhhOThmYmFiMWU1MGM3OTQ1YjM5MDY4OTFjMjRmNTY2NDVlNDVmM2E5NGExNTk0YzBlMDc3M2EifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5d0e5f08113045a4a1139efa29904b17",
+      "statement": "override_live_driver asserts death of one exact sentinel and does not bypass other live or indeterminate drivers.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/workflow.py#L8539-L8542",
+          "version": "repo-lines-v1:sha256:f96c9c6a6a981096a551c3436a79a2329c646cc9e6fd7e6c17c4d0e84ce8a996:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDAyYTQ3MDA4ZmFiNDhkNWM1NjU5NjYxYzcwMTZjZWEzOWM5YmU5NmEwOTMxOTNlYzkwMDI1MTc2YjExOGM3NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODIyYmIwNzY2NjA1Yjc3ZTk3YzlhY2VlZWY5OWY2OGY5YzU5MzFiNDU1MWZkMmExZGIyYjhhZWVjNzFlZWFkZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjA2Yjc2NmI0OGIzYTBlMjMzMWE2NTc4OThjNmY5NzQwYmQ5ZjVmY2RjOGY1ODE3MWQwYWUyNTE3NTVlZTdkYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNGVkOGUxYTQyZTg4NTVkNTAzMjZmZmVhYWYyY2UxMWNkMjczYzE5NjhmOTFmN2YxNDMwZTMxZmNjM2Q2ZGJkYyJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/workflow.py#L8567-L8592",
+          "version": "repo-lines-v1:sha256:9eaa844746aee2cecf0196080fc9d611ed0f8e167249293230afdf7cbaf03cda:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBiNmI5MTYyOTc2ZTVhMGMzMTk1ZTJiNjc5ODhmNGRhYjM4Mzc0NjI0YWJiMzNjMDFlMzFjNGQ2MGFmYmE2ODUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdkM2Y0NjI3MGFmNGI4YzI2ZTYwODVmZDc3MmUyZTNlZTRjMjczZjdlMjFmMjdhMzFhMjA1OGQxYmI1ZGMyYTgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAyNjJhYjk1YWFlZmYyMDk3NTgzN2UxYTM5ZDFhNjIwNWIyYTRjMDVhNzNhNWZlZWY0NDJjNjYwYjJkZmI0YTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJmOThkOTNkZGJlN2JjYzU4MDAwYWQ5NjQwOGQxYmIzZjllOTFiNzc4NDdiNmJhNTk4MzFiNDliN2I3OTMwYjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8b87cbe76967436f8f3ef21d1cc05d0a",
+      "statement": "In-flight operations require stopping the prior driver before resume/reprocess; ordinary rendering uses a consolidated snapshot rather than partial scenarios, sensitivity may skip incomplete members, and packaging requires a rendered report.",
+      "evidence": [
+        {
+          "resource": "repo://docs/how-to/in-flight-operations.md#L17-L43",
+          "version": "repo-lines-v1:sha256:889b9a1649c4c7b5d969b5dee42367977a4625dc20b6f50b7342649eef8272ca:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0ZDY0MGQ3MzE1ODljNGY5OTk2YWQzMGQ2ZTgyZjg1MWUxNDdmMjM5ZDIyNDhkMTdlNGJhMjlmZjE3YTUxYTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZlZjc3YjFmNzc2OGJiNmNmZDMwZjVhMzg2M2Y2YjhlOGIwNThmMjZjMDY1Mjg1NTQwMTk1MjUyNjJhNzI0YTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU4NWNiNTZjNzI5YWU3NWJkOWM4ZTYxNjBmYThjNmNiYWYyNzY1MjM5NmNmMGUyNDE4ZWNkMzgzNzc4ZDAxYmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM2ZmI1OTM3YTBlMmY0NDIyYjg2NWYxOWQ2NDE3NzY2YzExNGI5OTllYzUyZGNkNzUzNWMyMGU2ZDdhZmI1OWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c402b8186377471a9263b82f7e68107d",
+      "statement": "Disk sentinels preserve unchanged meaningful content, report walk errors and absent children, and aggregate child caches plus own artifacts without walking missing children; status trees and analysis _test data are excluded.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/du_sentinels.py#L150-L236",
+          "version": "repo-lines-v1:sha256:077bc1ad49b5264d9eb9bd1efdce1a5925d02a1def466b5cd25870cd72f097e5:eyJzZWxlY3RlZExpbmVDb3VudCI6ODcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZmOTA4YTFjMjVmZTE3ZjJmZDNlMGJiZWE3MzRlODhiODBhNWExNTE4MjhmOGZiNTMzYjkwMDUyOTdiMzViNmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwZTJhNDY1MDA5NWZhOTVkMGUyYmI0MWIyZGIyOTA5NGQzNDA0ZDI4Y2UxMjMzOWVjODhiYjRiNWM1YmU4ZjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ4OGIzMzdiMzhkYjE1NDc4M2Y2MGEyY2NmYTBmZjc1OTdlZWIwNDczZTMyMjFiOTA0YzJmZTY2MmJhYjQ5NGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEyNWY1MTY2YjA1MjA1ODI2MTMyM2U0Zjk5MDE0ZGE0NDU5MjZjMTRmNWM2MGZhNjU3ZmI2MGNiYTA4NmZmZDEifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/du_sentinels.py#L303-L394",
+          "version": "repo-lines-v1:sha256:e5f7aebf48c080651c2ef2ab54df0c44b66f0528fec548afd8db60ef980af220:eyJzZWxlY3RlZExpbmVDb3VudCI6OTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYyMjk2NzM4MmYyMWFiZDRlZmM2MjMxYWI2OWMwZTAzYWI0OGJhN2I2NzRjMTY5NTAwMzUxNjA3MDAwMmJlNjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiNDY4YWQwYWJkNWRmODYyMGJiOTRiZGZmZTg1ZjQyMTEwZWNkYThhZjc2NGE0ZDVjM2JhMDZiYWE1Zjc3M2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZiNWIwYWI0ZWVhMDNiOWVhMGM1ODQ2MjZmNTg1ZDdhZjRlOGI0NTljNjhkZDBhYTg1YTZjYzQ0YmFmNmJhMWEifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

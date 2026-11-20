@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:19b5705c0e866de1332ac8a2f3ec3b1e62e00b9524755b00d9f4ea400936ba1f",
+  "claims": [
+    {
+      "id": "claim_cb5aa883d76147698ab4f1d68d71eb1c",
+      "statement": "hhemt orchestrates local and HPC coupled flood ensembles using Snakemake, with portable render bundles for results.",
+      "evidence": [
+        {
+          "resource": "repo://README.md#L7-L14",
+          "version": "repo-lines-v1:sha256:c397b83eab3e75a20fb3e5b157571ddcccd123ac0ba7322165cef938156e8ce0:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWM1MmYyMDM3OTEzZWEzNDVlMDM4ODEwNWZkNzdlZDc1Mzg5M2IwZDM0OTg1YjBlNDMxN2QyNDkyZWE4MjI0MyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODliYmVjM2RmNDEyMzJmNTljY2VlNzVhNDk5ZTY2MzUyMjM5OTRkZjhkMWZiMGYzYjhkYmI5Y2Y3MjA4ZjE3NyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOWM3NjZmMWU3OGNkM2Y5ZjkwZWEwYjkxNmNhYWY1NGZlZTc1NWMyY2U4OTM3MDUzYmFjMjRmMzIxYjYyMWFkNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiY2ZjMjIzYmZjMTQ5YzQwMzc5OTVlYjI2MTAwMzVmMTVjMWYzNmM3Y2YxNWVjNTkxOTllNjEwOTg1ZjIyMTE5ZiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_3b987120e94e4feabb5bd1547dc6aa2f",
+      "statement": "Python 3.11/3.12 are supported; Snakemake is core and HPC executor plugins are optional dependencies.",
+      "evidence": [
+        {
+          "resource": "repo://pyproject.toml#L114-L144",
+          "version": "repo-lines-v1:sha256:60fbf39bfbd429e3ae00d432a8a472652fb8c79dd783aa43c633c340735e3d8c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxMWMwZTc1OGJkNGJjZmNkYzVhY2E0MjQ1NDJkNWE0ZGJjMTgzMTlmYjljNjExZTc3ZjMwMGVjY2Q2ZWU4ZDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY5NDE2ZTA5Zjc4YmEzMTZjMDMyNTY4MjEzYjg1NWVlNzU2ZTQxNTY1ZDkxOGYwOTUxOWM4MWZkNjIwZjQwNjAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkNjA5NDNhZDQyYjI0NmM4ODEyMmMxNDk0OTBjYzMxMDg0OWNlYmJkOWM1ZDk4NDhmMzgwZjU0NTQ0ZWRjMjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJmZDA4MWEwOTEzMGE2NTgwOTNmNzNmNThhNWZjMmI3ZjBlMzE5ODMwY2VmN2U4NzA4ZmEwZjNmMGZjNmE4MGEifQ"
+        },
+        {
+          "resource": "repo://pyproject.toml#L90-L94",
+          "version": "repo-lines-v1:sha256:d16c4fc17d6a9889a262df7d273863da7ffecc0d12112930a98cf0d0b2e8afa8:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGZkZDEzYjIzMzY4MGVkNmU1ZjFlY2E5ODU2NjQ4YTY3Y2I5NzczMzFjMmIzNmUxOThhNWZkNWY1YmIxMmU1YSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGY0NWU4NzYyN2M5NTI4ZDY3ZTUxYzQ4ODRiYmE4YTE4NjJiMTAyZTc5ZWQxODM2NDIxNmE0ZjFlOGM1YTI1MiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiNDM2YjIwNDhmNGMzYjhjYjQ3MTcxMDA4MDIzOGEzMGJjYzlmZmQ2OTUyZjAwODYwZDFjZmE2NDYxZTZmYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzc5ZmY5NTUwOWQ2YmM1ZmI0MzRhMjFjZWFiODMzMDIzOTdjODU3Yjc5NjE2MGUwN2U4YjE3NmYzYmY0ZDMxOCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_76555967b17b4bd1962aaf48de80dbd9",
+      "statement": "The supported production install uses the pinned conda environment and dependency-preserving pip steps; user-site isolation prevents shadowing and pip extras offer a reduced-support alternative.",
+      "evidence": [
+        {
+          "resource": "repo://docs/_snippets/install-commands.md#L1-L6",
+          "version": "repo-lines-v1:sha256:01ca0376684dbdc263a2e3bf105a2570470d23ee0b4c370f92ed3fae3ccb6deb:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWRlMmY1MzI4ZWU2ZTgwNTBlOGFhZmQ4ZGM4NjlhMDY5Y2Q5NTg0ZWRhYWY1NGZlNTg5ZDczYzNiN2RjZDc5OSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDdjMDZjNTYxZDVjMzI3MzQzNjg1MjY4YTQ2YjMzOTFmMzk5OGVlZTg5MGQyYmU1MWYwZDIxY2M0YTUzYWU2ZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://docs/how-to/installation.md#L20-L64",
+          "version": "repo-lines-v1:sha256:bd9c66fcbcf0564a4945c618234246be3154fc3bb9c750342a76e3b5bf9eeed2:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJhNzgyM2Y2MzdlYzE2YzdhZjYwNzUzM2FiZThlY2ZkZTM5NWQzNmVkMDc4ODdjNzgzZTE0YmRmZWFkNTg0NTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA4MjAzOTlmZjAxMTk2ZjJiYzk5ZDBhMjc4MTE1ZjUzZmU0ZTRkMTlhNjhjOTVlMTE2NDRmMmJjMmYxMTk2OGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM3N2Q3MDJiMGE5ZWI2ZjBmNmY0Mjc0MjFkMmY1ZGRmYzNlM2Q1NWQzMWUxZmJiN2U1MzI2YWQxZWQwOTE3ZGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ3YzA2YzU2MWQ1YzMyNzM0MzY4NTI2OGE0NmIzMzkxZjM5OThlZWU4OTBkMmJlNTFmMGQyMWNjNGE1M2FlNmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_472c7d9e8a7e4cfaabfddc06087c4651",
+      "statement": "Toolkit.from_configs requires system and analysis configs, optionally accepts an HPC profile, links the objects, and performs schema and default preflight validation.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/toolkit.py#L101-L187",
+          "version": "repo-lines-v1:sha256:3dade944666c7e15cfe45ef70fd36069964c44f6185508e723c7d783fc3d6d53:eyJzZWxlY3RlZExpbmVDb3VudCI6ODcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgyMGI0NTNmNWUwYzkyZDVmNmMyNTFhNWVhMTk2MGQ3MmYzYmQwNzk1NmFlODU3ZGEyMGUzMWE4OGM1NTk2OWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4NTAxMGRjMzBiMmZmZDQ1MTU0OTQzMTg0OTQzZjMxNzQxZGM0MDEzYmMzNjgxZTdlMjA4ZDA1YjBhYTNkZDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI0MGUxYTA3NGYxNTliZmI4ZDAzNGFkYmFlMGEyZGE2MzUzZmE2OGRlZGU3NTIzMjJlZTc1Mjc4MjNmZjY4OGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNiZTZjYTcwY2Y3NjZiZDA0YTA3MTcwYTk0ZTZmNjIyN2NjZWVlZjQ0ODYxZTJkN2E2NTExY2JiMzM4ODRjYmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3314695e53b940c1b4c50ecd8ce0c4c3",
+      "statement": "Toolkit.run is supported, defaults to resume, maps fresh to from_scratch, and does not compile solvers; fine-grained controls live on analysis.run.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/toolkit.py#L264-L298",
+          "version": "repo-lines-v1:sha256:8aa8df62b4ccba57df6afde49a64a1c69cd6f22029c9f644b8574528176977b7:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAwOGNkOTc5NjliOTRmN2NhYmQ5YWI4NTJjZGVjZGM5Y2U5OWU1MmQ3MmVjMWNkMThiOGFlY2EyOWE5ZTJiZTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVkNjVmNjFlNjBlMjE2NzU1YTkxYTM1ZGVlZjYwODU2ZmI4YTQzODI0ODEwZTg3MzIwMTczODNhYmZlMTkyN2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ3MjRkYzU0N2FjOTcxOWMwYmViNWE2MGQzY2U3MTIwMmE5MjFhODNmNzYzMTYwOWIwMWMzZjk2NjExYWQ5MDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdiMzA1Y2YwZDkxOGI5NDRiOGVmMjVjZGY5YWVjZDEwMTUxMTYyNGE4MWJiZWI2ZjU0NmYwYjcwMjk2NTkwZjMifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/toolkit.py#L379-L418",
+          "version": "repo-lines-v1:sha256:41752be5dbfd792391142d6b3d05b13c8dd0da335a4fdef2c0ae16b78f466d1a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmZDEzYmEzMmNkOGQ0YTViN2NmYzY4YjA3YmEzYjVjMDFlMGZjOTFlNDUzNjBkNmFmMmIzNDhhOThhN2M5M2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5MDlhNTNhNjE4ZDAyOGUxZDMwMDBjMGE3YWJjZWVjYmU1ZmIzN2Y0ZTUxMWVmZTQ2NjQzZmFkNmU2Njg3MmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI5OTQyYmI5MmQ0ODkxYWU1ZmIxMDE0MWE0MmRiOTNjMzJiYzgxNTUwMTMwMThlYTQ0NzhiNTBiYzZiNmMzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk0MGY2YzA5YTY1MzRhOWQ5NjJlNjhmZTIyYThiOTE4YWFjMDM1NWUyYThjZjYzNDZhMjVhNzE5ODIxMmU1OTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_d058c40e21b346198e34be1f00d65a5c",
+      "statement": "The hhemt console script enters hhemt.cli:app and run dry-run validates the DAG without executing it, but reprocess dry-run can mutate flags and report-shell triggers while sparing destructive data and figure deletion.",
+      "evidence": [
+        {
+          "resource": "repo://pyproject.toml#L179-L180",
+          "version": "repo-lines-v1:sha256:99c5f41d9ccd8a10868bcde5b42506feecd71a11bcc1ce56377cb608f1f76bd3:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGVhYjRlYzYzZGU1MTdkYTRjZDhlNWM4MzA3ZmIyYzc3MzdkMzkxOTBhYjY5ZjMyYTVlOWVmODFlYTQ0MTZkZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNmM5YThmMDE1YTE0MDA3YmQzYWM1OTdiNGI1ZjA1YTViNWFjN2ZlMGI2NzQ3MjVhZjIzOTRmZDExMjI4NmUxZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjY1ZTVjMDlkMjk5Y2FhNmJkZjVhNzY1YmMyOTEzNWIwZjVkODNmZDkxYTAxYjczMmZmZGYwZjQ4NTY0ZGY5OSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmI4NTBkMDkxYWU4MjgxODRhZDRiMDJhOWI2N2Q3YzU0YjQ4YThkYjdlMTU5YWE3MDVkOTdiYzIzMDYwYWQ1NCJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L5189-L5206",
+          "version": "repo-lines-v1:sha256:5eb85b0fbf066e7a5439929be755d43a0e04d6b53a1b881e15301b731ad4e096:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhYTA4MjYzOTY5NjE1ZWQwMjRjZTE0YzZkZjljYzVjOWQyMjUwYzJlODg1NDdiNWE0Zjg2NWM0NjRjYmJmODUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5MDlhNTNhNjE4ZDAyOGUxZDMwMDBjMGE3YWJjZWVjYmU1ZmIzN2Y0ZTUxMWVmZTQ2NjQzZmFkNmU2Njg3MmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjljNWU0OTVmNDc1ZjBhZjI0MTg3OTVkMGRiMzUwYzBkOWQ2YzAwYTgzMjYyMDhmY2Y1ZWY5ZWFjN2ViNDY4YjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE4NjYyYTM1OTVhN2U5Yjc5NjMyYjMwYzAyMDE2YTkyMDQ2NDYxY2ZlYTEwNmZiNzE5ODFjYWE4Yjg4ZjI4ZWUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/cli.py#L453-L457",
+          "version": "repo-lines-v1:sha256:8426a025c70a7dc0b072a3b05f2b7968d6d6ea7cdbc7c9e7f28d970ff8d10cdd:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTdmNzBhODQyODkyY2E5OTExNzIyNTI4ZGM0ZGZiOTU2MWEwNmJlMzYzNjBjYjU1NGRlYTI3Yjc4YzdjNmFjOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMTA1OTRiZjU1Njk4MDJjMDIyMWJiMWE5MWRlNWY5MDE4NjU0ODlmNjNlMTg1NjdiMTlkNTRiMmVmNmFiYzZlZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmFjNDFiZWIyYTkzNmM5YTNmOTg0MDBlOTQwZjM0ZDIzNmQ4YTVhZTU5YzgyNmQ3N2MxZDQ2MDEwZjViNjA1YSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDgzN2RiMGQ1MDJkOTdhMzNkNzk5YmI4YjUyMjdhMDEyMWFjNWQ5MzI2ZDYxZDVmNjdkYmM0MGZjYTAxMTlkNyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_30568bb050594db6acb5da97da6cb0c7",
+      "statement": "The documented Norfolk quickstart loads a full toolkit SHA, fetches public case-study data and uses serial/local execution without HPC, with auto resolved from config.",
+      "evidence": [
+        {
+          "resource": "repo://docs/quickstart.md#L20-L40",
+          "version": "repo-lines-v1:sha256:78bb1d17764e5616e5fdf423a9b6b6287c327dc165b23d72ba109047b876d043:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhlOTNkM2NjZTdiMzA1MjY0YjFkYzA2M2MwM2Q2NWNhZWJhMWIzMmJmNzRlMmY2MzhkOTIwOTZhZDc2MjZkMGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVjOWIyNzliZWQyYjk4ZWQzODBlZTljOTA5NDlhNWJmZmNiMzIzMDYwNzMwMjBlOTg5ZjM4NmIyNjRhMDJiYzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVkM2JjNWQwNTk3ODkzNTRlZDBkMmJjYzIwNTJjNmQxODRhZmZhYjRhMmUyYzA3ODhiZGMwMWEzYzRlOGFjOTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYwNDM1ZTcxODY5NTRhOWRjMjlhMDRhMDlhN2JkYjM2YzI0MmYwMGJlZGM2NTk3YTJiNThhZGQyNDlmNTM3NTgifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

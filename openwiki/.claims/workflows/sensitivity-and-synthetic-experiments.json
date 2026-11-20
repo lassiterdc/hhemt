@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:501e6dd09bf3fc70060f1e6606c1c45e082464bacce4e161cce5d6ade2e21222",
+  "claims": [
+    {
+      "id": "claim_19e8e754f3a843878a73554bd44e58fc",
+      "statement": "Sensitivity tables require unique wildcard-safe member_id values and reject retired identity headers, while artifact readers accept legacy sa_id and prefer member_id.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/member_identity.py#L27-L52",
+          "version": "repo-lines-v1:sha256:2657aa622b05037062e53fa35c4f5547f0aeaaff3be24d343553cf8eb5d86cbd:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJmN2M4ZmMyNDgzZTkzNGFmZWE0YThmYTlkNzIwOTU5YTg4NjI0ZTRmZTI3MzEzZjEwMDNiYzFkM2NjMmExMDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTYwMGE3M2QyZTAyZjM1MmI5MGZlZjFkOGQ2MzgxMWJhNGE4ZWUwYzFiZWFhN2FlNDY1OGYzNmFhMmUxOTgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAwYTQyODgzZDA2NGFjYzBmYjc3YzFhMDgyY2JlNjE1ZWQ3NWM3M2E4NDhjYzA0MjQ3MzM0NmZkYWZkZDA5ZWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg3NmNlOGE2OWZmNmE2MmZmNTc0MTRlNDQwOWNkNTFmYjk4Yzk0YWNkOGU3Mzk4MTI0YjNkNDk2OWIxNTYzNWUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/sensitivity_analysis.py#L2698-L2783",
+          "version": "repo-lines-v1:sha256:877fe300d48535384ecdd33e9a1e789989bdfa5f2ecb2089ae6270bd08770401:eyJzZWxlY3RlZExpbmVDb3VudCI6ODYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljN2I1NGFjNWM3ZjNkMzIwMTA5ZDI2ZTlkYWNiZDFhZjEwZjQ3Y2YzZDNlYzYwZjg5ZTJmNzY2NTZlNjQxMTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1MDMyZTk2NGQwOTMyMzUxZTVkMTg1MjY5MjgxYjE3MWEzYTA5YjA4YjI4NmU2NjFlYTQ3MDMyM2M4MmViNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIzYTQ0MDkwMTVmMzFmYThjZDZmOTIxOTk1MzRjM2I4ZjUwMGVmNjk1NjhkODUyODVhNTIyMDMzYjI4ZmU3MzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMDIyN2M2MWVhNjA2ZmM5NWM1YjE3N2NjMWVmNTFjYzVlZGFkMDIwNGI2ZWY3MGU2ZDVjOTJlZTBhNGQ4MmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_090e71891a2e47029ee48997a7088e6c",
+      "statement": "Members inherit primary analysis settings with validated row overlays, live under member directories, and disable nested sensitivity analysis.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/sensitivity_analysis.py#L3359-L3425",
+          "version": "repo-lines-v1:sha256:f2d00623f649fd17bd06ac62b75684b61ddb5ddfedbc4dbc37057ccf061236fb:eyJzZWxlY3RlZExpbmVDb3VudCI6NjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzOTk0YzM1MmFjZjYxNGM4YWU5NWIyNjkwNWRmOGM1ZTQ2YTk4NWZiMmEyNzNkM2UyOTUxZjc0ZDQxYTliZGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlMGU3ZjVjZjJiNTRmMjFjNzRmZGU3ZDIzYWIyMTMyY2MwYmVhMWFkMDljOGY5YmE3OTNiZDJkNTYwYjE2YWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE1YzQ0YjE4Y2MxZDQ1MzJjMzg0MjJmN2JiNGMyZWZkOTMwZmJmM2U0ZDk5ZTJjM2NkYWRlZDQyMjFlMjFhYTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ5YTMxNTc5MDBkMTM0OTQ5ZWVhNDA0YTIyZDc0MmI4YzkwN2U3NTU4Y2M4NjdiZDFlYWE3MTllZWU2YjU3NGMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_426a69cb5acb4182a30ca7aadf8e674a",
+      "statement": "Per-row system YAML and system overlays are mutually exclusive, and reusable targets are grouped by DEM resolution, partition-derived GPU hardware/backend, and extra compiler flags.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/sensitivity_analysis.py#L3103-L3140",
+          "version": "repo-lines-v1:sha256:14c0244c44af9a10ec5550c99b0a8c5c9a818e1b3fd1dbed92bbd1ddeea93fdc:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyNmU5OWRmNDE1NWIyMzQzMDgwZDk4MzAzNmI1NDAxMTJmODE3MmNiYmU4MWE1NjE3MDljZjlmYjg3ZTk2N2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM2OTk5NTEzNDRiMmY2YTU1ODFjNTRhMjU2YWYxOWE5NzllYWRjY2Y3NDM2ZGI5Y2QxMjY2MzE3ZjBjZWJlNTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJhYzliYTE0ZDJiOTYzMWNhNmE5N2ZkODVlMGIxZjdlNTc1Y2Y1ZmNjZjlhZTNmNjY5ZTViNmNjYTZlNjgxZGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhNmM4MWQwN2QyMzg0ODg2ODhiNDRjZDY5ZThhZmM0ZDk2NWExNjkxYTlhYjJkMDMzZTJmY2E3ZDg2NWQxNTMifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/sensitivity_analysis.py#L3200-L3226",
+          "version": "repo-lines-v1:sha256:05c3f6e8d036fea80bbba3deb75ce51b7e2b58b8d601ea75b378d54c29339e58:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU3ZmRiMTY3NzJjYjZmMTY3OWU2NDg0NTgwYjNjODU2NWI2ZDkxNzE0YjI0NzRhM2I0NDQzMzVjYmNiODNkOWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU4YjEwZmQ0YjZkMTgzZmQxNTRmMmNmOWQ3NWZlYmY3MmQ3N2EyOWUzNWRlYzgxYTcwYWJlYWFmOGE3ZWI5YzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEyMzQ4MGNiZjVlOTdjMTc1NWI1NDg5ODZlODE2ZTNkOGQ4ZTIzNmRlZDRkNmU4ODIwOGMxMmRiODFkMTgxMTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0ebc60dba9104503a266d162d48c361d",
+      "statement": "Sensitivity scheduling distinguishes execution mode from method routing, and generated native setup asserts existing solvers rather than compiling while containers rely on SIF binaries.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/sensitivity_analysis.py#L879-L915",
+          "version": "repo-lines-v1:sha256:fde352f0070504c27912b01dbb19b8e1a41ad6ec9dae69a88ca06487400bcafd:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4MTZiYzY1ZmYyYTRiNGVkMjA1ZTExMWY5NTM5OTA1NGI5NzkxNTY4NzRmYmNkODFhYTk4YTU2M2Q5MTgzNGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3NjM2MmIyNzI4MWIyY2I4YjYyOGY1NzVmNjU4MDk5Zjk0NWI4NjA2NDdmNTg3NjgwN2VlY2VkZjUyNDM1NzIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNkZDg5MzJkMmU5YWQxOWFmZGQ3YjcwMWJkMGU4MTc2ZGZlMTA2OTMzOTdhZDMxM2I3YWIzMTZmYzk5OTQ4NzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUxNDJiYmI0NDFiMTM1Zjc0OTE3YTYzZDk3M2M0Yzk3Nzc0YzIzYTEzMTgxYWU2Nzc5ZmIzYjc3Y2Q3NDJjYjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9e18cbdb31c5477ca2b07162e780e314",
+      "statement": "The sensitivity primary carries member subtrees and parameters, copies persisted time series event-wise, and verifies copied data before clearing member trees.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/sensitivity_analysis.py#L2120-L2129",
+          "version": "repo-lines-v1:sha256:c1158481b097f91cc8eb6bb23f760828a0d71b7faf58dcad776a2a1fde8aadca:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQzZGFkN2M0ZmUwMDYxNzk0MmIxM2EyMmZlM2ViNjczOWI4YWE2ZjMxZGE4MjAwYTM0MzY5ZDU3YmFlOThkMzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQwNzIyYTExNGRkOGZiZGIzODhhNGZjZjdkYzg2ZDIyYWE1N2M2YzEzZjBiNWEyYmFkZTczZmNhOGU5OTRjOGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ4ZDFhYzczMTI1NTE0ZjM5MzNlMjU5Njc1ZTdjZmViZjM0NmViMjMzYTM5NmIzYzg4NGNlYzAzNzI1ODJkMjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY1MTI5YjEyYmQwOGUxNjg0NjcyMDEyZGQ1NmY3ZmQ1ZGRlMzFiMDMwYWU3ZThmNTE3NmJhYzQxMDc1ZmRjZDYifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/sensitivity_analysis.py#L2396-L2543",
+          "version": "repo-lines-v1:sha256:a1d2fdb9d0c003c3a8df17dd5a34675c669388657272bb85d2b5b6e4cea7bf85:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQ4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0ZmJkYzQ5NGE0NmI2MDJiYzM3ZWU4MDY4NjExN2M0ZjVjZTRmY2Y3M2Y0YmQyYTE4ZGE3ZTBkN2Q1Yzc4MTY1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJjZTc5OTAzMzY0M2FkZjZiYWFjNWJlNTYxNzIyZDQ4ZTQ1YWFhMzUyMzVjZWRhM2Q0NGU3MDMxMzZmMDA0NWU0IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzNjk2Yjg0YjBhNjQ2NTZiZTBhNTg4MzBhYWEyYzRmYjFjNDBlYzJmMjE4NzY1NjA5YmQ2OWE1ODBiZDE4YmE5IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1ZmQyZmYyNzI2Nzk5ODllYTQxMGFmYzIxZGEyMGQ1YzJmMWI2ZDQ2YTdmZTljODczNmQ1ZmMwODQ4NzcyNzBhIn0"
+        },
+        {
+          "resource": "repo://src/hhemt/sensitivity_analysis.py#L495-L559",
+          "version": "repo-lines-v1:sha256:9ec3a227c1c698b011766044f2242d94608211cc4413df1afa762b1f99287cde:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY2Njk3YTVmZjNiZmJmNGMyOGViZGUwYTlhYWY2Mzk5Y2I4NmEyNTBlNTIyYTMzZWIyZDYwZjQ4ZDIyMmJlZmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyMGU1MWUxYjNmYmJjNWNhZGQxNTJhNTY5ZTA2Zjc0YzdmZWNiN2E2NTNlYmYzZTlkOTNlNWU3OGU2ZjVlMjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJhODhjNTMxYjIwMDFiMDVmYTYyNDdlOGRjYWQxMzgxNjUxYmFkNWRkMjQ4OWMwMTQyNjI3NGJiYTljNzliODAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM0ZWM1NzQ1M2VkOTJmOGM0OTNkODlhODBmOWIzNGMwNjk1NzA4MDRjM2E2ZmZlY2UwN2ZkYWUyZmI3OTliNGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_31d74be8cace4acfb36793ef18831d07",
+      "statement": "Synthetic preparation emits inputs and a matrix rather than executing the full ensemble, whose model arms are separate single-model sensitivity primaries.",
+      "evidence": [
+        {
+          "resource": "repo://docs/how-to/synthetic-compute-sensitivity-experiment.md#L20-L25",
+          "version": "repo-lines-v1:sha256:d601d8a502af5029f73be74c3f0b33016a61a2205fb7796f97f7c3b1ef687989:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDI5Zjg4YmJlMTZjOWUyYmNiMGVmZGMzYzY3ZDg3YWQ1ZWY2YzU1MzFkMjQ0ODZhM2M2OTc0NGE4NGI1ZDdiNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDMxMmEzNDBiNjJjMjgzZDUyMDUwOGM1MWEyYTE4YTFjZjcxZTU4OGE1MDM5MjUwYzNjYTNmMjc3MjU5YzI3OSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGUyYTEyNGQ4MTE0YzQzYjBiYzFlMTA4MTAxNWNlNGQzY2I4MTYwMDU5ZTFjMWRmNTQzZDM4NGExYWRiNmVkMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2M3NDc3ODcyZDkzNDk1YTgwMjFiODAyYmQ0N2I4M2U1OTUxMzc1ZjdlNDNkZDJhOTZhMTJkNjg3MDY1NTI5YyJ9"
+        },
+        {
+          "resource": "repo://docs/how-to/synthetic-compute-sensitivity-experiment.md#L35-L52",
+          "version": "repo-lines-v1:sha256:c1c10fe6fbdbaa5640bc1bad0c206eff28fabc16baed1935dee5e36bf437aea8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI0NGJkNDA2ZTM4YjU4YTBkODVmZTNiNzU5ZjYzOTIzNjZmYjMyNGZlMTQzOWZhZGEwZWVjNWZhODljYzM1YTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFhOTMyNjY5NjU3ZThjNDZjMzlkNWIwOGY2NWYwMTgxZDk1YTIxOWJiMzA3ODExMmZhMjE1NWM2ZTdlMzQ1YTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAxZjA3Y2ViMmY1MzdjYjk5OGM3ZWQ4OGE5YTQ3Y2JkMTViMzkzNjhlMDJjMWQyM2M1MGY3MmFkYTUxNzRhNWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc0Mjg5NjZhMTdmN2RmZGJmM2JlMmE1YjMxNWY2NWIxMGNmOTFlMjEzODk4OTM1OGE4MGY1MWZmMTE2YjQ5MWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_da9886499244424caaeddaaf2218e99a",
+      "statement": "Synthetic matrix enumeration is shared with capacity validation; a DEM ladder selects resolution rows and checks coupling-node cell separation, while generic case generation forwards only its explicit grid/rainfall knobs.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/synthetic_experiment.py#L295-L320",
+          "version": "repo-lines-v1:sha256:1783f6da601260d5e0a6e68b726c7fe0103286eec6c9fdcbb87549e747bb46f6:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVhZTIxOGJiY2FlODE1YzQ4YzhjNWQ4NmU3ZDUzMDQwOThlNWY3YThjMjViOTNhYWIxMzJhYzNkYTgyMzIyMzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEwZWU5MjIzYjQ3NmVjNTEwN2U5ZDRkZGQyZGRiZDQwODRjOWQzNWE3NzM2MThhYWU3ODg3ZDljNDA0ZjNkZGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ1OGM3ZDlmM2VlZGRiY2JlMzg5ZDZlZjNlYjg4MmE2OTJkMDgyYzYzZWUyZjI4ZDRlZWMyOTg0MWQ2Yzg1NmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc4NTcwN2YzNjhkY2IxNDhlNDBjNzE0OGFlNWE5NmU2MThjZTljYTY4MGE1NTdlOTNmYjRkMzllZDdiYTdkNjgifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/synthetic_experiment.py#L362-L384",
+          "version": "repo-lines-v1:sha256:d98f28ecd6a3a8dae07580b4a29814a8729e1126afdef621881a98fc79453ab2:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZjYjA4MTZiYTc0YWMyMGMwOTRiZjEzY2RlOTFhNzY1YWY3ZGJmYjY1NGFlYzljNGZjNTc1MWM0YTg5OWQxNGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1YmFiYTQwMzdjNTY1MjE5MjM2ZjUyZGFiZTZhZjA0NTZhZTdmM2EwN2Q4NmZmODM3NDhiNmM3MTg1ZWE2YmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzMDhlMzgwMjUxN2MwZTc1YzM0OTY0MDBhMDMyYzI5YjM5NTJjYjNkYTEwM2I0OGIwNzZlZDk0ZDJjMTNmMmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_881d3254f5fb44bc9c85c494082327b9",
+      "statement": "The synthetic case builder writes rasters, vectors, SWMM and weather inputs and checks rim/DEM consistency, leaving cache ownership to its caller.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/synthetic_model/_build.py#L148-L176",
+          "version": "repo-lines-v1:sha256:859e646382d1492c8ce52e58f7ebedcfc48af46ab73c8e23d6cc6cee5e0465d7:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA5ODcwZWI4NzAwMDA5NzQ0OWE3NTcyNzNjOTZmN2MwNzkxY2M2ODAyZDQwMzU4OWYwM2EzMWU3MmVhNWRjNjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ3YjI0ZWViZWIyMTkxYWY1ZjFhYzNhYjNkNDJkNzJlMzA3NGE5MGZjMGI3NzI0ZDk1ZThlMmUwYTU0MTJmN2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_97edc0a4763f4046979f63cded737323",
+      "statement": "Descriptor execution validates and verifies toolkit pin data, gates overrides, resolves system/analysis environment placeholders into copies, checks deployment prerequisites, and defaults to resume and allocation-dependent waiting.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/experiment_definition.py#L128-L171",
+          "version": "repo-lines-v1:sha256:e04fcd7b019a25200e02be7d73e8a366b71dad870cab6b1e370c5feec34e9fe4:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwNTVmNWQ4NGU5MDY4NWRhYWZhZGM1YzdlNDM3YmY1YTY3NmZlMWY3ZmJjNWMzZDcyM2VmMTUyZmRmOWQ1OWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNiNDQ3YTlkMDRlZTAwZWYwNmI3YmNhZGM4MWU1MmExNWMyNjgzNTk4OGE0ZDNjMzViNjBhYzgzMTMyMzMxZWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNlMDU4Njc3NGI4YmZjZjljYmFhZDJjYzc4NDI0MWEyN2ZiNmZhOWQ0ZThlNGYwZmY5YzQ3ODQwNDc3YjVhNzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg2NGU1YTA0NWM1Yjk2MjVkYTNkOGU0MmIyMmY4ZDhjMDg1MWIxMzdhNDNmZGNiNWUyNzEwNGViZTNmMWJkYjkifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/experiment_definition.py#L420-L484",
+          "version": "repo-lines-v1:sha256:ca137e2aed5819275922a7d11754aeab9d307f20c32f3bcc0bf74c29dcc2b087:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI5ODk5NjQxODM4ZGYwMWE0Y2ViODJmMWZhYzYxZWJjNDk2OGJhYWE0ODYxZDA2ODk0YWRhZmEyYWFjYjZlZGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIzZGYyYWNmMDZlOGMzZjAzYzcxMzVjNmU4YWM1YTljYTU0MzJhYmUwNmE3NGFjYTBmZGQ5YTUzYTAwOGY5ODciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFkYmI5NTQ2MzFiNjQzM2ZlMjUzM2E3ZWVkYzc1NTkwNWY5ODUyYmVmNGJlNmE3N2NjNTJkMWFlNjNkNzM5NTkifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/experiment_definition.py#L588-L660",
+          "version": "repo-lines-v1:sha256:b8ea702cdb6f555f60c2a5fc5d6669a676ea155b476d983e1fb28c9624c83039:eyJzZWxlY3RlZExpbmVDb3VudCI6NzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExMTc3ZGMwMjcxNmI5ZTc4ZTY3ZjdmODZjMWUzMGQ1MTk3N2M1ZDJjZDZiYjA3YjhjYjg3YmMxYjIzMzY4OGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhOTU0YjE1ZDJlY2IyYmMyYTU4ZmYyOWI1YWViYzg2ZjZlYmExNTBkOGZmM2MxMzA0MTFmOWFiOTM4MGE3OTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a89a7ef905af462aa7d81cae7493c86f",
+      "statement": "An experiment definition is named by its directory, while the descriptor selects configs, cluster profile, inputs and toolkit/container pins and the analysis config supplies analysis identity.",
+      "evidence": [
+        {
+          "resource": "repo://docs/how-to/running-an-experiment-definition.md#L19-L53",
+          "version": "repo-lines-v1:sha256:e6d152cf3635c3700854be66f05c282dee648dc2a386a3f5d8d1a561e8978140:eyJzZWxlY3RlZExpbmVDb3VudCI6MzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwM2Q5OTczNDBkZTg3N2M5OTRmYjJiNWNlZDYxODBmNTdmNTkzMjVmYjI4MDgxNDY0NjNhNGUzOGU4YzE1YzUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRkNDM2MTQxNzU1ZjM4MmQ0MTFhOTk1ZGU5Y2M2YmFjYmZlYmJmNGY1Y2MyNTI3ZmVlZTIwMmI2NjFhMTg2ZTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU4YTYxYmViMDkzOWU4NjViOGIwMzU0MzBmYWQ0Yzg3OGJiZTY5NThhY2MxMTU5M2Y1OGQzMDYwNzIyZGI1YmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ0MWUxMmNmMzQxMWNjMDU1MWZkZTI5OWEzYTk0Njc5Y2M4NGE5NTc1NTY3YmRiMGNmYTZhNDJkYjMyMDA1NjIifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

@@ -1,0 +1,172 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:5de1751ef387bc3596153569dbbe50f71c9d920be4e66c7c48f3b47b12423454",
+  "claims": [
+    {
+      "id": "claim_62c1a0d90f074c69a0442379ac403194",
+      "statement": "CLI and Toolkit map closed fresh/resume modes to analysis.run's from_scratch flag and delegate locus resolution, while CLI overwrite is carried on force-rerun.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/cli.py#L463-L500",
+          "version": "repo-lines-v1:sha256:68565304fd5ccdc33abb60d75af56db7315f3d6933fcdc2e25173a5adf6af0fc:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxMWE4YmFiY2VkMjFhMDU1YjlmODVjYTYyMTgwYzNkYzBjN2MyMjJjOWViM2VkODZjM2Y1ZDFjZWYzZTE0MmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5MDlhNTNhNjE4ZDAyOGUxZDMwMDBjMGE3YWJjZWVjYmU1ZmIzN2Y0ZTUxMWVmZTQ2NjQzZmFkNmU2Njg3MmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAyM2QzNDcyZDc2MmUwNWM1MDdjYWVhNmJkNTEzMWEyNGQyODkwMjEyZmNhZmQ0MzIyY2ZkN2I0NjNlZWU1MTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY3N2ViNTVlN2FiNTkwZjM2ODQ4NTliYWIwYTQwMjVkMWE5YjgwMmVlZmM2MTMyNzZkZGZiM2Y5MDBlOTQwNGYifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/toolkit.py#L385-L418",
+          "version": "repo-lines-v1:sha256:8aef169553c895e4bfd769a1044f5ae8289265f8a0f6d22fe0df5948a5b0e89e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJiNGQ2Yjg4NjU3YTQzNDQyZTczNWQxMmJkNDBkY2IwNTc4NzliYmJlZTIzYjlmNzM1ZTExYmM0MzQ5MTlhYWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5MDlhNTNhNjE4ZDAyOGUxZDMwMDBjMGE3YWJjZWVjYmU1ZmIzN2Y0ZTUxMWVmZTQ2NjQzZmFkNmU2Njg3MmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZmYzc1NWUyOTQyY2E5ZDhiYzI1MTc0OTYxOGRlNjQ4M2Y2YWM3MjQ1MTdiYTFmODhmNGFiZDZiMGE2OTcwZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk0MGY2YzA5YTY1MzRhOWQ5NjJlNjhmZTIyYThiOTE4YWFjMDM1NWUyYThjZjYzNDZhMjVhNzE5ODIxMmU1OTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ba143de1d155478d899f403a14159af7",
+      "statement": "Analysis run validates coupling and report configuration, can return a detached SIF build receipt, guards fresh directory deletion, stamps layout, and defaults to waiting only outside SLURM.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L3297-L3304",
+          "version": "repo-lines-v1:sha256:1299c2a904723857ba1bae33b928c7d6338f5820bbf1eb85302a250bcde3bb91:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGNmOTZkYzI3MzhlM2FkZDRmNmJmMjExYjdiNzEyNDBlN2JkMTEwMDBjMDlhZGY1YWE4ODlkNTNlNmJmYmZhYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNmE3MTc3ZDRmOWQ2MjlkNDVhNTI1MGE2MjVkM2IyZTU5YjdlNzFiNjE4YWI1YWU0ZWE4OGQ5NGNhODIzMDUwNSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOWZmYTZiZWU4MTlkZTFjYTNhZGYwMDYzYjc2YmNlYjRkMWNiMDYzNjhjOGRmMjhlZmI4NDFlOGFjYzM1ZDk3ZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiY2UyM2YzZDg1ZDk3NmMyNmU3ZDQwNzQ2Yjk5MDM2YjBkZTI2ZDE4ZjVhZmZmMzQ3MjA2OTAxYmUyNjdlMWM1MiJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L3340-L3358",
+          "version": "repo-lines-v1:sha256:f08e49e137deaed16d28150d2b1d71fdd482d018f8c8165342cdccb745590c06:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlNDM4YTE0MTdkM2Q4OWZhYmU1MjE4YWI1NWM4ZjZlZTUyNmZkMmQ1M2E5NmQ1ZmU3NDNhODgyOWZkMzc4NDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI0MzQ0YjlkNDkwYmFkOGVmYzk0MTBlNmZiOWQyMGI2OGYwMTE4M2NmZjgxNWQzNWFmZmFkOGM0ZDQ4NjIwY2EiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY4Y2ExNWJlMTY0YzRhMTNjMjM3ZTM1Y2MzMTM1MzI0ZmQ2MjczYzg5MWYwZDQxMmJiYjM0YmY3YWJhNzIxMjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE0N2UxZjQ1MmNmMDRiMTg0NDM4MGY2OTYwNmZiNzVjYTE2NWRiYzJlYWNjMjQ4N2QxYTdiZDlhZDY0NDBmNzkifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L3502-L3532",
+          "version": "repo-lines-v1:sha256:420c8bdef97331b2b21d9d14705836c328a66abbebc0bc056caebb565c819d20:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhN2FmMTNmODg1Y2VhOThkMjkwZTBjODkyZjk0NGNkZDkwODg5ZmM4OGZjMWM5NzdmMGQyMmViNGJlZGM5ZWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNjYjBmNDBjYjFlZjkxZjg1ZjMzYmZlZDJhYWI0NjU0YmM0ZGQ5NDVkNGUyZTFjNTBmOTM0NzM4OWY4YWM4ZmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczYTU4YTIzZTcxYjdkNTE0MDFjNzc4MDFhMGI1Nzk5NjVkODUwNTk2MGM3OTM0ODM3NzY0NjZjY2I4NWFiYzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk1YTc3ODA2NThiODEzNTNiYzViMjcyZTEwODg1Nzg1MGI0YWJhMWY3ZTNiMzBhOTdkMTkwYzkyNzhmMDQ4ZTgifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L3605-L3694",
+          "version": "repo-lines-v1:sha256:28659677309bbe93368c32edb1411f9d6a05955908eb51eddd0737437dadc62f:eyJzZWxlY3RlZExpbmVDb3VudCI6OTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI1ZDNmODBkNzVjMDIyMGZmMWQ3YzhkNDU5NmM0M2ZmNGFjNzk4OTAxM2FiODU1YzExNDI4YWMwNThjZjBkN2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJmNjdhY2ZiZjA1NDE0M2FkODdiNzFmZjhhMDQxMDMyNWRjOGVlNjY1YzllOGI4ZmU0MDY0NzcwZWIzNGQ2NTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdjMjQxMDMyMWU0M2U1Mjg5NTFiZmRmNWE1ZGU1YjkyMTI2NjBlOTZmNDExNDU2MzU5OGJhZjMwOTZiYTkyMjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM4ZjQxMDBmNDMyMmExMzI3MzNkZDgyNzIyOTcwNDE1ODM2ZmI0MzYyOWMzOTY4MTllNzg3NGI1YmQ4YzE5YTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8510e87d3ba6447fa5170b4c4a7acf19",
+      "statement": "Process rules consume run flags, scenario consolidation fans in enabled model processing flags, and analysis consolidation normally refuses incomplete execution while report/status targets are part of the DAG.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/workflow.py#L3542-L3618",
+          "version": "repo-lines-v1:sha256:610c311664fdce16cfada95e47f376d8b63f6b9f13b70d43037a64fb3843abee:eyJzZWxlY3RlZExpbmVDb3VudCI6NzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjY2MzODM2OGJlY2YzZTljNmJiMWYyOGVlOTlhYWMwMjcyOGRhM2ZlYTFlMjgxZGY4NjY3ZGQyMWM5OWQyZTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NGQxMmVkZjZjYTExOGFlYzUzZTlhN2Q5NzFmNWEzZGRmYWUxNDFjMzAzNmNhZGQzZGY5ZTE5YmEwYjU1YjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUwZTE0OGRjZTliMzU0ZTBjNDljOGQzODQwM2QwMTQxN2IyZjQxNjFlM2MxZDEyY2Y5NGRkY2I2ODRjMDU2OTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA2Y2UyNTVkNGUxNjhhNzVkOWU3NjFmODQ1OTI3ZjdiMjg2ZWYwNGQwODQ2MmUxNDU2NjU5NmI3OWY0YmM2NjkifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/workflow.py#L3622-L3689",
+          "version": "repo-lines-v1:sha256:6566132c3e6ccae400b46c012b2a0e0fcf49e775372c2b7f477868b68273e129:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZiNDI5OGQxZTE5ZTUzYzY4ZTA2M2E3NDQwYmM4YjM1NzgzZTYwOTQ5NDk1Yjk4Y2ExNDRkZWYwM2M5ODlkM2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5OTI0M2ZmYzMwMmUzNTIwYTA5YWY5NTg5Mzc5ZTEwMzkzYzI2NTEwMjJiNjcyZGE0M2QyMjljY2I0ZGQ5MzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA2Y2UyNTVkNGUxNjhhNzVkOWU3NjFmODQ1OTI3ZjdiMjg2ZWYwNGQwODQ2MmUxNDU2NjU5NmI3OWY0YmM2NjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ1M2ExM2YwMWZlYjc0ZThiZjUwN2IzZTEwNDY2MTcwMjljNGU4YjFlYThkMmRjNmRhMDkzMDg1YTY5ZGMxY2EifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/workflow.py#L4004-L4108",
+          "version": "repo-lines-v1:sha256:55e163e4355b80c535ea4e09e1da10604bbcbe0e0fed19cd7c923d766f39dd52:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjMmU3Mzc1NzMxM2Y0MDIyNDIzYjQ5OGZmNjYyNjcxNzQyMDMyMWFlMjkwNzgwNzIxYWIzZjYyZTliNzk5NjVjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJjNWQ4YWRlYzBkZjRmNDFlM2RlYzdkMGY3NWE1MjUzYWZhOGNjYmRkMGE3ZDc2OWRmNTQwNDc0NjM3YzhkZjBmIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJkYjNjNTRiNzNmMDRhODEzMWE5NGU5NmFiNWUxN2QxY2U5YzY0ZWQ2MzBmNmNmZDkwMzlmODAxMzVjYjI3YmU4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI2MGI1NzJiYTlkNmNkMGJhYWIxYzMzZTg3NWZmOWRhMDkyNjU4ZjlhYmFmOWFiOTAzNmE1NzUyNjM0M2NkZWMxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_4d1db745878d43d588ec9dc02e511135",
+      "statement": "Preparation runs isolated from other PySWMM preparations, reloads configs with GPU target resolution, and emits completion only after refreshing and checking the scenario preparation log.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/prepare_scenario_runner.py#L123-L204",
+          "version": "repo-lines-v1:sha256:480e43c334bf18a95965b6b94a726e6ab69bdfb2fcef18de507f4bbbffd77d32:eyJzZWxlY3RlZExpbmVDb3VudCI6ODIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlM2NmMjFmYjE0ZmI0ZGY2ZjkxN2ViMDIyOTQ4ZWYxOTYzMjM1MmRhNDRjYmRmOGU2N2FiZjAyYjRlMjVjMzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIzMDg2NmUxYmNjNWFiNzZlM2VmNTkwMTJkMGFkMzlhNjg3YWJlMDAyM2I0MzhhY2IxMTMwYTE4ODI1ZTgxOTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBhN2UxMTU1YWNkYjI3Mzc5ZDBiNzIxZTZlNTg5ZTFiMmEwMzRiM2JjMTQ5ZjU2YzJmZDk0YTQyOTJkNjA1M2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNkNDEzNDBjYzIzOWExNTljZTliNjAyMmU5ZjYzMjI4MzJlMmVhZDc2Y2FlOWU0NzU0ZDIxMGViOGZiNmQ1ZTgifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/prepare_scenario_runner.py#L2-L19",
+          "version": "repo-lines-v1:sha256:6da45346928e1fe28426f893f71fe5e8f3888c52cb539fc3fea3b224da089f11:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzMDNlY2RkNGE0ZDEwZjE5YzczZmQ0MmZkMTI0MzdmZDMzNTRhODI2ODE2MDVkYTUyNTVhOTdhMzkwNjhkYmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY3ZDMxNzEzYzY0OGE2ODQyZWY2MGUyZTQxM2E4ZjU5ZDBkYWY0OWQwOGE5NjU5NWQzMzllYTIzNDA2MWU0ZjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoxLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1N2ExMDkzNmQ5ZmYyMjgyYzBiMmVhMWE0OGUwNTI1YzBkYTJlYzJmOTdlZDZhOWUxYjk3M2UzZjY3ZTU0MWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg0NDgxMzE0NWFlNzI3ZDYwY2U0MWNlMmIzNDkzMTM0ODRmODBhYWNlZDFjNzJhZWFhOWY5ZmUwY2FlZmY1ODMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_951aec4dba564c299f9348ecff1d0449",
+      "statement": "Generated setup asserts native builds instead of compiling, and container model execution skips native build checks.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/run_simulation_runner.py#L289-L309",
+          "version": "repo-lines-v1:sha256:9e2e4c78973a463c76645052f7f7c65299a287ad02945c5e7b0dd67a234d4d37:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRjMmMyMWJiMmZmMGQyNmQxOTMxOGNkYWU1OTI0ZjZiYzIyMzI1MGM1OTU5YmExMTMxYTUwZWFjOWJlYjdiYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTYwMGE3M2QyZTAyZjM1MmI5MGZlZjFkOGQ2MzgxMWJhNGE4ZWUwYzFiZWFhN2FlNDY1OGYzNmFhMmUxOTgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczM2U4NDg3Yzg1ZGZkY2Y5ZmE3YjkzYzc0NmM5NDYyNWFlNDdlMTIwYzc5N2U3OTFlNzM3ZjllZDdmZmM3M2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5M2JkNjZlMmJiNzFmM2I4YTkyNDA2NGJiZjdiMDdjNTkwM2E3NzNmYTRmOGMzNTQ2MDYwMzg2NjcxZDNhNzMifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/setup_workflow.py#L51-L75",
+          "version": "repo-lines-v1:sha256:b0bcc2de8a89f71ab19c1c07cfe2bc703f60e3d20d8b2407ae690f3136aad318:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhMGMyMWFlYzI4ZTY2MjBmZWMyMjQ1ODllOWEwMjQ2OTllZjNiZThlZmNhZGRhYTE2YjQzNTNiZWFiMmU1NWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ2OWZkYjRiMTNhYjE2NjhlNTE2ZjQ5OWUwZjFmMzkzMzVkOTk3M2NkZjJmZjU3Yzk1NDllNGQ4MWExYmM1NzMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE3ZDk3NDczODZhM2ExNTkwM2E1NmFjOTFlY2M0ZTIzN2ZlYTlkZmNhNDcwZWM0ZDRkY2RhZTk5ZDkxZjdhNmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI5N2ExNDFjOWIyMDY1OWNlMjU2NGM2MzhmYWM0YTdkYjBiMWQ4YzFhYmM3NWE0MzM3MDNkZGNmMWFiN2NlMmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4cfe9bc50d6049099ec61573db687a04",
+      "statement": "Model and processing runners gate stage flags on completion, and processing verifies expected outputs and reclaims before emitting its done flag.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/process_timeseries_runner.py#L321-L411",
+          "version": "repo-lines-v1:sha256:107ed0453df387756432b1a09d837ba938c1cfb934a7b837ad9423c1e1ca0f0d:eyJzZWxlY3RlZExpbmVDb3VudCI6OTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIxYWIwNzRlNDBjY2FkZTg0YjY3NmI1MWEzMjYxYWEzMmZmZTAzZGNiOGM5OWM3N2FjNjc0Njc0NGQ2MGZmZGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMyZjBiNWMwNjJkMmQyMDBhMDZkYzM5MGRhNmE5NjAyYjc2YjJjODU1OWFkOTI0NjZkZTEzOWI5Y2FlZmEwZjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIzZjAzYWQ4ZDAwMzUwZmVlMTVlOGY4Y2IzOTFjNjU3ZWYwY2ViYzZiYzhmZTJlYmE2MjA2NzAzNDRlNjMyY2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYyZDg4YzhjZTUyNmMyNjA0ZDc1ZGJlM2FiZGM4NzhkMTBhYjZkMzQ4MGIzY2ZkOTg3NzkxZjVkYzVjM2RkMjMifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/process_timeseries_runner.py#L458-L495",
+          "version": "repo-lines-v1:sha256:077e93395d594678a4a407b46b9499a77237ec129093b0d7a0922635c0793ac6:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwODkyNGQ5NDI5NWFmMGU1ODRhMTBlYmQ0NWNlMDU5ODk3Y2EyY2EyNGQwNjM3Mjc1ZmJhYzE1NjJjM2Y2MDMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZjMmE0N2NiYzI2ODliZmNkY2Y5ZjA1ZWFkOTAxOTViYTY4MmMwNWE1NTk1Nzc5MTUyYTVhOGE4ZmY5NDYxZWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIzZjAzYWQ4ZDAwMzUwZmVlMTVlOGY4Y2IzOTFjNjU3ZWYwY2ViYzZiYzhmZTJlYmE2MjA2NzAzNDRlNjMyY2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhNGQ0ZjY4ZGRmNjgyNjhlZTAzMjZiYTMxYjQyMzA1MWRjNWIxYzY5ZmM5ZGJhMTc3ZWFjYzkzMGZjYmU2ZmIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/run_simulation_runner.py#L1009-L1032",
+          "version": "repo-lines-v1:sha256:c2fdcfb91b7097cdca0356d28666fd64c0522d06e62f2dd01c9eb017396e5978:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhhYmQyMDdiYzY2MzFlZTA2NzE4MGNiNGQ5NTEyYTllZTk2MjE5MDk3N2UyZDE4NGNmNmY1MjZkYzliNWYzMTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIzMDg2NmUxYmNjNWFiNzZlM2VmNTkwMTJkMGFkMzlhNjg3YWJlMDAyM2I0MzhhY2IxMTMwYTE4ODI1ZTgxOTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk0NGJlYmY1MmZhMDExOWJkYzE5OTYxODQ2NmEzNTg5YmQ2NDEzNjg1NGQ2YTUyMDBiNTYwYzAxYzY0NTA0M2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJjODQwNTZjMDZhYWYzMzJjMGFhYjFjMmRkMTYyNmIxZDYzZDY0NzI1OGNjMzJlNDAwNGQ5M2NlZmY2MTdjZGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2a5317567f0c4742950f498403776807",
+      "statement": "Submission reconciles live work before generation and has distinct single-allocation, tmux batch, local, and detached SLURM dispatch with prelaunch DAG validation.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/workflow.py#L7437-L7522",
+          "version": "repo-lines-v1:sha256:d5eb58b390afd0a5a469dfb74633fcb0a92528e2a4b2114e535bd8c9452afb00:eyJzZWxlY3RlZExpbmVDb3VudCI6ODYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViZjc5MWQ4YzlmYTFmOWNmNzJkNDk4OTVkMmFjMzExZTMxMDFiNGE0ZDkxNmFmYTk5MjgxNjMzMzg2MWY2NWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzYmE5OWQ0ODc1ZDA1NDE0MWE2NjYxYjE5MmM4YTBiZTYxYjEwMjNkMWU1ODE1MDEyMDgyY2QwMTRjYzk1YmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlmZGQxNTRlNDA0MjY1M2RkODZiNWE2MDIzNzYyNDk4YTMxZTJmMzdkYTJiZTc0NTg3NTc1MzA4Yjg5N2RiNWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM5OTU3NDc1ZjA3NTZkYmY5MDVjMWYyOTYzYjNkNzE1YTA4MWNjNDVkZjBhOWI1YzVjNmFmZTk3ODA5NDc3ODgifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/workflow.py#L7524-L7591",
+          "version": "repo-lines-v1:sha256:159ab44971c46e870aeb25d8fd99a222c6245bee28fd45e175adbcec74fe286e:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEyNDc1ZDEzMjAzNTMxZDE5MThkNmQ4NjA2YWIzODc0OTkwY2ZlMTgyMzJhOWZkYmFkNzUzYWEyMDIwMmNmMTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzYmE5OWQ0ODc1ZDA1NDE0MWE2NjYxYjE5MmM4YTBiZTYxYjEwMjNkMWU1ODE1MDEyMDgyY2QwMTRjYzk1YmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQyODY3YjBkMGY4NDE1YTJjZGViZjJlZGEyZDk0N2M0ZGFhZjcyOTRhNjAxYWYyMDZlYWUxMWFmZGQ0ODMzZmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhlZDRiNzE0ZjViZDI1YTY0YjE5Zjk4NDdjMjVlMTZkMDkzZjlkYzBhN2E3ZDA4ODZlNjE1MmVlMzliYTRhMjcifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/workflow.py#L7593-L7680",
+          "version": "repo-lines-v1:sha256:10de75a008616a1e98551bb9349d3f25c317cd1b21d43a6175a2d26d1d1e0dff:eyJzZWxlY3RlZExpbmVDb3VudCI6ODgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2NTk1N2VkOWFjMzA4NzVlNjE3MjY4NzAyNmJjOTU1NjdjN2VkOTdlZjg3YTM5YTQzZmNlNmMzNDI4Mzk1ODIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFkNzMwYmE3NGY2Yjc1MmNiZjA0NGIwZDBlYzg4OGE0M2FiNjU3Y2VlNGJkYTU0NGI0NTY4YWFhODgzOGUxNjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQyODY3YjBkMGY4NDE1YTJjZGViZjJlZGEyZDk0N2M0ZGFhZjcyOTRhNjAxYWYyMDZlYWUxMWFmZGQ0ODMzZmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlhMzY3NTY4NjdiYWMzYzYzZjMwNWEwNWUwYzU5MTU5MTkxOWVkYzc5ZmY1OTk5ZjI0OWM3MmI0MjRhNjEzZjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a38dee42622e41079c18b6b393d6159e",
+      "statement": "Auto execution locus follows configured dispatch family rather than ambient SLURM_JOB_ID, while explicit local/SLURM overrides pass through.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/orchestration.py#L57-L105",
+          "version": "repo-lines-v1:sha256:f02b6ef709d2a0f45e7bc3d848de912594789d8f2f28587f6407281fbc11ac3f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlMDY1NjQ1OThlYjIxOGU3NTBiMDkxMmUyN2YzZmQ5NTdhZGYwM2U0MWI4YzdlOTdlZGI1N2Q4MDAxYzdkNjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYyZTE3NWQ3M2Q4ZGY0NWM1YmE3NDEyYmViNzU5YjVhN2MyMTlhMDQyM2MyM2JiZTVlYTY4ODhjYjM0Zjk4NGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJkZTlhOTVmZjI2NTMxOWVjM2U1ZjdlYzQ1ODFlNjBiYTc3NTA3Y2I3OWY5YWM4M2IzNmNmZjU5M2FjMGRjNWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_771ae8a2a1ed4e7d83d4c19436e91745",
+      "statement": "WorkflowResult on detached launches certifies launch rather than completion; phase/event fields describe request scope, and partial-failure disclosures are not populated for tmux runs.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L3700-L3739",
+          "version": "repo-lines-v1:sha256:6a715e4e2856bee06d4108170ea9c208b24486b4ab9645934a0fca5722dfd2f8:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViZTM0ZDNmZDY1ZTVjNzYxYzM0OWZkYWIwNjNkN2FlZTc2ZTUwZTViMzA0OTg2NmY3ZjJiMjJkNmVhNjlhOGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY3NTZiOGJmZWQ3NmQ2MDA0ZmM1MzE5ZTBhNjAzNzg1Y2JmZjdlMTk3NGZkZmY1YmVlMTkwMzdiZGI1NDIyYzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUwOGQxNjg1ZDQ0ZDQ1Nzc3Mjk4ZTQzYmI3ZjkyZjQxMjMyZTYzYWE1MjFhNzA1NmE0NmJhNjY4OWI4Zjg4NjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNmMzg2NWY4NTIwZTFjMzgyYTIwMzI5NDE0ZWFiOTdlMDczNzQ1NGZmMTYyNmQyYzA2NGRiOGI2MTEzNWNmOTcifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/orchestration.py#L284-L341",
+          "version": "repo-lines-v1:sha256:cc0c4a3a4ebdefede3830f0e88a171c10e2e128a856e7473937a2a1b0e3bb705:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI2ZmJhZTBiOTFkNDRmYzBkNDlmNWRlNjkxZGE2ZmM0MzFmMjYwMTM0YmY3MzFlMGUyMWY3NjQ4MDk0MzM0Y2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMyNWVlNDBlMGNiZDE1NTY1MGEwMGI1YTE4OGYyODIxNjNlYTY3NDczNjlmZDgxZTQ5MWNiMWUyYjI2YWE1M2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBkNDliMDdlZWUxMzgzNzFiOGY2Yjk1ZWUwMzcwZGY1ZGU3YzNjMWVhYTYyMDAyNDFhMTAyNWM1MjQyMGE4YmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZkYTVmZTgzMzI5NWRiN2NiYjZkMjBmNjUwMzcyMmE2MDVmN2QyNGZkZTU5N2Q2ZmM0ZWZiZWU5YmZhZjQyYzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2426f202e0204386855716d62abccda3",
+      "statement": "CLI reporting checks result success including dry-run and maps workflow failure to exit 3, while exceptions use a shared class-based exit mapping.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/cli.py#L502-L524",
+          "version": "repo-lines-v1:sha256:5620c9ea9ee3fbd87ea5b93f0fca2713984475f0bb56bce07351f12f254c4d30:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNjMWUzNzU4NDhmM2U5NDgwYWJjMDhhNDRjMjdmMmQxMDBmNmE1ZjcyNGI0MjJjMjJiNGRmOThlMmZhOWNmMzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExMmE5NjZmNDBjMDMzMWZmMDRiM2NmZjNiNTg4YmIyMzg4NjBjN2M2N2MzNjRjMmYzZjE3YjM3OGYxOGVmM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczM2FiYWNkNDQzZmQ5NDZiODdkY2Q0NWRmNGMwZWI4YjhkZTRjNmU3NzI1ZjA3ZTg4MTM5M2M4MGNhMWQ5NDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdhMTUzMTFkNmJhMjU5YmJmNDg3YjYxN2Q2YWMwMTg2YzgyNWZiM2NmOTY0M2UxOGU3NDUyNzQ1M2Y1NzYxNWMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_253c67be62644f738a956115fdbcd188",
+      "statement": "Configured combined simulation/processing shells are distinct from grouped process-rule retry semantics.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/workflow.py#L3572-L3599",
+          "version": "repo-lines-v1:sha256:084a98804a21cc7084fd22d5e28941dd6b527472aa651f4e944881069ada4f62:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4OTVjOWU3N2E3MDE4MWVhMDhhOWMzYjI0NzQ3YzBjZjMxODA3ZDQ5YTc5ZjhmMjkwMmE4NDFjZTcxNWY5MTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjNDM1YTdmMzE2OGI3YzJmMTI2MjI2NWI3YmM1ZjFlODU2YWFhODgwODBiYTFiNGNkMTUwN2I2NzQzNTg5ODEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkxOGI2MjdlMGE5NmZmYzhiYjI2MDA2NTQzZTdjYzNiZjcwNzZlOGM4YjNlNWMzMjU2ZjhlZjFjMWM0MTc4N2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU1OWRlOGQ2NTQyNjUzYTRiMDgwYjc0YWNmMjJhNDEyMjExODYyMTAzMDg5MzFhYzYzZDgxMmZjYjRlZDI4ODYifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

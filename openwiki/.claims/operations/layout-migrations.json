@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:0aadc8a82e70ff6e652377d225b94c2b75fc8966ce1ba9d8aad8f34e99ac7711",
+  "claims": [
+    {
+      "id": "claim_9817018a11454e9a97b874afcc4ce091",
+      "statement": "Fresh layout stamping preserves matching records and refuses differing records or unstamped targets with migratable content; construction and established modes have distinct policies.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L1632-L1657",
+          "version": "repo-lines-v1:sha256:64102aa559f5818a8f436a399b8910fc735c11ca7ebc69daea43b40b03a41c3d:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAzM2E1OGM3ZmUyNzgzYTc4ZDFiMDJmZjRiOTE2M2QyYzM5ZWVkZWI4ZWE3NTAzMmE0ZWM3Zjc5NTQ4NmZiOGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIwODQ2Y2Y3ZjBjNGE0ZDg5Yjg4ODg2ODQ4NDBiMzljZTYwYTkxMjQwM2EwZGNlMTdmM2RhYTZjMTFiMTA0NDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYyMzkxODliYmMxOTdlYzEyYzZlZGIxNjExOTUyNjIyYWQ3Y2ZkYTNhZmE0NGY1ZmIzZTUzZDdlM2Q1ZWIwMDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIxY2UxZDYxMjA0YTBiMTY0ZjE4YTEwZGU5NTQyYWYxYWNjMmVkOTA3MjcyOWE0NWEwYWMzZmVlNmYyNDc4ZWQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L3621-L3627",
+          "version": "repo-lines-v1:sha256:5ef1de6d7b2f9ad7afa5664bdf42d19a00299e112e871637938b2264ad7467a3:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjc5NTQ2NGYwOTJmZTJmYTMwYTBlMzEzZWRjNzUxODc5NjgwZmQ5YWJjZWJmYWI1ZGU0OGFhYmFhODIxYTE0MyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWE3OTU4MzQyYTcyOTdlM2Y5ZjE2YTU2NGQ4MjRkNjllN2U4NjU0NzBlMTg0OTVlN2ZhYWNmOTI3NjM0MWJkOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmFiYzVhMWMzYWQzYzAxMjY1NjMyYjIxNWQ0NGRmYmM4OGFkMDdhNzRmMjFhYTE4ODQ0ZjMxZWU5MDFhYjlmYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMGE4MDVhMTY1MTEyYjgzN2IyMzUyZTllNjZjNGM2MzAzZjFmZDk5YjJkMmI1NTg3MDdlMjRkNDJhYmU5NGFjMiJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L4675-L4681",
+          "version": "repo-lines-v1:sha256:5ef1de6d7b2f9ad7afa5664bdf42d19a00299e112e871637938b2264ad7467a3:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjc5NTQ2NGYwOTJmZTJmYTMwYTBlMzEzZWRjNzUxODc5NjgwZmQ5YWJjZWJmYWI1ZGU0OGFhYmFhODIxYTE0MyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWE3OTU4MzQyYTcyOTdlM2Y5ZjE2YTU2NGQ4MjRkNjllN2U4NjU0NzBlMTg0OTVlN2ZhYWNmOTI3NjM0MWJkOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZjY2OTlhOTJmOTFjYTBhOWIwNDkwNWNmNGEwMDgwODAyMmFjODVlMzI1ZDkyYTljZTAwOWI2ZTg4MjljMjI0OCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjNhZDFiMTI4YzU4NGIxZmY2MDY3ZThkZTI5OWMyNmNmNThlNWRkZjIyOWI3NzNmMjA2MTdmY2E5ZTY1NmRkZiJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L4965-L4985",
+          "version": "repo-lines-v1:sha256:a9553a543f51d94b8e18766f671b1bb3f223cb4f21d98c1bea264a63189560a4:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIzMmM0NTE3ODJjY2Q0NDE2NTM3OGQyZWU0NjUxMTRlZTY0MjYzMjQ5MDdhNTFmNjQ3ODQyMmRiNGYxOTlmMzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFhNzk1ODM0MmE3Mjk3ZTNmOWYxNmE1NjRkODI0ZDY5ZTdlODY1NDcwZTE4NDk1ZTdmYWFjZjkyNzYzNDFiZDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc2ZWM4NTMyNmM3Y2I4ZGE1NDllOTQ0ZDJmZjlmYTk2YmE0ZGExYWY5ZmI3ODU4NjVmYWNjYzhmNjA4NWEyZmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYyMzc1YTJjZDg2YzBiZTVmYTc4ZTVmZjFlNjViMGQ4NzVhMDhiNGZkMzU2NDRmYTU5MGY5ZjkwZWFjNGRjN2QifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/version_migration/state.py#L134-L203",
+          "version": "repo-lines-v1:sha256:09a7af6d0e9fff8c30292e1237b26492b881d9039ec3eaf95e1baf00ed3cf60a:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUzZjJjYTBhMTI5MDU4YzRhZTNmYjM2MTgzNTdkYmRhYTc2MDFlYzBlZDI4MWUyMWJkYzdhYmZhMmEwY2M4NmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhNzI5NTFhYTUwNmFlMjg5MzYxOTY0MWNlZmE0YTkyYjg0MmZhNDk3MGJmOTAwYzUyMTcxNjM0NzY4MWVmNjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg4ZGU4NTIwY2NiMjZjNGYzOWUyNmVkMTlmYjFmN2NhMmFiZDhiOTNhMGQ0YjYzYjVlMWVhNzNmMTYyNTY4M2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI4MDYzNzE3MGYzNDM2YjM4YzQ4ZjFmZWRlMDgwYmVlNGEzMGViN2NjNjIwMjBhZGE0YzcyZmVlYjlkODUxMTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6e75e57555e84f338b0dd612aa021c57",
+      "statement": "Version inference prioritizes the target record and local legacy evidence before inherited primary stamps, and treats an unstamped unified tree as layout 21 rather than the current layout.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/version_migration/state.py#L259-L308",
+          "version": "repo-lines-v1:sha256:176b24d750354ad92a9f88318174abe02357a6e0225d9085812aa66d878737ef:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ0MTI1OTUyM2UxOTNiMTQ0Mjc0YzdlNzRiOTNkNmQ3YTY1MDk1ZTI1OTg0ZDJjYzM0NjE2OTc3YWVhMGFmMDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTYwMGE3M2QyZTAyZjM1MmI5MGZlZjFkOGQ2MzgxMWJhNGE4ZWUwYzFiZWFhN2FlNDY1OGYzNmFhMmUxOTgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYzMzhhODcyNjJjODVhNmQ2YTcwZDJiMjExY2ZiYzg3NTk5MTNiNjg0NzAxMjIzYTlkYmUxMjE3Zjk4MjZmMWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhjYjlhY2E5MjkxZTEwOWQyZWM1MDU1NzQ5YjgyYWYwOTNkMjRjMDdlNDU4NWIwM2ZlOTA1Mzg1MjNiYzg5Y2EifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9c35cb9272614977bde03dc23c0932a1",
+      "statement": "Baseline asserts a supported version without migration and forced downward baseline clears history; verify only compares the record with LAYOUT_VERSION.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/version_migration/runner.py#L226-L235",
+          "version": "repo-lines-v1:sha256:6f6cd1e2666c791a023471fa54cc28d9c3e8ecdd96d177ab44473df0381667ec:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlNWFmMGYyMGNkZTU4OGFkYjU4ZTk1MGNlM2M5MTliY2Q4ODY0NjdiYzE2Y2Q5NjdkODkyZTY3ODBiOTNkOWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI1YjRiYmYyNWYzNDdiNDE3M2ZlODY0NTMzYjg4ZWM5ZDhjZmM4ZWY3YjU4MmQyYWVlYWRiNTdhMWNkNzNhYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc2ZjExNTcxY2NmNTkzNTc1NzU1M2EzNmNjMTE5NDFhNGZiOTJmY2ExNjY3YzE3YjlhNDgyNmM3N2I4NjliOTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/version_migration/runner.py#L57-L95",
+          "version": "repo-lines-v1:sha256:3b4a6e29341555bbc521ca257c26815bf9e0f759edf06d0913a8ecab6409368a:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdmZTNmZDBkZjIyNzEyYzExYTNiMTU0ZDlmNDZkOGE4ZjYzODA0NjhhNzAwNWFjZTkzYmYyYmFkOTMyZWQ1NWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhjYzRhN2QxY2M3OTZhYmEzZTQ2NzIzMzI3ZjUxN2U5ZjgxMTk4MmQyNTBmMDcwMjk4NmU0YjU3NjRhZDk1ODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1ZDBkYTVlYzM0YWU5MDVmNmE2YjBhMTYxNjU0NTAyZjk4MDUzNmQ4YmY2NGNiM2RlNWM1YjRiMDExMmZkNjcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ac948f28d5d54f47bfa438075676072e",
+      "statement": "Migration planning is forward-only over consecutive registered edges; application executes operations before recording each successful migration and provides no whole-chain rollback.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/version_migration/context.py#L151-L158",
+          "version": "repo-lines-v1:sha256:00e1a4d544809d254a349c55b12e87b9dd3c94bb167089bc072ab208172ca71b:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWUyOWU2OWM3ZDA3ZThiY2FiNDUwMTA4MjRiOWZlMzlmMTg0ODM3YTJkZTViMTM4NGU1MjU4OTg3OTRlYmY4ZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTYwM2FhZDY0M2RiM2E0ZTgyZWM2MzE1NThkYjQwZDRhYTk2MzYwNmMzNGNlYWEyODc2NGFkMTQwNzMzNWI4OSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTk3YTFiNDMzZTIwYjUzMDRkNWE2N2RmNTBlM2QyMDVjMWE5NzMyMzlkNjczZTVlZjAwNWYxZjgyYjIxMTlhMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDIzNTg1YzFmODlmNWY3OWYxMDRlOWIwZjdmZTIyNTdjYTNhNTQyNmM0MDJjMjlhMzczYTc1YjQ4OWVlYmQ0NSJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/version_migration/registry.py#L62-L160",
+          "version": "repo-lines-v1:sha256:8c1e903fa77d1ae83f02931eeb44859cbdb31f9473c65bc54d8c759bf46a18fc:eyJzZWxlY3RlZExpbmVDb3VudCI6OTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1YmI3ZjI0YTNkMTYwYzE1OGI5NjU3MTc2YTgxODkwY2U5M2I4OTZkODVmOWFmMTQ5NWZkMjczNTVhMGEzY2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU0NTI2YWZkNzhlMmJiZGM0N2QwODZmNjliOTdhZjYwZTQ5MjAzZDNjNDlhMTAwMDNmNTQxNzEyODlmOTYxZTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNiMzBlZmM3MDM0OTEwZGUzYTg3ZTE2ZmM3YTMyNGUyODgxYmM2YjQ1YmU4NmYzYWVkMTZhYmE3OTIwOGZmM2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/version_migration/runner.py#L125-L182",
+          "version": "repo-lines-v1:sha256:9ec6569a512e9ed31f2fd118b3f7c3c344e054cad23dc02d92ca4d69e24b0d09:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVlMTVkNzlhOWVhMWViODM0MzllZGRlNTNkZjMwYzEyMTYwNWE2MWRiNDZhYWMzYjlkMDdhZjYzNjMyOTY0NjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRiMjVmMzJmNjg0NzJmYjYxMDU5Y2RiNWEzZTIzZjRmYWQwMmFiZDRiMTc3YWJlOGUyNjJhNTUzZjNkODc1YmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI4YWU3YjM4ZGI3ZWJhZTE0MWZmMzFiNDNmOGFhZDBhNmZhYzFmMGM1MzczNjM4NDA1YmRjNTY5MWFkY2E5ZjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJlNDEyYThlYjkyMGIzMDc1MzMzOWY3OTJlNmVkMzU5YjgzZjBhNGU3YzBkYzE4NzIxOGNiYjRhZThjZGVhYTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_61c5b12d987847e9b884afca2f243676",
+      "statement": "Version records use atomic replacement and file locks, history updates check predecessor versions, malformed records raise explicitly, and JSON log operations have separate locks.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/version_migration/context.py#L300-L357",
+          "version": "repo-lines-v1:sha256:95c6c4ab369836de8c33f1bd96ca2ca0f7d4eb7ecb204cba7fa641cc5e41fc53:eyJzZWxlY3RlZExpbmVDb3VudCI6NTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3MGEyYjQ4M2FmMzE2ZDI5OGFiODRmZGIxMzZhYzY4MWRmYWQ0NGE5NjhlN2E3YzhiZDlhMjUwMjkxZTZkZDMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJlZTBmNzhmZTE0NGEwNmI2NjM5NjM4YzlmNGQxZGY0NDA0NTcyMzZkYzBlMTEyN2IyZTQ5MDFjNjEzODc0YjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYxY2UxNjIwNGYzYjY2NzE5ZDQzMjM4MjRhOGIxZmQwNTNmOTI5NDczZDliZjM3NjNhNjk0YmJkOTNiOGUzNDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM2YjQzMDM2MzNhOWMwODQ5ODlmZDRlY2IyODkwMzc0MmM3NWYyNzRjNWQyYThlNTVkOTdiMDEyOWU5MmJhZmMifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/version_migration/state.py#L222-L255",
+          "version": "repo-lines-v1:sha256:faf753b2713a423d6e0426f1ede6c01119e2a93c13c51ed38bb3a6f1c6e2af55:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQzZDlkMzMzZmEzN2MzYTMzOGJmZDZmNzE0ZWFiODYwZDNkNmNkNmMxMGZmMTMyNzkzZDkzY2ZkZTJkZTJjNzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2YjUxMjY5YmI3YzFmODU4OWRkMDMxY2FhYzk4OTgyOGFiYmQ0YzVjZWY2MDkxNDUwNDZkY2M2MTJmM2FhNmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNkYjE0YjBhMjJlZTljODY3YzJlZjVjM2UxNDg5YzY5NjA2Y2RkMzJiMDY4ZTc5Njc4MzcwM2ViMjE3OWI3NTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYzMzhhODcyNjJjODVhNmQ2YTcwZDJiMjExY2ZiYzg3NTk5MTNiNjg0NzAxMjIzYTlkYmUxMjE3Zjk4MjZmMWIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/version_migration/state.py#L88-L131",
+          "version": "repo-lines-v1:sha256:4a1fe5747e17dbccf2ba25dcfbea8de09ce8bfc026f6970e2ab86700a40b19e5:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVjYTA2NTNlYWRjNDhiNzk5ZGVmNjIxMTc2OTQyNTgyMGUxMWE4NDMwNGZkM2JiMTU3NmU0NTcyMzFkMjgwM2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2YjUxMjY5YmI3YzFmODU4OWRkMDMxY2FhYzk4OTgyOGFiYmQ0YzVjZWY2MDkxNDUwNDZkY2M2MTJmM2FhNmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjExMmZlYjVkODFlZDY3N2M5ZWM1NDQyOWM1MDE4ZGNkNzg2YWEwZTBmZTY3OTUxM2ZlMWM2ODc2YTViZTE3Y2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhhMDNkYTI3YTAzYmVmOThkYjgzYWExZmU1NDUyZGE1YTJiZDEwNTE2NjdhYmY3NmEyNzQ4YzViYzkyZGExZGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fac7490036674ca4884ae02431c9ebfa",
+      "statement": "Migration CLI defaults to dry-run and passes slug reconstruction configuration only when both config options are provided; dry-run slug reconstruction suppresses log and layout-state writes.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/version_migration/__main__.py#L55-L82",
+          "version": "repo-lines-v1:sha256:b3996f3ea73b514df4629127919804d47b3a2618c30630bd62ba597747e55d67:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0NDhiZGVjZGIwZmVhZDY4M2YwY2I4NjVkNmM5YThiZDcyYTMxNzZhYThjOWY5YWM2ZWU5ZWU3ODhkYjY1NTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVhNDE0M2E2MDEyZGQ1NDU2MmI1MDhjMDY0YjRmMGRkYTg0OGYzMmRjYjk5YjRlMThkYzFmZTcxMTFiOTE4OTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ2MzYyOTAxZjU1N2Y4Yzg2OGJhN2IzYjgxYzUzMzc3YWQ3MWI5MTIxOWQ5MGZmZTZkYTY0OTczZjc3ZWNkZTgifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/version_migration/context.py#L112-L149",
+          "version": "repo-lines-v1:sha256:e12516e2f072b8186b6026dff80b07bc46b9f187c6eb51c5ad725e6ad36a1930:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4MjQwYmJlMDNjMTI5ZTE4MWJmNjM3OWUwN2E0ZmE3M2IzNmU3NDM0MDkwN2MyMjEyODRkZTIxN2JiNDRkNDkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmODUxMjI0ZjFiMzNlYmVlNmYwN2EwM2QwMDgxYjA3NzIwNTQwMjcxMzNiZTA0MTYyMTcyMDE5ZDRlNDY3ZWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBkYmY2Zjc2Nzk5YmFlYjJhOTVhMGFjMDFhODNmNzVmY2M3YWE3MWZhOGJmMWVjMDM4MDhjZjdkZDNkOWFkODYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU2NmU5NjcwMjQxZGUwOGQzYzVhNjUzMDY5YzVkMjI2ZWRjY2ZkODc2ODBiMDkwM2FmNDI1YmM4NDhmODc5NmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4d6d3e1f6bd44def81b882abf0d09c6b",
+      "statement": "Layout version 34, member bundle schema 7, and combined bundle schema 8 are separate contracts; bundle readers demand exact schema matches rather than applying layout migrations.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/bundle/__init__.py#L101-L105",
+          "version": "repo-lines-v1:sha256:3de1f31f903f2c74d1f4694559c8bda3d61b766e697c82878f30b8ffbde0caf2:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODJmZGRhYmZlMWVlNTI0MmY4MTQyNDY1Y2E1OGI3OTQ1ODJiYzI3NDM1MmZmMTc1Njg0MTFkZThiZmUyNjNmNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMTQyNWVhZGM4MWQ5ZDU0ZGE0YTMyMDBhYjQ5MGI5ODFmMGIzNTAzZGExMjBlNDNjN2Q0ODkxOWIzNmNmNTYwMCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZGI0MmM2M2Y0OWQwZGNmYjEyY2JhZDgwMDZhY2Q3Yjc5Y2VhZWMzYjc0OTc5NzgxMDRjN2RlYWQ3NzFkOTFiNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjllMGJhMzdlYzkzNTA4OTdlZGYzZmVhNmRlODRkNGIwNDEyM2ViZGUwZGUyOTViYmM3MmJlNDQ4NDdiNTVjYiJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/bundle/__init__.py#L145-L157",
+          "version": "repo-lines-v1:sha256:bb3c2ab3abfe82a0505ae8ddfbf28286182bd82a60c93ef8b17b9cf383203a43:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhMzcwMjU3YzllZDdlYTIxODI2Y2U4YWU1MjU0OWQxODVlZGE3Y2U1ZTJjMzdkMGM3YjJiMGNjZTUxYjY1ODEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyMjRhNWQwZTlhNTg5N2E1NTNmYjI3OTIwOTc2NWMzNTMxYzJlYjZhODViM2FkODM1M2UxZTljNDgzZDIwMDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk4NzY4NGZlOTIzODZkMmMzMTVkNTEyZTdmYzZlMDkwNmRmNDQ0ZDZhMDdiNmY0MTVhYjE4ZmQxYTdlZmMyMjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFmZTMxZGQzNWU2ZDEyOTdhMDJiOTE3Yzg4NDMxN2UwMWNlZWQyYTU1ZDIwODVkMzAxZmE4NWI3ODZiZWVhYTgifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/bundle/_combine.py#L1645-L1673",
+          "version": "repo-lines-v1:sha256:10902637e87855736254053c2fd613b771acafeb4b9a21e61429c54640e5c3df:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0OTAwNTI4ZTBjMDVjZDJjMjE0MGM0YWFkNWJkMzg5M2UzNzZiOThlNzA5MmJkNDYzMjU1ZTg5NjYxMzZmNmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZmMWE0OTRhZjQxODZmZWIzNmMyMjExOGUxMzc5MTNjM2FjOWNkNGM1YzMyOWQwZjIxMTljZjE2YjAwYmJjOTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU4ZGU1MDZlZTI3NWIzYTUyMjQ3YWE5MjgyNTUyNzhhZmUyNTM0NjVlMWU3Njc3ZGM4NGY5MjhkZjQ3ZjYxOWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJjN2NkOGJlNzUyNGFlMzZiNTI1NWMzZTYxNDIwODkzZTc3OTQ2OWQxMTY3YWNiNjM3NzlhOGQ5ZmY1MGJiMjgifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/version_migration/constants.py#L15-L44",
+          "version": "repo-lines-v1:sha256:14715b933f4533b549e329e3dffd50b8e386d7a86ef3081cfc7b21ef163e25a2:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2YzNhNGRmYWM2NjI4Mzc3ZmRkNzc5OGQxMTQ2ZWE3ZWMyYWU2YWI3ZjVkZmIzOTdhYzRlYmE0NTQyN2M1M2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZjMTcwYzI1NGFhODM1MmNkYjcyZTJlMmQ1NGJmMjRlNDg5NGFjZGEyMTM0YzRiODJkZjk1NmQ3MmFkZWUzNjgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU1YjZlODcwNmI0MzA0N2YyYTZkYjY3ZjEzMjYzODU5NTYwNGU2N2YzNjk2Njg3NmNlMDE1OGYwMDUzZTZiZDEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQyNDAwOTBkYWU3MjIyODk3ODA1OWZkNjY2MjliZjk2YjRkMTZkMDI4OTY0MDE4M2Y4YmRmMzhjNjVkMTM1NDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_dd05dad11777463c898ab70337e29944",
+      "statement": "The Snakemake metadata migration primitive renames metadata to a labeled backup and avoids overwriting an existing backup.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/version_migration/context.py#L882-L920",
+          "version": "repo-lines-v1:sha256:91092cdfab103e73d3adf24aa3a6514e31b23b2c2c0f0ad300e0b53246515355:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkNTIzZTY0MzkwNTMxMzk0NmQwNzFhNGI3NzE5MjZkNmM1MWFiM2QzYmI3MjhkNmY4ZDhkMGE0ZGNiMjRlZjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI4NWMxMGQ3NWNmZjNiODNlYzRkODExM2YyM2QwNmE0OGJjZTYzNjFmNzNlOGQxNzIzYmRkYzhjOGE0ZmNhYTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI5NjAzNmViYTY2MmI0MGUwNTBjNDI0YTJlZjIwNDRiNmQ1NTY0YzVlMmM0YzE3OTk1YmVlZTExYzFhZTA3MDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFkMWFiNGEzZGRhNjVmODFhY2UzOWU4ZjcyODQzNjc4NDBmOGIxYjA5NjQ0MTQ2NWU3N2I0YTQwNDM5ZTFmNDcifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

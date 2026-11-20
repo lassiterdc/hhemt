@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:9177296257291ec1935435dbafce98c9ca998b29c3d7150354269a157c0d6d3e",
+  "claims": [
+    {
+      "id": "claim_33953fef79904057916105b83aa5359e",
+      "statement": "Report selection supports ordered set composition and an analysis-dependent default sentinel; disabled_renderers subtracts renderers.",
+      "evidence": [
+        {
+          "resource": "repo://docs/reference/reporting-sets.md#L8-L46",
+          "version": "repo-lines-v1:sha256:4d141a68ef7a3009174549c5510b27f44ce84f11a97eaa19cf108a49a6656ed3:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ1Y2QyZGRkNmUxYzg5ZjlkZmE0N2M1Yzc1NDA3MjM1ZmMwOGYzMjRmYjE5NzQ4NTIyN2EzYzlkZGJlZjliNjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE5NmM4MDAzZDUyZTE5NmM0NGUzMDE2YjZhMzI1MDY5MDViMWM5N2Y2YTg3MDg5MmQzYzhiMjk5ZjFhZDdhMzIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE2MGE4Mjc0M2ZkYjI0MmU2Nzc1YjVkMzhmNzU2M2JmMWY2YTU4NTdiNjBjOTA3ZWI0YjUxYTRmZjM4MzMyMDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMwNDY2YWQ5YmYyNjAwNjEzY2YyMWRmZDBlZThlYzg2MjE1ZTk0MTcxNmM1ODVhMDcwODAxYzE3MzZiZGNmNzIifQ"
+        },
+        {
+          "resource": "repo://docs/reference/reporting-sets.md#L98-L109",
+          "version": "repo-lines-v1:sha256:af446b9dce7c744d59fa37d304022233fd8754ae448dcce49e399c697bc4eec1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk5OTc5MWUwNWE4ZGVmYmExMjM5NWNlNTE0MGY1MzY5MTMzZTBhZjBlZmIyYmRlNWViOGMyNWRjOGQxNTM5MGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3MzU4ZmRiOTI0MjU0ZWEyMDM4Mzk1MjBkNTE2NmExYWQ2ZDY4YTcyZmQyMzE2ZGY4NGJmY2NiYzI4NGU4ODIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiOWNkYWFjMmQ3MDA3ZTQyZjc4YTFkNzczMTgzMWYyMThkYzdlY2Y1NmU3NjZkOWY0NThkMjUzZDFiODE3NzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE4NGVjNTI5ZjY4NWExODlmOGU3YmY1YTY0ZjRjNGY4N2VkZTJiMzc2M2Y5NWFkZGUxNDgyYmFkMDM1N2VjYTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f230d84e14b44f6baf37488685a39b79",
+      "statement": "Run-entry validation checks reporting-set shape, required varied axes, and composed disabled renderer names, rejecting combined on an analysis.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/config/report.py#L1183-L1292",
+          "version": "repo-lines-v1:sha256:c925bbcfbdc4660cb4721c054f8b065342cb868a848c42f772c7f3384d81c9ef:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5NGExYWYyMGQwM2I0MTA2OWVjYzE5ZDUyZjAyZTMwZDU0ZjgzNjRjYzY3MzY4OGY4YjhlODIxYzk5MGMxZGZkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIwYzJlOTE4MzNlZTVkYmFmNjI1Y2Q3N2ZlZjhiOGFlOGE0MzdlMzI0YjU1NGY0ZTU4MDJkOTVlMzQ5MmM3OTRjIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI4Y2M0YTdkMWNjNzk2YWJhM2U0NjcyMzMyN2Y1MTdlOWY4MTE5ODJkMjUwZjA3MDI5ODZlNGI1NzY0YWQ5NTg5IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIyZWY1MmE5MTY5OGRhZGJiZDJmOTBiNWJiZjc4YjE1ZDVjN2Y0ZDE2MTI1OTI2NWMyNmU2ZTVhYTgzZGM4MGJmIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_2fbcdc7d092146e0b2c598462487b042",
+      "statement": "Bundle is a consume-side object separate from Analysis; loading requires exact bundle schema compatibility and validated analysis config, while differing toolkit identity emits a warning.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/bundle/__init__.py#L1-L24",
+          "version": "repo-lines-v1:sha256:8727be064d9ce88c2b126b1755bf8371432a31acb82bdc13a5c1b815914aa586:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdjMmJhYWE3NDRhMTAxZmRlMzRiNDIxMGZmNTY1NWFhOTQ2NzM3ZDU4NTI2OGNmMmQwNTFhZTU0MjE3Y2YzY2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzMDNlY2RkNGE0ZDEwZjE5YzczZmQ0MmZkMTI0MzdmZDMzNTRhODI2ODE2MDVkYTUyNTVhOTdhMzkwNjhkYmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU1YjZlODcwNmI0MzA0N2YyYTZkYjY3ZjEzMjYzODU5NTYwNGU2N2YzNjk2Njg3NmNlMDE1OGYwMDUzZTZiZDEifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/bundle/__init__.py#L130-L231",
+          "version": "repo-lines-v1:sha256:b0f4a28e6754c46def74d2ca8766153a265d6968f03c8b665ae11eedfe30cbb7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIzYjA4MGYwYWQwNGQ3MDY2Y2E0Mzg4M2QwMTRlYjU1OTJiODM2N2NhMDRjNjM5Nzk2ZmMzMGQzY2NlZDllZmMyIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzNTdjNjNjYjRhZjMxZTk4YzQyNjY0ZGRhMTM4ZDZlOTc0N2E5ZTYzMjQwNzUzNWU2ODM5Y2UxM2E1YmFmMWQ5IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxZTJjNzdmNDdiODI3NGQzNGY3NjY2OTQ3MDA1MjExMjQ4M2I1M2FjZTg3MjZjODkyMWIzNDVmMGMxOTFjYzQ4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhMTk1ZWQ5OTI3MTE0MmJlM2M2MzIwOWU5Y2IyOWZmMzM2YzhlY2VmNmJmZDQwYjY0NTkxMDYyZTRjM2FlZjg5In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_0348b8aa07c94439abf3dd684eee85eb",
+      "statement": "Bundle paths follow per-field portability policies and are rebased against the bundle root before metadata-intent schema validation; render input existence is checked separately.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/bundle/__init__.py#L380-L407",
+          "version": "repo-lines-v1:sha256:5b640bc6f857f6af918a946d37cf00475ce52ac776f8cb6fd7a7bf3bc5e41333:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc1ZDdjMTZmZjZmZDExZTcwYmQwOWNhMGMwMWI4ZjVkM2ZhNzAzODk4MzRjM2MyMjJiNTUxYWJhMmI1NzkwYWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUxMDM0ODFjNTdkMGYwZGMwZjc2Y2QyY2M4YjM2MDRjNGU4Mjk2ZGE0MTIyYWRkMTllODE3NDVkYzdlMzMxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIwODA0YjcyOGFlZGUwZWNkNTZhNWRhZTIxNzNmN2QyZDRhMTdiMTk3YWZiNzkxOWRlYzg4YWI1YzBmOWI5ZDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ2YTZhZDMwNWFmOTVmOGJiMWY3MWM0MDMwYTk5Zjg5NDI0YjYxM2I1MGNlMGU5YTllYmIwZTc4OTVmZTk5ODAifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/bundle/_path_policy.py#L19-L78",
+          "version": "repo-lines-v1:sha256:4cc18fe5ca098908dc5546284cb90f3c071472fa9bde9962078dcd75615e1a1a:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVkZTcyMzg0OTRmMmVlYTM5MDZmNGUyMDQ2ZWM2NmVjODI5YjE0OWFlYzQ4NWQ4MDhiYTg0N2Q4MDkyNTFkNTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4YjA2MzA3NjE4NjRjMzk0NzBmY2VhNDk0ZDFjZTI3MDYzYTg5NjUyNmI2NDJkZDkxZjYxODc1OWE4ZDI2MTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5MWJmM2Q5NmYxYjExOTY4OGRlZWE5YTAwNGIyYjNmZWJiMTgwYmI4ZmIyMzQ0NjI1NjE0YWRjODU5NTYzYWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlkODA0ZmJhNzI3YTU2ZmI0MGNlNzQzZGVkM2IzZDQyY2ZjNDVmYzJlNWVjY2YzOGE4NTkxY2FhMzY4YTc5OTEifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/bundle/_path_policy.py#L317-L385",
+          "version": "repo-lines-v1:sha256:490e145b7ac2221a6db49312f9da2fe8d33f820f9d4380394dc8ce20a3c900a3:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIyYWRkZTA4NTY1MjUxOTU1NDIxZjI5M2Y4NDFjZTE0ZjFiNDdkNGIyNWQxMGIyMDVlMmRmZWE3MTViNGZiNzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNlNjU3ZmFhOTA3MWRhMGZjNWZjOTE1N2EyMWI1NDYyZmEwNTNmY2FhYjM4NjRjMTAwZThlMmRkN2FlZWQ1NmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU3N2NjYWEyOGE3YjMyZjgwZTIwNDc5YTE2OGI5MWVkYmYxMTQyOWQ2MDQyNjU4NzNlNjUwYjk1YWQ4NmMwMjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_90ae72af73c14594926b74a22593f4b6",
+      "statement": "Bundle regeneration checks stale plots and locks and uses a report-only Snakefile with touch/report subprocesses; auto format uses a 15 MB figure threshold.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/bundle/__init__.py#L409-L510",
+          "version": "repo-lines-v1:sha256:2c7bb294544f30061017234f508b182dd7afc66e4a9dcd991db9fffedecfc936:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI4NzBkOWMyN2ZlNTIwZWNhYTQ1NmI0OTE4YzFjMzhhMzI5MjZlMDQ4M2Q4ZDRiYTM3NzcxNTNkYmRmZmVjOTIwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1NWRkOGJmYThiY2M1YjBhZTQyYjFjMTdhZGEwYWM1NjI0ODEyOTg2MTI5Y2FjNWNmZTM0OWFmMzU1YWMxNzM4IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJiOTY5ZjUzMTFiOTYzOGM2MGFlMzZkMzhjYTBkYzYzZTAzMjQ1ZDQwY2Q2YzI1YjM4MDIwMzk5ZWUwOWM0MmM1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlNGYyMTYyNjc0Y2NmM2MxZDYzZjcxYTU2MjQ3MTE4MWM2M2JhMzcwYmM4MWZhMTQ3MDY0ZDk2YjkyNTcwZjYyIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_778b0c41b6734590b64fa89d031ccb37",
+      "statement": "Combine requires at least two completed bundles, refuses metadata-only root trees, stages render inputs, gates compatibility and solver provenance, renders combined results, and cleans temporary state without modifying inputs.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/bundle/_combine.py#L260-L408",
+          "version": "repo-lines-v1:sha256:8b8589a20266f5f5c0ff95dd986342a00b334e328706f3e263955d5c5f34e545:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQ5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIyZGVlMGU4ZjY4Njg1YTFhYzRlNDExMjFjNDkwOTYyZTgwZTYxZjRkMjkyNTIyOWM5NDljNDBlYTJiODUwMTQyIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzZTg5YWQzNDBlNWRmN2U5YWU2YzE5NWI3YzY1OTg3NWVhN2MyNDI3ZWNlNTU0NDdhZjNiNGE5MjJhNDUyYWI4IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1ZTIxYTJiMzQ4Y2ExYzVjM2RjN2NhMTg5NzIwYzA3ZTA2YjRlODcwNThiZGExNThhMjZjN2MzNjk3NTY1MmY3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0YTgyYmJiNzg4ZDA3MWViZTdlMmNmNDQwMTM2NzU0Mzk1NzJhZTJjYzg4YWYwODMzZjIzMjY1ZDZjMDhkZjQ2In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_4f4a1a848e6f4e59b6b47a05f449c715",
+      "statement": "Combine defaults to a ZIP containing child archives and refreshed figures, optionally writes an unpacked directory, and a declared solver split does not waive same-branch solver identity agreement.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/bundle/_combine.py#L283-L327",
+          "version": "repo-lines-v1:sha256:d1241bf3daeec5c721b4ccf99c83960414e61abc959383d2137eac16b576987b:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NzY1M2Y2MTMxYjQzYzM3MTRhNGYzZWI2MmQxNjQ4MDdiMWI2YmVlZmE1MTEyYjUwZDgyZDgzNGI2ZjY2MjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU3YjYyNDE1YWJhNTYxNTE2ODk5Njg2ZWQ0YzJhM2I2NmIzMTMxMjJlYjA5MGRjMjk1ODU0NTc4MjFlZDBhMDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE3NzA5ZThjYjYwNmFiNTUyNmNjYzkyYjdlNTRhY2Y1ZjliMDA2NzkxY2FiNGRmMDhhM2QwNTZlMTNmZTU3NjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYzYjVmOWNiOTIwY2Y0NTRjZDcwYzU2NTkyNjAzMjM3Y2FlMzg0NDQwNjFlNDdiYjRmZDlhMTZkMDViYTVjMTYifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:0cda0c67a75adc5cd0decaae0810d30e4510dd7c1ca11501a698cf1b6d2db837",
+  "claims": [
+    {
+      "id": "claim_a3685e2626d749a38b334fa24a15d9ce",
+      "statement": "The shared YAML loader defaults to runnable existence context, wraps Pydantic schema failures in file-attributed ConfigurationError, and preserves missing-file and empty-document error classes.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/config/loaders.py#L72-L109",
+          "version": "repo-lines-v1:sha256:6cb97f365fc3ed4770b2244e031e30ef75edcac82d66898c6b434d2fd2fc84aa:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4NjFmMThjYTZiOTg4MTYwYzM0YTkyMWY5ZWVkMzhmNTcyYjczY2FmYWUxOGZkMDg4MzM3NDJjNDE5ZTM0ZTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhkMzE2OTQ2YzdiMzBkZTZmNTgzMDc0MzE2MzE4YjYwNjkzZjBhMjQzN2NhNGUxM2YwZTZjM2U5NGQ3OTYwODciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhjYzRhN2QxY2M3OTZhYmEzZTQ2NzIzMzI3ZjUxN2U5ZjgxMTk4MmQyNTBmMDcwMjk4NmU0YjU3NjRhZDk1ODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdmMjEzZmYxNWY5NTA2NDYxMTY5MWVlODRmYmIwYmYyYWFlZDA1ODA3NGUxNGRmNjhjOWQ5Y2EwYzBkOWMxYmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9da1c3a6cf154ec48bc43da1a6f7c835",
+      "statement": "cfgBaseModel forbids extra fields, enforces conditional requiredness using declared defaults, and checks converted scalar paths after expanding the user directory while skipping toolkit-owned outputs and template/metadata existence assertions without YAML-directory rebasing.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/config/base.py#L121-L122",
+          "version": "repo-lines-v1:sha256:96faa4940f2c7376ba83cae443577a6b7b6f8e343e49f221b342ff95f5b51c2e:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjIzNjY1MjJkYWMzNGI0YmYyYzVlMzQwMTlkNDk1NjhjMWMzYjlmNWEzNzJiMmQ4NWY2MTcyMjA5ZWY4ODEwOSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMWM2NWExZDE1NDI0NzA4NjljNWZjODFhNjk1MTUxYjBjMmMxZWE1OWZkYWIyNjUzNDU4MTRlOTI3YWJkYWVjYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzY5YTAwNzU4OWQ3NDRiODRmNzIzOTMwOTI2ZTRlYWM4MDcyYmM4OTBlMjE2MWQ1NGM2ZDhmMzY0OGZmNTJkMSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTdjMzFiYWRkMmRmZGM3ZWZmYzBhYTFkZGU3MWViMTgyMjAzNDZhMzRiMTZhMWUyNzJlOTBlYzYwMmUyZTViNSJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/config/base.py#L263-L363",
+          "version": "repo-lines-v1:sha256:f8ac9147e519d06dbe4d6d868cf0aa0849b4c182093aa8a63c338b91743aaf2d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5NTVkM2Y0ZjZiZTc0Yzk2ODI1YmZlMWU1ZGRmYzE5NjIyNWVkZWUwYjNhZGQ1OGM2MzI4YzE0OGFjYjZlMjE5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI4NzgxNWViNmI4NWI2OWQyMjMwYTUyYmE2ZmZkODE2YmUxZjBlYjg0ZjNmMDFjZGRiMTkyMDFhYTgwNmMyNjQwIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIyNzVmZmI2OWFkNmQ3MWEzMzViMDRhOTY4ZDdjNWU4NGZjZjdkN2QyMjdhY2UyZWZlNWU5YmZlMmEyYjUyNjNhIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_6adca23aa420405c81c5059288cbf15c",
+      "statement": "Both-config schema aggregation collects ConfigurationErrors from system and analysis loads but lets missing-file and empty-document errors propagate.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/validation.py#L276-L309",
+          "version": "repo-lines-v1:sha256:2f9d7ec76c9eb5ca74b483f69e7222fae951ffba54bc37567e5d5e09b0159362:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg1MTY5M2FiMjUzNDhmYWZmY2E1MzAzOTIzZDc4MTY0M2NiZTE5ZWRmMDI0NDgwZDA0OTQ4ZTNhY2E4NjAxYjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5MDlhNTNhNjE4ZDAyOGUxZDMwMDBjMGE3YWJjZWVjYmU1ZmIzN2Y0ZTUxMWVmZTQ2NjQzZmFkNmU2Njg3MmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU2ZGZiZjQ1M2Y3ZjFiZWJhYjcyODM2MWIwZjM5M2VlYjRjMWZiNjY4ZjllYTIyYjkxNmRhY2Y1ZGZmODFkODMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMxNzg5OTBhYjM1MmI4NzU3NGRlMjQyZWJkNGM1ZDFjM2U0OTg2M2IzMGZlNGM4YmNmNTk1YmYwOThjNzU5ODkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b599cc756bdd4122bb4dbc9717616a78",
+      "statement": "Preflight combines configuration and data validation with sensitivity, forcing/window, partition, report dependency, container and retention checks into one ValidationResult.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/validation.py#L2654-L2723",
+          "version": "repo-lines-v1:sha256:cd4415a9e242de59de2f0818ce619554a99f84ff21758556b018cacd43e649a0:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhYTFkMjJiNTZkYmFmOWMwYmQ2Mzg4OGM1NWUyMWQ2YjYxOTFmYjk5MGNhNmY1NTI4ZmYxMjM4ODI5ZTMwMjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhMTFjMDU2N2QwYTVmOWU5YjEzNWY2NWNkMjUzNzJkZmQ2Mjg3NzVmN2MxZWQyNTNmOGJhZDQyZGQyZDY2NjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFiMzcyZDhkYjkxYWM4MjdkYmIzYjk1NWMyMDhhNjAzOGZlNzNkMzc1YThhZDhmNjllNTY2YzQzNDc0M2U4NjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc2NDJjMjQxYjNjYzE1NWM1MzdjYWZkMGM4OTU5NjRkMGJiYzdkZDU2NjBjNjQ3NjhiYTAzNzBjNzZiZTdjZWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_03a904533a034a59b37da483fee816d9",
+      "statement": "The CLI run path loads both schemas, constructs linked system/analysis objects, and invokes analysis validation before dispatch.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/cli.py#L410-L429",
+          "version": "repo-lines-v1:sha256:7f029e083c18501702359e3e4cb46eaad105ecbb40aabe7900bb0fd230806a7e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYzOGMxNjQ2MGUzNDYxN2MyYjc0OTY0YTExMmE5NDA1YWE5N2ZkYmYyNDdiYjVjNjIxNmUyNDNjMzc4YmUyNmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3NmNiOWI4NTU0OGU1YWYyYjRjNWU2MGY1N2U0ZDEzODA4MjU3ZTY1ZmVkOGU5MTI3NjAxNGE2ODM5MDA5OWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyODAzMzlhNTk4YzEyNmY4NDAzNWNlYzI2ZGFhOWM3OTI3OGQ0YmMxODlhNjdiOGJlYjMzMTZmZTM0YjVlMmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA4N2MzODU5NWU3Y2Q4OGFkMDUyYjJmYzVjNjlkMzMzZmIwNjM4M2NkNTQ5OTRhYTIxMzU3M2JiNWFhM2FkYWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f0c6d1a7cc64488fad6acd9de1820620",
+      "statement": "Analysis requires inline report configuration, but an explicit report_config path supplied to analysis.run overrides it.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/config/analysis.py#L1835-L1844",
+          "version": "repo-lines-v1:sha256:ac200d8ea2f605eb084dc330949bc776032f62bdc1e6fe36273cd983a98bfb62:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0NTA1ZjMyYWU1ZjBiMjQyN2RhMWE4ZjBkZGNkMGU1YTI1NGE2OGIyMDcxZGQ4YTZkYWYzNzkxYWU3Zjk4NGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFlMTdhOGU3ZmU0MzNiNDdlOTRmYWI5MTg3ODZkMTkxOGFiNWQ0OWE0YTRmODExYWEyMDdjZTRiYTE0NWMzYmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlkZjY2N2U3YzUxN2I4ZGZkOGRkZDMwY2NmNjA0MzRmN2Y5ZDM4MGIwZWU2MGRkMDEyMzQ0YWU0ZjYzMGMxYTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRiN2Y2NDc3ZjFmNzEyMDY1N2JjYzk4MzE3MTJkZjQxMTkxMjc5NTU3MjM5NTFmYjdhYTQ0ZWM4YzNlNGRmODEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3708dfaf5ae846da9a855bd1b4e92cdc",
+      "statement": "SLURM submission rejects config and declared input paths under the system temporary directory unless explicitly bypassed with HHEMT_ALLOW_NODE_LOCAL_CONFIGS=1; local locus avoids this cross-node guard.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/validation.py#L2759-L2836",
+          "version": "repo-lines-v1:sha256:1aff52974f71aa731e74f180210081852da7fb5486a8b7d025ebcfec73ad3e13:eyJzZWxlY3RlZExpbmVDb3VudCI6NzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ1YjEyOTBhZDEwNjc2YzJmZDhkMGQ0ZDE4MTljYTkwMGYwMTdmMTUyMGQ0MzI1NTA2MzlmM2M4YzQxOTNiOTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiNDY4YWQwYWJkNWRmODYyMGJiOTRiZGZmZTg1ZjQyMTEwZWNkYThhZjc2NGE0ZDVjM2JhMDZiYWE1Zjc3M2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c3e0bd4ea4774ac89945e01306ddd3cf",
+      "statement": "The HPC config models remote cluster properties separately from cfgBaseModel and rejects profile extras overriding toolkit-emitted per-rule resource values.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/config/hpc_system.py#L1-L18",
+          "version": "repo-lines-v1:sha256:7e971ab86cb4051ffe0b0b0f1b600507d3528dc4812eeb55f6eadca9abdc034c:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJhYjZiMzlkZDc4MzRkNGE4MjExMzU0MDVmYjRkNDE0MGQyMGExYzc2MmM5YWYxNjM0NjNkYWZjNDE0MjRlMTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc1NmUzY2I2NWZjNDU3YTVkNTcxM2M4ZTNkMjZiNjlkZWU5OWI0YjFmZWViOWM1NDEyOTk3ZTZjMWExMjY4ZWUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhYWY3NjM3Y2I2ZTdlNWRiODVkNjM0Mjc0NjAxNGRmMDQxY2NkNTU4YTkyMGIyOWViNmFjNzE5ZDdiYWY1YzIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/config/hpc_system.py#L60-L97",
+          "version": "repo-lines-v1:sha256:41d2e8e03c6caf5fbc256a07c8b65f5c1e4f62fdd1e1c38e511235308f2415de:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlZjA1ODAyM2RiY2QzYjc5YmUzODNkZWEyOWUxODRmOGE1ZmE3YTliNmJhMThlYTM0ZmFkOWVkMWMxMGYwMDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUxMDM0ODFjNTdkMGYwZGMwZjc2Y2QyY2M4YjM2MDRjNGU4Mjk2ZGE0MTIyYWRkMTllODE3NDVkYzdlMzMxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE5OGIwNjNkOWI0N2U2NTM3OTYyNTU3MmNjZTE5NzY2OWQ1NzY3ZTEyYzE4YmUwNzU2NTJiOGNkOTgxY2U4ZDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZiMzBmNjllYjlkNmY3MzBkY2UzOWExOTI5NzBjY2ZiYTFkNjU3MDkyMzMyY2Q4ZmRmNjk4YzhiMWE1MWJmY2MifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7c8bfab5224240918d0d56cdd74764b9",
+      "statement": "The documentation configuration reference derives field and conditional-requiredness records from live Pydantic models.",
+      "evidence": [
+        {
+          "resource": "repo://hooks/config_reference.py#L185-L195",
+          "version": "repo-lines-v1:sha256:b2d8095fd749db1bc821676a03cb7ed601b6b0cb32331745b08166655fc6971e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5NmI5MmMxNDVmMjdmMTQ0ODQ0NDViYWQzN2E4ZjM2OWE3Y2FiNTU5ZTAyMWQ2MjVmNWQwYjc3N2M4MzkzZTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVkMTFkODQ5NTRhNzU2MzY4NmI0ZDUwNGIyMGI3OTZjYTRhNDczYzZmNzgwMGU0ZjM1YjM4NGFjZGI4ZGQ0MzIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgyNzI5NjA3ZGVkM2E4M2Q0ZTg1YzExMTJkNjg5MTI3ZGI0NDZjNTkxNmFmMzgxYWQyM2UwOTA2MmE0OTgxN2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQwOTdlYzFiZjlmZDI3NzZmMTg4YzA5NmQ5NDY0ZmUyNjFlNjMzOGU2Zjk0YzAyMjE3NGYyOTE1MDVlYmY1OGYifQ"
+        },
+        {
+          "resource": "repo://hooks/config_reference.py#L59-L86",
+          "version": "repo-lines-v1:sha256:93030fa7b4093228df78bb2308b09edc66f74ace3808e272b6a3e2ce7661a81d:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRhMGRhMDY2ZTNlMTFiMTA2ZjJlZWZhMTYzNzBiYTVkZjRhMzJlYzA3NzdjODEwYjM0YTg2MjY1MGE2MzdkYzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYxODNhYWZmYmExNjY0ZGUzZmYzOTkwMzczY2ZjNGQzNjM2YTZhYTIwNTA1ZGUxNzNlMDI2ZmZmZWQ5YmEzOWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFlOGY5YjYxNjk4Y2UzODE4MDBjYmZjZmQyNjFkMDA1YTM3NDZmOTY0YTUyMDkwYmVmZmQ3NTBjYzIzYTFmZDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmN2I0ZTdmZDg0ODc3NmZhNDNkY2RmN2QzYTRkZDJhMTc2ZmIzZjU4ZGZlOGU0OGQ0YzMyNjM2M2Y5MGM2ODQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1c9334d6144a4016a041a3bfaf2843ee",
+      "statement": "Analysis construction independently enforces configured toolkit SHA and clean running identity before simulation-directory creation.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L588-L644",
+          "version": "repo-lines-v1:sha256:29b42fb192a70ada6e3eabeb343ee04fc0a2971f3b7c97500466b5d1e059d7c4:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0Njg3OGJkNjVlZGM4OGI4YTI5ODZkZWUxZjU0NzZiMGU0NmRhYzAxOThhOTAwYzIyM2IyY2IxZmZlNDgzMjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliOGEzYjMwYjdmYTI3MzY0MjQyODZjMDMwZmViODE0NjE4ZmFhYjg2YjBkZTg0NTBhNDJhZDcyZjA1NzE3YzQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhlMWQ5ZTI2NGI2ZTY2NzY2MjI2OWMyMDk2NDJkZDgxODFkZmYzYzM0MzQ5Y2U3MmQ4NmRjMmRmZTMyZDFiZTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJmNjg2NGU5NTA2NDM0MDEwYWY2ZTVlY2FhMjE2N2YxYjczODc3ZTJiN2NiZmNmNzI4NjAwZjFlYzg2ZTk1NWUifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

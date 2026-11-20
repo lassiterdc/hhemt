@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:a0e0810f4f4fa47f47f2515f620f715c75705458a96103a4c02346c83b83941b",
+  "claims": [
+    {
+      "id": "claim_7a85f631104240b08b3662757df47821",
+      "statement": "Analysis EDA runs calculations in process before selected rendering, persists configs and notebook exploration surfaces, and treats HTML export as best effort rather than rerunning simulations or consolidation.",
+      "evidence": [
+        {
+          "resource": "repo://docs/how-to/running-eda.md#L57-L70",
+          "version": "repo-lines-v1:sha256:6d0e54f614d8ac7593a17b481e8ac68452591f238d62c21a058d960d88f56648:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlZGQyYzUwYThiZjZiMWQ5ZDY1NmExNjc0OWRjOWFmYmQwYWZiZjcwMGY0MjAxMmQ1ZWQ5MDcwYWY3ZGQ0NzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyN2RhY2IyMzUxNWFiZmJiMGI3ZmNlYWYxOTI0NGY4N2I1Y2RiZTBlNGY3OTRkNzY4Nzk2MmJiMzY5ZjNiNWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE2NDZiNzE5MjExZDQ4ZGQyYjg1YjcxNzY4ZjhlN2RmMjdhNGFjYTlmMmVlYzQxYzc5ODdlMjgyZmRjNDg2M2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRiZDE2ZmEwOTIyNGI4ZjdiMTk0MGMwMzI3NzY2YzQ5NjQwY2RkMmViYWY0YzI4ZThmMDk0NDlkMGM3MmViN2IifQ"
+        },
+        {
+          "resource": "repo://docs/how-to/running-eda.md#L7-L11",
+          "version": "repo-lines-v1:sha256:783831a51184f4cd3c91327f55b064fa4a006ce60f1346a0d0c75cf0f1518535:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWQ4ZmVmZGY0MjlkMDg5NzkzNGYzMDZlMmJhYjM5ZDFiNmJlMjdjYWEzNmY4MzRhYjNhYWQ2YzNlY2U5OTc2MyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYjM2MDRhNDY4N2Q3ZmRkNTYyZTYxZTEwNTY0ZDk5YzVmZGNkMDQ1OTU5M2YxYWM2NjZiMDhmMWM2MjQ0NDg1YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmM5OTQ0MmM2NmMxMGUwYjEwZGZjNmVlZTU1M2UxMDllY2M5NTgyNDgyNmM0MDhjMjFiZDBiZTc4NDExYWQzMyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzVjZGExZTM1NmIwMGYwOTdkYjk0OGY3ZTg3ZTAzZmM1YjE2NzI2ODE2MDdhYzhmYWYxYWFkZWUwNDYwNWVhOSJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L1470-L1547",
+          "version": "repo-lines-v1:sha256:032e6f9f82268f8ccce3df666fc72c307d656f03d61a6cc65966a8c93e59cb30:eyJzZWxlY3RlZExpbmVDb3VudCI6NzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUwMmYxMDczYmUwMmMyOGNmY2RkMzFhNmQ3MzhjZTBkNDUyNjY5ZjNiYmQzY2U0NGY5NGQ4NzY1NDI2YWRjZGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkNWFiMDNhNTdjYTY0YTFhNjZkZTg4MmMzYjljYThlZmU3ODM1ZWE2ODc0N2EzYTA4ZjNiMWYyOWE4YjRlZjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUwOGQzYThiN2UwZjFiZTJkNDI2YjFlODdkM2M5YzExYjIwMDdkMWZiMTUwNjRmZGUzYzBmZmQwNmYwZTQxMjIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIxMGQ4YzA5MjljNzBmOTdiN2VlNzVlZDcxMmJiZmJjZjE1NjA2NDExYWY4MmUyNWUwYTI5MzhhZTdlNGJhY2QifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b944d3efe44b4737b7b2742df35d3636",
+      "statement": "EdaResult carries optional CheckResult and derived artifact provenance, while facade EdaReportResult carries notebook/report/plots/verdicts and bundle EDA omits fresh calculation verdicts.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/eda/_result.py#L1-L42",
+          "version": "repo-lines-v1:sha256:a8f4dbcbb22d95550ca6de0e5bebc08e2130ada3775100dcaa8a94bc6e748134:eyJzZWxlY3RlZExpbmVDb3VudCI6NDIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ0NDkwYWVhYjU3Y2Q0OTI1ODI4YjdiNWQ1ZWNmZDMxNzFhM2MwYjNmMmQ5NDNjNGE5MjhlYTA1NDdjMzc3MjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3OGQ4ZTViYjQzNDE4ZGM0NDQ4NzI5MmRkNjgwNWFmN2NhZTdhZTY2ZjA3YzE5NTQ3ZGZhZWJmYzc3ZTU0Y2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_22e169269de34fd58111498c0b595beb",
+      "statement": "CheckResult applicability, instrument and detection floor are essential to interpreting a pass, but current persisted EDA aggregation reloads only name, level, passed, summary and details, dropping those extra fields to defaults.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis_validation.py#L44-L97",
+          "version": "repo-lines-v1:sha256:44fbd60e4804ad2e98b2b8c895e1adcf0568a7bfc34a42dd8840ea10d9b7e7f4:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI2ZmJhZTBiOTFkNDRmYzBkNDlmNWRlNjkxZGE2ZmM0MzFmMjYwMTM0YmY3MzFlMGUyMWY3NjQ4MDk0MzM0Y2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjllZjMxZTU3ZjdmMWM0NGYzYjgwMmZhYmZlODZiNDBkMTBjZWNkY2ViYWYwNDA3OGM5MGM4MmMzNTU3OGFiZDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYyMzgxMTg0OTMzMGI4N2U0ODBiODM1ODQ1NDlmODFjNTY3MmU0ZWFlNDdiOTIxZTQxMzdjYTZlNDQxYzdmMTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZjMWYwMmZkN2VjMWQ0NjJjMGNiODE4Yjk0OGZmZTRmNzE1YjJjMmM0MzI2MzBjMjMyZGZlMzRkNDI3NDNmYTkifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis_validation.py#L619-L648",
+          "version": "repo-lines-v1:sha256:70ceddbcde878955032313a438c9460464847e8fa983d88bf1fd6a07355fbc2f:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzYTEzZTk2NDcyN2VkNTFhNDY5ODI1MTVkNDJhMGJmOTMyMDZlYzA4N2RlNTI3ZmYxMDExZmQ1YjU0YmIyOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3ZjVhNmZhNmFjOTYxYzFiMTIyNmUwYWQyMDVhZmI1NDY4OTIwNDkyMDUwNjdhYmRiOGMwZDQ4ODIyN2E5OWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhjYzRhN2QxY2M3OTZhYmEzZTQ2NzIzMzI3ZjUxN2U5ZjgxMTk4MmQyNTBmMDcwMjk4NmU0YjU3NjRhZDk1ODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg1ODI0OTYzMGU5NTJmZDNmOGU2NWVkMzQ0YWM0ODNiZGMwNzhiYjgzMjA0MWY1MjY3YmI4ZThlNDg4MTgzYTYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_68307292f0444e65a7f89e09c642e2fa",
+      "statement": "Exact comparison checks coordinate alignment, dtype and decoded array equality with equal NaNs rather than archive-byte identity; strict cross-simulation checks use family references while cross-family mode characterizes divergence without equality claims.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/eda/cross_sim_identity.py#L20-L26",
+          "version": "repo-lines-v1:sha256:05ac181c4de76ae27dad9c2667ea8f890727c446f1250c72f297f4cb2988a39c:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYWY5NDczYjYzZjI0NDJiMTA3MWJmOTFiNjFiMjk3NWJhZWJlNGRlYmFmNTY2YTVlMmYyZDk2OGM1Njk4ZjNiMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzI5ZTdmNjA2MzNhNTkzMWMzYjMxYTRkZjg2NjZkMjE1MTE1MzIwNzQ4Zjc2ZDk0MTc0NjQ1ZTA4ZmJlNmQwYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTA4NTM5NDdmMjAyNTA0MmEzNDg3ZmMzODMwYTJmOTY2ZjEwMDUzMTlhZGE1ZDBlODdiY2ZmMTU2YzhlZGRkMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMWFhZjc2MzdjYjZlN2U1ZGI4NWQ2MzQyNzQ2MDE0ZGYwNDFjY2Q1NThhOTIwYjI5ZWI2YWM3MTlkN2JhZjVjMiJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/eda/cross_sim_identity.py#L452-L498",
+          "version": "repo-lines-v1:sha256:03801e321edac053f2041a8fc0cde02e80e7e04fa3244af5c90b9c44db69dd9f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5ZGNjYzc4NTdiNTEzMjRhMDFiOTIzYTg5MjQxNDJhMzFjYWI5ZjBkZGYxYmJlOTQ2MWE1ZWUxYTE4NWIwMjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4NmRlMzcyZjNlN2NiNTZjYmZkZWJhNmMzZDkyYzZkNmExODFmNGYwYmI3Yzk2N2JjYjg4ODM5MmQ5NWIxMTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhjYzRhN2QxY2M3OTZhYmEzZTQ2NzIzMzI3ZjUxN2U5ZjgxMTk4MmQyNTBmMDcwMjk4NmU0YjU3NjRhZDk1ODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3MGYyZTZlYzU1YzI1OWIwMWU0MmIxNzkzZjAyODgyZjE0Njk2ZmQ2ZWIyZWVhNDQ2M2UzYTMwOGQ3OGZhMDgifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/eda/cross_sim_identity.py#L588-L617",
+          "version": "repo-lines-v1:sha256:7663d2d38065d96017fd10cc9d157895f5189580455a197e96a6f8f8fc18171a:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhkODc4ZmM5NWJlZDE3NzFmYmE1NDE3NDg1MDlmZDExNGNhNjA4YWMyZmQ4OThkZGQwZWViMDYwMjViY2RjOTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0MDkyZWQ1NDJiYTdlNWU2YjRlZDVhZTBiNzBhMmZiNTRiYWQ1OTYxZDg0MmZlZjJiNzg2ZmE2NDU5MzE0YWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiNDY4YWQwYWJkNWRmODYyMGJiOTRiZGZmZTg1ZjQyMTEwZWNkYThhZjc2NGE0ZDVjM2JhMDZiYWE1Zjc3M2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMxOWEzNmU3Y2JlNWM1ZmVhYjg1ZGMyZmNkODUxMTA2NGMxZGJlOTgzNjhlZGQ5NzA0YmNiOWI4ZGZmODllYjAifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/eda/cross_sim_identity.py#L967-L970",
+          "version": "repo-lines-v1:sha256:b57b7c05e5464fb85a3836c1f96a56ce049ca8b11ac95033e5d0ede08eb824d4:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNmM0NDI1NzRlNzk4ZjcwZTllNDA4YTljYWQxODMxZDM4YjYyMDFlMmRkZGIzNzQ3NDJiZGRlYTE2YjBiMmUyNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzBjMWYxODhmMTQyZWQ3YTgyNDY4MGIyMDcxNzJjNTUxOWJjNjE0YTQ4ZmRhN2NmMTY3ZWRiOGRkZjc5OTU2YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzBhMmU1N2RkZGU1ODA4OGQ1ZDMwNzMxMjUyYWE3MGY0MzRmZTlkNmNiYTE3YjdiMjJlYjYwYmYwMjYyY2YwYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMGNmMTM5ZjVmMjI2MDk0YTkwZWM1Yzk2ODI3Zjg4ZmRkMjQzOTVlMzUzZDk4ZGRjNjZjM2ExMDQxOTQwYWI0MSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_59f1894fa6ac4357a78225335f5f0c1d",
+      "statement": "Raw identity compares a primary's own configurations within CPU/GPU device classes and always emits a comparison or degraded artifact; clean-versus-resume between primaries belongs to combined-experiment comparison.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L1505-L1514",
+          "version": "repo-lines-v1:sha256:8d021f9640d339164d3fab6feaddfc7dc888b8dc73e956969243a1cb635cafd4:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1N2FhZjZkOWM3ZjZkMjJiZDk0ZmRmMmFkMTZmNmRjZjE2NTYxYTg1YmJkNGE3YjZmNTliNDU2NWI1YWNmYTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhYWU4YTBjYTc2Zjk4ZjdiN2RjNzk4NDk1MWQ2M2U1N2RiM2M2NDU1NzljYTUxYmFkNmE1MzlkNjE0ZWRiYmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgxZDY1ZDdiYWM1MWMzYzIxMjdiMjJlYTEyYWYwM2RhZDVmOWZjZjE1OTQ1NTc5ODQ3YWYwNjFhYjRhNWQwMWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIwMzA0ODcyZTc3ZWFhMDRmMzM4MTRkMTI1MDZjZGQxNGU4ODQ3MjUwODFmN2NjZjA1MDIzZDU4N2FkM2YyMWQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/eda/raw_byte_identity.py#L792-L845",
+          "version": "repo-lines-v1:sha256:9376818943abba5a80da502ff58eb845749937b92551066ef88b3d680e26bc2f:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYzOTJmZTY1YzYxZWI2NTkxMzQzY2IxNjM1NzNlYTQ5ZGYyZDFiNTg3NjYwN2JiMTJhMTdjNDRiOTMxMDNiNTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUyNzNiOGRjMTgyYjM1MTVjM2YxZmYwNzQ2ZGQ2ZThmMjE0ZTRhYTg2YTdmMTY5MzkyOWEwMTZlY2U4YjA2Y2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFjMTFiMzg3N2U3NTk2NDM1YzZhMGE3ODMyY2QzZGNkYThlNjBlZTFiMGFhNTIxM2IyNmNjNGM1NTY0NDNlZGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc4YTNkNjcyNTMxNTMwNjQ1MTM4NTZlMTBlZDY3MDRiZWIzOGFlMTgwN2E0ZWI0MTQyMzQ3ZDM3ZDM3NzgzNjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_545739bfbaea471c9302c6e413faaf76",
+      "statement": "Raw TRITON comparison covers shared timesteps of decoded H/MH/QX/QY outputs, while the SWMM helper compares parsed values plus timestamp-free output bytes; raw verdicts disclose a raster-only denominator and float64 floor, and have no detail rows.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/eda/raw_byte_identity.py#L42-L47",
+          "version": "repo-lines-v1:sha256:636b5415311c4213e0049cdc03fa44b5b1471cf079c72c1b0812cb34101b11a5:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzE3ZWQyNzAwNTBiYmQ3ZDFlOTFhYjc1ZDg1YmUyYzJhNGNmYWY5MGU4YTRmYTJhZjQ0M2YzNGU0MDJiNGY3ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDk2Mzc5MjZkNjgzMDY4NThjOWE1MGJlODgyMDgyMThkZmJhM2RjYWM2ODFmYWQ3OWY0NjE4NTBkMWFiOGQ0ZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODJhZmVhNTgzZjU3NzgzMzU2ZTEzOWIwNDIzOGUyOTMxZWZlMjZhOTlkOTU4Yzc4NTEwMjRlZjhhN2RhNjJkOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDFmODNiNzE0MGM2ZjFiNTUyMTBlZGY3ZjUzM2NiZmU1Y2QxNDY5NTc5ZDU1MjUwNGJmMzIyMjQzN2QzOGFjNiJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/eda/raw_byte_identity.py#L962-L1002",
+          "version": "repo-lines-v1:sha256:f889fdcab29de271680ce04922b72ffe4f9a0d2851b2b6961770771d67c7ab9b:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjZmNzkxODQ3ZGI2ODczMzQzY2QyMDU5ZGZjZDg1ZWQxNTIyOGJhMWY3MDMyZmNmOWM0ODY0ZjlmNDMyYTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ2NTdkNzRkMTk5OTU2YjJhN2M3MWYxZTAwNGY3MjM4MmNjNGY3MzM1ODEzNDBlNmQzZTVkMGFlMjMxZGM4MjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYyZjFiZGM1OGQ1ODkyZTVjYjE5MDg4YWQyNzFjZjU2Y2M2MzRiNjYwNjgzMmZkMzllNjA5NmFiYWUyOTk3OGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/eda/raw_byte_identity.py#L99-L197",
+          "version": "repo-lines-v1:sha256:13abb5c2b5c7c02a47fee47bc4bb845914e0a7f93c7497ab01cea1f877edf483:eyJzZWxlY3RlZExpbmVDb3VudCI6OTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYyMTA0YmFhYTcwNGZmMjhiZThlOWU5YzA0OGZkNGRiMTQ1ODk4YmE5YjJmNGFjYjQ3NjAzOTEzODE4NTdiMzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJjMTliNDBmNzBjNDM2MmE0MmJmMDIwMDdjNGIxNjI3YjE3OTEwMjE2NmMwNzA2ZTAyM2E1ODIzNjQ5NmZhYjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY1YzBhZGZmMWE0ZWM3MTUzM2IyYWM1OTRkNGFhZTE1NmJiZjc3ODRlYzU2NDhjNjM0MjQ2NDk2NmU2NzE0NzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI0YzYzYTU2MjNjYzU4ODc3MmFlN2Q1MGU2ZDc1YjY5YzNkNzVmYWE1MjBiMGIxN2ZmMzkxMjM5YWU2OWJjOTIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ce608cfc1beb4123ba145378d685b004",
+      "statement": "Rank checking uses within-family rank-1 references, resume checking pairs clean and resumed members by compute identity, and cross-hardware checking characterizes rather than demands equality.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/eda/compute_sensitivity.py#L1-L30",
+          "version": "repo-lines-v1:sha256:fd576dee3d8af3a8132fa41737ad563a8a12a63bda20ef99acf2271e4f508a89:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQwNWQ0ZDJjNTUzODAwMTNiNGNkZTRkYzUyN2I2MjAzMGE3YmRlM2JmZDMyNzI4ZWY4NDlmNjhjZmUzYWFhMzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMzMTUyMWQyNzdjYzg3YTU2MWYyODAzMzdhMTM5ODNmMzcwOTY2MGQyMzk3ZDhkZDRmZjliNTBjMjNjYTgwMWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhYWY3NjM3Y2I2ZTdlNWRiODVkNjM0Mjc0NjAxNGRmMDQxY2NkNTU4YTkyMGIyOWViNmFjNzE5ZDdiYWY1YzIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/eda/compute_sensitivity.py#L590-L617",
+          "version": "repo-lines-v1:sha256:732531091a194b06b9c0fa2470b9fdac928d65db86a798f5681f240d87275e75:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYxYzlmNWU5OGFkNGFkMGJkZjRhOGE0MDUxZDNhZTYzMGFjOTUxZTIyMTI2ZDFiN2FmMDVjNjQ1ZWU2N2M5ODkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdjMTRjNmIwZDFlZDYxOGQxNjQ0MzBiNGQ4NGJhY2RiMTY1OTBlYTFhYWU1MjdlMTFjYzMxN2Q1MmI1OTYwZGYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc3Yzk2ZDg2MzRkYTQ0MDc3MDk2YzNmZDg5MmY4MzczZTNlMWI0NzI4OGQ2YmQ3Y2ZkY2RkOWQ5ZDFkZTk2MTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjViZjRjMDMxZDA3ZTM4MmE3YWNkZmU2MjljZWM0ZTNiOTEwY2FkMDM0NGY5YzdkYmUxNjU5ZThiNGE4Nzg4N2QifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/eda/compute_sensitivity.py#L703-L732",
+          "version": "repo-lines-v1:sha256:5070a8caf33bebc7a9a4a32e568541a9d21e54094c8c0ecf725d1caf3489dc71:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNkNDIyZjcyNjJlNzQ1YjIxNzFkYzZlMGU3NGQxOTVhNjRlNDkwYzA1NTU2N2JiODlkNTZlZDM1YjFkN2Y0YmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdmY2Y3YWNhNGNmNzU1OGE1MjdmMDk0YWFjYjVkMjQzMTA1NjljYjRmNDE4ZjRkYjJhODI4ODMzN2I3NjQyMjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc3Yzk2ZDg2MzRkYTQ0MDc3MDk2YzNmZDg5MmY4MzczZTNlMWI0NzI4OGQ2YmQ3Y2ZkY2RkOWQ5ZDFkZTk2MTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkxYjA3OTVmOTRhNjMyODE3YzVkYzQ4YWMwMzRiNzMxZGFlNmY4ZjQxMzI4ZDlhMzQzMjcwOGZmNWU5OTNhZGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_14929b555f2a4468be044812013f7c46",
+      "statement": "Magnitude metrics use union-wet absolute differences and baseline-threshold relative differences with separate new-wet counts; entirely dry CSI is undefined rather than perfect agreement.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/eda/compute_sensitivity.py#L79-L162",
+          "version": "repo-lines-v1:sha256:340d2350e85aad3efa45c85084a49fa9012071bbb86ff801a24df1833fbba163:eyJzZWxlY3RlZExpbmVDb3VudCI6ODQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIwOTY0ODY3MTdkOTAxOTBiMzMyN2I0MzhkNWVjZmRmNWQ0NWUzMWE4OWRmYWJmYThkY2RjYzdkNjM3NjZiODkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI1N2FlNzdiY2U3YTVmZDhlNzJkYmFhMmRkYzE0ZDkwMjhhNjQxZGQwMzQwNjU4MWMzOTE4MjJkM2Q4NGRiMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUyZTYzZGI1YTRmMzQ0ZWIzMTJjMTQwMDI3NzE4ZGI0ZjA5YTU1MjcyMTc4ZDc1NDUxZjZiNmMxOTljNmNkM2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhMjc0MTEyODFhNmYzMTUwOThkYTYwNmU5MDNlMzNlYTYwZWNjNWQzMTlmMzZlN2JiMDA1Y2E2ZjE1MzllNzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ceca471f47224f5bb58bda86818964c1",
+      "statement": "EDA re-persists whole-tree validation and re-renders an existing errors-and-warnings figure non-fatally, and EDA must precede bundling for its harvested artifacts to be included.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L1467-L1468",
+          "version": "repo-lines-v1:sha256:9123912a94b5054891fd8cde62dc9942e862e7463544033b55d125e0ac0c087c:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTFiZTNhNmU3ZTE2MzM5NThmMjgyNTgzNjBkODg0YzZhMzQzZGJiMzA0MWFlYTIyZDQ5YzQ5ZDAzNjM1Y2EzOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiM2MxZTRjNjQ3ZmZjMDFkNDJmYWMyOWZiNGIxYjNlYmUyOGIxMjdjZjkyN2YwZGRkMDhhZGM2NDI5OWEzOTgxOSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTM3NWJmY2ExNDc1MmJlYjg0ZmIzMTliZTkxODYzM2MyMDc3ZTZhM2IxYjhmNjhhNTg1MTdhYzNmMTczMmUzOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTViOWVhMjBiOGQxODBlYjllZDk0ZWNmMWVlOWUwODhlY2VhNTQwMzQzYzRlMWE1NTUzMjI4MGY0MzM1YzRiZCJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L1548-L1607",
+          "version": "repo-lines-v1:sha256:fd668b998baaf76f39fafef57f878c7dddef42b5e67cf9a8dd1890b07907fb08:eyJzZWxlY3RlZExpbmVDb3VudCI6NjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhNWM2YTU1MzVhYzQxYWE4OTFjNjhmNjE2Yzk0ODUzMjE3ZmFlNjczMDUzOWM0MTkzMGRhOGVkMDYyZTQwMGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM1OGZlNjMxYmEzMDE5OTVjZWU2MWNmOGE5YTE4YTMxYTk3NDk4NjY5YmIzMTg1ZGU5MTQ5OGE1ZGVhOGUxMDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY4ZjEzZWY3YmNiYTcxY2NiZWRhYWEyN2I1NTkxNTY0NmNkZjQwMWIzMjkwNDdjMzljNTRhMmJiZmZlYWU5YjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhkYzNjZTFiNGM4NzcyNDZiM2FjY2EzMmFkYzE4Nzk0NTg5NDY5OTgxZTRkYzllYjQzMGMxZjM4YjBmYTEyOTQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis_validation.py#L3358-L3431",
+          "version": "repo-lines-v1:sha256:f9ad1c0ef74dd2f955ec95bd8866d7e69feb48daab0bc362d042756a7a1ac475:eyJzZWxlY3RlZExpbmVDb3VudCI6NzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBiYzFlYmI4MDNjZTMzM2JkYjRkY2IyMzVkODI0NGI1MDhkMzUzN2ZlZjY2MzcxMGI1MGZhY2E2ZjA4YWJkMGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhjYzRhN2QxY2M3OTZhYmEzZTQ2NzIzMzI3ZjUxN2U5ZjgxMTk4MmQyNTBmMDcwMjk4NmU0YjU3NjRhZDk1ODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNhYzM5ZDU1YjFjNDA5YWVlN2MzMThhZThmZWU0ZjEyOWVlODM1OWViMjczNjU3NWJlYmI4MDcxN2E1Mzk2OWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7e7e74b8399548b0883c6eb5c3c4372d",
+      "statement": "EDA plot dispatch validates registry keys before filtering, ordinarily skips absent backing stores but emits degraded enumerated targets, and handles raw identity, DEM figures and config-diff backing names explicitly.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/eda/_plotting.py#L38-L126",
+          "version": "repo-lines-v1:sha256:4a54f48212548992fa19c57267943d8bdd20733a98ce9e0dc412f5f9d7a9dfc1:eyJzZWxlY3RlZExpbmVDb3VudCI6ODksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdiODYzNDE0YTgzNWEwNWQ0MjA5YWI1ODRiYmMxZDQ5MzIzMWQwZTAxZTE1ZjljODE3YmU1NWEwY2E2ZTczZjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU0NTI2YWZkNzhlMmJiZGM0N2QwODZmNjliOTdhZjYwZTQ5MjAzZDNjNDlhMTAwMDNmNTQxNzEyODlmOTYxZTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRjZmMzMTAwNDgxMDA3NWMxNDYzOGE0Y2M1NjE1Y2Y5NmE4MWFlODhmNTdkNzNmNzBhMzM4YWI5ZmMzYjA1MjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU3MjgxZTYzYzhlZmEyNjQ3NWYxNDAwOGMyNzQ3ZmZhODViNzQzYmI0NDI5ZGJlMGFiMzAxNWFiY2Y5Mzc5NDQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/eda/_plotting.py#L703-L748",
+          "version": "repo-lines-v1:sha256:8c9ba203bedf3b2fd44cce329177a3590dfc08311966a44f00d6064e02f26aaa:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgyODgwMWRjMWI4NzZlMDUzY2EwMTE3MzFlN2Y3NzA1MzI2MzI3ZjcyZTQyZDU5YWE3ZTNiODdjZTMyMTM4MTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU1ZDJhMTdhNTgwYjk4YjRmZmJlNzAyZWY0YjQ3OTM0ZjdiNzg3ZTJlNjhjZDA5MzM3YzVjY2U3N2I3MmNhMDciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fe773f7cfd1445caafec58e85c10e647",
+      "statement": "Static promotion materializes configuration with deferred EDA dispatch, and reporting-set registration validates an EDA-capable existing set without mutating live routing.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/eda/_promote.py#L107-L152",
+          "version": "repo-lines-v1:sha256:e9499e16d0348db9b82f5fb769f655cf5b843317546af3d511333ce4be3b4293:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY3MjliYzRiZWE1Y2U5MDNlMTUxMjcwNjNlNGMwYjZiYWU0MDI2ZTFiNGE0YTZiNDcyZjEyMjA3MDc2MDE5ZWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlmMGEzMjEzNmIzMjQ3MjRiOTYxMjc2YTY3MzNmMDk5Y2E0NzkxZmMxNTlkZjZiNDk4NGNjZjhkYjg0ZTI0OGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/eda/_promote.py#L52-L104",
+          "version": "repo-lines-v1:sha256:1eed3869cdb18b05329dab9eee4a1a7ce45a92280dfe2081e5f6671e114a8650:eyJzZWxlY3RlZExpbmVDb3VudCI6NTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1NDBkZWZiZjU2NGU4YzBlMDdiZmE2MWMxMDBjNDlhMDQxOTg1NjI4MWUyMDNiZjdmMzMwZDA4ZTNiYjIwMTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJmNDY5ZDU3NDkwZDAxM2ZlODg3MjcxNzBmMzAyMmM1NDRmYmE3M2U3MjQ0MjNiOGFhZTE3Yzk5Mjg2ZDc5MDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY2MTZkZGNkOTZhMzlmMWMwMjU2NmRhODU1ZTM0OTRjNzFmMjVjYjEzY2MzM2QzYjM0ZmQ2YzZhYjNiZGRlOWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZmZTU2NWY0MzJkNDBjZTA4ZDY4NjU4MDIzMWE5ZjRiZTQwMTVjZmViMWU1ZGE2NDAzYWM0MDMwODUxNjE0MzgifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

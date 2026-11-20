@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:0006b57002a73605f1ee57800c80e2ac6ca2a5f1903fab5174729b1a8304f624",
+  "claims": [
+    {
+      "id": "claim_c541ab370aac45898adf99e4615da7fc",
+      "statement": "Development recipes separate filtered fast, parallel no-compile/no-subprocess, serial subprocess, and unfiltered gated runs; qa also mutates formatting and lint findings.",
+      "evidence": [
+        {
+          "resource": "repo://justfile#L8-L86",
+          "version": "repo-lines-v1:sha256:6a2c7949e03ebc7267febe9f7d93b9870a8be293ea64caa008f0fcf27003a5ce:eyJzZWxlY3RlZExpbmVDb3VudCI6NzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMyYzU1MTU0Mjc3MzFjMTRhNzVjZTZjNTljODdkZmFkMzExOGY3ZTViNjA3YzJjMjMxZjI4MDkyYzAwMTMxNTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhZTE3Mjg3NDkzMjU4NmE2OWE2ZjdlNmRiYTUyNDk0YjVmZTU4MDY5NDg4OTQ1NTMxZDI1YTNlZmI5NmVkMjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFjNGE3YWE1MmFlM2UyOWI4OGE2NjliNzc0MzkzODRhMDhkMWQzYjVmYzUzNzNlYTIyNzFhMWI0N2U0ZDhiZjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJmYjk4YWRjZTE4ODQ3Zjg3Njc5MTIyNDY5OGJmYWUyODhjNTVkNmE4Y2NkMWY0ODI3ZTkzNDc5ODE0MTAxMTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e83de23fd30a4d76b015a46d8e53ca3f",
+      "statement": "Python support is 3.11 and 3.12, and pytest discovers tests under tests, retains failed temporary directories, and configures a non-killing 300-second traceback timeout.",
+      "evidence": [
+        {
+          "resource": "repo://pyproject.toml#L114-L124",
+          "version": "repo-lines-v1:sha256:02626c3c6ff028f563f12bcde10bda5fdb9e88f09ad08782c14be42eb602db6f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxMWMwZTc1OGJkNGJjZmNkYzVhY2E0MjQ1NDJkNWE0ZGJjMTgzMTlmYjljNjExZTc3ZjMwMGVjY2Q2ZWU4ZDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliYjA4YzAzOTViNzczOTUzMWJkZDg4OTU0MzkzZjE1ZDdkMzM1MTQ5MTBlMzkxMzY1N2U4OGY2NWM0OThmZDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkNjA5NDNhZDQyYjI0NmM4ODEyMmMxNDk0OTBjYzMxMDg0OWNlYmJkOWM1ZDk4NDhmMzgwZjU0NTQ0ZWRjMjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwN2RiZmZkYzE0ZTczMGViNGNkZmNhZDYzNWQ4NmJiZDhiYzNiODhhYjBlZDQwYzdhMTE4OTZkNmUyMjdjOTgifQ"
+        },
+        {
+          "resource": "repo://pyproject.toml#L261-L291",
+          "version": "repo-lines-v1:sha256:229d5e6fce222451d20912fe0b85c0d9c700ac2567e43cb5522928540905f64b:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg2NzZlNjQxNDY1YTY1NTFlOWU5Y2ZmZDdmYWExZTZhNDJmOWI3MjQ4MDk4MTNjOTAzZDdlZGNiNTJmMzAwNmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImExNzBkODBlNGRjZDVhZWFkNWY4MGNkN2IwYWZjMDIzNTY4N2M5ZTY0ZTg2ZjhmZjhkY2Y1ZjQ3YTg3MTZkNjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY5MmNiYTAyYjZlZGE0NTk4ZWVkMjU5OWVjMmEwYjAwNmMxMDhkNDgxYzE1OWFlODI3YjY0MDVhOTA2YzQzZjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUyMDZmY2JjYjE2MjA3NWY2ODc1MzY3YjdiOGY1NGVmYjFhNDQ2YTJhMTE3OTk3OTcwMjliZjYwZjcyODAwNzAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_722a2fb5b2114b4395b865c0801945f2",
+      "statement": "Compile venue permission and compile-tier requirement are independent tokens, with toolchain the permitted venue and exact value 1 enabling required-tier behavior.",
+      "evidence": [
+        {
+          "resource": "repo://justfile#L51-L53",
+          "version": "repo-lines-v1:sha256:abad05992bf77c1a31c4b3463c54009fa8cdef5266f2aa27311c61b9af85c41e:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2U3YzBiMmViMzQxNDEzYmNhNmQ4NmYwOTEyODNhNTc1YmI2ODBkZDA0OTczZWEzYWY4YmYyZjRjMzk0NTAyNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZmQ4YTEzNjU3ODRlMjhmZGMxOWJlNmExNjgyNDIwMDNkM2FkNGYzOWZiMjllZTQwZjE5MWE3NWMzOWEzZWM1MCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWNmMzgwYmY4ODhhOGQyYTRkMTE4OGM4Y2FhN2VjZjE5OTQ5MWI0OTBhNzA0NTI5NjkzMmRkODhiMzJlMTRkMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDRiYmMzMzQ1YTQ1ZWZmYjA5MGI4ZDE5YTY3OWNmNmM3NjM2MzRkMzQxYTcyMjA5ODZjY2M0MmU5MDE3MDQyYyJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/_compile_venue.py#L38-L107",
+          "version": "repo-lines-v1:sha256:2ecf9c389770406fa129622506490eb6ba6ba5b15cff9078b92b0d2e48399fff:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMyNzg4OGI5ZDVhMjhhZmMzODI2N2YxMDQ4MDM0MmVlMzg2YWJjZTk3NmVlZjk5NWQ0OGJjYTlkMWMyZjgyMmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkMjRiNGQxYTFlMjQ3ZGQ3OTg1NjVlMjliZmQ0NDhjMzc4MzA4YWFjMmZlZDhmMTk5ZGU4YWI0NjZjMjU4YmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJhZmU0N2ZiMGJlZGZhMGI0NWYwYTgzNjg1ODgwYmE2MjIzZjRmNjRkOTUwODg2YmNiNWRkYmZjZTZlOWIzOTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_eeadad828c1c440e90457fff4056f353",
+      "statement": "Root pytest guarding prioritizes checkout imports and exports PYTHONPATH to children; mismatches exit 99 unless explicitly allowed, and collection fixture guarding returns early if its support module is absent.",
+      "evidence": [
+        {
+          "resource": "repo://conftest.py#L63-L89",
+          "version": "repo-lines-v1:sha256:80efa9ab3b547b7502b41b4c65695bbb9362301276fd0e1976506707dc4c221e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1OGFmM2FkZjljNmU3Njc0OTRhY2U1MmI4MDk4ZGI4NTk3ZjhmNDgwZWRkOGQxMzAwODRhNzRjYjNlNjkyNjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJjZTFiOGIwNjJkYWQ5OTA4N2YyOWQ1MjVhOTY4ZWNmMmE0YzcyNWVhZjYyYjNmNjBmM2ZhYzZjYjdjMjEyZTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlhNGZlYjBjYjNlNmM1ZDcxNDU5NTAzOGI3M2I4YjZmYWE1NTU3ZWJjZGMwMTU3ZDg3MmQwNjM4NWE1ZDJmNDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://conftest.py#L7-L50",
+          "version": "repo-lines-v1:sha256:75a9c38c8e33b79f4fe835efc0780a7793a57a7397fa93ec82edb7cf72135267:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwZmIxMjU2ZjUwMTIxYzJiZDdjYmQzZTFkYzUxZDFkYzA3ODg4NjM0YjFmNjI2ODJiNWI1MWYyZDEwNzYwOGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM5NTY4NjhjNDQ0YjFiOTNiODA4MmM5MDIwOWQzOTRiYTI3ZGZjZjQ3NmNkMzk2ZjNjODAxMThiOTQwNjEwMzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM5ZjFiZmEyMjNiOGU0OGIwMTRmNzY1MjIxZWMxNDM0Zjk3NWNiMjVmNGVjMzYzMjkwNjcxNzk4NWIxMDY0MzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2MDhmYjVlZGZmNDQ2ZmY5NDE5ZTY3NDUxZmY4YjJhYTBlYzM3MzkyOGQ1ZjIxYWVkYTlkZGY2ODFlNzM1YzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ac2dd70c1e984ee8b44a24ac8dbd79b2",
+      "statement": "Suite partitioning preserves expensive fixture consumers and checks complete assignment, while aggregation distinguishes missing/void chunk preconditions from test outcomes.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/suite/aggregate.py#L1-L59",
+          "version": "repo-lines-v1:sha256:2637fe3a5db9cf2eb78288231ba8dd5b67bbee18f2801d23301011cb51658f88:eyJzZWxlY3RlZExpbmVDb3VudCI6NTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjMGQ5MjRiZmM0OTVmZWRkODhkNDE1MWE1YTE3YWZkNDI4ZmVhYjIyODZkODIzNzA3ZTBhM2JhYzkzOTNjM2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZhMzJhMWM0NTk0YTZjOGE3YTBiMzBlYzE2N2M2YzdmODcwMDRhOTg0NjhiMmJhOTFiNGUzNTk1MGU4YmYwOGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMzYTA3ODQ4YThhNzk5ZDgwMTMxMmExNDY0ZmNiMDc1YTM1ZGJjNGFlMGU2MTBkYzA3N2YwZGM2ZDdiZjMxZDUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/suite/aggregate.py#L334-L400",
+          "version": "repo-lines-v1:sha256:d4c07093e1d305aa563a29210606aa53b449bc13a28b54fc5aa53fada83b4690:eyJzZWxlY3RlZExpbmVDb3VudCI6NjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiMTE2ZjJiZjM5MzY0NjczZWNlZGRjNzcwYTkyYjhhZDYwZmE5MDk2ZGM5ODZiNjliOTY5YmMwYWFiNzNmZjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlZTAwYmMwMWJlYjUyZWUzYTY0MjkzNThlODAzNmI4ZmY0ZDgzZDU5YTcyYmQ1NGU4ZDVmZTljZmExNjkwZTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFmZGYzYWI4MTUwZGUzMmZlNjZkMGQzYjk0NzE1ZDA2MDJhMzRhODExYmYzM2QyMjc4MjIzNDZlNmY0MDk4MjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE4MmI4NDY0ZTllNDA5ZWVjYzZhMTAxNzk5MGY3ZWViMzUyNTlhOWE1YzkyYTlmZGMxYmE4YTdkODhkZWY1ZGUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/suite/partition.py#L1-L13",
+          "version": "repo-lines-v1:sha256:2131ae6947381d00a16d834a36e9a5a2602655275ea33794a2daaf6444977709:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY5MDU2ZDY0ZTQwYjE2MzkwZjU5MThiZThkNDIzZmYxMDg4Mzc5ODg5ZGRlZDhiNzlkODRmNzYzOTE1ZTE1ZTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzMDNlY2RkNGE0ZDEwZjE5YzczZmQ0MmZkMTI0MzdmZDMzNTRhODI2ODE2MDVkYTUyNTVhOTdhMzkwNjhkYmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjU1YjZlODcwNmI0MzA0N2YyYTZkYjY3ZjEzMjYzODU5NTYwNGU2N2YzNjk2Njg3NmNlMDE1OGYwMDUzZTZiZDEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7f699f69717b46fe9a07cb55ff465630",
+      "statement": "Only union scope with complement evidence supports suite-level claims; triage and tier restrictions are forced to narrower scopes.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/suite/_runner.py#L1279-L1288",
+          "version": "repo-lines-v1:sha256:1c44dfd7d1fd0cd4143ef2ca9956607c401bbd88364a4ecaef683b4ab204f549:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNhOThmZWUyMDg1YzQyNzA0YjI3ZDJhNjcyZTdiMWM3ZTFlNzYxZDQ3MWI4NTBiODliOWQ5ODNlNTY3ZWEwNTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4ZGFhNDhhZTA4OWIwYzczZTllYzRlNTQ0MWI0YTFjZTA5NDlhNmMzNWYzZTRmYjI0YzEwM2IyNDkzNTg2MjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0N2E5NTI2ZWNmYWM1MTQ1NzRiMzhiY2NhYmY0MjIxNTI5MzkzNjg5MzI5ODg1YmU0ZmE2OTQ4Y2JmN2RjY2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNhNThmY2Y0OTQxYmI5ODI5ZDk3M2M1OGQyMTdiZjQ5YzA5YzIyZTM5ZjkwZjRjNzlhNDg0MjYzYWQzMTVkYWYifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/suite/aggregate.py#L1002-L1014",
+          "version": "repo-lines-v1:sha256:e7fdd64c42dc080449b08fdfcf2c4bca8fd5ead0fb4f96de314a03d2eee26d45:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVkODk2MzM4NmM2YWZhMTQyNDU3OTI5NTQ5NmNiZjkyYWQ3OTc1MmM5YTdiMjBhNmUwYmYxZjU3MjdmN2ZjZDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxY2Q0MWY1YzYxZjU3NWYzMGIzMDc1ZTM2OTllNjVlMWY1ZmJmZGQwYzJiNzM4NjU5Zjc2MjdmZDAzMDg4OTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhlYzdhMjg4YzFkZDQxYjBkZjdlZGZmMTlkNTczODczNmJmNjc4ODY5MmJhOGM4Y2FiODAwODA3MWViNjk4ZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4NGNhM2FiZWQ2ZmZhOThlNzZkMDZlZGY5OGM2NWI5YWI1OGM1NDEyMzQ4ZjI3MTdiZjJhYTA2ZTYyYWIwNzcifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/suite/aggregate.py#L51-L55",
+          "version": "repo-lines-v1:sha256:842cbed410336474e0dfea81a5656ff58739d6b135ca70fddb411a9f1716307e:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYzI1ZDJmODNjNjdiODczYjczNTMyNTg5MTkyZjdkMzE0ZWQ3MjJiMTkyY2E1MmYxNGM0ZmU3NGE2NDlmOTRmMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZDY5NWY0MWVjYjA2MTg1Mjk2ZjBiN2RhOGExOTFiODY5YjVmYzU0NzA5MDExYTVlOTgyNDU5Y2YyMDhhYzcwMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGM5YjZlNWQ5ODNkNWM4OTliMTFiODhkMTYwM2E2MDEwNjVkNjc3ODYzOTQ5ZTk3Yjk3ZDk4NDNmYTY3NWI4YyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMmRlODc3MDEyNTdkZjg2ODRiZDYyYzUzMjc2MWRiMzY2YzM2Mzg0OWY4ZTE5NzBkMTA0MTkyNmNhYmU2MTgxZiJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/suite/aggregate.py#L862-L889",
+          "version": "repo-lines-v1:sha256:55ddbce2167393172ae4332fe200deedff521bbeea429627ef68e42c6ee75ff5:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFmODU2N2RlODhmMDFlMWM1OTg1MTU5ZDQzM2VhNGJkYTRhNjg4MjViOWI2OTRmMDkwZWYxY2EwYzliZjRlYzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI1ZDEwMjhjMzQ3YWQ4NjJlMDE1MTBjYTNiZGIyOWYwY2QyOGY0NDlhNmMzYmYxMmI2ZTdhMTUzYTU4ZDU5YjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczNGJlMDJhYjFmMzhlNGFjYjIyYjI5YzhhOGVhMzc4MWIxMmI0NWIxOTYxOTYzMTBmMzRjNDkxOGJlYjA1Y2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE4OGIxMjc2YWE2YjlkNDJlZmFjOTAzMzRjYWI1YzZiMjYyYTNkYTRmM2NmYTY0MmUxNjQwZWNjMmFmZWFiNWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a52f8eb6f2994f33a4f3a1ab0604d4fe",
+      "statement": "Fixture markers distinguish absent, stale, unsatisfied and complete states, compare optional live payload digests separately from identity, and are written after payload postconditions pass.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/cache/markers.py#L145-L235",
+          "version": "repo-lines-v1:sha256:31bb8356b0410d8d0784e7dfc14050bea40b867d04fea0c34273bdbf6430aaba:eyJzZWxlY3RlZExpbmVDb3VudCI6OTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE0YWU2ODlkZGM4MDk2OTY1YzQyMWVmZTk4ZDhkOTQyNmFhZDQ5OWRkZDI1NGI4NjdlNDkzMzVmYTZmMzM0NmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRmYmQwMDkzMTRiYzI3MDg0MTY3MzRhMDJhZTVmZjM5YTFlNDhhMDUwYmU5MWY0M2IyZmFhOTIwMDJjNjJiZmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk0NTIxZTVlNjEwMTRhZmE2MGY2YjNiY2NiMzFlMzIwZWExMjIzMzA5OWVmNWQ4N2UzMDcwYWM0MWMwY2UwMWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_504b639d90474f888216b6d22a242da9",
+      "statement": "Cache builder provenance uses working-tree Python paths and bytes rather than commit identity, alongside caller-provided case, solver, environment and payload terms.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/cache/keys.py#L571-L601",
+          "version": "repo-lines-v1:sha256:af38b96f55b8b9680444f33e3a95b1224d5aa504d70c4e6d315e1251332e08d9:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJkMjE2NDgzNzBlNDhlZjE2YTFhYjEwYzI0MGMzMzIwYWI5ZTYyNjdmMGE3YzdkNzFjYmQzMWM5NzdhN2YxZmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRiMTQxMTQ2ZDQyOGY2ZTRmZDQ1ODk2NjA2NDkzYjg2OTJiODEwNjIzMGZmZTU1YjlmYjBmNTFlZjdmNDA3NDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIxNDQ0ZDcwOTY3NzExOTljNmNjYmUyMWM4YWI0OTczYWM5MTZjMDNmNzlhYjllNWY5MWQ5NmQ3ZTg4ZDc4MjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg4Mzk4YmYyOWNlM2I5NGU2YmE3OGZiYWJkNWU5YjEzYTJlOTE3NzY2YTE3YTlkNGQ1YjAzYjU2Y2FhY2FhOGUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/cache/keys.py#L627-L669",
+          "version": "repo-lines-v1:sha256:78f0b812df6090247ba27dcbbbf8e67bc2f47506d25fec550b678273d305a633:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgyNjA3OWRjYzgxNDE3ODgwMTRmNjNjYTljMzdhOWY1NmY5ODBlZmM3NDNiM2NlMTZlZTVlMjcxNDA3ZmM5N2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJlNGQ1YTY2MTVmMzczNGRjOGI5OTk5OWI3NGI2ODIyMmQxZWE4MWUwN2FhMTUxNWVlNTNkOGJlNDExNGI4YTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8fc8169cc3e64a42bc6ef411e202a9c7",
+      "statement": "Cache clear gates compiled builds and source clones independently, excludes software from analysis-tree clearing, can partially apply cheap-tier removal despite compile refusal, and checks liveness only for compiled/source roots.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/cache/clear.py#L151-L167",
+          "version": "repo-lines-v1:sha256:f8d4ac97cb83c580cb7af19dd6e0e131c12abe887bda940db256f00a7ec832c8:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlZDdkY2NjMWJjOTkzYmM2NTE5N2JjYzI2NzFkOWNlYmM1YzMxZmFmMmZlMWRlM2JlZGQyNzdlYjU5ZDlmM2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM5M2MyZmIwMjE5MGNmZDg2M2QzMjE4NzY4ZGZmNTRlODc0MzRmYWQ5MDZhYjE0MmNmMzZlOGVlYTE5NjY3OTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjcwY2UzZjI0YWI0N2MyZjVhOWQzMzdmMzc3ZWQ4NTczZmE1NjU4NDA3NjQwMmYxYWYwNTRhM2RlZDYxOTQ2MmYifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/cache/clear.py#L222-L326",
+          "version": "repo-lines-v1:sha256:9e684219ede354d4b0c7d173163882a6b069a13604a7d5bf7caebf9c0792e45d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI3OThlYjJhNTBkNzJmMTE3MTRhNWM3MTllOTAwNTVlYWNjYjdiMThiMGZiMDdkM2JmOTIyZjc1NWE1NGMyNDNmIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIxZWRiNTA3Y2Y2OGM1ZWYyNzM0MDczY2M4Y2YzM2U0ZWViZGQzYmEwZmU5MjUxNjljYTk5NjZkNzg0YTU0ZWZjIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI2ZGJkOTVmNzI2YzcyZDM5YmMxZTkwOTMzNDYyMjJkYTYyYTdhMDVkNDUzZWU4ZDY0YjNiNjllYTQ0MjA1NjYzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_7ea4602f7b4d4c9dbb15e72408389f2d",
+      "statement": "The contributor guide describes conda scientific setup plus shared checkout-bound hook environments, and notes that marker-identical recipes may collect different populations under different dependencies.",
+      "evidence": [
+        {
+          "resource": "repo://docs/contributing.md#L22-L44",
+          "version": "repo-lines-v1:sha256:fafa76df5e394cdfc8d46b9f015622bebbe66ff11ce900ffa303a93ce7473700:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkyMWU5MjllZTA4ZTdlNTU2ZjI4OGUyMGY2MDBiYTlkZjMyYTdlZjMzZDk2MzYzZDQ3MmI3NzJlZDdlYzAwOGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiN2JiZWFmNWQyNmU1ZjJmZjJhNzI4OWM1YWQ0MGNjMzhmODc0YjkxMjY0ZmNiNDllNWM0OTM4YTU2ZGU4MGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk0YjE5MGY0NzUzN2FhZGNmYjk4OWZkMDg4ZWIxMWUxZGRlYzNiZjIyOWQ4NzA5ZDVmY2IwOTc5YjMxODU4MmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjlhYTlkNmM1NmQwY2ZmNGMzMWFhNzI0M2U3Zjg5ZmZhYWIxNmE0YjkzMjc0YjYzZmU2N2U2ZDFkZGY0NDZlYjkifQ"
+        },
+        {
+          "resource": "repo://docs/contributing.md#L70-L81",
+          "version": "repo-lines-v1:sha256:be2d0de89788494c2180df347566231d11c732a73cc69c027387fc3e924cc40a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg3ZDk5YTE1NWViZjkzMzQ5YjY1MDI0MTI4YmUzMTQ0N2E0YzA4NGRkY2E5Y2RhODM5OWE0ZmNlODRmM2VlN2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU1OTkyMGE4MTU5MjE2NWQwMzk5NjNhMTNjZDA0NjNkYzJiM2IzNzNiZTYzYzIzN2QyYTYxMjM2MmI1OGRkMTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVlZTE1NjdmNGZkMTIwZjc4MDE4MmNmZjc0OTQyYjIyNjUxNmQyY2Y0ZWExN2E1ZTBiOGMxYmNiYzU2NGZmZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY4MjA2YjdiN2NkYjExMGZkMjNkYjhmMmQ2ODE2ZGQ5MTZlMDZlYzNhZmIxNjkyYTgxNTkwZmM4NmZhZDk1MDAifQ"
+        },
+        {
+          "resource": "repo://docs/explanation/testing-the-toolkit.md#L54-L85",
+          "version": "repo-lines-v1:sha256:5b132afd290d4f287567ea88bccb6ffa08dcf24e58a0ce83837a3c84aea983a2:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg4MDFjNzk2NjQ4M2E4YzUyMjNiODdiMmYwYjYwNTg2NzM0MjA2MjMzNmY5MGRmZGI1ODM0NDAwMTE3YjAxYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjYzkxZTY3MzU3OGIwOTVhZWQ5MzdhNzE5ZjRmMDFlZDY3NDEwNGMxMjExOTM3MjVkYTRlZjUwYmI1MjM4NmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhiYzIyOWI4YzkxZTE2ODM4MjJhOGQxZDg2YWQ2MDM0NWU0NDU4MTZiMGU0MzUzM2MyMTI5NDMwNmIyMWY1ZWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc0NjQ1MjQzY2JiNzIyNmM0MjVmMWJhM2EwMDk1Y2FlNGZlMTBhYTkwZjQxMWFmZWFkMmNhZmQzOGViZGE1MmQifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

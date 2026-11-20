@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:5e7fb5a36f69135afd239f08b9a54afebf805ab9baf894834ab1d6b3f4d30407",
+  "claims": [
+    {
+      "id": "claim_7013f23d9d024fc89decfb34a0b3afc9",
+      "statement": "Execution locus honors explicit local/slurm and otherwise derives from config family rather than ambient SLURM_JOB_ID; allocation environment independently informs concurrency sizing.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/orchestration.py#L57-L105",
+          "version": "repo-lines-v1:sha256:f02b6ef709d2a0f45e7bc3d848de912594789d8f2f28587f6407281fbc11ac3f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlMDY1NjQ1OThlYjIxOGU3NTBiMDkxMmUyN2YzZmQ5NTdhZGYwM2U0MWI4YzdlOTdlZGI1N2Q4MDAxYzdkNjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYyZTE3NWQ3M2Q4ZGY0NWM1YmE3NDEyYmViNzU5YjVhN2MyMTlhMDQyM2MyM2JiZTVlYTY4ODhjYjM0Zjk4NGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJkZTlhOTVmZjI2NTMxOWVjM2U1ZjdlYzQ1ODFlNjBiYTc3NTA3Y2I3OWY5YWM4M2IzNmNmZjU5M2FjMGRjNWEifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/resource_management.py#L48-L183",
+          "version": "repo-lines-v1:sha256:a7933c04ce12d20e44e7234a730523aa70d889aa36598703e1205142ba6f4d85:eyJzZWxlY3RlZExpbmVDb3VudCI6MTM2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkMjU0MGQwMGU0ZThjZWU2MWMyOTE5ZTFlNmE2NTg0NmI0NjM4YjNjNmJkOTUzNjc5NTY3MmJkZWE5Y2Y1NjE4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzMjBhZDdiZTEwYTYyZDJhNDgyOGY4NjBkNTIzNmU5NWNkOTA2ODkxMDIzZDdjOWJiZTQ5OWZmNTUwM2YzNzRhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0ZmVkMDMwNGI5MjA1ZWY3MTljZTM1ZjU3NGZiNTJiNWM2ZTBhMTAyOTQ3NWNiY2M5NGYxMjQ4ZTZmZmNmZjQ1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwMDA3ZTllNTE4ODk0ZWFkZTlhYTIxYmJhM2RkNTYyZDBiMTU1MTMxYzYzYWQyYThlNTNmMmUyNjI3MTVkNDIwIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_ffb1c2fdcc524739bd7c2cf4716146c3",
+      "statement": "Dedicated HPC-family branches reconcile live submissions before DAG emission; single-allocation dispatch validates a dry run, records queued tokens against the allocation and only sweeps failures after waiting.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/workflow.py#L4932-L4944",
+          "version": "repo-lines-v1:sha256:71e77727b589d8e7bcef264843a3a46d55e8747e076c7de43b4667f7d1dc2f05:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVmN2ZjZmNlYjVhOTJlNDU0Y2YxNzc1YjQyNDQ3YWNmMGVkMmM5ZWNhYmQ5YTEwZTVjOGE0OTYxNzA4MDRmN2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVjYmU5NTAwNTk2Y2UwZWU0ZjlmNjg4NDNjZjVmYmZjMTQzNTQ2NzM4ODY1N2E3YmNiMTcwNTk3ODMyOGM1NGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEzYzM3ZDYwYTBmZDc1Y2NkYTEyM2RiNzkwNjM5MzUyODYzNWNkZDYxNGMyODQ4NDI3NjRkNTU3MmU3MTk5NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVjMjNiZDFkNGZkZTE4ZWI0MmJhNDE4MGU4ZWViZjdmYzE0MzczYTUyNzNmMTE2NjI3ZDY5MTMyMzM2ZmQxZTMifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/workflow.py#L7413-L7533",
+          "version": "repo-lines-v1:sha256:2eddda20ca826fce8c057ef7a665ac98fb9a8a81274b24ee2cfcc8879aad7278:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjYzU0MThlYjIzMmVkYzcyNDcxMDU4YTA3NTRkZTQ5Y2YzZGFhMmZlY2E0ZWQ1ZjhiMmNkNjIzYWNkM2I1NGVlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYWJmODlkYjQ2NWFjYzQ2MjY2NWIyNWIxMzFhNTU2YjFlYjlmZGQ1ZDVkZWFiMWE5ZjY4MWI3MDBkYzI2Yjc1IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3YWE4YTUzN2VlYTNmOWE5OWU5YjU2MjRjNDJhZWY1ZTEzNTQ0NmUyNGU5ZjE5MDgzMjY5ZmQ1YTlhMjgzNzc4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJiMjk5Y2M4YmUyMWFmMTMwNGNlMTEzZWZiNDhhYTI3M2VlYWFhYTE1NWVjYmE5ZDE5YzQzYzM2MTBkMzMxYTkzIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_307154a639fc4b009542ece6131d7772",
+      "statement": "HPC profiles own partition caps and GPU topology/backend; guarded executor extras cannot replace toolkit per-rule resources or conflicting emitted profile values.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/config/hpc_system.py#L31-L163",
+          "version": "repo-lines-v1:sha256:2dbdafa13d0f879354c329e0cd8a976835d41f5b38a55ad37365e805353e9797:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0NjI2NjJlNTk0YWM0MjgzZjM0NDgyODM5YTk5MTVjM2I4OGRlMzA0NmFiMTA3NDFhNTMzZTI1ZGNjMzM4ZGIwIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI3ZGVmMzZlZjVlMzBkOGY0NmZkZDE3MDZiYTgxYmFiNWViN2U1NjBmMjQ3MDJiMzZjY2UwZjc3NjQ2ZWQ4YjAwIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI3MDE3ZWY1OTY5OWIyMjg5ODQyMDVhNmMwMjdiOWRjZGY2M2M4NDRkODY4OTliMzc5NTI4ZDczZWM0OWE1MmZjIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0M2NlZDhiMjI4ZDBhZGQ4ZGY3ZDVmZmMxMmFmMjA3NzVhZGNkOTVkNmQ0NzVkMDBhN2VkZDk3NDk4ZGZjYjE0In0"
+        },
+        {
+          "resource": "repo://src/hhemt/config/hpc_system.py#L343-L364",
+          "version": "repo-lines-v1:sha256:25c30ca74f6639f177ae16657979ff31eb0a2c22c250f3ccc8182fe13871d06a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1NWEwMjcyNDNhMDc4ZjI3OTU2NzEwZTRlYTE5MDNiZjJhNTYzN2UxMmZmM2Y4MTJjMjNiOTNkYTRmNWRjNTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ1ZGE2MTAxMDE5MjgwOTdlN2NhZWFjYjIzM2YyYWFlZDJhMDY4NzE3MzI0ZGJhNmM4YTRjOTA2NzIwMzcyNmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU2ZGZiZjQ1M2Y3ZjFiZWJhYjcyODM2MWIwZjM5M2VlYjRjMWZiNjY4ZjllYTIyYjkxNmRhY2Y1ZGZmODFkODMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZmMGRhOTY4MWU4ZjBmOGEyODQ3MWY2NGY3ZjljODJmODMxYTNhNDNmNTZiZjViZmVhZWQyOTM5NmI2NTViODAifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/workflow.py#L4849-L4899",
+          "version": "repo-lines-v1:sha256:d75694b7fbc6c2298d5ef1b722dc1de583f443e0090f65e4a3fc61be6a862039:eyJzZWxlY3RlZExpbmVDb3VudCI6NTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3N2Q2NmI1YzMyYzIwMjVlYWIwMzczOTBhOGQyMzZmZGMzNDViM2JjOGZmNzMzN2UyNzliNDM5YzgwZmNmN2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUxMDM0ODFjNTdkMGYwZGMwZjc2Y2QyY2M4YjM2MDRjNGU4Mjk2ZGE0MTIyYWRkMTllODE3NDVkYzdlMzMxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEzODYwNWVjMjdiOTFhNGYyMmFmNDcxMDU2ZmEyMzgwMjM5YzBmNDY1MDU4ZTA4ZjZjM2QwZTVlZDdiZmUzODUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFlZDkyNGM4NWNmMGI5MzA1ZGE0YTNkYjY3ZWY3NTExYjI2MGJlYWMyNWM2NWJiODc4ZTQzYWU2OGZmYzQ3Y2MifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a01fbd218f4d4172b401be40c2eca88d",
+      "statement": "Optional CPU and disk guards depend on what the site meters: CPU counts need not match billing ceilings and statvfs need not expose account quotas.",
+      "evidence": [
+        {
+          "resource": "repo://docs/how-to/hpc-profile-setup.md#L104-L126",
+          "version": "repo-lines-v1:sha256:7a1e87193b2744ce04ba2944871904219ef8aa1e837973cfa2fac5697b8cd12c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhkYzRjM2VmNGVhYjljOWFiMWM4ZTVlYmIzZGEyYzQ0OTY1YTgyN2UyZTA4OTRiYWE4NWFhMmQ5YjIwNzRmOWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4ZTRkZTc5MDMxM2ZkMDJjZTIxNzMwMTI3NmIyNDc4OWNjYmZlZWJjMjViYTFkMDViYzBhZDFjNzc3OGIzM2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYyZjk1YjFmODRmYzY4MWViODU5ODdlYzNhODVhZGI2ZTFjYjY1NjVjY2MwMTE1MDE4YzljYWFlOGIzNThjMDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEwNWM2ZjJkNmM0ZDFhMzkyYzhkY2VlYTk2YmFhNDQ3MDY4OWE5ZDJmMzg3NThjMDFhYjNjMzBiNzM1OGYyOTIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_6c971b7f526f4bf6a945c081b386cd2e",
+      "statement": "GRES multi-GPU resource emission uses tasks=N, mpi=True and tasks_per_gpu=0 to avoid runner duplication, reserves exclusive nodes only for full-GPU-node requests, and emits whole-node CPU weights when required.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/workflow.py#L3048-L3218",
+          "version": "repo-lines-v1:sha256:8e55a7ce417b4249675656d325583ea9730e68c81432935af0cfff230b130c11:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI5M2VkOTgxNjBmYThkM2FiNTEyMjM5ZmU5YzU1ZjY4YzEzNzY4ZGYyODQ4MjVlMDg0ODZmYjJjYmZiNDI1ODBmIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI2OGQyYjExNzAwYWEyMzhhMjczOWViMzcyNzE3MDI5OGE5MzU4YzExYzgxNWI5MTJlNTMwNDkzYjdkYWM0MTQyIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1YzNjNGEwNmQyNmI4ZDExNDRmZjg2MmQwZjBhNWNmMzE4NGZjZGVmMGNkZGY0NDM1Nzc5MjljNTc0NWM0MWE3IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlYmFlOTc4ZGI5ZjYwNDJmZDFhZDE0ODE2OGY4MzEyZGY4NzIxZmQ5ODk5MDc1NzQ4YzMyNjc4NjExNTI5YmY5In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_7b839852cb7f4234824ce457fe1a9b7d",
+      "statement": "TRITON launch forms distinguish SLURM-family/resolved locus, local direct or MPI execution, per-task GPU flavors and the guarded batch-job GRES multi-GPU no-overlap branch.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/run_simulation.py#L1436-L1436",
+          "version": "repo-lines-v1:sha256:da5816ba8504c5b258f1ce20cda2ccd985db276bf5c8824ce760148768352f4b:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGE1ODE2YmE4NTA0YzViMjU4ZjFjZTIwY2RhMmNjZDk4NWRiMjc2YmY1Yzg4MjRjZTc2MDE0ODc2ODM1MmY0YiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGE1ODE2YmE4NTA0YzViMjU4ZjFjZTIwY2RhMmNjZDk4NWRiMjc2YmY1Yzg4MjRjZTc2MDE0ODc2ODM1MmY0YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzM2YWY2ZjQyMTg3YTdkYzAxYTYwZGVjNmRmMmNiNGE2YjNjYjk4ZjAxYTE0M2Y4ZmYxZWVjNTdhYzZiMDgzMCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMmE0ZTNmMjgwNzNlMDUwMjU4NTY1ZDFlZjZlNzJiNzRjYTQ3MWZmOTMzNzc2MzAxOWZmY2UzMTAwNTVkMDVlZCJ9"
+        },
+        {
+          "resource": "repo://src/hhemt/run_simulation.py#L1952-L2141",
+          "version": "repo-lines-v1:sha256:64074d3e84cdbf7580a6033972dced732dec4107570603e1eabc7ed417e25845:eyJzZWxlY3RlZExpbmVDb3VudCI6MTkwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhNDA2ZDA1N2E5NDI3YzRjNmUzOTU5OWZiMTNmMTc4ZjVhNGIzN2EyNjM3NjEyOTA3N2ZkMzg1YWUyZDRlODFiIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJhZmM0ZDY3ZTE0OWJjMzVhOTRiMmY0OWMwYTMyYTI4NTNmYzBjMzU2ZDIxOTE2ZmU2ZGJmODE4NTExMmUxMGQxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJmYmFjODVhNDRkMzdkZjNjYjA1YTY2ZGFhNzI5MTk1ZWI4YjRhMTJlY2E1ZGUyZWM1NmNmMWI0ZjE5MTcxODFiIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3ODYxMmU2YzlmOGZlNjVlZGVjN2E1NmY5ZjE3OTE3OGNiMzI3MTIxZGVmYmI2NDc0NjAyNmJlNDEzZmM2MDJkIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_e6d5d15ff5ff48d0a71234b9dda21ce1",
+      "statement": "Cross-node config checking rejects temp-directory config/input paths for SLURM locus, supports an acknowledgement bypass, and is a path heuristic rather than remote mount verification.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L4658-L4673",
+          "version": "repo-lines-v1:sha256:9eeae025916caa504504e82789902a77c719c63aceaa85e932d09df311f27801:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI5ODYzN2Q1M2JhOThhYTUxMTJlOWY3N2M1NWU4ZDgyYWQ0ZjMyZmY1YmZmYWU5MDkyMmQyMWVjYzMxNjA0ZGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5MDlhNTNhNjE4ZDAyOGUxZDMwMDBjMGE3YWJjZWVjYmU1ZmIzN2Y0ZTUxMWVmZTQ2NjQzZmFkNmU2Njg3MmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYwNGM5Yjk3YjdjMGZiMWZiODJmMTliYWM2NDllMWU2ZTA0MDJkOTgzNThjN2NhNWQzYWNjZmJhNzQ2NDk5NjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJiMzJiMmM4NDJmYjUyY2QzNWZlNGZmY2IxZjg4MmJjMjY3N2Y1ZjE4NTE3MmNhYmRmYjcxYmYxZjg2YTBjNjcifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/validation.py#L2759-L2836",
+          "version": "repo-lines-v1:sha256:1aff52974f71aa731e74f180210081852da7fb5486a8b7d025ebcfec73ad3e13:eyJzZWxlY3RlZExpbmVDb3VudCI6NzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ1YjEyOTBhZDEwNjc2YzJmZDhkMGQ0ZDE4MTljYTkwMGYwMTdmMTUyMGQ0MzI1NTA2MzlmM2M4YzQxOTNiOTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwYzFmMTg4ZjE0MmVkN2E4MjQ2ODBiMjA3MTcyYzU1MTliYzYxNGE0OGZkYTdjZjE2N2VkYjhkZGY3OTk1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiNDY4YWQwYWJkNWRmODYyMGJiOTRiZGZmZTg1ZjQyMTEwZWNkYThhZjc2NGE0ZDVjM2JhMDZiYWE1Zjc3M2YiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_caeb589800d44f4f87c430987c1c480e",
+      "statement": "Snakemake child thread defaults preserve user exports; purpose-sized TRITON launch guards reject positive CPU/GPU underallocation readings but exclude single-allocation pool readings.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/run_simulation.py#L1857-L1938",
+          "version": "repo-lines-v1:sha256:9f6bb1d4d622ff2f47a6259c92caaebd01e3b9f70c65fc410b55a274d6cd0cf3:eyJzZWxlY3RlZExpbmVDb3VudCI6ODIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU3MWQ5MjRkNmZlNzQyNjA1Y2FhN2I2ZDRiYmU2MGQyNmM5MTEzNjBiYTVjYjkwZGVhYjBhZDc1M2IwYTg0YmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhkNTg4YzEzMmIxNThiMWFjOWZkYWNjNTliNDQ0M2Y3OGViNjhmYWJmMDJjODgxMGZiOWY5NTc3MGI2YzZlZjUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUzZjExMjZmZjgyZjg1NDIwZGE3ZGJiYzRmMTNjMjI2ZWUxZTFlNGFkY2E4MDAxNzU5MTViYzIyNmNmODdiMTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY4YjMyMWY1YjAyMDNhODViNTU1NWU2ODY5Y2IwMTUwMzY0ZWU2MjhlMjA0YjI5NDIzOWUxY2Y4NGEyOTA2NDMifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/workflow.py#L104-L141",
+          "version": "repo-lines-v1:sha256:4cc8aaf4b070c22f4b2408f46cc18de84f7f744bcc8ec82b0a72e4379b2d0a52:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4ZDk5YjU1ZjJmNTY4ZGNhZThlYTA5MzY5NjIxMjk0ZDEwNWFjODI2ZDIxNzVjZDEyNmIzZGM1ZjQwYjNhZDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhOGM2YTRlZjgyM2JmNTQwMDk5M2ZjODhmODU2NDkxNTQyZWFlN2Q0OWE3NTI3MGJmZjZhNTk1YTFiNjFiYzIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0OTE4YWY0M2VhNGViYjliOTMxOTlmMGU0NjkyMjNiYTFkNTJjZDRmNmM4NDkzNmNkZDc0ZDY3MGJlZTM2YzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM0OGI0ZDMxNDY4N2I2MjI1ZjE1NzZiM2Y3MGM2ZjY0NDdhNTUyZGMwN2VkMGQ5NTM5MGIzNjhjNTQ4ZGMxZGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1cc8c18ee058401085617c3317aeeb31",
+      "statement": "GPU binding guard checks per-task step GPU counts and distinct devices before exec, watches early bind-error signatures, and persists verdicts distinguishing failures, missing evaluation, measured pass and historical negative-signature classifications.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/gpu_bind_guard.py#L125-L252",
+          "version": "repo-lines-v1:sha256:310ff14e7db6e59d2488787b6c0e73c6fa8d4c3d4e6340d14f507d83d5912ff6:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhNTdlMjNlYWRkNDA3NTQwN2NkY2M0YmE0MTNiMjhmNWM4M2NmMmJkMDZiMTQwYmIwMzIwODcyYjc5ODAxMjMxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI5OGJmNDI1Y2NkZjhiYjE3YTY5ZWMyZDdmOGE5YjRkMzdkMGVjNzJjMzFmNTlhYjcyMmMzM2JhY2VjNjdjOGU1IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxODY4MTkxZDgxNzEyYzdjNWVmMzNkZTFmZmFkMDQyMTdhM2JjNDkyOGMyMGE3YjBlNTI3M2ZmNmJiNjcwN2ZiIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MzhjYjRkNTk0NDAwNWViZDZkNGUzZDkwM2U0M2I4YjFhNTZhMTc1MzcyNTBjZDJiZTZjMjVkMTc0ZWZmNmNmIn0"
+        },
+        {
+          "resource": "repo://src/hhemt/gpu_bind_guard.py#L43-L92",
+          "version": "repo-lines-v1:sha256:6e873281bc2e6a863d520fa3670e5ec209a82cc169d3dbd37d9c0f6022112dcc:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxNjQ4MTc1YzZjMmI4ZWJmOWYwZjM2OTVjNzk0MTg0YmM5NjZkMDIwYTNmZTQzOTQxYzQwNGRkZjcxOGNkNTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNlZmMzNjRkZTViNWJiYTliMmJhNTY2OGI4MzI0YjY2NWQzYWRkNmFjYjVlMDc2ZjIxNWJjYzZjYWJmNWIzYTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVjOGUwZTIzNmRkOGQ1YzE1OWY1ZTNjZDgyODI0NzNmYzJjYWE5M2JmNjM5ZDkyOGIwYjIxNTI3ZGM5OWIzMzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImMwN2M2YjliOGM4N2U0OTZjNmQzYTYwYjEzMTBhNjFjYTUzZDhlZDM5ZDZhZjg3NWFlYmY0ZjQ1NTM0MzU4ZDYifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

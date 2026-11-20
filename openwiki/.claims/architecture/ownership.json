@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:49672a9d9d29e31323cb8a7f3f2676fa454d0f02093ef4b7232bdf0fe7fd74a6",
+  "claims": [
+    {
+      "id": "claim_1fa5e47e39f8451eb5306613148974f5",
+      "statement": "Toolkit schema-checks both configs, links system and analysis, optionally validates, and maps fresh mode to analysis.run(from_scratch=True).",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/toolkit.py#L166-L187",
+          "version": "repo-lines-v1:sha256:0511aa3d8c1d46e3acab13f1559bd2bcc12d7dd4373f218dc77effb2af9881f4:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwMGU4ZmVkMzljM2ZhMjEwYzc0N2M0NDc5YTBhMTg0MTkyYTY4Mjk2MjM5YTM5M2NjZTdjMzUzMGU4Yzc1MzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4NTAxMGRjMzBiMmZmZDQ1MTU0OTQzMTg0OTQzZjMxNzQxZGM0MDEzYmMzNjgxZTdlMjA4ZDA1YjBhYTNkZDQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczMjA5MmYwOWNhZDA5OGZmMzA5MmU5Y2MyYjdkZDI2YjBhYjUxZjZmMDA2OTlkZjcwNTMxMTIxZDE2OWUxMzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNiZTZjYTcwY2Y3NjZiZDA0YTA3MTcwYTk0ZTZmNjIyN2NjZWVlZjQ0ODYxZTJkN2E2NTExY2JiMzM4ODRjYmIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/toolkit.py#L385-L418",
+          "version": "repo-lines-v1:sha256:8aef169553c895e4bfd769a1044f5ae8289265f8a0f6d22fe0df5948a5b0e89e:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJiNGQ2Yjg4NjU3YTQzNDQyZTczNWQxMmJkNDBkY2IwNTc4NzliYmJlZTIzYjlmNzM1ZTExYmM0MzQ5MTlhYWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU5MDlhNTNhNjE4ZDAyOGUxZDMwMDBjMGE3YWJjZWVjYmU1ZmIzN2Y0ZTUxMWVmZTQ2NjQzZmFkNmU2Njg3MmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZmYzc1NWUyOTQyY2E5ZDhiYzI1MTc0OTYxOGRlNjQ4M2Y2YWM3MjQ1MTdiYTFmODhmNGFiZDZiMGE2OTcwZTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk0MGY2YzA5YTY1MzRhOWQ5NjJlNjhmZTIyYThiOTE4YWFjMDM1NWUyYThjZjYzNDZhMjVhNzE5ODIxMmU1OTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_edf2406d4d4e4e98ac53a99d53f8c04b",
+      "statement": "The system owns processed terrain, backend-specific build paths, shared system log and processing helpers, with independent observer-log and layout-state gates.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/system.py#L206-L262",
+          "version": "repo-lines-v1:sha256:ff40fff5f6741055d974379cad29bdae623b6f7176c5526ca69e75ebb90aebb9:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlmZDdhMDdhODNkZDE5OTZmYjUxNjg0YjQyYWVjYWY0ZTkwZmI3OGJhNzIzMGU1NDJlZDdiZDAxZDQyMzAxYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5NWM2NmQ2OTI2ODg5NmFlNTFlYjhkNTU3ZjcyMWJiYTlkYzAyMTY1NDQ2Y2E2YWI2NDRkYjQxYzZlMzJjNjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQzMWFmMDhmMzYzNTY0MjAyNTU1OTcxNWNhYTY4MjFkNDE2MWNmNmFiZWMwN2NlOTJlZjMyNGQ3ZDE5YzIyZDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZlNGE5Yzg0NjA3ZGFmNzRkZWMzYzNjMWJlMmE2OGIzZjhkZDBlZjJmMGFkYmQ1OTMyNDJiZGNmNzc5ZGVmMDgifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/system.py#L291-L362",
+          "version": "repo-lines-v1:sha256:23f9e57eb3d0142d4e9518ba4c1028268d260a42ab48578f8d34471810ad3151:eyJzZWxlY3RlZExpbmVDb3VudCI6NzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlNmRiMjcyZDIyZTcyMDc4MmEwYjVmNDllNzE5ZTcyMWE3Yzg1OGVmYjk0YmRjY2IwNDZjMTA4OTA2MjZjYTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIzZDA1NDBjY2I2M2Q0ZTc2NDRmYzczNzhkODM3ZjE0ZTAxYTI1ZDJjODhhMDBiOTE5NDRmYjA1M2IwODc4YTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjgyYjI5NmNjMjNhMjAyZGQzNzA3ZjZjNjgyOTAyOTBlNGMyZGUwZDY2OWMwYzY4OWMxMTNlY2Q5YzMwNDcwYjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFhZmVjMDhiYTZlZDIxNjIyNzhjOTRmODA0OTQyOGNmM2RkNDFmZjZkMDRlZDljZmRmMzk3YTRiYWIzZWVkOGQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8a8f1e9088054ad5bbecd44c5ff240f9",
+      "statement": "An analysis binds its own directory, event table, workflow builder and processing helper, choosing an analysis DataTree for regular runs or an experiment DataTree and sensitivity controller for sensitivity primaries.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L545-L576",
+          "version": "repo-lines-v1:sha256:123fae031d49d0c2a6bdb2ffb1e0c0252485840046b65860f22cfd32f84b4928:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMxMWZjMmZmNjEyNmYzMTkyZDg5Mjk5MWJjNGNmYmM3OGQ4NmFlYzg3YjQyYjBlZThhMzFhNDUyMzgyNzM1ZGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxYmU0NjY3MWMyNzY0YjdlYzJkMWE3ZDY0NjI3NzJhOTdhNzk3MDFiNzJhOTMyMjJkZDQ0ODhhNTdlOWViNmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU4MzIxZDk3MWM4OTMxNzBkNWZlYmYzZWUyYzg4YWZhZDhkOWJhMTM0ZjljNjMyODhlYWVmMWJkZDhlMjVkYTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjUxYzM4ZDFkMmViNDkxMDFkMDFkNzJlZDhjY2YyM2VjNzcyOGY1MWFlZWRkNzRjMjQ3ZTNkOTg5MWNiZmY3MTIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L646-L695",
+          "version": "repo-lines-v1:sha256:50386c5fb6cf6a8380a642d0545c38ecf3fa12076fac1bbea46598df857aad3f:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAzZTQ0NWI5OTYyYzc3NzMyYTM0N2UzMGE0YzZlYjZiNzI2MDI1NjEzMTM5YWQzNTY5Y2Q4MDMwM2FjYmVjYWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM2NGUwYTBjZTczMGIyZTE3ZDI0YzU1NTViNGI1NjY5NmRmMzY4OTY5NzgwODQ4MTE5MDQwNDU5ZmJlN2FiNzIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiYjUxYjkxZDliNTYyMTI2OTgwOTFhNzkyNGVkOWUwOTA0YThjNDI5NTdhMWZlMmQ3NGRhZWFjYThiMGY3MGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg0NDZiZjRmYzEzYmEzNGNkODA4Nzg5YmNmNDIxZWViMGZhOWRlYjQyMTFlY2EzZmJhZGVmNDY3MGMzMzIyNWIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0c7060bf54794d5dae960d0b8996f4d1",
+      "statement": "Analysis construction checks configured toolkit identity and dirty state before creating its simulation directory.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L588-L644",
+          "version": "repo-lines-v1:sha256:29b42fb192a70ada6e3eabeb343ee04fc0a2971f3b7c97500466b5d1e059d7c4:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0Njg3OGJkNjVlZGM4OGI4YTI5ODZkZWUxZjU0NzZiMGU0NmRhYzAxOThhOTAwYzIyM2IyY2IxZmZlNDgzMjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliOGEzYjMwYjdmYTI3MzY0MjQyODZjMDMwZmViODE0NjE4ZmFhYjg2YjBkZTg0NTBhNDJhZDcyZjA1NzE3YzQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhlMWQ5ZTI2NGI2ZTY2NzY2MjI2OWMyMDk2NDJkZDgxODFkZmYzYzM0MzQ5Y2U3MmQ4NmRjMmRmZTMyZDFiZTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJmNjg2NGU5NTA2NDM0MDEwYWY2ZTVlY2FhMjE2N2YxYjczODc3ZTJiN2NiZmNmNzI4NjAwZjFlYzg2ZTk1NWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_250db708d05a43d8945e94bec3025e87",
+      "statement": "Scenarios own event-local paths and preparation/run helpers with per-model logs; removed events avoid directory recreation and use guarded preparation components.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/scenario.py#L1148-L1194",
+          "version": "repo-lines-v1:sha256:c687f7b1c692c857a35896378b53fa1f5a0a4e1e6a7665ed4f524eeb9dc65760:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU0YzBhZGZlMjgxYWNlNjA3Y2I4ZjlhNmM4ZTBmMDUyMzkzZDQwYTk3MTcxNjFmY2JkZWQ2Y2VkNTlkYTRmOGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxMmRjNTlhYjU3OWM4MTZlM2U1N2UzOTNmODNiY2JiNzY2OWUxNzk5MDdhMjU4MWQxZGM3NDc5M2ViYjAyMDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5ZWRmMWEwMWUzMDI4MTY4MjdiMTk2YzdiZDU4ZWI1MDA2ZDg2MzQ0NjEwN2U2OWVmNWQxZWM2YWZlMWYxMjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFhNWRkNGRhNWZhMTc4YTIyN2RmYzIyMTQ2ZGY1NTQzYzI1ODQ4NzQyNDNkYmJlNzY2MjVkZTQwOGNhYWVhMTUifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/scenario.py#L1302-L1334",
+          "version": "repo-lines-v1:sha256:9ced5dd151945f85f4aad1f6140fa50b386bf1a5e305fb82f5df1047a8b4c358:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcyY2QxODAwZmQ5YTUyYzBjOTUxZGQzYjg3N2Q2ZWY2ZTBkNzIzNzM5ZDUyMDAzMjdkNzYyMTQwM2EzZTFlZmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFlM2EwODQyMmY5ZmVjMGYxYWQzNDFkM2Y0N2JlYWMxNWQ5OTcyNDFhNTYwYmQ5NTgzNzZlYTk0YWM3OWVhMTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRiNzkwNTA1ZTlhYzQ5OThlNDA0MDIzMWQxNjFkOTZhODA3ZjQyNzlhZDgxZTNlZGQyNjFmNjc0NzdjY2IzN2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAxZTdmN2JkYTdhM2EzNWVkNTM2NGU0NWMxNjg3ZTY1YmQ3MmQ0N2QxYmVjYmIzMDllMjgwZGY5OTNhMDE3ZmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fb0e5ff2c5d64d538f5b9be12f9e103c",
+      "statement": "High-level run resolves execution locus and delegates to workflow submission, which routes sensitivity and regular analyses separately and retains sentinels for detached drivers.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L3661-L3701",
+          "version": "repo-lines-v1:sha256:0eb8cecd74ffb454568c31bb91d205e35e742b2302ebfa8da02537ef3d707d2f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM3YWI4OTE3Mzc0YWE1YTRhOGMyOWNhOTUwYmVjZWU3MWIzYzRhMDYyZjk2OTE2ZTU1Mjg5M2U2MTkwY2QyMmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc5ZTI0M2U5M2UyOTgyYWQxNjg0MDM3ZjI2MjgxNTgyYmZjMGM4ODQ2NmYyNWQ1YzNlMDE5YmEzODE1Y2FjZTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJmZWJiODNjOWUwY2MxZGE0MTM3NzhiM2M5NWE4NDU1OTc0MDBhOTJiMzIzYzk2ODhmMzljZWI0ZGQzZTE1M2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5NGJmYWUzMzliZGU2ZTEyZmJhYjE3ZWU1ODNkNjMyNDM4YWQzZTNjNmIwZTk4MzA4NjQwN2U4ZjcxOGI2ZWEifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L4758-L4819",
+          "version": "repo-lines-v1:sha256:f5869041bbdec30184592854f4f0a54458dbbbfbdaf08a1413f0334dced4f1d4:eyJzZWxlY3RlZExpbmVDb3VudCI6NjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBkNGY5ZGYwNDA4N2E3ODU1NjNlM2IxZmIyZDRiMWIxNWU5YTYwNjQ0NDE4ZmEyYzI3OWY1YzFiNGY2MTk2ODAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0OTYyNDEwZGE0Y2VhODljYWQwOGJlM2ZkMGY1NGY5NTIyNGVkODFiNjg5NTA1MzJhY2Y1M2VhNDc0YjE2YjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU1ODY0YjEwNjhlZTk2NDhmYzdlNTYzYjQzNDcyZTJiMGU2ZGI4ZjU3YzcxODhjYzRiNTg2NWVmNjhiODg1NzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEwYTE0NmYxZjk0NDAzYWQwMWY5OWM4YzYwOTZkZGIwMGQ4NzU3Njc3ODE3ZTlmMzg4NjBiN2NhN2I4YmVmZGQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/analysis.py#L4831-L4849",
+          "version": "repo-lines-v1:sha256:52fa05712802f4ab3a1f9c2a9fc0d0f5e3cdaf15665ae7d04b67f82e03a0a900:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM3Mjc2ZDUyN2MzZDkwNmFkYzlhNWVkNWJjMjE4ZjZhMDVjN2E5ZjgxMDk4MDA4ZjU1Y2FmY2MzZmZiMDRmYzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU1MDMyZTk2NGQwOTMyMzUxZTVkMTg1MjY5MjgxYjE3MWEzYTA5YjA4YjI4NmU2NjFlYTQ3MDMyM2M4MmViNGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM2ZjJjNDIwZjA1ZWEyZjFjNjcyOGVhN2FlZjI3NzFiZGMxMTYyNTU5OTRjMWNkM2EyY2MzOTE1ZmNiYWFhYzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ2ZDlkMDNlMDM3N2FhMzA4MzI5NWI5Yzk1NzJmMTkwNzA3ZTY5Y2M1NzU1NTgwYjNlNTRiZjNiMWE0MjdlYzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5ff9c00afffa40bdad7372d6be4d68e8",
+      "statement": "Direct execution strategies consume launcher/finalizer pairs: serial runs sequentially, local uses a thread pool, and SLURM validates allocation resources before bounded subprocess polling; selection is separate from Snakemake submission.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/analysis.py#L1109-L1125",
+          "version": "repo-lines-v1:sha256:a8d9b035e4f38a2b2bb68d51012f0cdf54b3095244ea89939197207ac4188200:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmYWIxNDQ1MmJiYmVlMTc3ZGQ5NjAwZDhiMjM4MTNlYTI0OTQ0MjEzZGJlNjllMWIyMWJjNzE3YzUwZmY1MjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJmODZhNTNjZjFmNzE2MDM3ZDVlOWIxYzViZTljNWQwZDBhM2JlMzBiYWM3NzNhMmEwM2Q2ZWMwM2EwMTc2MDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI0ZjA4MGM1OTVjNzQ1Zjk1MTY1YzUxMTIxNmIxMzk1YzkzZGUzYzZlNjU1YTIxYjk2ZDkwZGI5Zjc2NjRlNmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNiYmYwMGFmNzI4NGI3MDE1ZWZmZTgyOTdhOTBlOWUwZjQ2YTJhZjQ1NTVjMWFjNTgwZjhmNWVjN2E0Y2U2YjIifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/execution.py#L164-L226",
+          "version": "repo-lines-v1:sha256:415a9870d1001851cce20a0b3377a9c953cc1e8c748cbe42904d421fddd7dbd3:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmOTk1Nzk3ZjdmZDc3Mjc5NGU4ZjBhYzNjNThkNTJhNmVkM2I4MmQ0NDRlNzBmZTliODMyNWIwODgxOGFlMTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjViZTI3OWNhOTNjZDYzYzU3ZTEwMjMyNzEyYjEwZTgxNjdlNjVhMWQ3NWJjYjZlMmJlZDcxNmNiNzM2MDM0NjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY2OTllN2ExZDczOTU0Y2U3MzUwMWRhM2M5OTk5ZWM4MmQwOWE2ZmIxZTc2ZTEzYTEyNzIxODU3ZGEyZGY1NzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhlZmE0MzIxMGY5OTZlYzk1ZjYyMjk0MmE1OTVkNjE5MDc0NzExZTg3YjQwOWVlYWFjMzc3MDEyMjBlZTVlZDAifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/execution.py#L299-L403",
+          "version": "repo-lines-v1:sha256:41c9a45c823347a8929af69331c64727ae05bd7487a021f22b9c484cd316bb3f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIxNWVhZmY0MzQ3MzE2ZjNhYmU2NmRhMWQ1YjIzMWJhZTIwNjExNjJjOWVkYjU0YTlhMjM2ZmUwY2YyZjg4M2U5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1YmUyNzljYTkzY2Q2M2M1N2UxMDIzMjcxMmIxMGU4MTY3ZTY1YTFkNzViY2I2ZTJiZWQ3MTZjYjczNjAzNDY2IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0NmNmNzNkZWM0ZDk2NTAxODdiZjE1MWQ5N2Y1NzdiODY1YWNlZTFhMjRiZDI0YTVmMTRjZDY3M2UwMjAzNjE1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        },
+        {
+          "resource": "repo://src/hhemt/execution.py#L94-L119",
+          "version": "repo-lines-v1:sha256:6dd6515ce8c3c7192ed0d7fcab3496e41d934f11f3ec5d5ddaa0c63f5f9315bf:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2MTE0MTU4NzZhY2Y0YzllYmI4YjlkOTU3ZmFjZDEzN2I5NDYyY2UxYTUwYmYwZjRmZmEzMTM3MmY5NWZhODciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjViZTI3OWNhOTNjZDYzYzU3ZTEwMjMyNzEyYjEwZTgxNjdlNjVhMWQ3NWJjYjZlMmJlZDcxNmNiNzM2MDM0NjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjExZWJiNDFkNDBlMjQ1YTA3YTEyY2U5YTU5MWQ1Yzc4ZDEzZjA5NDBiMDExYzk5MDllYjhhNDY0YzRlNDQyYjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVlMjBlMDVmZWZiMGE0OWYwZTg3NjJmYjhjZjMzMmY1MjhiN2E0OTUxNmNkMTJiOGZiNGM4OWE1ZjVjMTcyZWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8e11f2795e064163bb1873d7fb981eca",
+      "statement": "Simulation workers reconstruct observer system/analysis objects and skip native compilation checks for container execution.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/run_simulation_runner.py#L475-L500",
+          "version": "repo-lines-v1:sha256:80b28fb642e8fc663ae6cb84774ec9e2af9f53bf5ca55f9747b6a81dcf0c2f89:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM4MjVlYTRiMWU2ZWM1ZTM0NWY2MzRmNThjZDU3NGQ0YWM1MTVjNDRhNDNiYWNmODI5MzU4ZDBkMDFiNjVhZjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVjNjU3MDkyY2RjM2NjMzMxOTRlNTU1ZjM3NjY0ODdhNDQ5OTk3MTE4NWE5NDBiNDU5OGQyZmRiNzI1ZGFhNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNmNGM3MjM0YzJmZjFlMTk1NWZiNjcyMGVjNjRiM2Y1ZWFmYjdiNTgzNDBkNTIzYTQ1MzEwNGUxNjQzNmI5YmUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ2MDY4YjIzY2M3MjBlMTRjYmMzNjYxYjg4YjlkYzY3YmNjNzBlYWEyZWZkODJiMWQwODAwZDU1OTNhNzQwMDAifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/run_simulation_runner.py#L598-L611",
+          "version": "repo-lines-v1:sha256:5cc3490ce6fb4d7d35af68f0e5a05547d43869c8c412ebb8baeb4abe33374275:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxY2FmYjU2M2RiMDhjMTJmNTBkZDc4NzgyNTZhNzg0YWMzOGNiMTRlZDRmNjY0ZmRhMDNhNTVkNDZlY2Y3YTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlNzU5NjJjZjg3ZGJiYjM1NjM5NGE3MTczMzkxZDM1ODAxY2U5NDc2YWIyM2U4ZDkzMGQ5Mjg2YzA2ZThhYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0MTI5NzJlYWRhN2Q5MzJkMDJkYjJlMzQ1ODA0OTVkMDNmMmU3MmQwODBjYzIyNzQzYzBjOTdiNzUxMjg5OTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA0YjU2MDgwYmZhMzkxMDU3NGU0YTY5MTNiZjc3MDNhMmUyMWRhYWQ5ZGE3MzMxMzhjNzdhNDlkMzg2ZjdhNzAifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}

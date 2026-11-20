@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:e050212550b384c628f525b70a6b33af58a2328f56e31177eaf6eee013ed1bb2",
+  "claims": [
+    {
+      "id": "claim_b62f25e8b0cd45a69b020f9fec04cf83",
+      "statement": "Analysis consolidation derives crate descriptors from emitted variables and attributes, embeds the core in the DataTree, and writes the full sidecar after the summary store.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/processing_analysis.py#L650-L687",
+          "version": "repo-lines-v1:sha256:5530d54cb85b474c2f1990f1418bef2f60e68facd3452645942f10960cc19db0:eyJzZWxlY3RlZExpbmVDb3VudCI6MzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA1MWVjNzUzZjMxN2VmZGZjMDlkY2QxNGRmNzdiMDk0Zjc2MTU0ZTk3ZWI0NWMyZjAxYzgyOGE3M2FjNmNiNmQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4YzFiYjQxYWUzZGJkNGVhYjk0NTQ3OWQwMjMzMzVkYWY0ZWMxZGM4ZjhiYTgzNmYwM2FmMDU4OTkyM2EwNTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU4NGRkMTk3OGQ5OWY5OWFiNGQ4OTdkMmU4YWRhM2UzMzMyNTQxNjY5NDE4NDRkODQ4M2Y1ZjAyYWRiZmRiNTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZkMTcxYTYxYzFlNDE4MTcwNmE5ZmFiOWUwYTE0M2YwNDAzYzdlOTY2N2RmOGMxNTVhYTA4NTQ3NGVkYzkzNmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_23639cd3fdad4a5fb9a7f3c6e74d14ff",
+      "statement": "emit_provenance reads the analysis log and returns an embedded core plus full graph with per-run input, result, instrument, submission-time and agent relationships.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/provenance.py#L974-L1057",
+          "version": "repo-lines-v1:sha256:cf799e4198f331258a82f85225eeb7937f206b61ad0ad94c99a3624d816051af:eyJzZWxlY3RlZExpbmVDb3VudCI6ODQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3YmQ4NDBiMWZhNDFlYWRkMmQ4NTYzN2M1Zjk3ZjU2ODQ0N2I1NDZlNjU2YjM0N2JiZWIwMjY4ZDQ5NzhkYTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhlMzdhOTBiNDFkNzU0MmIxNWU3NjdmMWVkODU0ZDUwOTI2NDdjYTBhNDkyMjViMDE0OGVkY2EyYTc0NzU4MWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFmMTY2YjkwZWE3NDkzNDI1MmMwMzViNjJkMWE5MTY5NTk1MGUyMTU2OTM5NTI1NDcwYmUyOWQ2MTY3MzdmNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_011aef23387d46d4a8f626d580af6ef4",
+      "statement": "Metadata serialization fixes graph and key ordering; core partitioning excludes volatile properties and unchanged sidecar content skips replacement.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/metadata.py#L636-L650",
+          "version": "repo-lines-v1:sha256:51ec4c924586522e12a786c63b8de9db7ecf6f11720f3602b234ec05cdd35e15:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA5YzkwMGViM2Y5Y2Y5MjQyODk1YWQwNzZlM2RmMDdiZDFjNTNiNjhhOTRlY2FiMzY1OThkYjA0YjM4MDQyY2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0ZWU0ZDBjOGFiM2Y2Yzk5ODRkNzhjMTNlZTM4NzZhMzcxMTZhY2QzMDJjNmE3MzAxMzZiYWQwNWIzMTU1M2YiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM2NTcxMGY5NDY4MzA4ZWUwYzM5MWJhOWRkMzhkNTg0MzY2MmRmYTAyZGZiZDJiZDVkYWI4ZTU5YzQ1ZDZlNDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJkY2ZhMmFlY2VlY2FlODA0YTdhMjU1OTAyNDc3NWUzMmNiY2I3ZWYzZmFiODdlNzRiNjI1MDU0YWNjMWY2M2QifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/metadata.py#L706-L753",
+          "version": "repo-lines-v1:sha256:9b06e1b216e17c5b911cf7570f6d646a132f5406a6ad04eebdd2af68861c243f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMyMjFlZGRiZTc1OTFjNTQwMTRjYmFhODQ2NTMyZGEwN2E0OTcwZjMwMmM1MDc1Y2I5MWY1NWJmMzA1NmQ1YjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwZTJhNDY1MDA5NWZhOTVkMGUyYmI0MWIyZGIyOTA5NGQzNDA0ZDI4Y2UxMjMzOWVjODhiYjRiNWM1YmU4ZjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3YjczZWU2NGQ4YWE5OWJiZDllOTc0Njc5YWE2YTFkMzk1NTNhYzA0ZDM4Zjg0MzA4ZmZiMWYyNmZkYTVjOTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRhOWJiNGIyM2UxY2ZlN2MyZWYwZjAyZjE1NWM4NzI2ODY0ZDNlMDUxNTQyZmQzNTdjNzhkZjZhMTBhNGMzYWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_82759c61451a4b7eb54c49a7464dbd9a",
+      "statement": "Publication requires an archived license matching normalized configuration; overrides assert rather than rewrite it, and intentional changes require regenerated consolidation.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/publishing.py#L841-L948",
+          "version": "repo-lines-v1:sha256:70053adf8aac581742b98ee9391e7ff9b6a161781128ce22764abb9a82521c45:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlODk3ZTI2MWZlMzU1MGQ1NWUzNGFjNWI3NGI0MjcyN2IxOWI2ZmY2N2UyZTAwNDlkOTkxYjVhMWM4Njc0ZDgxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1OTA5YTUzYTYxOGQwMjhlMWQzMDAwYzBhN2FiY2VlY2JlNWZiMzdmNGU1MTFlZmU0NjY0M2ZhZDZlNjY4NzJmIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzZjNmYTBhY2E5YzgxZjkzMDE3M2RlZjQ5NmI1M2VkYzg0NGM3ZjBjZmEzZGJkNGZhYmIxZjFkNDFkNTdhNjJmIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwMzVkMzJkOTY2MDZkM2EwMmI0ZmE5NWQ2ZmM4OThmMjY2NGQ3MTI5NWYwYWI2MzU1ODkzZDgyNWM0MDNiZGQ1In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_b7a54b3f11824760970634a6d8500274",
+      "statement": "Publication supports analysis-directory, reprex ZIP, and explicit Path deposits, stages under TMPDIR or the analysis directory, and warns rather than blocks on documented size limits.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/publishing.py#L819-L839",
+          "version": "repo-lines-v1:sha256:19c0f564a04e33017a8742f1d3010383169a8e9a35dd478b8d7f3a9d67e233a8:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhkODBlMjQ5NGI5OGFlY2UyNjlkYjE5M2NlYjRjYTdjNzhkZTA3NTM5ZjM3MWZiNTY5MzMxY2MwMTk1MWQ3ODQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMzMTc3ZDk0NmQxOTY5NDcxYzk5ZGYyZmMxM2I5MGE5ZmZkZWJiMGZhYzg0ZjViMGQyNTdhMDIzZTcyYjU2NjkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVlZGJkNjJhYWYyNjMzZjAzMTA5Y2M0YjYxMzhiMWY4YjVlZjVkMjI0MGJiMmJlMTkxMWQ0NjJhMjgwZmNkOGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQxNGM4ZGQ1NTY4YzZkNGE5OTI4MTUzZjg5MjBkOTkxYWMwY2M4ZGIzN2MwZDMyYWMyYzM2NGI3ZjI0NmZlZDQifQ"
+        },
+        {
+          "resource": "repo://src/hhemt/publishing.py#L950-L1003",
+          "version": "repo-lines-v1:sha256:6677de1e5164f5786112de80ad42f5a743da9f053f8da2c4e96df96067b887be:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc5NjZhMTc5YWY4MzJlNmJiNmUxMDYwNjRmN2Q2ODRlOGVhZThkNTJlY2MzZjhiNGExOTJkNDNlMzk1MTM2M2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdjZThkYjkyZDg0MTQ5OWM5YzMyYzNkMjViZGU2NTc3Mzg3NTYxYTFjMzA4YzAwNTM5OTNjN2U0MGYyMWQxMDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRlYWI2YzQ5ZjMwNTBlZWNmMzBmODRlNTQzYTEwZmY2NzhiM2I2YTNjMmI1YzBjNGI3MjUwZDBlMDVhZTU2NTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4718148aafde437686c7b1feb6f98f5f",
+      "statement": "Zenodo creates, populates, uploads and publishes a draft before reading its minted DOI, and attempts an advisory software-record reciprocal relation.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/publishing.py#L565-L714",
+          "version": "repo-lines-v1:sha256:a594c5b16e1d3386af5368e2e02671c3916a51ffc302a93a0042deb24005920b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUwLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIxZDFhOTlmNjg4OGViYjQzMzIwN2VjZjZmMWM4NDg4N2JiMjY1MjIyMGIxYjRmNjdkYmY4NDJhYzE1ZjQ5MDVhIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1ZTdiY2QzNmVmNTNiNDQ1MjNlNjVlOThkMTk0NDk5M2UwZmYxNzQ2ZjU1MzZjMWE1MTE3NDZmM2UwMWU3NTZmIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI4Y2M0YTdkMWNjNzk2YWJhM2U0NjcyMzMyN2Y1MTdlOWY4MTE5ODJkMjUwZjA3MDI5ODZlNGI1NzY0YWQ5NTg5IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3MzAwMDUxZmQwMWJjMDI0MjczNmY1YTYyNGMzMmZiNTgwMWY0YzlhZWZhYzY3MjNhMGI3NmFlNmU1OWZlZjY5In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_9f43b75b852346548e793c5d20e8232f",
+      "statement": "HydroShare creates a fresh public resource per call, does not apply supplied creators, and returns no minted DOI but a manual web-UI publication instruction.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/publishing.py#L717-L773",
+          "version": "repo-lines-v1:sha256:6a3d220181b51da329ae9fb5072c132986d8fc2ad9a4af7ad84c4381224d4cf6:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM1YmYwNDZmYTJjY2NjYjU3ZTRiODhjYTM2MWU0OGE0ZjZhZjY3MDNkOTA4ODdkOGI3M2FhNTRlMzU3M2FlODIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2YjA0NDkxNDY5NzIyZTgzNjNhOTRlNDA0NDUzOGUwMTNhMmEyMTdlMzZiMWU1NjhiYTYwYWNiN2I0YzhmMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYzNzMyYWExOGE2OGViODBiZWQzODU1MzA0NmJiMzgxZTg1MTQzMWUzZmEwODdmNDMzYjNiMjYxNmRjM2RjOGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM4YmVjMWI3MDg0NGM4YmJkN2NjZWJjNTQyNGI2ZDc2MWYyNzMxYmJhYThmYjliZjg4M2YzMjQ4ZWExMzc3OTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f063a0e5549241ef95aacdff10b39123",
+      "statement": "Globus submits a task containing the configured items, retries once after policy-driven reauthentication, and polls with explicit failed, cancelled, and timeout handling.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/globus_transfer.py#L92-L192",
+          "version": "repo-lines-v1:sha256:31efdaf3fca31ace9045ae0c51556997ec2785e2757d15fd0b983d93b03130db:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAxLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0YzY5OWQzYzY0MjM0ODlhMjQzZjFiNzQ1YzM5NjI0ZWQ1YjM4MzE0MmY0ODM5MjJjNTdjNjFjOTY1ZjJkYmYxIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI5NjM4OGQwNDFlY2EyMWUxMjQ2NDg1NGY0ODk0OWM3M2U4NjNmOTEwMzBlZmY1MWE0OTI1ZTA1YzY2NzE1ZGQ4IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxYjIwNDMwYjFjZmY1OWFlMjFmYzgxNDZhNTBmMTdhN2ZiMmNlYmFiODA0YzE0MGUzYmY3MGEzODNiNTMyNTgyIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJiYWNiMzc3NWNjM2I1ZTRkYjM4ZDQwZTNmN2MxYWQwNjcwM2M2ZGE0NDcyMjY2OTAxY2ZjNTQ4Y2E4ODYzMTVhIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_3ba4b1a9ac9e483bae9d3aaf20e6d23b",
+      "statement": "Globus authentication uses mapped-collection scopes and refreshable tokens cached in ~/.globus_tokens.json, with an interactive authorize-URL and code exchange when needed.",
+      "evidence": [
+        {
+          "resource": "repo://src/hhemt/globus_transfer.py#L223-L276",
+          "version": "repo-lines-v1:sha256:216f054b40a19c797682558c69f853963168c5af6a9ba8417ca2d7e11c1d9ada:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4NzUxOTlmMGUxMzIxOWJhZWRmZTRjZjUxMjE2NWQ0MGY4MDE5ZTY0NGRjYzczMTIzOGYzMzM0YWQ0ZWM4MzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1YjkzMjQyMzNjOWI2NDY5NTEyZGM1MDIzOWU1ODVjYzc0ZTM2MTE0NzFhYzRjOTI4NGU1NjA1NDFjZmNlOWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAyN2JiMTE1YzU4OWE0N2IzYThmNTczYjYyY2Y5OWVkNjFiODVkMGFiMjI0MzlhOGMwYTdjMTg2YzM4MTQ1YmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY1ZTRlOGU4MDQzNWRhNGVhZWMxODRiYTNlNDE1YjY4NjFhM2FiZmJhMzI1NDVmYTI1YjVlNjE4OGE1NDZlMDIifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-20T07:08:41.116Z"
+  }
+}
