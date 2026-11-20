@@ -5620,3 +5620,7 @@ non_breaking_allowlist:
     layout_signature: c23299b17ce0fdc65b66c37dbb565189c651d985580dccb50f3e859087b51f34
     justification: |-
       adds a skip with a warning for the per-node path-3 account when the report step is finer than the capture interval; no persisted layout changes
+  - path: src/hhemt/swmm_runoff_modeling.py
+    layout_signature: 86a7774a38f50892b31b88d881dea61a626d8d47c553f131e948df72454983f0
+    justification: |-
+      writes the node inflow capture before the hydrograph flags and heals a capture-less prepared scenario; persisted file layouts unchanged

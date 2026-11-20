@@ -331,6 +331,12 @@ class SWMMRunoffModeler:
             node_inflow = read_hydrology_node_inflow_from_capture(self.scenario)
             persist_capture = False
 
+        # The capture is written BEFORE any hydrograph file or log flag. The flags are what the already-written gate
+        # (``hydrograph_outputs_gate``) reads, so a prepare killed between the flags and a later capture write (the
+        # memory-limit kill, retried by Snakemake) left a scenario the gate skipped on every retry and whose capture
+        # was never written; with the capture first, a kill at any point leaves either the capture or no flags.
+        if persist_capture:
+            self._write_node_inflow_capture(node_inflow)
         # write hydrograph file
         df_node_inflow = hydrograph_frame(node_inflow.inflow_by_node, df_node_locs, lst_outfalls, node_inflow.times_hr)
         sim_id_str = self.scenario.sim_id_str
@@ -354,8 +360,6 @@ class SWMMRunoffModeler:
                 y = col[1]
                 f.write(f"{x},{y}\n")
         self.scenario.log.hyg_locs_created.set(True)
-        if persist_capture:
-            self._write_node_inflow_capture(node_inflow)
         # verifying that all nodes are within the DEM
         xllcorner = rds_dem.x.values.min()  # type: ignore
         yllcorner = rds_dem.y.values.min()  # type: ignore
@@ -901,6 +905,15 @@ def hydrograph_outputs_gate(scenario) -> str:
     _hyg_logged = bool(scenario.log.hyg_timeseries_created.get() and scenario.log.hyg_locs_created.get())
     _hyg_present = scenario.scen_paths.hyg_timeseries.exists() and scenario.scen_paths.hyg_locs.exists()
     if _hyg_logged and _hyg_present:
+        # A scenario whose prepare was killed after the hydrograph flags and before the capture write (written by
+        # a toolkit that set the flags first) is logged, present and capture-less while ``hydro.out`` still exists.
+        # Skipping it would strand it: the default reclaim then removes ``hydro.out`` and nothing can rebuild the
+        # capture. While ``hydro.out`` exists the capture is still writable, so fall through and write it. With
+        # ``hydro.out`` gone this is the post-reclaim re-prep the fast path exists for, and it still skips.
+        _capture = hydrology_capture_path(scenario)
+        _hydro_out = Path(str(scenario.scen_paths.swmm_hydro_inp).replace(".inp", ".out"))
+        if _capture is not None and _hydro_out.exists() and not _capture_openable(_capture):
+            return "fell_through"
         return "skipped"
     if not _hyg_present:
         # THREE rebuild sources, tried in order: hydro.out, the per-node capture, and the event's slice
