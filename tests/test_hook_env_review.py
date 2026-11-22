@@ -30,6 +30,21 @@ WRAPPER = Path(
 
 pytestmark = pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not on PATH")
 
+
+@pytest.fixture(autouse=True)
+def _isolated_user_uv_config(tmp_path, monkeypatch):
+    """Run every subprocess of these tests (toy `uv lock`, the wrapper, its sync) under an EMPTY user uv config.
+
+    The developer's real `~/.config/uv/uv.toml` may set a relative `exclude-newer` span, which moves daily: two toy
+    locks made apart then differ byte for byte and a locked sync of one is refused. `XDG_CONFIG_HOME` is where uv
+    reads the user-level config; every helper here copies `os.environ`, so setting it once reaches them all.
+    """
+    config_home = tmp_path / "empty_user_uv_config_home"
+    (config_home / "uv").mkdir(parents=True)
+    (config_home / "uv" / "uv.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+
 _DAY = 86400
 _HEX16 = re.compile(r"^[0-9a-f]{16}$")
 _SCRUBBED = {"VIRTUAL_ENV", "HHEMT_TY_ENV", "PYTHONPATH", "UV_PROJECT_ENVIRONMENT", "HHEMT_HOOK_ENV_ROOT"}
