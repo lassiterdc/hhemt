@@ -631,8 +631,11 @@ class analysis_config(cfgBaseModel):
         gt=0,
         description=(
             "Time allocation, in minutes, for the analysis-level `consolidate` SLURM rule whose MEMORY is "
-            "set by hpc_mem_allocation_for_analysis_output_consolidation_mb. The default 30 reproduces the "
-            "value that the rule carried as a hardcoded literal, so an analysis config that omits this "
+            "set by hpc_mem_allocation_for_analysis_output_consolidation_mb. The same value is the time "
+            "of the per-member consolidation rule of a sensitivity master, each member's own value "
+            "applying to that member's rule, whose memory is set by "
+            "hpc_mem_allocation_for_sim_output_processing_mb. The default 30 reproduces the "
+            "value that both rules carried as a hardcoded literal, so an analysis config that omits this "
             "field is unchanged. Raise the value when the consolidation fan-in is large, because the cost "
             "of the rule is dominated by whole-population walks whose length scales with the number of "
             "scenarios and not with the size of any single scenario. The field is a plain number and no "
@@ -1013,8 +1016,42 @@ class analysis_config(cfgBaseModel):
         description="Outfalls of SWMM_model that remain outfalls in the coupled model. A free, normal, or fixed "
         "outfall listed here drains as the model says. A TIMESERIES or TIDAL outfall listed here reads the "
         "series the model defines, unchanged for every event. Every outfall of the coupled model must be "
-        "named by an external-boundary water-level record, listed in swmm_outfalls_to_couple, or listed "
-        "here.",
+        "named by an external-boundary water-level record, listed in swmm_outfalls_to_couple, listed "
+        "in swmm_open_water_outfalls, or listed here.",
+    )
+    swmm_open_water_outfalls: list[str] = Field(
+        default_factory=list,
+        description="Outfalls of SWMM_model that drain to open water, where backflow from the water into the "
+        "sewer may occur. Each name is an [OUTFALLS] row of SWMM_model. Every listed outfall receives the "
+        "representation open_water_outfall_representation names, so in one simulation all of them are treated "
+        "alike. A water-level record of the external boundary may also name a listed outfall, and the record "
+        "then drives TRITON's boundary line as the record of any other outfall does. A listed outfall may not "
+        "also be listed in swmm_outfalls_to_couple or swmm_outfalls_to_keep, and may not have a row in "
+        "manhole_table. With the list empty, the default, no outfall is treated differently and every file "
+        "the toolkit writes is identical to the file written before the field existed. A non-empty list "
+        "changes hydraulic results.",
+    )
+    open_water_outfall_representation: Literal["driven_stage", "crown_rim"] = Field(
+        default="driven_stage",
+        description="How each outfall listed in swmm_open_water_outfalls is represented in the coupled model. "
+        "Read only when the list is non-empty. One representation applies to every listed outfall.",
+        json_schema_extra=field_meta(
+            options={
+                "driven_stage": "The outfall stays a SWMM outfall and becomes a head boundary whose stage "
+                "TRITON sets before every SWMM step. The stage is the water-surface elevation of the TRITON "
+                "cell that holds the node, or the outfall's invert when the cell is dry. Water the stage "
+                "pushes into the sewer is taken from that cell. Water the sewer discharges at the outfall "
+                "leaves the modelled domain. Needs a TRITON build that reads the cfg key "
+                "swmm_driven_outfalls, and preparation refuses a build that lacks the key.",
+                "crown_rim": "The outfall is converted to a coupled junction. The rim of the junction is the "
+                "crown of the outfall's outlet conduit, the lowest rim SWMM allows. The diameter of the "
+                "junction is that of a circle of the same area as the total flow area of the outlet conduit, "
+                "counting all barrels, and the loss coefficient is manhole_loss_coefficient. The toolkit "
+                "writes the node's manhole-table row itself. When swmm_node_rim_from_dem is set, "
+                "preparation also exempts the node from the DEM-rim route, and needs a TRITON build that "
+                "reads the cfg key swmm_dem_rim_exempt_nodes.",
+            }
+        ),
     )
     dem_rim_resolution: Literal["full", "processed"] | None = Field(
         None,
@@ -1144,9 +1181,11 @@ class analysis_config(cfgBaseModel):
         ),
     )
     toggle_consolidate_timeseries: bool = Field(
-        default=True,
+        ...,
         description=(
-            "When True, the per-scenario time series of every model family that writes them are consolidated into "
+            "toggle_consolidate_timeseries has no default, so every config states the value, and a config that "
+            "omits the field is refused at load. When True, the per-scenario time series of every model family "
+            "that writes them are consolidated into "
             "the `timeseries` branch of their group inside analysis_datatree.zarr, beside the `summary` branch of "
             "the same group. A sensitivity master holds the series of each member in the `timeseries` branches of "
             "experiment_datatree.zarr. The coupled model writes the groups tritonswmm/swmm_node/timeseries, "
@@ -1158,10 +1197,16 @@ class analysis_config(cfgBaseModel):
             "link series holds `flow(t)`. Each gridded group has a separate elapsed_s axis at the TRITON "
             "reporting step, chunks of about 32 MB, a streamed write, and a read-back that compares the stored "
             "slice with the source block by block. The timeseries_keep_triton_gridded field selects the gridded "
-            "variables kept. Defaults to True, so a run with no key set keeps the series in the consolidated "
-            "store, the durable processed product. Set False to keep summaries only. The per-scenario series "
-            "stores are cleared under the switch toggle_clear_scenario_timeseries_after_consolidation once the "
-            "slice of the scenario has passed the read-back."
+            "variables kept. True keeps the series in the consolidated store, the durable "
+            "processed product. Set False to keep summaries only, so the per-scenario series "
+            "stores are kept and no consolidated copy is written. The one exception is an explicit election. When "
+            "remove_after_processing is a list that names timeseries and clear_raw covers every enabled model, the "
+            "per-scenario series stores are deleted after the summaries are verified, so the run keeps summaries "
+            "only. The value all of remove_after_processing, the default, makes no such deletion. "
+            "With consolidation on, "
+            "the per-scenario series stores are cleared under the switch "
+            "toggle_clear_scenario_timeseries_after_consolidation once the slice of the scenario has passed the "
+            "read-back."
         ),
     )
     toggle_coupling_exchange_flow: bool = Field(
@@ -1318,10 +1363,11 @@ class analysis_config(cfgBaseModel):
             "the model log of the scenario. Requires toggle_consolidate_timeseries, and preflight refuses True "
             "without the toggle. Left unset, the field takes the value of toggle_consolidate_timeseries, so a run "
             "with no key set clears the per-scenario copies after the verified read-back, and with consolidation "
-            "off the stores stay. An explicit False keeps the per-scenario copies. A written cfg_analysis.yaml "
-            "carries the resolved value and never None. The scenario and member directories are also removed "
-            "after a verified copy into the consolidated tree when clear_raw and remove_after_processing are at "
-            "their clearing settings."
+            "off the stores stay unless remove_after_processing is a list that names timeseries and clear_raw "
+            "covers every enabled model. An explicit False keeps the per-scenario copies. A written "
+            "cfg_analysis.yaml carries the resolved value and never None. The scenario and member directories are "
+            "also removed after a verified copy into the consolidated tree when clear_raw and "
+            "remove_after_processing are at their clearing settings."
         ),
         json_schema_extra=field_meta(applies_when=[when("toggle_consolidate_timeseries", True)]),
     )
@@ -1343,8 +1389,8 @@ class analysis_config(cfgBaseModel):
             "coupling-node flag, the per-node statistics, and the run-level variables. The kept names are the "
             "variables that the `timeseries` branches of analysis_datatree.zarr and the bundle carry. Preflight "
             "refuses a name outside the domain of every enabled model family. The field applies even when "
-            "toggle_consolidate_timeseries is off. A pruned variable is gone, and recovering the variable takes "
-            "a re-run."
+            "toggle_consolidate_timeseries is off, until the per-scenario store is deleted under "
+            "remove_after_processing. A pruned variable is gone, and recovering the variable takes a re-run."
         ),
     )
     timeseries_keep_swmm_link: str | list[str] | None = Field(
@@ -1359,15 +1405,17 @@ class analysis_config(cfgBaseModel):
             "statistics, and the run-level variables. The kept names are the variables that "
             "the `timeseries` branches of analysis_datatree.zarr and the bundle carry. Preflight refuses a name "
             "outside the domain of every "
-            "enabled model family. The field applies even when toggle_consolidate_timeseries is off. A pruned "
-            "variable is gone, and recovering the variable takes a re-run."
+            "enabled model family. The field applies even when toggle_consolidate_timeseries is off, until the "
+            "per-scenario store is deleted under remove_after_processing. A pruned variable is gone, and "
+            "recovering the variable takes a re-run."
         ),
     )
     timeseries_keep_triton_gridded: str | list[str] | None = Field(
-        default=None,
+        ...,
         description=(
             "The gridded TRITON surface time-series variables to KEEP in the per-scenario store after the "
-            "summary is written. The store drops the rest, and the summary keeps every statistic. None or blank "
+            "summary is written. The field has no default, so every config states the value. "
+            "The store drops the rest, and the summary keeps every statistic. None or blank "
             "keeps everything. A string names a toolkit set. The set 'all' holds every variable of the class, "
             "and the set 'default' holds every variable except max_flood_depth, unit_discharge_x, and "
             "unit_discharge_y, and the summary keeps the peaks of the excluded variables. "
@@ -1376,8 +1424,9 @@ class analysis_config(cfgBaseModel):
             "statistics, and the run-level variables. The kept names are the variables that "
             "the `timeseries` branches of analysis_datatree.zarr and the bundle carry. Preflight refuses a name "
             "outside the domain of every "
-            "enabled model family. The field applies even when toggle_consolidate_timeseries is off. A pruned "
-            "variable is gone, and recovering the variable takes a re-run."
+            "enabled model family. The field applies even when toggle_consolidate_timeseries is off, until the "
+            "per-scenario store is deleted under remove_after_processing. A pruned variable is gone, and "
+            "recovering the variable takes a re-run."
         ),
     )
     process_output_target_chunksize_mb: int = Field(
@@ -1554,6 +1603,23 @@ class analysis_config(cfgBaseModel):
             "or the clone must descend from the commit that added the key. In container mode the recorded "
             "TRITON commit of the image must equal TRITONSWMM_branch_key and be one of the commits known "
             "to read the key. The setting changes hydraulic results when True."
+        ),
+    )
+    swmm_node_rim_swmm_fallback: bool = Field(
+        default=False,
+        description=(
+            "Applies only with swmm_node_rim_from_dem true and dem_rim_resolution processed, and is refused "
+            "otherwise because the field would change no result. Scenario preparation checks the DEM rim of every "
+            "coupled node against the minimum viable rim. The DEM rim is the DEM cell elevation minus the "
+            "invert. The minimum viable rim is the crown of the highest conduit that ends at the node, above "
+            "the invert. An authored MaxDepth above the crown never makes a node fail. When "
+            "False, the default, a node with a lower DEM rim, or with a DEM cell that gives no rim, stops "
+            "preparation with an error that names each node. When True, each such node keeps the SWMM depth in "
+            "place of the DEM rim, and the scenario records the nodes in dem_rim_swmm_fallback.json beside "
+            "dem_rim_exempt_nodes.txt and raises a warning at preparation. The scenario log carries no line. "
+            "The TRITON build must read the cfg key swmm_dem_rim_exempt_nodes. A DEM rim "
+            "that is too low is not corrected under True. The node is no longer set from the DEM at all, so choose "
+            "True deliberately."
         ),
     )
     one_coupled_inflow_node_per_dem_cell: bool = Field(
@@ -1944,11 +2010,19 @@ class analysis_config(cfgBaseModel):
             "Post-processing reclaim policy. The reclaim fires only after the per-model summary outputs are "
             "verified present and openable on disk. The value none reclaims no artifact, all reclaims every "
             "artifact class, and a list selects classes. The class timeseries names the per-scenario *_tseries "
-            "zarr or nc set, and the process runner never applies the class. With toggle_consolidate_timeseries "
-            "and the clearing switch on, the consolidation deletes the per-scenario series after the read-back "
+            "zarr or nc set. With toggle_consolidate_timeseries on, the process runner leaves the class unapplied and "
+            "the consolidation deletes the per-scenario series after the read-back when the clearing switch is on, "
             "and the runner logs the discharge. With the clearing switch off, the series stay in the per-scenario "
-            "store and the runner logs that. With consolidation off, the series are the processed output and the "
-            "class is skipped with a logged reason. The class raw_swmm_binaries drops out_tritonswmm/swmm/*.out "
+            "store and the runner logs that. With toggle_consolidate_timeseries off, the per-scenario series are "
+            "the processed output and the runner declines the class with a logged reason, including under the "
+            "value all. The one exception is an explicit election. With toggle_consolidate_timeseries off, "
+            "clear_raw covering every enabled model, and this field given as a LIST that names timeseries, the "
+            "process runner deletes the per-scenario series stores of every enabled model after the summaries of "
+            "the scenario are verified present and openable, so no consolidated copy and no per-scenario series "
+            "remain. Preflight refuses this election when the system config sets observation_points, because the "
+            "observation groups of the consolidation read the per-scenario gridded store. The class "
+            "raw_swmm_binaries drops "
+            "out_tritonswmm/swmm/*.out "
             "and never the *.rpt files, because they are live completion predicates. The class is skipped with a "
             "logged reason when clear_raw is none, because eda.raw_byte_identity.compare_swmm_raw needs the raw "
             "binaries that clear_raw governs. The class coupled_rpt truncates out_tritonswmm/swmm/hydraulics.rpt "

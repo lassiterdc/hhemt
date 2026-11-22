@@ -30,6 +30,21 @@ WRAPPER = Path(
 
 pytestmark = pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not on PATH")
 
+
+@pytest.fixture(autouse=True)
+def _isolated_user_uv_config(tmp_path, monkeypatch):
+    """Run every subprocess of these tests (toy `uv lock`, the wrapper, its sync) under an EMPTY user uv config.
+
+    The developer's real `~/.config/uv/uv.toml` may set a relative `exclude-newer` span, which moves daily: two toy
+    locks made apart then differ byte for byte and a locked sync of one is refused. `XDG_CONFIG_HOME` is where uv
+    reads the user-level config; every helper here copies `os.environ`, so setting it once reaches them all.
+    """
+    config_home = tmp_path / "empty_user_uv_config_home"
+    (config_home / "uv").mkdir(parents=True)
+    (config_home / "uv" / "uv.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+
 _DAY = 86400
 _HEX16 = re.compile(r"^[0-9a-f]{16}$")
 _SCRUBBED = {"VIRTUAL_ENV", "HHEMT_TY_ENV", "PYTHONPATH", "UV_PROJECT_ENVIRONMENT", "HHEMT_HOOK_ENV_ROOT"}
@@ -391,6 +406,19 @@ _CONFIG = Path(os.environ.get("HHEMT_REVIEW_PRECOMMIT_CONFIG") or _REPO / ".pre-
 _BASE = "f22181a3"
 _WRAPPER_WORD = "scripts/hook_env.sh"
 
+#: The one deliberate change of an entry's tail since `_BASE`, as `{hook id: (tail at _BASE, tail now)}`, each tail
+#: the text after the interpreter prefix. Commit 8507b964 ("fix: grade the pushed range in the layout version
+#: check") dropped the literal `HEAD~1` from the pre-push range entry, so that the pushed range that pre-commit
+#: exports in PRE_COMMIT_FROM_REF and PRE_COMMIT_TO_REF is graded and not the last commit of the tree the push ran
+#: from. The pair is matched exactly: the entry must carry the base tail and the current tail, so any other edit of
+#: this entry's tail, and any edit of another entry's tail, still fails the comparison below.
+_DELIBERATE_TAIL_CHANGES = {
+    "check-layout-version-a-range": (
+        "python scripts/check_layout_version.py check-a --range HEAD~1",
+        "python scripts/check_layout_version.py check-a --range",
+    ),
+}
+
 
 def _local_hooks(text: str) -> list[dict]:
     return [h for r in yaml.safe_load(text)["repos"] if r.get("repo") == "local" for h in r["hooks"]]
@@ -443,6 +471,9 @@ def test_the_rewrite_changed_each_entry_only_by_its_prefix_and_nothing_else_abou
     What kills it: any edit to an entry's tail or to another field of a hook.
     Second correct implementation: any tail-preserving rewrite with a different wrapper path spelling
     would need the prefix constant changed, but every tail-preserving rewrite passes.
+    Exception, exactly one: `_DELIBERATE_TAIL_CHANGES` names the entry whose tail was changed on purpose after
+    `_BASE` by 8507b964, with its tail at `_BASE` and its tail now; for that entry the base tail must be the
+    first of the pair and the current tail the second, and every other entry is held to equality as before.
     """
     base = _base_hooks()
     now = {h["id"]: h for h in _local_hooks(_CONFIG.read_text(encoding="utf-8"))}
@@ -452,6 +483,9 @@ def test_the_rewrite_changed_each_entry_only_by_its_prefix_and_nothing_else_abou
     for hid, hook in now.items():
         rest_old = old_prefix.sub("", " ".join(base[hid]["entry"].split()))
         rest_new = " ".join(hook["entry"].split()).removeprefix(_WRAPPER_WORD + " ")
+        deliberate = _DELIBERATE_TAIL_CHANGES.get(hid)
+        if deliberate is not None and rest_old == deliberate[0]:
+            rest_old = deliberate[1]
         other_old = {k: v for k, v in base[hid].items() if k != "entry"}
         other_new = {k: v for k, v in hook.items() if k != "entry"}
         if rest_old != rest_new or other_old != other_new:

@@ -74,7 +74,7 @@ def test_unset_clearing_resolves_to_false_when_consolidation_is_off(tmp_path: Pa
     than in a model validator; the resolved value is the same and the test passes.
     """
     cfg = _resolved(tmp_path)
-    assert cfg.toggle_consolidate_timeseries is True, "consolidation is on by default (D24 (a))"
+    assert cfg.toggle_consolidate_timeseries is True, "the stated consolidation toggle resolves to True"
     assert cfg.toggle_clear_scenario_timeseries_after_consolidation is True
     assert _preflight_refusals(cfg) == [], "an analysis that mentions neither key must clear preflight"
     # The off arm, now explicit: with consolidation off the unset clearing key still resolves to False.

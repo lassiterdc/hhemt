@@ -7,6 +7,7 @@
 | [Config filling](config-filling.md) | The order for filling the system and analysis config YAMLs |
 | [Use a runnable SWMM model](using-a-runnable-swmm-model.md) | The single SWMM model that the toolkit splits into the role models, the outfalls to couple, and the TRITON build to pin |
 | [Set manhole values per coupling node](per-node-manhole-values.md) | The manhole table, the fill toggle, the 1 to 1 error and the steps that resolve the error, and the effect on hydraulic results |
+| [Represent outfalls to open water](open-water-outfalls.md) | The list of outfalls that drain to open water, the 2 representations of the outfalls, the TRITON keys that each needs, and the files that preparation writes |
 | [Set observation points and initial conditions](triton-inputs.md) | The points file, the observation interval, the consolidated groups, the labels of a resumed run, and the initial-condition rasters |
 | [Compile the solver](compiling-the-solver.md) | The one-time TRITON-SWMM build for each machine and GPU target, and the cases that call for a rebuild |
 | [Building container images](building-container-images.md) | The Apptainer images for container mode, built with `hhemt build-sifs` |

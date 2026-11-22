@@ -455,7 +455,10 @@ def _build_synthetic_post_processing(*, fname_out, raw_dir, batch_timesteps, ny,
         analysis_paths=SimpleNamespace(analysis_dir=fname_out.parent),
     )
     inst._run = SimpleNamespace(raw_triton_output_dir=lambda model_type: raw_dir)
-    inst._system = SimpleNamespace(processed_dem_rds=rds_dem)
+    # 423c5d6d added `_export_observation_series`, which reads `self._system.cfg_system.observation_points` on
+    # every write. None is the config default (a run without observation points), so the stand-in carries that
+    # and the observation export returns before touching any file; this test's batching assertions are unchanged.
+    inst._system = SimpleNamespace(processed_dem_rds=rds_dem, cfg_system=SimpleNamespace(observation_points=None))
     inst.scen_paths = SimpleNamespace(output_tritonswmm_triton_timeseries=fname_out)
     inst._scenario = SimpleNamespace(
         latest_sim_date=lambda model_type, astype: "2020-01-01",

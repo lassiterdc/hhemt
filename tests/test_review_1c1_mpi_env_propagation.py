@@ -35,6 +35,28 @@ PROBE_WORKFLOW = WORKFLOWS / "mpi-transport-probe.yml"
 RUNNER_SRC = REPO_ROOT / "src" / "hhemt" / "run_simulation_runner.py"
 LAUNCH_SRC = REPO_ROOT / "src" / "hhemt" / "run_simulation.py"
 REAL_BASH = "/bin/bash"
+# Real tools linked into the fingerprint step's stub PATH. The first ten are what the step and its `ompi_info` stub
+# run; `id`, `uname`, `basename` and `readlink` are what a login profile runs, because the step runs under
+# `bash -el`. Measured on Rivanna (/etc/profile and /etc/profile.d/*.sh): without `id` the shell exits 127 at
+# /etc/profile line 31; with `id` alone it exits 127 in /etc/profile.d/modules.sh (`uname`); with `id` and `uname`
+# it exits 127 in /etc/profile.d/which2.sh (`basename`); with `id`, `uname` and `basename` it exits 1; with all four
+# it exits 0. Dropping `readlink` alone gives 1 and dropping any other one of the four gives 127.
+STUB_SYSTEM_TOOLS = (
+    "tee",
+    "timeout",
+    "head",
+    "ls",
+    "env",
+    "grep",
+    "sort",
+    "cat",
+    "nproc",
+    "lscpu",
+    "id",
+    "uname",
+    "basename",
+    "readlink",
+)
 
 
 def _compile_job() -> dict:
@@ -259,6 +281,14 @@ def _fingerprint_run_text() -> str:
     return steps[0]["run"]
 
 
+def _link_system_tools(bin_dir: Path) -> None:
+    """Symlink each real tool of `STUB_SYSTEM_TOOLS` that the host has into `bin_dir`."""
+    for tool in STUB_SYSTEM_TOOLS:
+        found = shutil.which(tool)
+        if found:
+            (bin_dir / tool).symlink_to(found)
+
+
 def _fingerprint_problems(
     run_text: str, tmp_path: Path, ompi_info: str | None, parent_env: dict[str, str], mana_host: bool = False
 ) -> list[str]:
@@ -276,10 +306,7 @@ def _fingerprint_problems(
     run_text = run_text.replace("/sys/class/infiniband", str(ib_dir))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for tool in ("tee", "timeout", "head", "ls", "env", "grep", "sort", "cat", "nproc", "lscpu", "uname"):
-        found = shutil.which(tool)
-        if found:
-            (bin_dir / tool).symlink_to(found)
+    _link_system_tools(bin_dir)
     mpirun = bin_dir / "mpirun"
     mpirun.write_text(f"#!{REAL_BASH}\nexit 0\n")
     mpirun.chmod(mpirun.stat().st_mode | stat.S_IEXEC)

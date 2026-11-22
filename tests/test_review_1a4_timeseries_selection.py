@@ -22,7 +22,14 @@ from tests.fixtures.golden_trees import construct_golden_analysis
 _NODE_COMMON = {"depth", "head", "inflow_flow", "flooding", "volume", "lateral_inflow", "pollutant_conc"}
 _LINK_COMMON = {"flow", "velocity", "link_depth", "link_volume", "link_pollutant_conc"}
 _GRIDDED = {"flood_depth", "max_flood_depth", "unit_discharge_x", "unit_discharge_y"}
-_COUPLING_NODE = {"coupling_exchange_flow", "path3_volume_pos", "path3_volume_neg", "nonconverged_steps"}
+_COUPLING_NODE = {
+    "coupling_exchange_flow",
+    "path3_volume_pos",
+    "path3_volume_neg",
+    "nonconverged_steps",
+    "outfall_stage_m",
+    "outfall_discharge_m3s",
+}
 
 # (kind, family) -> (domain, default), written out from the measured variable table and the developer's rulings
 # for the default set, not computed from the module.

@@ -561,6 +561,165 @@ def test_check_a_range_mode_ignores_an_uncommitted_migration_module(tmp_path: Pa
     assert "no migration module" in out.stderr
 
 
+# ---------------------------------------------------------------------------------------------
+# `check-a --range` GRADES THE PUSHED RANGE, not the tree's HEAD (change 1117-HOOK).
+#
+# MEASURED DEFECT (laptop, 2026-11-17, a checkout whose HEAD is 423c5d6d, the release commit that
+# takes LAYOUT_VERSION 31 -> 34): `check_layout_version.py check-a --range HEAD~1` printed
+# `check-a: FAIL - LAYOUT_VERSION jumped from 31 to 34; each bump must be exactly +1` and exited 1.
+# The pre-push entry carried a literal `HEAD~1` and the range arm read its head version at the
+# literal `HEAD`, so the verdict followed the tree the push ran from and never the commits being
+# pushed: it refused a push that carried no jump at all. check-b resolved its population from
+# PRE_COMMIT_FROM_REF / PRE_COMMIT_TO_REF; these arms hold check-a to the same population.
+#
+# The fixture is built with ONE `git fast-import` so each arm stays inside the 0.15 s budget.
+# ---------------------------------------------------------------------------------------------
+
+_PUSH_ENV_UNSET = {"PRE_COMMIT_FROM_REF": "", "PRE_COMMIT_TO_REF": "", "PRE_COMMIT_REMOTE_NAME": ""}
+
+
+def _make_stepped_repo(tmp_path: Path, versions: list[int]) -> tuple[Path, list[str]]:
+    """A linear `main` of `len(versions)` commits, commit i holding `LAYOUT_VERSION = versions[i]`.
+
+    Every commit's tree carries a `V{v:04d}__m.py` module and `v{v-1}`/`v{v}` fixture directories
+    for EVERY version above the first, so the module and fixture probes pass wherever a bump is
+    +1 and the only thing that can fail a commit is the version step itself. Nothing is checked
+    out: check-a's range arm reads only committed trees, which is the property under test.
+    Returns the repo and the commit shas, oldest first.
+    """
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    files = {}
+    for v in sorted(set(versions[1:])):
+        files[f"src/hhemt/version_migration/versions/V{v:04d}__m.py"] = '"""m"""\n'
+        for n in (v - 1, v):
+            files[f"tests/fixtures/legacy_layouts/v{n}/.keep"] = ""
+    stream = []
+    for i, v in enumerate(versions):
+        tree = {**files, "src/hhemt/version_migration/constants.py": f"LAYOUT_VERSION: int = {v}\n"}
+        stream.append(f"commit refs/heads/main\ncommitter t <t@t> {1700000000 + i} +0000\ndata 2\nc{i}\n")
+        for rel, text in tree.items():
+            stream.append(f"M 100644 inline {rel}\ndata {len(text.encode())}\n{text}\n")
+    subprocess.run(
+        ["git", "fast-import", "--quiet"], cwd=tmp_path, input="".join(stream).encode(), check=True, capture_output=True
+    )
+    shas = subprocess.run(
+        ["git", "rev-list", "--reverse", "main"], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout.split()
+    return tmp_path, shas
+
+
+def _push_range(repo: Path, from_sha: str, to_sha: str, *, remote: str = "") -> subprocess.CompletedProcess:
+    """Run the pre-push entry exactly as the hook runs it: `check-a --range`, no ref, the pair in env."""
+    env = {"PRE_COMMIT_FROM_REF": from_sha, "PRE_COMMIT_TO_REF": to_sha, "PRE_COMMIT_REMOTE_NAME": remote}
+    return _run(repo, "check-a", "--range", env=env)
+
+
+def test_check_a_range_grades_the_pushed_commit_not_the_trees_head(tmp_path: Path) -> None:
+    """RED BEFORE: the tip holds a 31 -> 34 jump, the pushed range holds none, and it must PASS.
+
+    HEAD (c2) is the release-shaped commit that jumps 31 -> 34; the push carries only c0..c1
+    (30 -> 31, exactly +1). The old arm read its head version at the literal `HEAD`, so it never
+    looked at c1 and its verdict followed c2. Asserting the graded commit's own PASS line is what
+    separates "graded c1" from "passed because HEAD happened to agree with something"."""
+    repo, shas = _make_stepped_repo(tmp_path, [30, 31, 34])
+    out = _push_range(repo, shas[0], shas[1])
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "jumped" not in out.stderr
+    assert f"{shas[1][:9]}: PASS - V0031 migration + fixtures present" in out.stdout, out.stdout
+
+
+def test_check_a_range_fails_a_pushed_jump_of_two_whatever_the_trees_head_holds(tmp_path: Path) -> None:
+    """The must-fire half, over a HEAD that holds NO jump: the pushed commit c1 takes 31 -> 33."""
+    repo, shas = _make_stepped_repo(tmp_path, [30, 31, 33, 33])
+    out = _push_range(repo, shas[1], shas[2])
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "jumped from 31 to 33" in out.stderr, out.stderr
+    assert shas[2][:9] in out.stderr, "the failure must name the pushed commit that holds the jump"
+
+
+def test_check_a_range_passes_a_push_of_several_commits_each_bumping_by_one(tmp_path: Path) -> None:
+    """A push of two commits each +1 holds no jump of 2 or more, though its endpoints differ by 2.
+    Grading the endpoints (30 against 32) would refuse a correct release, which is the false block
+    check-b's per-commit walk exists to avoid."""
+    repo, shas = _make_stepped_repo(tmp_path, [30, 31, 32])
+    out = _push_range(repo, shas[0], shas[2])
+    assert out.returncode == 0, out.stdout + out.stderr
+    for sha, v in zip(shas[1:], (31, 32), strict=True):
+        assert f"{sha[:9]}: PASS - V{v:04d} migration + fixtures present" in out.stdout, out.stdout
+
+
+def test_check_a_range_fails_a_jump_that_a_later_commit_does_not_mask(tmp_path: Path) -> None:
+    """A jump of 2 or more in the FIRST commit of a push is still named, though the commit after it
+    steps by exactly 1: no later commit can disarm the walk for an earlier one."""
+    repo, shas = _make_stepped_repo(tmp_path, [30, 32, 33])
+    out = _push_range(repo, shas[0], shas[2])
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "jumped from 30 to 32" in out.stderr and shas[1][:9] in out.stderr, out.stderr
+
+
+def test_check_a_range_unset_environment_grades_the_single_head_commit_that_jumps(tmp_path: Path) -> None:
+    """The documented one-commit default: with no ref pair, `HEAD~1..HEAD`. The population must
+    reach HEAD, which jumps 31 -> 34, and refuse it."""
+    repo, _ = _make_stepped_repo(tmp_path, [30, 31, 34])
+    out = _run(repo, "check-a", "--range", env=_PUSH_ENV_UNSET)
+    assert out.returncode == 1 and "jumped from 31 to 34" in out.stderr, out.stdout + out.stderr
+
+
+def test_check_a_range_unset_environment_passes_a_single_head_commit_that_bumps_by_one(tmp_path: Path) -> None:
+    """The control for the arm above, on a HEAD that does not jump."""
+    repo, _ = _make_stepped_repo(tmp_path, [30, 31, 32])
+    out = _run(repo, "check-a", "--range", env=_PUSH_ENV_UNSET)
+    assert out.returncode == 0 and "V0032 migration + fixtures present" in out.stdout, out.stdout + out.stderr
+
+
+def test_check_a_range_an_explicit_base_still_overrides_the_environment(tmp_path: Path) -> None:
+    """The positional base keeps its meaning (the existing arms pass `--range HEAD~1`): it wins over
+    PRE_COMMIT_FROM_REF, exactly as `check-b`'s does. c1 holds a 30 -> 33 jump. The environment's
+    FROM (c0) would put it in the range; the explicit base `HEAD~1` (c1) excludes it and the push,
+    c1..c2, holds no jump."""
+    repo, shas = _make_stepped_repo(tmp_path, [30, 33, 34])
+    env = {"PRE_COMMIT_FROM_REF": shas[0], "PRE_COMMIT_TO_REF": shas[2], "PRE_COMMIT_REMOTE_NAME": ""}
+    out = _run(repo, "check-a", "--range", "HEAD~1", env=env)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_check_a_range_the_same_environment_without_a_base_reaches_the_jump(tmp_path: Path) -> None:
+    """The must-fire control for the arm above: the identical environment with no positional base
+    grades c0..c2 and must name the 30 -> 33 jump, so the override above is what made it pass."""
+    repo, shas = _make_stepped_repo(tmp_path, [30, 33, 34])
+    out = _push_range(repo, shas[0], shas[2])
+    assert out.returncode == 1 and "jumped from 30 to 33" in out.stderr, out.stdout + out.stderr
+
+
+def test_check_a_range_a_null_from_ref_is_a_new_branch_not_a_misconfiguration(tmp_path: Path) -> None:
+    """A new-branch push: pre-commit's null FROM sentinel must reach a verdict, never the
+    `misconfigured invocation` refusal (the same arm check-b holds)."""
+    repo, shas = _make_stepped_repo(tmp_path, [30, 31])
+    out = _push_range(repo, "0" * 40, shas[1])
+    assert "misconfigured invocation" not in out.stderr and "does not name a commit" not in out.stderr, out.stderr
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_check_a_range_skips_commits_already_reachable_from_the_named_remote(tmp_path: Path) -> None:
+    """`PRE_COMMIT_REMOTE_NAME` names the remote: a commit it already holds was graded by the push
+    that put it there, so re-grading it would refuse a correct merge of a branch that carries it.
+    c1 (30 -> 32, a jump) is on `origin`; the push c0..c2 carries only c2 (32 -> 33)."""
+    repo, shas = _make_stepped_repo(tmp_path, [30, 32, 33])
+    subprocess.run(["git", "update-ref", "refs/remotes/origin/develop", shas[1]], cwd=repo, check=True)
+    out = _push_range(repo, shas[0], shas[2], remote="origin")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "skipped 1 commit(s) already reachable from refs/remotes/origin/*" in out.stdout, out.stdout
+
+
+def test_check_a_range_without_a_named_remote_grades_the_commit_the_remote_would_hold(tmp_path: Path) -> None:
+    """The must-fire control for the arm above: the same range with no remote named grades c1 and
+    names its jump, so the exclusion is what made the arm above pass."""
+    repo, shas = _make_stepped_repo(tmp_path, [30, 32, 33])
+    subprocess.run(["git", "update-ref", "refs/remotes/origin/develop", shas[1]], cwd=repo, check=True)
+    out = _push_range(repo, shas[0], shas[2])
+    assert out.returncode == 1 and "jumped from 30 to 32" in out.stderr, out.stdout + out.stderr
+
+
 def test_check_b_range_mode_refuses_when_the_sentinel_is_absent_at_head(tmp_path: Path) -> None:
     """The fail-closed arm for `_load_sentinel`'s ref branch. Range mode grades a COMMITTED rule
     set, so a HEAD carrying no sentinel has no rule set to grade and the only sound outcome is a
@@ -828,9 +987,15 @@ def test_layout_version_registrations_supply_the_range_predicate() -> None:
         f"{a['pre-commit']['id']} bases on {a['pre-commit']['entry'].split()[-1]!r}; the pre-commit venue grades "
         "the change being committed, and a wider base flags the previous commit's files"
     )
-    assert a["pre-push"]["entry"].split()[-1] == "HEAD~1", (
-        f"{a['pre-push']['id']} bases on {a['pre-push']['entry'].split()[-1]!r}; the pre-push check-a arm grades "
-        "the pushed commit range"
+    # NO LITERAL BASE, as for check-b below (change 1117-HOOK). The entry used to end in `HEAD~1`,
+    # which grades the last commit of the tree the push runs from; the pushed range arrives through
+    # PRE_COMMIT_FROM_REF/PRE_COMMIT_TO_REF, and a literal base in `entry` would override it.
+    # The argv after the script name is EXACTLY `check-a --range`: any literal base, before or
+    # after `--range`, would override PRE_COMMIT_FROM_REF and fails here.
+    argv = a["pre-push"]["entry"].split("check_layout_version.py ")[1].split()
+    assert argv == ["check-a", "--range"], (
+        f"{a['pre-push']['id']} runs `check_layout_version.py {' '.join(argv)}`; the pre-push check-a arm grades "
+        "the pushed range, which comes from the environment and not from a ref in the entry"
     )
 
     # CHECK B is PRE-PUSH ONLY. Done-when 1, stated as data.

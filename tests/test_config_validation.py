@@ -79,6 +79,8 @@ def _minimal_analysis_config_dict(tmp_path: Path) -> dict:
         "open_boundaries": 1,
         "report": {},
         "clear_raw": "none",
+        "toggle_consolidate_timeseries": True,
+        "timeseries_keep_triton_gridded": None,
         "force_rerun": "none",
     }
 

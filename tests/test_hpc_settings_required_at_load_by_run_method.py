@@ -61,6 +61,8 @@ def _config(tmp_path: Path, method: str) -> dict:
         "open_boundaries": 1,
         "report": {},
         "clear_raw": "none",
+        "toggle_consolidate_timeseries": True,
+        "timeseries_keep_triton_gridded": None,
         "force_rerun": "none",
         "hpc_total_job_duration_min": 120,
         _TIME: 60,

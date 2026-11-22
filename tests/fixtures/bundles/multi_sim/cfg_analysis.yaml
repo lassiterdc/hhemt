@@ -59,4 +59,6 @@ static_plot_configs: []
 
 report: {}
 clear_raw: none
+toggle_consolidate_timeseries: true
+timeseries_keep_triton_gridded: null
 force_rerun: none

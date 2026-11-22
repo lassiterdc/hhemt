@@ -201,6 +201,7 @@ See section 6. The compile fields in 4.2 are consistent with it and are not the 
 | `target_processed_output_type` | `zarr` |
 | `run_mode` | `serial` for the multi-sim golden |
 | `clear_raw`, `force_rerun` | `none`, `none` |
+| `toggle_consolidate_timeseries`, `timeseries_keep_triton_gridded` | `true`, `null` (neither has a default) |
 | `report` | `{}` for the multi-sim golden (as observed) |
 
 Input files under `{G}/inputs/` `[CHOICE]`, one per set path field: `watershed.geojson`, `boundary.geojson`, `swmm_model.inp`, `subcatchment_raingage_mapping.csv`, `weather.nc`, and a raster for `DEM_fullres`. The one SWMM model `swmm_model.inp` must declare `FLOW_UNITS CMS` (`config/system.py`, `validate_swmm_model_is_si`, reads the last `FLOW_UNITS` line by SWMM's prefix rules), so it carries an `[OPTIONS]` section with that line. The toolkit renders the TRITON cfg itself, so no cfg input exists. `DEM_fullres` is written as an ESRI ASCII grid with the processed DEM's values under the name `inputs/dem_fullres.asc`: hhemt only needs the file to exist when the config loads, and no golden-backed path re-reads it `[OPEN]` (OI-D3).

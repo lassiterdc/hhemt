@@ -140,6 +140,7 @@ nav:
       - Config filling: how-to/config-filling.md
       - Use a runnable SWMM model: how-to/using-a-runnable-swmm-model.md
       - Set manhole values per coupling node: how-to/per-node-manhole-values.md
+      - Represent outfalls to open water: how-to/open-water-outfalls.md
       - Set observation points and initial conditions: how-to/triton-inputs.md
       - Compile the solver: how-to/compiling-the-solver.md
       - Building container images: how-to/building-container-images.md

@@ -288,34 +288,20 @@ class TRITONSWMM_system:
                 config_path=self.system_config_yaml,
             )
 
-        gpu_suffix = f"_{self.gpu_hardware}" if self.gpu_compilation_backend and self.gpu_hardware else ""
         # Initialize paths with backend split
         self.sys_paths = SysPaths(
             dem_processed=system_dir / f"elevation_{self.cfg_system.target_dem_resolution:.2f}m.dem",
             mannings_processed=system_dir / f"mannings_{self.cfg_system.target_dem_resolution:.2f}m.dem",
             # TRITON-SWMM build dirs (coupled model)
             TRITONSWMM_build_dir_cpu=tritonswmm_dir / "build_tritonswmm_cpu",
-            TRITONSWMM_build_dir_gpu=(
-                tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}" if self.gpu_compilation_backend else None
-            ),
             # TRITON-only build dirs (no SWMM coupling)
             TRITON_build_dir_cpu=tritonswmm_dir / "build_triton_cpu",
-            TRITON_build_dir_gpu=(
-                tritonswmm_dir / f"build_triton_gpu{gpu_suffix}" if self.gpu_compilation_backend else None
-            ),
             # SWMM standalone build dir
             SWMM_build_dir=(swmm_dir if (self.cfg_system.toggle_swmm_model and swmm_dir) else None),
             # Compilation artifacts (shared across build types)
             compilation_script_cpu=system_dir / "compile_cpu.sh",
-            compilation_script_gpu=(
-                system_dir / f"compile_gpu{gpu_suffix}.sh" if self.gpu_compilation_backend else None
-            ),
             compilation_logfile_cpu=(tritonswmm_dir / "build_tritonswmm_cpu" / "compilation.log"),
-            compilation_logfile_gpu=(
-                tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}" / "compilation.log"
-                if self.gpu_compilation_backend
-                else None
-            ),
+            **self._gpu_sys_path_entries(),
             # Backwards compatibility aliases (point to TRITON-SWMM CPU versions)
             TRITON_build_dir=tritonswmm_dir / "build_tritonswmm_cpu",
             compilation_logfile=tritonswmm_dir / "build_tritonswmm_cpu" / "compilation.log",
@@ -360,6 +346,48 @@ class TRITONSWMM_system:
             from hhemt.version_migration.state import stamp_new_target
 
             stamp_new_target(self.cfg_system.system_directory, LAYOUT_VERSION, mode="construction")
+
+    def _gpu_sys_path_entries(self) -> dict[str, Path | None]:
+        """The ``SysPaths`` fields that depend on the GPU pair, derived from the current pair.
+
+        One source of the GPU path rule, shared by ``__init__`` and
+        :meth:`assign_gpu_target`. Every entry is ``None`` when no
+        ``gpu_compilation_backend`` is set; otherwise the build directories, compile script
+        and log carry a ``_{gpu_hardware}`` suffix when the hardware is known.
+        """
+        system_dir = self.cfg_system.system_directory
+        tritonswmm_dir = self.cfg_system.TRITONSWMM_software_directory
+        assert tritonswmm_dir is not None  # __init__ refuses None before it reaches here
+        gpu_suffix = f"_{self.gpu_hardware}" if self.gpu_compilation_backend and self.gpu_hardware else ""
+        has_gpu = bool(self.gpu_compilation_backend)
+        return {
+            "TRITONSWMM_build_dir_gpu": tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}" if has_gpu else None,
+            "TRITON_build_dir_gpu": tritonswmm_dir / f"build_triton_gpu{gpu_suffix}" if has_gpu else None,
+            "compilation_script_gpu": system_dir / f"compile_gpu{gpu_suffix}.sh" if has_gpu else None,
+            "compilation_logfile_gpu": (
+                tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}" / "compilation.log" if has_gpu else None
+            ),
+        }
+
+    def assign_gpu_target(
+        self,
+        gpu_hardware: str | None,
+        gpu_compilation_backend: Literal["HIP", "CUDA"] | None,
+        additional_modules: str | None,
+    ) -> None:
+        """Assign the GPU pair and modules to this system AND recompute its GPU ``sys_paths``.
+
+        ``sys_paths`` is derived at construction, so assigning ``gpu_compilation_backend``
+        afterwards by plain attribute leaves ``TRITONSWMM_build_dir_gpu`` at ``None`` and the
+        compile then dereferences it (``AttributeError`` at ``build_dir.parent``). The
+        sensitivity driver, which injects the primary ensemble partition's pair onto the
+        system the analysis constructed, calls this instead.
+        """
+        self.gpu_hardware = gpu_hardware
+        self.gpu_compilation_backend = gpu_compilation_backend
+        self.additional_modules = additional_modules
+        for name, value in self._gpu_sys_path_entries().items():
+            setattr(self.sys_paths, name, value)
 
     @property
     def analysis(self) -> "TRITONSWMM_analysis":

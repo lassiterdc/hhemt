@@ -29,7 +29,12 @@ WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 COMPILE_WORKFLOW = WORKFLOWS / "compile-tests.yml"
 
 REAL_BASH = "/bin/bash"
-SYSTEM_TOOLS = ("tee", "timeout", "head")  # tools the step uses that are not under test
+# Tools the step uses that are not under test (`tee`, `timeout`, `head`), then the tools a login profile runs, because
+# the step runs under `bash -el`. Measured on Rivanna: without `id` the shell exits 127 at /etc/profile line 31; with
+# `id` alone it stops in /etc/profile.d/modules.sh (127); with `id` and `uname` in which2.sh (127); with `id`, `uname`
+# and `basename` it exits 1; with all four it exits 0. Dropping `readlink` alone gives 1 and dropping any other one of
+# the four gives 127.
+SYSTEM_TOOLS = ("tee", "timeout", "head", "id", "uname", "basename", "readlink")
 
 
 def _compile_job_steps() -> list[dict]:

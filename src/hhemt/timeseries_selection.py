@@ -15,7 +15,9 @@ The domain is a CLOSED table, evaluated from the writers. Regenerate it with::
 
 plus ``coupling_exchange_flow``, which the coupled node store gains when ``toggle_coupling_exchange_flow`` is on, the
 three per-interval path-3 variables (``path3_volume_pos``, ``path3_volume_neg``, ``nonconverged_steps``) it gains when
-the coupling diagnostics are on, and the two pollutant series a water-quality model adds.
+the coupling diagnostics are on, the two per-interval open-water outfall series (``outfall_stage_m``,
+``outfall_discharge_m3s``) it gains when the analysis lists a driven-stage outfall, and the two pollutant series a
+water-quality model adds.
 
 ``"default"`` is family-conditional. Gridded: every variable except ``max_flood_depth``, ``unit_discharge_x`` and
 ``unit_discharge_y`` (their peaks live in the summary). SWMM node of the coupled family: every variable except
@@ -95,6 +97,9 @@ FAMILIES_BY_KIND: dict[str, tuple[str, ...]] = {
 #: The per-interval path-3 account the coupled node store gains for the coupling diagnostics (T1b); selectable like
 #: ``coupling_exchange_flow``. Spelled here, not imported, so this module stays free of the processing import graph.
 _COUPLING_DIAGNOSTIC_NODE = ("path3_volume_pos", "path3_volume_neg", "nonconverged_steps")
+#: The per-interval stage and discharge of a driven-stage open-water outfall, which the coupled node store gains when
+#: ``swmm_open_water_outfalls`` lists one; selectable like ``coupling_exchange_flow``.
+_OPEN_WATER_OUTFALL_NODE = ("outfall_stage_m", "outfall_discharge_m3s")
 _NODE_COMMON = ("depth", "head", "inflow_flow", "flooding", "volume", "lateral_inflow", "pollutant_conc")
 _LINK_COMMON = ("flow", "velocity", "link_depth", "link_volume", "link_pollutant_conc")
 _GRIDDED = ("flood_depth", "max_flood_depth", "unit_discharge_x", "unit_discharge_y")
@@ -102,7 +107,12 @@ _SYSTEM = tuple(LST_SWMM_SYSTEM_SERIES)
 
 #: (kind, family) -> every selectable variable, in a fixed order.
 DOMAIN: dict[tuple[str, str], tuple[str, ...]] = {
-    ("swmm_node", "tritonswmm"): (*_NODE_COMMON, "coupling_exchange_flow", *_COUPLING_DIAGNOSTIC_NODE),
+    ("swmm_node", "tritonswmm"): (
+        *_NODE_COMMON,
+        "coupling_exchange_flow",
+        *_COUPLING_DIAGNOSTIC_NODE,
+        *_OPEN_WATER_OUTFALL_NODE,
+    ),
     ("swmm_node", "swmm_only"): _NODE_COMMON,
     ("swmm_link", "tritonswmm"): (*_LINK_COMMON, "capacity_setting"),
     ("swmm_link", "swmm_only"): (*_LINK_COMMON, "capacity"),

@@ -553,7 +553,7 @@ def _members_for(tmp_path: Path, monkeypatch, master_yaml: dict, sweep: dict) ->
 
     monkeypatch.setattr(sa.anlysis, "TRITONSWMM_analysis", fake_analysis)
     master = SimpleNamespace(
-        unique_system_targets=[SimpleNamespace(analysis_ids=["0"], system="sys")],
+        unique_system_targets=[SimpleNamespace(analysis_ids=["0"], system="sys", member_systems={})],
         df_setup=pd.DataFrame({f"analysis.{k}": [v] for k, v in sweep.items()}, index=pd.Index(["0"])),
         member_prefix="member_",
         members_dir=tmp_path / "members",

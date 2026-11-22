@@ -213,6 +213,17 @@ select = [
 
 [tool.uv]
 package = true
+# uv.lock is pinned to a fixed cooldown date, not left to the developer's global uv config.
+# A global `exclude-newer = "3 days"` (a relative span) moves every day, so `uv sync --locked`
+# and `uv lock --check` see a cutoff that differs from the one the lock was made under and
+# refuse with "The lockfile at uv.lock needs to be updated"; scripts/hook_env.sh runs that
+# sync with --quiet, so every hook that starts through it then exits 1 with no message. A
+# project setting takes precedence over the user file, and uv records it in uv.lock's
+# [options] table. The date is the first instant after the lockfile's last change (commit
+# 423c5d6d, 2026-11-16 16:52Z), so no resolved package moved when the pin was added.
+# Move it only when you deliberately re-lock to take newer releases: set it to the re-lock
+# time, run `uv lock`, and review the diff of uv.lock like any dependency change.
+exclude-newer = "2026-11-16T17:00:00Z"
 
 [tool.ty.environment]
   # Two tiers, per ### D144. UNSET -> .venv, the REPORTING stack (numpy 2.x / pandas 3.x),

@@ -2,7 +2,7 @@
 """CI check enforcing the version-migration discipline.
 
 Usage:
-    python scripts/check_layout_version.py check-a [--range] [base_ref=main]
+    python scripts/check_layout_version.py check-a [--range] [base_ref]
     python scripts/check_layout_version.py check-b [--range [--to REF]] [base_ref]
     python scripts/check_layout_version.py check-c [base_ref=main]
     python scripts/check_layout_version.py --stamp {path} --why {text}
@@ -16,9 +16,10 @@ NAME THE REF WHEN YOU RUN A CHECK AS A POST-CONDITION. Without `--range`, `check
 bare `check-b` measures the whole branch since it left `main`, not the change in front of
 you. A branch that carries an unrelated layout-relevant change older than your edit fails a
 bare `check-b` for that change while the venue that gates your push passes. The gating venues
-are in `.pre-commit-config.yaml`: `check-a HEAD` at commit, and `check-a --range HEAD~1` and
+are in `.pre-commit-config.yaml`: `check-a HEAD` at commit, and `check-a --range` and
 `check-b --range` at push (the range comes from the PRE_COMMIT_FROM_REF and PRE_COMMIT_TO_REF
-that pre-commit exports). Run the form the venue runs, with its ref spelled out.
+that pre-commit exports, and is the one-commit `HEAD~1..HEAD` when they are unset). Run the
+form the venue runs, with its ref spelled out when you are not inside a push.
 
 `--stamp` is the remedy GATE rather than a check: it APPENDS one
 `non_breaking_allowlist` row carrying the changed file's sha256 and the
@@ -574,8 +575,11 @@ def _file_content_hash_at(ref: str, rel: str) -> str | None:
     return hashlib.sha256(data).hexdigest()
 
 
-def _commits_in_range(from_ref: str, to_ref: str, *, exclude_remote: str = "") -> list[str]:
-    """Full shas of the commits in `from_ref..to_ref`, OLDEST FIRST.
+def _range_rows(from_ref: str, to_ref: str, *, exclude_remote: str = "") -> list[list[str]]:
+    """`[sha, *parent_shas]` for each commit of `from_ref..to_ref`, OLDEST FIRST.
+
+    One `git rev-list --parents` call: the walk that grades each commit needs its parents as well
+    as its sha, and a per-commit call for them is paid on every commit of a push.
 
     `--reverse` is load-bearing rather than cosmetic: the walk reports failures in the order
     a reviewer reading the push will meet them, and a reversal bug would make a multi-commit
@@ -587,11 +591,20 @@ def _commits_in_range(from_ref: str, to_ref: str, *, exclude_remote: str = "") -
     only: the bare `--remotes` would also drop commits reachable from some OTHER remote, and
     with no name at all it would drop the one commit a manual run grades.
     """
-    args = ["rev-list", "--reverse", f"{from_ref}..{to_ref}"]
+    args = [
+        "rev-list",
+        "--reverse",
+        "--parents",
+        f"{from_ref}..{to_ref}",
+    ]
     if exclude_remote:
         args += ["--not", f"--remotes={exclude_remote}"]
-    out = _git(*args)
-    return [line.strip() for line in out.splitlines() if line.strip()]
+    return [line.split() for line in _git(*args).splitlines() if line.strip()]
+
+
+def _commits_in_range(from_ref: str, to_ref: str, *, exclude_remote: str = "") -> list[str]:
+    """Full shas of the commits in `from_ref..to_ref`, OLDEST FIRST. See `_range_rows`."""
+    return [row[0] for row in _range_rows(from_ref, to_ref, exclude_remote=exclude_remote)]
 
 
 def _commit_parent(commit: str) -> str | None:
@@ -736,30 +749,23 @@ def _unsigned_carried_files(
     ]
 
 
-def _merge_parent_shas(range_mode: bool) -> list[str]:
-    """Every parent of the merge being graded, or `[]` when no merge is being graded.
+def _merge_parent_shas() -> list[str]:
+    """Every parent of the merge IN PROGRESS, or `[]` when no merge is in progress.
 
     A MERGE is graded against the HIGHEST `LAYOUT_VERSION` among its parents, not the first
     parent's: a back-merge of a develop two or more bumps ahead carries those bumps from the
     OTHER parent, and the first-parent-only comparison reads them as one illegal jump.
 
-    Two venues, two sources, because they hold different state:
+    This is the PENDING-CHANGE venue's source (pre-commit): the merge is IN PROGRESS, so `HEAD` is
+    still the first parent and the others are listed in `MERGE_HEAD`, one sha per line (an octopus
+    merge lists several). `git rev-parse -q --verify MERGE_HEAD` would return the FIRST line only,
+    so the file is read. `--git-path` resolves it in a linked worktree, where `.git` is a file
+    and `.git/MERGE_HEAD` is no path at all. A clean merge fires `pre-merge-commit`, not
+    `pre-commit`, so this arm is reached by a conflicted or `--no-commit` merge.
 
-    * pending-change venue (pre-commit): the merge is IN PROGRESS, so `HEAD` is still the first
-      parent and the others are listed in `MERGE_HEAD`, one sha per line (an octopus merge
-      lists several). `git rev-parse -q --verify MERGE_HEAD` would return the FIRST line only,
-      so the file is read. `--git-path` resolves it in a linked worktree, where `.git` is a
-      file and `.git/MERGE_HEAD` is no path at all. A clean merge fires `pre-merge-commit`, not
-      `pre-commit`, so this arm is reached by a conflicted or `--no-commit` merge.
-    * range venue (pre-push): the merge is a COMMIT, so its parents are `HEAD`'s.
+    The range venue (pre-push) does not call this: a merge there is a COMMIT, and `_check_a_range`
+    reads that commit's own parents.
     """
-    if range_mode:
-        try:
-            fields = _git("rev-list", "--parents", "-n", "1", "HEAD", suppress_stderr=True).split()
-        except subprocess.CalledProcessError:
-            return []
-        parents = fields[1:]
-        return parents if len(parents) >= 2 else []
     try:
         raw = _git("rev-parse", "--git-path", "MERGE_HEAD", suppress_stderr=True).strip()
     except subprocess.CalledProcessError:
@@ -770,29 +776,23 @@ def _merge_parent_shas(range_mode: bool) -> list[str]:
     return merge_head.read_text().split()
 
 
-def check_a(base_ref: str, *, range_mode: bool = False) -> int:
-    resolved_base, verdict = _base_ref_or_verdict(base_ref, "check-a")
-    if verdict is not None:
-        return verdict
-    base_v = _layout_version_at(resolved_base)
-    merge_parents = _merge_parent_shas(range_mode)
-    if merge_parents:
-        base_v = max([base_v, *(_layout_version_at(sha) for sha in merge_parents)])
-    # SAME VENUE SPLIT AS check_b, and it is not optional here either. Every read below is a
-    # WORKING-TREE read at default settings: the version, the migration-module glob, and the
-    # two fixture-directory probes. At a range venue that is wrong in both directions.
-    # Measured at 32be36e2 with an UNCOMMITTED bump to 23 on a push carrying 21->22:
-    # `check-a HEAD~1` reported `FAIL - LAYOUT_VERSION jumped from 21 to 23`, blocking a push
-    # that carries neither 23 nor a jump -- a false BLOCK relocated from check_b rather than
-    # removed. The module and fixture probes fail the other way: an UNCOMMITTED module or
-    # fixture directory would satisfy a check about a pushed commit, which is a false PASS.
-    head_v = _layout_version_at("HEAD") if range_mode else _layout_version_at_head()
+def _grade_layout_step(base_v: int, head_v: int, *, is_merge: bool, probe, tag: str = "") -> int:
+    """Grade ONE LAYOUT_VERSION step, `base_v` -> `head_v`, and return 0 (pass) or 1 (fail).
+
+    The one body both venues share: the pending-change venue grades the working tree against a
+    base, and the range venue grades each pushed commit against its own parents. They differ in
+    exactly two things and both arrive as arguments rather than as branches in here: `probe`
+    returns `(has_module, has_from_fixture, has_to_fixture)` read from the venue's own source (the
+    filesystem at pre-commit, the graded commit's COMMITTED tree at pre-push), and `tag` prefixes
+    every message with the graded commit's sha at the range venue. `is_merge` arms the refusal of a
+    merge result below its highest parent.
+    """
     if head_v == base_v:
-        print(f"check-a: LAYOUT_VERSION unchanged ({head_v}); pass")
+        print(f"check-a: {tag}LAYOUT_VERSION unchanged ({head_v}); pass")
         return 0
-    if merge_parents and head_v < base_v:
+    if is_merge and head_v < base_v:
         print(
-            f"check-a: FAIL - the merge result's LAYOUT_VERSION {head_v} is below its higher "
+            f"check-a: {tag}FAIL - the merge result's LAYOUT_VERSION {head_v} is below its higher "
             f"parent's {base_v}; a merge must not undo a shipped bump (resolve it to keep "
             f"{base_v} or higher)",
             file=sys.stderr,
@@ -800,42 +800,152 @@ def check_a(base_ref: str, *, range_mode: bool = False) -> int:
         return 1
     if head_v != base_v + 1:
         print(
-            f"check-a: FAIL - LAYOUT_VERSION jumped from {base_v} to {head_v}; "
+            f"check-a: {tag}FAIL - LAYOUT_VERSION jumped from {base_v} to {head_v}; "
             f"each bump must be exactly +1 (write {head_v - base_v} migrations instead)",
             file=sys.stderr,
         )
         return 1
-    if range_mode:
-        module_names = _tree_names_at("HEAD", VERSIONS_RELPATH)
-        fixture_names = _tree_names_at("HEAD", FIXTURES_RELPATH)
-        has_module = any(re.fullmatch(rf"V{head_v:04d}__.*\.py", n) for n in module_names)
-        has_from_fixture = f"v{base_v}" in fixture_names
-        has_to_fixture = f"v{head_v}" in fixture_names
-    else:
-        has_module = next(VERSIONS_DIR.glob(f"V{head_v:04d}__*.py"), None) is not None
-        has_from_fixture = (FIXTURES_DIR / f"v{base_v}").is_dir()
-        has_to_fixture = (FIXTURES_DIR / f"v{head_v}").is_dir()
+    has_module, has_from_fixture, has_to_fixture = probe(base_v, head_v)
     if not has_module:
         print(
-            f"check-a: FAIL - LAYOUT_VERSION bumped to {head_v} but no migration module "
+            f"check-a: {tag}FAIL - LAYOUT_VERSION bumped to {head_v} but no migration module "
             f"V{head_v:04d}__*.py exists in {VERSIONS_DIR}",
             file=sys.stderr,
         )
         return 1
     if not has_from_fixture:
         print(
-            f"check-a: FAIL - fixture {FIXTURES_DIR / f'v{base_v}'} (FROM side) missing",
+            f"check-a: {tag}FAIL - fixture {FIXTURES_DIR / f'v{base_v}'} (FROM side) missing",
             file=sys.stderr,
         )
         return 1
     if not has_to_fixture:
         print(
-            f"check-a: FAIL - fixture {FIXTURES_DIR / f'v{head_v}'} (TO side) missing",
+            f"check-a: {tag}FAIL - fixture {FIXTURES_DIR / f'v{head_v}'} (TO side) missing",
             file=sys.stderr,
         )
         return 1
-    print(f"check-a: PASS - V{head_v:04d} migration + fixtures present")
+    print(f"check-a: {tag}PASS - V{head_v:04d} migration + fixtures present")
     return 0
+
+
+def _check_a_range(from_ref: str, to_ref: str) -> int:
+    """Check A over a COMMIT RANGE, ONE COMMIT AT A TIME -- the population is `from_ref..to_ref`.
+
+    THE POPULATION is the pushed commits, normally the `PRE_COMMIT_FROM_REF`/`PRE_COMMIT_TO_REF`
+    pair pre-commit exports to a pre-push hook (see `_resolve_push_population`), exactly as
+    `_check_b_range` takes it. MEASURED DEFECT this replaces (laptop, a checkout whose HEAD was
+    423c5d6d, the release commit taking LAYOUT_VERSION 31 -> 34): the previous range arm read its
+    head version at the literal `HEAD` and its entry carried a literal `HEAD~1`, so the verdict
+    followed the tree the push ran from and printed `jumped from 31 to 34` for a push that carried
+    no jump at all.
+
+    WHY A PER-COMMIT WALK AND NOT ONE `from_ref` VS `to_ref` COMPARISON. The rule is "each bump is
+    exactly +1". A push of three commits at 30 -> 31 -> 32 -> 33 obeys it, yet its endpoints differ
+    by 3, so an endpoint comparison would refuse a correct release; and it would also pass a
+    +1/-1 pair that nets to zero. Each commit is graded against ITS OWN parents, so a jump of 2 or
+    more is named at the commit that holds it, whatever its neighbours do. This is the property
+    `_check_b_range` already has for the same reason.
+
+    EVERYTHING IS READ FROM THE GRADED COMMIT, never the worktree: the version, and the migration
+    module and fixture-directory probes (`_tree_names_at`). An uncommitted module or bump in the
+    tree the push runs from can neither rescue nor sink a pushed commit. Measured at 32be36e2 with
+    an UNCOMMITTED bump to 23 on a push carrying 21->22: a worktree read reported
+    `jumped from 21 to 23` (a false BLOCK), and an uncommitted module satisfied a check about a
+    pushed commit (a false PASS).
+
+    THE WALK COVERS THE WHOLE OF `from_ref..to_ref`, side branches included: each non-merge commit is
+    graded against its own parent and each MERGE against the HIGHEST version over ALL its parents
+    (the first parent alone reads the other parents' bumps as one illegal jump), the same rule the
+    pending-change venue applies to a merge in progress. A jump of 2 or more on a side branch that
+    reaches the pushed history only through a merge is therefore named at the commit that holds it.
+
+    A TWO-REF PUSH GRADES ONE REF. pre-commit's `_pre_push_ns` returns after the first ref that has
+    commits to push, so a push of two refs runs this hook once, for that ref's pair; the second ref's
+    commits are not graded here. This is inherited pre-commit behaviour and not a property of this
+    function; check-b has the same consequence. The pre-commit venue (`check-a HEAD`) graded each
+    commit when it was made.
+
+    THE REMOTE EXCLUSION is `_check_b_range`'s: when `PRE_COMMIT_REMOTE_NAME` is non-empty, commits
+    already reachable from `refs/remotes/{name}/*` were graded by the push that put them there and
+    are skipped; unset or empty grades the whole range. ROOT COMMITS are skipped for the reason
+    `_base_ref_or_verdict` gives at an unborn HEAD.
+
+    WHAT PRE-COMMIT SUPPLIES, read from `pre_commit/commands/hook_impl.py::_pre_push_ns`: a DELETED
+    ref (local sha all zeros) is skipped by pre-commit and never reaches this hook; a NEW branch
+    exports the commit before the first commit the remote lacks as FROM (a null FROM reaches here
+    only from a manual run, and `_base_ref_or_verdict` reads it as absence of history, as for
+    check-b); SEVERAL refs in one push yield ONE pair, the first ref that has commits to push.
+    """
+    remote = os.environ.get(PRE_PUSH_REMOTE_ENV, "").strip()
+    rows = _range_rows(from_ref, to_ref, exclude_remote=remote)
+    if remote:
+        skipped = len(_range_rows(from_ref, to_ref)) - len(rows)
+        print(
+            f"check-a: {from_ref}..{to_ref}: skipped {skipped} commit(s) already reachable from "
+            f"refs/remotes/{remote}/*; grading {len(rows)}"
+        )
+    if not rows:
+        print(f"check-a: {from_ref}..{to_ref}: no commits to grade; pass")
+        return 0
+    # A linear push reads each commit's version twice (as a commit, then as the next one's parent),
+    # and the hook runs once per push, so the reads are memoised for the walk.
+    versions: dict[str, int] = {}
+
+    def version_at(ref: str) -> int:
+        if ref not in versions:
+            versions[ref] = _layout_version_at(ref)
+        return versions[ref]
+
+    failed = 0
+    unchanged: list[int] = []
+    for commit, *parents in rows:
+        if not parents:
+            print(f"check-a: {_short(commit)}: no in-repo predecessor (root commit); skipped")
+            continue
+        if (head_v := version_at(commit)) == (base_v := max(version_at(p) for p in parents)):
+            # A commit that leaves the version alone has nothing to grade; one summary line below
+            # names them, so a push of fifty such commits prints one line and not fifty.
+            unchanged.append(head_v)
+            continue
+
+        def probe(base_v: int, head_v: int, c: str = commit) -> tuple[bool, bool, bool]:
+            module_names = _tree_names_at(c, VERSIONS_RELPATH)
+            fixture_names = _tree_names_at(c, FIXTURES_RELPATH)
+            return (
+                any(re.fullmatch(rf"V{head_v:04d}__.*\.py", n) for n in module_names),
+                f"v{base_v}" in fixture_names,
+                f"v{head_v}" in fixture_names,
+            )
+
+        failed |= _grade_layout_step(base_v, head_v, is_merge=len(parents) > 1, probe=probe, tag=f"{_short(commit)}: ")
+    if unchanged:
+        print(f"check-a: LAYOUT_VERSION unchanged ({unchanged[-1]}); pass ({len(unchanged)} of {len(rows)} commit(s))")
+    return failed
+
+
+def check_a(base_ref: str, *, range_mode: bool = False, to_ref: str = "HEAD") -> int:
+    resolved_base, verdict = _base_ref_or_verdict(base_ref, "check-a")
+    if verdict is not None:
+        return verdict
+    if range_mode:
+        return _check_a_range(resolved_base, to_ref)
+    base_v = _layout_version_at(resolved_base)
+    merge_parents = _merge_parent_shas()
+    if merge_parents:
+        base_v = max([base_v, *(_layout_version_at(sha) for sha in merge_parents)])
+    # The pending-change venue reads the WORKING TREE: the version, the migration-module glob and
+    # the two fixture-directory probes. (The range venue reads none of them; see `_check_a_range`.)
+    head_v = _layout_version_at_head()
+
+    def probe(base_v: int, head_v: int) -> tuple[bool, bool, bool]:
+        return (
+            next(VERSIONS_DIR.glob(f"V{head_v:04d}__*.py"), None) is not None,
+            (FIXTURES_DIR / f"v{base_v}").is_dir(),
+            (FIXTURES_DIR / f"v{head_v}").is_dir(),
+        )
+
+    return _grade_layout_step(base_v, head_v, is_merge=bool(merge_parents), probe=probe)
 
 
 def check_b(base_ref: str, *, range_mode: bool = False, to_ref: str = "HEAD") -> int:
@@ -1432,6 +1542,7 @@ def stamp_allowlist_row(path_arg: str, why: str | None, at: str | None = None) -
     return 0
 
 
+CHECK_A_DEFAULT_BASE = "main"
 CHECK_B_DEFAULT_BASE = "main"
 PRE_PUSH_FROM_ENV = "PRE_COMMIT_FROM_REF"
 PRE_PUSH_TO_ENV = "PRE_COMMIT_TO_REF"
@@ -1440,8 +1551,12 @@ PRE_PUSH_DEFAULT_FROM = "HEAD~1"
 PRE_PUSH_DEFAULT_TO = "HEAD"
 
 
-def _resolve_check_b_population(base_ref: str | None, to_ref: str | None, range_mode: bool) -> tuple[str, str]:
-    """`(from_ref, to_ref)` for check-b, with the RANGE venue's population from the environment.
+def _resolve_push_population(base_ref: str | None, to_ref: str | None, range_mode: bool) -> tuple[str, str]:
+    """`(from_ref, to_ref)` for check-a and check-b, with the RANGE venue's population from the environment.
+
+    BOTH CHECKS SHARE THIS FUNCTION on purpose: two resolvers would let the two pre-push entries
+    grade two different populations of one push. check-a's entry used to carry a literal `HEAD~1`
+    and so graded the last commit of the tree the push ran from (change 1117-HOOK).
 
     THE ENTRY CARRIES NO REF, and this function is why. pre-commit exports
     `PRE_COMMIT_FROM_REF`/`PRE_COMMIT_TO_REF` to a pre-push hook, and reading them HERE -- in
@@ -1500,14 +1615,18 @@ def main() -> int:
     # keeps every existing invocation's failure loud (`a subcommand is required`).
     sub = parser.add_subparsers(dest="cmd", required=False)
     a = sub.add_parser("check-a")
-    a.add_argument("base_ref", nargs="?", default="main")
+    a.add_argument("base_ref", nargs="?", default=None)
     a.add_argument(
         "--range",
         action="store_true",
         dest="range_mode",
-        help="grade the COMMIT RANGE base..HEAD instead of base..worktree. Required at any "
-        "range-based venue (pre-push, CI, a clean-checkout run): the default reads the "
-        "version, the migration module and the fixtures from the WORKING TREE.",
+        help="grade the COMMIT RANGE base_ref..PRE_COMMIT_TO_REF one commit at a time instead of "
+        "base..worktree. Required at any range-based venue (pre-push, CI, a clean-checkout run): "
+        "the default reads the version, the migration module and the fixtures from the WORKING "
+        "TREE. The population defaults to the ref pair pre-commit exports "
+        "(PRE_COMMIT_FROM_REF/PRE_COMMIT_TO_REF), and to the safe one-commit HEAD~1..HEAD when "
+        "those are unset; an explicit base_ref overrides PRE_COMMIT_FROM_REF. Without --range "
+        "base_ref defaults to main.",
     )
     b = sub.add_parser("check-b")
     b.add_argument("base_ref", nargs="?", default=None)
@@ -1539,9 +1658,12 @@ def main() -> int:
     if args.cmd is None:
         parser.error("a subcommand is required unless --stamp is given")
     if args.cmd == "check-a":
-        return check_a(args.base_ref, range_mode=args.range_mode)
+        if args.range_mode:
+            base, to = _resolve_push_population(args.base_ref, None, True)
+            return check_a(base, range_mode=True, to_ref=to)
+        return check_a(args.base_ref or CHECK_A_DEFAULT_BASE)
     elif args.cmd == "check-b":
-        base, to = _resolve_check_b_population(args.base_ref, args.to_ref, args.range_mode)
+        base, to = _resolve_push_population(args.base_ref, args.to_ref, args.range_mode)
         return check_b(base, range_mode=args.range_mode, to_ref=to)
     elif args.cmd == "check-c":
         return check_c(args.base_ref)

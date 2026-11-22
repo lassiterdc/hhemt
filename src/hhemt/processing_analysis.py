@@ -363,6 +363,15 @@ class TRITONSWMM_analysis_post_processing:
     # facing chunk the shape fixes; a Norfolk gridded step is 537 x 551 float32 = 1.18 MB, so the block is 27 steps.
     _TIMESERIES_BLOCK_BYTES = 32_000_000
 
+    # Bytes of a series slice the read-back evaluates in one pass. A scenario's own gridded store is chunked deep in
+    # time and narrow in space (Norfolk: 70 steps by 68 by 68), while a block of the consolidated group is shallow in
+    # time and spans the whole domain (3 steps), so evaluating the lazy expected slice one block at a time
+    # re-decompresses every source chunk once per block that overlaps it (about 23 reads of each, measured on the
+    # R2a member). One pass over a span holds the span in memory (about this many bytes) and reads each source chunk
+    # once per span it touches, and not once per block. 1 GiB holds one Norfolk source chunk row (about 835 MB of one
+    # variable), so a chunk straddling a span edge is read twice at most.
+    _TIMESERIES_VERIFY_SPAN_BYTES = 1_073_741_824
+
     # The two per-scenario hydrology capture stems (`processed/{stem}.zarr`) and the run-level report figures that
     # become data variables of `swmm_subcatchment_hydro/summary` (the capture stores them as attributes, which the
     # combine-attributes rule of a cross-event join would drop when two events differ).
@@ -846,6 +855,9 @@ class TRITONSWMM_analysis_post_processing:
     _COUPLING_DIAGNOSTICS_GROUP = "tritonswmm/coupling_diagnostics"
     #: Longest chunk along a capture's own (non-event) dimension; a per-step capture has millions of rows.
     _COUPLING_DIAGNOSTICS_CHUNK = 1 << 20
+    #: Bytes above which one chunk of a coupling-diagnostics capture is split further. Half the 2 GiB the Blosc codec
+    #: accepts, so a chunk of the widest variable plus the codec's own header and shuffle buffer stays under it.
+    _COUPLING_DIAGNOSTICS_CHUNK_BYTES = 1 << 30
 
     def _consolidate_coupling_diagnostics(
         self, store: Path, *, compression_level: int = 5, verbose: bool = False
@@ -911,7 +923,34 @@ class TRITONSWMM_analysis_post_processing:
                 d: (1 if d == "event_iloc" else min(int(ds.sizes[d]), self._COUPLING_DIAGNOSTICS_CHUNK))
                 for d in ds.dims
             }
+            # A variable over two long dimensions (the link-flow capture: 1,153,321 steps by 1,145 links) would take
+            # a 4.8 GB chunk, which the Blosc codec refuses above 2 GiB ("Codec does not support buffers of >
+            # 2147483647 bytes"). The longest dimension of the variable with the largest chunk is halved until that
+            # chunk fits, so a capture whose chunks already fit keeps the shape it has always had.
+            while True:
+                worst = max(
+                    ds.data_vars.values(),
+                    key=lambda v: v.dtype.itemsize * int(np.prod([chunks[d] for d in v.dims], dtype="float64")),
+                    default=None,
+                )
+                if worst is None:
+                    break
+                if worst.dtype.itemsize * int(np.prod([chunks[d] for d in worst.dims], dtype="float64")) <= (
+                    self._COUPLING_DIAGNOSTICS_CHUNK_BYTES
+                ):
+                    break
+                longest = max((d for d in worst.dims if d != "event_iloc"), key=lambda d: chunks[d])
+                if chunks[longest] <= 1:
+                    break
+                chunks[longest] = -(-chunks[longest] // 2)
             prepared = ds.chunk(chunks)
+            # A variable keeps the chunk shape its own scenario store wrote it with, and one that does not depend on
+            # the event (the ``simtime`` coordinate) keeps it unchanged through the join. A dimension longer than
+            # ``_COUPLING_DIAGNOSTICS_CHUNK`` is cut into several dask chunks here, and ``to_zarr`` refuses to write
+            # them under an encoded chunk that spans two of them (measured: 1,153,321 rows against 1,048,576).
+            for variable in prepared.variables.values():
+                variable.encoding.pop("chunks", None)
+                variable.encoding.pop("preferred_chunks", None)
             # The caller's block already holds this store open, and a block opened on a held store leaves the one
             # index rebuild to the outer block; stating the block here keeps the `consolidate=False` write inside
             # its own, which is what the write discipline checks.
@@ -2291,8 +2330,13 @@ class TRITONSWMM_analysis_post_processing:
         """Read the event's slice back from the store and compare it NaN-aware with ``expected``, every data variable.
 
         The comparison is of VALUES read from disk, BLOCK BY BLOCK along ``elapsed_s`` (blocks of about
-        ``_TIMESERIES_BLOCK_BYTES``), so a gridded slice of about 1 GB is compared with a few blocks resident and
-        never as a whole; a SWMM slice is one block. Shape metadata and chunk presence do not qualify: an append
+        ``_TIMESERIES_BLOCK_BYTES``), so no array larger than one block is ever realized with ``.values`` and a
+        gridded slice of about 1 GB is never compared as a whole; a SWMM slice is one block. The LAZY expected side is
+        evaluated once per SPAN of blocks (``_TIMESERIES_VERIFY_SPAN_BYTES``) and held persisted while its blocks are
+        compared, rather than recomputed from the scenario's own store for each block: its source chunks are deeper in
+        time than a block, and a per-block recomputation re-reads each of them once per block that touches it (about
+        23 times on the Norfolk R2a member, whose consolidation then did not finish in four hours). Resident memory is
+        therefore about one span, not one block. Shape metadata and chunk presence do not qualify: an append
         persists the new shape before its chunks, and chunk presence is inexact where empty chunks are not written.
         """
         stored = xr.open_zarr(store, group=group, consolidated=zarr_store_has_index(store), chunks=None)
@@ -2310,7 +2354,7 @@ class TRITONSWMM_analysis_post_processing:
         if "event_id" in expected.coords and "event_id" in read.coords:
             if [str(v) for v in read["event_id"].values] != [str(v) for v in expected["event_id"].values]:
                 return False
-        block_bytes = TRITONSWMM_analysis_post_processing._TIMESERIES_BLOCK_BYTES
+        cls = TRITONSWMM_analysis_post_processing
         for name in expected.data_vars:
             want = expected[name]
             got = read[name]
@@ -2321,14 +2365,37 @@ class TRITONSWMM_analysis_post_processing:
             if "elapsed_s" in got.dims:
                 n = got.sizes["elapsed_s"]
                 per_step = got.dtype.itemsize * max(1, got.size // max(1, n))
-                width = max(1, block_bytes // per_step)
-                blocks = [{"elapsed_s": slice(i, min(i + width, n))} for i in range(0, n, width)]
+                width = max(1, cls._TIMESERIES_BLOCK_BYTES // per_step)
+                span = max(width, cls._TIMESERIES_VERIFY_SPAN_BYTES // per_step)
+                spans = [slice(i, min(i + span, n)) for i in range(0, n, span)]
             else:
-                blocks = [{}]
-            for block in blocks:
-                a, b = np.asarray(got.isel(block).values), np.asarray(want.isel(block).values)
-                if not TRITONSWMM_analysis_post_processing._arrays_equal(a, b):
-                    return False
+                width, spans = 0, [None]
+            for piece in spans:
+                if piece is None:
+                    got_piece, want_piece, length = got, want, 0
+                else:
+                    got_piece, want_piece = got.isel(elapsed_s=piece), want.isel(elapsed_s=piece)
+                    length = want_piece.sizes["elapsed_s"]
+                    if want_piece.chunks is not None:
+                        # Evaluated once for the whole span: each block's slice of it is then a lookup, where the
+                        # lazy graph would re-read the scenario's own store for every block.
+                        want_piece = want_piece.copy(data=want_piece.data.persist())
+                    # The stored side is read once per span too, as dask chunks of its own stored shape: a master
+                    # written by an earlier toolkit stores a gridded group as (1, 61, 107, 219), so reading it two
+                    # steps at a time decompresses a whole 61-step chunk per block.
+                    stored_chunks = got.encoding.get("chunks")
+                    if stored_chunks and len(stored_chunks) == got.ndim:
+                        got_piece = got_piece.chunk(dict(zip(got.dims, stored_chunks, strict=True)))
+                        got_piece = got_piece.copy(data=got_piece.data.persist())
+                blocks = (
+                    [{}]
+                    if piece is None
+                    else [{"elapsed_s": slice(i, min(i + width, length))} for i in range(0, length, width)]
+                )
+                for block in blocks:
+                    a, b = np.asarray(got_piece.isel(block).values), np.asarray(want_piece.isel(block).values)
+                    if not cls._arrays_equal(a, b):
+                        return False
         return True
 
     #: Coordinates a series group stores beside its data variables, which are labels of a slice and never a variable

@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 import tests.utils_for_testing as tst_ut
+from hhemt.consolidate_workflow import expected_swmm_threads
+from hhemt.run_simulation import omp_thread_count
 from tests.fixtures.test_case_builder import _TEST_RUNS_ROOT_OVERRIDE_ENV, retrieve_synth_TRITON_SWMM_test_case
 from tests.utils_dry_run_plan import job_names_from_log, stats_total
 
@@ -347,8 +349,15 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
     if "swmm" in enabled_models:
         tst_ut.assert_swmm_compiled(analysis)
 
-    expected_threads = analysis.cfg_analysis.n_omp_threads
-    assert expected_threads >= 1, f"n_omp_threads must be >= 1, but got {expected_threads}"
+    cfg = analysis.cfg_analysis
+    assert (cfg.n_omp_threads or 1) >= 1, f"n_omp_threads must be >= 1, but got {cfg.n_omp_threads}"
+    # THREADS is the swmm_threads setting bounded by the run mode's OpenMP count (DR-36), the value
+    # analysis_validation.swmm_thread_issues computes, and not n_omp_threads itself. It is written into the
+    # hydraulics and full role models, which rewrite the row in place. The hydrology role routes by kinematic wave
+    # over one link, so the toolkit writes no thread count there: it keeps whatever row the base model carries, and
+    # that row is inert. The row is read as a value, never as a literal: a derived model keeps the base model's
+    # column spacing (swmm_runnable._set_option), which no literal here can name.
+    expected_threads = expected_swmm_threads(cfg.swmm_threads, omp_thread_count(cfg))
 
     for event_iloc in analysis.df_sims.index:
         proc = analysis._retrieve_sim_run_processing_object(event_iloc)
@@ -360,11 +369,15 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
             "assert_analysis_workflow_completed_successfully passed above, so scenario "
             "preparation must have written it"
         )
-        with open(paths.swmm_hydro_inp) as fp:
-            content = fp.read()
-            assert f"THREADS              {expected_threads}" in content, (
-                f"hydro.inp for event {event_iloc} should have THREADS={expected_threads}"
-            )
+        # The hydrology role keeps the base model's own THREADS row: write_swmm_role_model writes swmm_threads only into
+        # the hydraulics and full roles, and the hydrology role is derived from the base model with its [OPTIONS] kept.
+        # So the row must equal the base model's row(s), whatever swmm_threads is; that row is inert (kinematic wave).
+        hydro_rows = tst_ut.threads_rows(paths.swmm_hydro_inp.read_text())
+        base_rows = tst_ut.threads_rows(Path(analysis._system.cfg_system.SWMM_model).read_text())
+        assert set(hydro_rows) <= set(base_rows), (
+            f"hydro.inp for event {event_iloc} carries THREADS rows {hydro_rows} that differ from the base "
+            f"model's own rows {base_rows}"
+        )
 
         assert paths.swmm_full_inp.exists(), (
             f"full.inp missing for event {event_iloc} at {paths.swmm_full_inp}; "
@@ -372,10 +385,21 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
             "assert_analysis_workflow_completed_successfully passed above, so scenario "
             "preparation must have written it"
         )
-        with open(paths.swmm_full_inp) as fp:
-            content = fp.read()
-            assert f"THREADS              {expected_threads}" in content, (
-                f"full.inp for event {event_iloc} should have THREADS={expected_threads}"
+        full_rows = tst_ut.threads_rows(paths.swmm_full_inp.read_text())
+        assert full_rows == [str(expected_threads)], (
+            f"full.inp for event {event_iloc} should have exactly one THREADS row of {expected_threads}; "
+            f"got {full_rows}"
+        )
+
+        if "tritonswmm" in enabled_models:
+            assert paths.swmm_hydraulics_inp.exists(), (
+                f"hydraulics.inp missing for event {event_iloc} at {paths.swmm_hydraulics_inp}; "
+                "the coupled model is enabled on this fixture, so scenario preparation must have written it"
+            )
+            hydraulics_rows = tst_ut.threads_rows(paths.swmm_hydraulics_inp.read_text())
+            assert hydraulics_rows == [str(expected_threads)], (
+                f"hydraulics.inp for event {event_iloc} should have exactly one THREADS row of "
+                f"{expected_threads}; got {hydraulics_rows}"
             )
 
     if "swmm" in enabled_models and "tritonswmm" in enabled_models:

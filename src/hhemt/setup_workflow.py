@@ -68,11 +68,11 @@ logger = logging.getLogger(__name__)
 #                   only when the run is about to fail -- which is where the full remedy
 #                   belongs and where a reader will actually act on it.
 #
-# `compile_and_preprocess_all_targets` is deliberately NOT named as the remedy: it
-# compiles off `target.system` and carries a build_dir_gpu=None hazard on the GPU path,
-# so naming it would re-commit the defect this message exists to fix. setup_workflow's
-# own main() does the four-kwarg, partition-resolved construction correctly on every
-# model arm, on both CPU and GPU, today.
+# The remedy named is this module's own command line, never an in-process compile call
+# off a sensitivity target's `target.system`: that route carried a build_dir_gpu=None
+# hazard on the GPU path, so naming it would re-commit the defect this message exists to
+# fix. setup_workflow's own main() does the four-kwarg, partition-resolved construction
+# correctly on every model arm, on both CPU and GPU, today.
 # ---------------------------------------------------------------------------
 _COMPILE_TARGETS: dict[str, tuple[str, str]] = {
     "tritonswmm": ("TRITON-SWMM (coupled model)", "--compile-triton-swmm"),

@@ -145,6 +145,22 @@ COUPLING_NODE_DIAGNOSTIC_VARIABLES: tuple[str, ...] = ("path3_volume_pos", "path
 #: Variables of the coupled node store that record the manhole values the solver read: the diameter in meters and the
 #: loss coefficient, on ``node_id`` alone. Present only when the analysis sets ``manhole_table``.
 MANHOLE_TABLE_NODE_VARIABLES: tuple[str, ...] = ("manhole_diameter", "manhole_loss_coefficient")
+#: Variables of the coupled node store a driven-stage open-water outfall adds on ``(date_time, node_id)``: the stage
+#: TRITON set at the outfall and the flow of its conduit toward the open water, each the mean over the report interval
+#: and NaN at every node that is not a driven outfall. Each carries ``date_time``, so the consolidated ``timeseries``
+#: group picks them up, and the per-scenario summary drops them (see ``summarize_swmm_simulation_results``).
+OPEN_WATER_OUTFALL_NODE_VARIABLES: tuple[str, ...] = ("outfall_stage_m", "outfall_discharge_m3s")
+#: The flag the coupled node store carries on ``node_id`` when ``swmm_open_water_outfalls`` lists any outfall: 1 at each
+#: listed outfall, whichever representation it takes, else 0.
+OPEN_WATER_OUTFALL_FLAG = "is_open_water_outfall"
+#: The scalar integer the coupled node store carries whenever the per-node path-3 capture is attached: how many of the
+#: solver's print-interval records ended after the last report time and were left unattached (0 when none). A data
+#: variable and not a dataset attribute, because the count differs by event and consolidation's
+#: ``combine_attrs="drop_conflicts"`` deletes an attribute whose value differs between events.
+PATH3_UNATTACHED_VARIABLE = "path3_records_unattached_after_last_report"
+#: The capture the solver writes for the driven outfalls and the name list beside it that fixes its width.
+OUTFALL_STAGE_FILE = "outfall_stage.bin"
+OUTFALL_STAGE_NODES_FILE = "outfall_stage.nodes"
 
 
 def read_written_manhole_table(table_file: Path, coupling_nodes: list[str]) -> tuple[np.ndarray, np.ndarray]:
@@ -2125,13 +2141,15 @@ class TRITONSWMM_sim_post_processing:
         uncoupled nodes). When the analysis sets ``manhole_table``, the scenario's ``manhole_table.txt`` is
         decoded and added as ``manhole_diameter`` (meters) and ``manhole_loss_coefficient`` (dimensionless) on
         ``node_id``, the values the solver read at each coupling node and NaN at uncoupled nodes; with no table
-        neither variable is added.
+        neither variable is added. When the analysis lists open-water outfalls, ``_attach_open_water_outfall_outputs``
+        adds the flag ``is_open_water_outfall`` and, for a driven outfall, its stage and discharge.
 
         Raises
         ------
         ProcessingError
             If a listed coupling node is missing from the SWMM output, the table file is absent or unreadable
-            (see ``read_written_manhole_table``), or the flux is requested and the
+            (see ``read_written_manhole_table``), an open-water outfall input is missing or unreadable (see
+            ``_attach_open_water_outfall_outputs``), or the flux is requested and the
             side-file is absent. A store is never written with the flux variable silently missing:
             ``_clear_raw_outputs`` reclaims the side-file once the node store is written, so a missing
             file means the reclaim ran too early or the run did not couple.
@@ -2161,6 +2179,7 @@ class TRITONSWMM_sim_post_processing:
                 full[slots] = column
                 ds_nodes[variable] = ("node_id", full)
         ds_nodes = self._attach_coupling_node_diagnostics(ds_nodes)
+        ds_nodes = self._attach_open_water_outfall_outputs(ds_nodes, f_inp)
         if not self._coupling_exchange_flow_on():
             return ds_nodes
 
@@ -2187,6 +2206,98 @@ class TRITONSWMM_sim_post_processing:
             column = np.full(len(node_ids), np.nan)
             column[slots] = values
             ds_nodes[name] = ("node_id", column)
+        return ds_nodes
+
+    def _attach_open_water_outfall_outputs(self, ds_nodes: xr.Dataset, f_inp: Path) -> xr.Dataset:
+        """Put the open-water outfall flag, and a driven outfall's stage and discharge, on the coupled node dataset.
+
+        Nothing is added when the analysis lists no open-water outfall (``swmm_open_water_outfalls``). Otherwise
+        ``is_open_water_outfall`` (int8 on ``node_id``) is 1 at each listed outfall, whichever representation it takes,
+        and 0 elsewhere. Under ``driven_stage`` the solver's ``outfall_stage.bin`` is decoded as well and added as
+        ``outfall_stage_m`` (the stage TRITON set, m) and ``outfall_discharge_m3s`` (the flow of the outfall's conduit
+        toward the open water, m3/s, negative for backflow) on ``(date_time, node_id)``: the time-weighted mean over
+        each report interval, NaN at every node that is not a driven outfall. Names are matched the way SWMM matches
+        them, upper-casing ASCII letters only, because the solver reads the list through SWMM's case fold and the
+        spelling it writes back is not pinned here.
+
+        Raises
+        ------
+        ProcessingError
+            If a listed outfall is absent from the SWMM node output, the scenario holds no ``driven_outfalls.txt``, the
+            capture or its name list is absent beside it, the capture names other outfalls than the scenario's list, or
+            the capture does not cover the report intervals. A store is never written with the series silently missing.
+        """
+        from hhemt.coupling_diagnostics import outfall_stage_interval_means, read_outfall_stage
+        from hhemt.scenario import _swmm_fold, driven_outfalls_file_for
+        from hhemt.swmm_utils import driven_stage_outfalls, open_water_outfalls
+
+        cfg_analysis = getattr(self._analysis, "cfg_analysis", None)
+        listed = open_water_outfalls(cfg_analysis)
+        if not listed:
+            return ds_nodes
+        node_ids = [str(n) for n in ds_nodes["node_id"].values]
+        position = {_swmm_fold(n): i for i, n in enumerate(node_ids)}
+        absent = [n for n in listed if _swmm_fold(n) not in position]
+        if absent:
+            raise ProcessingError(
+                "attach open-water outfall outputs",
+                f_inp,
+                f"{len(absent)} listed open-water outfall(s) are absent from the SWMM node output: {absent[:5]}",
+            )
+        flag = np.zeros(len(node_ids), dtype="int8")
+        flag[[position[_swmm_fold(n)] for n in listed]] = 1
+        ds_nodes[OPEN_WATER_OUTFALL_FLAG] = ("node_id", flag)
+        if not driven_stage_outfalls(cfg_analysis):
+            return ds_nodes
+
+        driven_file = driven_outfalls_file_for(f_inp)
+        if not driven_file.is_file():
+            raise ProcessingError(
+                "attach open-water outfall outputs",
+                driven_file,
+                "the analysis lists driven_stage open-water outfalls and the scenario holds no driven_outfalls.txt; "
+                "scenario preparation writes it beside coupling_nodes.txt",
+            )
+        driven = [line.strip() for line in driven_file.read_text().splitlines() if line.strip()]
+        raw = self._find_capture_file(OUTFALL_STAGE_FILE)
+        if raw is None:
+            raise ProcessingError(
+                "attach open-water outfall outputs",
+                self.scen_paths.out_tritonswmm,
+                f"the analysis lists driven_stage open-water outfalls and the run wrote no {OUTFALL_STAGE_FILE}. "
+                "Check that the solver at the pinned commit reads swmm_driven_outfalls; a solver that predates it "
+                "ignores the line without error.",
+            )
+        sidecar = raw.parent / OUTFALL_STAGE_NODES_FILE
+        if not sidecar.is_file():
+            raise ProcessingError(
+                "attach open-water outfall outputs",
+                raw,
+                f"the name list {OUTFALL_STAGE_NODES_FILE} that fixes the file's width is absent beside it",
+            )
+        ds_stage = read_outfall_stage(raw, sidecar)
+        recorded = [str(n) for n in ds_stage["node_id"].values]
+        if [_swmm_fold(n) for n in recorded] != [_swmm_fold(n) for n in driven]:
+            raise ProcessingError(
+                "attach open-water outfall outputs",
+                raw,
+                f"the capture names the outfalls {recorded} and the scenario's driven_outfalls.txt lists {driven}",
+            )
+        slots = np.array([position[_swmm_fold(n)] for n in driven], dtype=int)
+        report_times_s = self._report_times_seconds(ds_nodes, "attach open-water outfall outputs")
+        means = outfall_stage_interval_means(ds_stage, report_times_s)
+        ds_stage.close()
+        for variable, values in zip(
+            OPEN_WATER_OUTFALL_NODE_VARIABLES, (means.stage_m, means.discharge_m3s), strict=True
+        ):
+            full = np.full((len(report_times_s), len(node_ids)), np.nan)
+            full[:, slots] = values
+            ds_nodes[variable] = xr.DataArray(
+                full,
+                dims=("date_time", "node_id"),
+                coords={"date_time": ds_nodes["date_time"], "node_id": ds_nodes["node_id"]},
+                attrs={"cell_methods": means.cell_methods},
+            )
         return ds_nodes
 
     def _report_times_seconds(self, ds_nodes: xr.Dataset, operation: str) -> np.ndarray:
@@ -2326,12 +2437,32 @@ class TRITONSWMM_sim_post_processing:
         each record lands on its own row and with a coarser report step several are summed. A report interval
         that no record ends in stays NaN. All three quantities are additive, so the sum is the interval's value.
 
-        Nothing is attached when the analysis does not ask for the per-node capture.
+        The coupled SWMM output can hold one report period fewer than the event length, so the solver's final
+        print-interval record then ends one report step after the last report time and no report interval
+        contains it. Such a record (ending no more than one report step, the difference of the last two report
+        times, after the last report time) is left unattached: a warning names the count and the first end time, and
+        the scalar integer data variable ``path3_records_unattached_after_last_report`` holds the count (0 when every
+        record landed), so a reader can see that the final interval is missing instead of reading it as zero. It is a
+        data variable and not an attribute because the count differs by event, and consolidation deletes an attribute
+        whose value differs between events; it is present whenever the per-node capture is attached, so a mixed
+        analysis consolidates to one value per ``event_iloc``.
+
+        The capture must start at the first report row: a first record ending later than the first report time (plus
+        1e-6 s) is refused, and one ending at or before it is accepted. This narrows but does not close the case of a
+        capture shifted late by whole print intervals: when the report step is two or more print intervals the
+        shifted first record still ends inside the first report row and is not seen.
+
+        Nothing is attached when the analysis does not ask for the per-node capture. Nothing is attached either, with
+        a warning that names both intervals, when the first record ends after the first report time and the print
+        interval (the median difference of the record end times, from at least two records) is coarser than the
+        report step: a record then covers several report rows and cannot be allotted to one, so the member is
+        processed without the per-node account instead of failing after its other outputs are written.
 
         Raises
         ------
         ProcessingError
-            If a recorded node is absent from the SWMM output, or a record ends after the last report time.
+            If a recorded node is absent from the SWMM output, the first record ends after the first report time, or
+            a record ends more than one report step after the last report time.
         """
         if not any(c.name == "swmm_node_path3" for c in self._coupling_captures_expected()):
             return ds_nodes
@@ -2360,18 +2491,59 @@ class TRITONSWMM_sim_post_processing:
             t_end = np.asarray(ds_diag["time_s"].values, dtype="float64")
             row = np.searchsorted(report_times_s, t_end - 1e-6, side="left")
             beyond = np.flatnonzero(row >= len(report_times_s))
-            if beyond.size:
+            if t_end.size and t_end[0] - report_times_s[0] > 1e-6:
+                # A capture whose print interval is coarser than the report step cannot be aligned to the report
+                # rows: its first record legitimately ends one print interval in, after the first (finer) report
+                # time. That is a property of the run's configuration, not a shifted capture, so the member is
+                # processed without the per-node account. Needs two records to measure the print interval; a lone
+                # late record cannot be told from a shifted capture and is still refused below.
+                print_interval_s = float(np.median(np.diff(t_end))) if t_end.size > 1 else None
+                report_interval_s = (
+                    float(np.median(np.diff(report_times_s))) if len(report_times_s) > 1 else float(report_times_s[0])
+                )
+                if print_interval_s is not None and print_interval_s - report_interval_s > 1e-6:
+                    member = getattr(getattr(self, "_scenario", None), "event_iloc", None)
+                    warnings.warn(
+                        f"The per-node path-3 account is not attached for member {member!r} ({store}): the capture's "
+                        f"print interval is {print_interval_s} s and the SWMM report step is {report_interval_s} s, "
+                        "and a record cannot be split across finer report rows. The variables "
+                        f"{', '.join(COUPLING_NODE_DIAGNOSTIC_VARIABLES)} and {PATH3_UNATTACHED_VARIABLE} are absent "
+                        "from this member's node dataset; every other output is written.",
+                        stacklevel=2,
+                    )
+                    return ds_nodes
                 raise ProcessingError(
                     "attach the coupling per-node path-3 account",
                     store,
-                    f"{beyond.size} print-interval record(s) end after the last report time "
-                    f"{report_times_s[-1]} s (first at {t_end[beyond[0]]} s)",
+                    f"the first print-interval record ends at {t_end[0]} s, after the first report time "
+                    f"{report_times_s[0]} s; the capture must start at the first report row",
                 )
+            # With a single report time there is no step to measure, so every record past it stays a refusal.
+            report_step_s = float(report_times_s[-1] - report_times_s[-2]) if len(report_times_s) > 1 else 0.0
+            stray = beyond[t_end[beyond] - report_times_s[-1] > report_step_s + 1e-6] if beyond.size else beyond
+            if stray.size:
+                raise ProcessingError(
+                    "attach the coupling per-node path-3 account",
+                    store,
+                    f"{stray.size} print-interval record(s) end after the last report time "
+                    f"{report_times_s[-1]} s (first at {t_end[stray[0]]} s)",
+                )
+            keep = np.ones(t_end.size, dtype=bool)
+            keep[beyond] = False
+            if beyond.size:
+                warnings.warn(
+                    f"{beyond.size} print-interval record(s) of the per-node path-3 capture end within one report "
+                    f"step ({report_step_s} s) after the last report time {report_times_s[-1]} s (first at "
+                    f"{t_end[beyond[0]]} s) and have no report interval to land in; they are not attached.",
+                    stacklevel=2,
+                )
+            ds_nodes[PATH3_UNATTACHED_VARIABLE] = ((), np.int64(beyond.size))
+            row = row[keep]
             hit = np.zeros(len(report_times_s), dtype=bool)
             hit[row] = True
             for name in COUPLING_NODE_DIAGNOSTIC_VARIABLES:
                 added = np.zeros((len(report_times_s), len(names)))
-                np.add.at(added, row, np.asarray(ds_diag[name].values, dtype="float64"))
+                np.add.at(added, row, np.asarray(ds_diag[name].values, dtype="float64")[keep])
                 full = np.full((len(report_times_s), len(node_ids)), np.nan)
                 full[:, slots] = np.where(hit[:, None], added, np.nan)
                 ds_nodes[name] = xr.DataArray(
@@ -2999,13 +3171,16 @@ class TRITONSWMM_sim_post_processing:
         "swmm": (
             "output_swmm_only_node_time_series",
             "output_swmm_only_link_time_series",
+            # The system series store has no summary store of its own: its reductions are the `system_*` variables
+            # of the node summary, so this model holds three series stores against two summary stores.
+            "output_swmm_only_system_time_series",
         ),
     }
 
     @staticmethod
     def _attr_is_swmm_side(attr: str) -> bool:
-        """True for the SWMM node/link artifacts; False for TRITON gridded + performance."""
-        return ("_node_" in attr) or ("_link_" in attr)
+        """True for the SWMM node/link/system artifacts; False for TRITON gridded + performance."""
+        return ("_node_" in attr) or ("_link_" in attr) or ("_system_" in attr)
 
     @staticmethod
     def _reclaim_classes(policy) -> tuple[str, ...]:
@@ -3038,10 +3213,9 @@ class TRITONSWMM_sim_post_processing:
     ) -> tuple[str, ...]:
         """ScenarioPaths attr names of the per-scenario time-series stores the ``timeseries`` class names.
 
-        This is the NAME set of the class, independent of whether the process runner applies it. It exists
-        separately from ``_reclaim_attrs`` because that method applies D24 (b) and returns nothing for the class
-        under either value of the consolidation toggle, which would make the disjointness guard in
-        tests/test_synth_remove_after_processing.py pass against an empty set. The guard reads this set instead.
+        This is the NAME set of the class, independent of whether the process runner applies it. The disjointness
+        guard in tests/test_synth_remove_after_processing.py reads this set, so it asserts against the class's
+        names and not against whatever one arm of ``_reclaim_attrs`` returns.
         """
         cls = TRITONSWMM_sim_post_processing
         attrs = cls._TIMESERIES_ATTRS_BY_MODEL.get(model_type, ())
@@ -3066,19 +3240,21 @@ class TRITONSWMM_sim_post_processing:
         ``consolidation_on`` is an ARGUMENT and is never read from a scenario or a config here: the caller
         resolves ``cfg_analysis.toggle_consolidate_timeseries`` and passes it.
 
-        D24 (b): the ``timeseries`` class is not applied by the process runner under either value.
-        With consolidation on it is DISCHARGED by the consolidation's verified clearing, which deletes the
+        D24 (b): under the default policy the ``timeseries`` class is not applied by the process runner under either
+        value. With consolidation on it is DISCHARGED by the consolidation's verified clearing, which deletes the
         per-scenario series only after the read-back, so a runner that deleted them first would leave the
-        consolidation nothing to copy. With consolidation off the per-scenario series ARE the processed
-        output and exist nowhere else, so the class is a no-op with a logged reason. The set returned is
-        therefore empty for the ``timeseries`` class either way, and the argument is what a caller states
-        about which of the two arms it is on; the name set itself is ``_timeseries_drop_names``.
+        consolidation nothing to copy. With consolidation off the per-scenario series ARE the processed output, so
+        the class is a no-op with a logged reason, UNLESS the user names ``timeseries`` in a
+        ``remove_after_processing`` list with ``clear_raw`` covering every enabled model: that explicit election is
+        the one arm that deletes them, and it is applied by ``_reclaim_paths`` through ``timeseries_discard_arm``,
+        not here. The set returned here is empty for the ``timeseries`` class either way, and the argument is what a
+        caller states about which of the two arms it is on; the name set itself is ``_timeseries_drop_names``.
         Resolving these names to concrete Paths needs self.scen_paths and is _reclaim_paths' job.
         """
         cls = TRITONSWMM_sim_post_processing
         if "timeseries" not in cls._reclaim_classes(policy):
             return ()
-        # Both arms of D24 (b) apply nothing; `consolidation_on` selects only which reason the caller logs.
+        # Both consolidation arms apply nothing here; `consolidation_on` selects only which reason the caller logs.
         _ = consolidation_on
         return ()
 
@@ -3088,6 +3264,7 @@ class TRITONSWMM_sim_post_processing:
         *,
         policy,
         consolidation_on: bool,
+        discard_timeseries: bool = False,
         which: Literal["TRITON", "SWMM", "both"] = "both",
     ) -> list[tuple[str, Path]]:
         """Resolve the drop set to ``(artifact_class, path)`` pairs for this scenario.
@@ -3095,9 +3272,14 @@ class TRITONSWMM_sim_post_processing:
         The class travels WITH the path rather than being re-derived from the filename at
         deletion time, so the per-class log record cannot drift from what was actually
         removed. Classes: ``timeseries_triton``, ``timeseries_swmm``, ``raw_swmm_binaries``.
+        ``discard_timeseries`` is the one arm that applies the ``timeseries`` class here
+        (``timeseries_discard_arm``); ``_reclaim_attrs`` stays the D24 (b) answer.
         """
         out: list[tuple[str, Path]] = []
-        for attr in self._reclaim_attrs(model_type, policy=policy, consolidation_on=consolidation_on, which=which):
+        attrs = self._reclaim_attrs(model_type, policy=policy, consolidation_on=consolidation_on, which=which)
+        if discard_timeseries and "timeseries" in self._reclaim_classes(policy):
+            attrs = self._timeseries_drop_names(model_type, which=which)
+        for attr in attrs:
             p = getattr(self.scen_paths, attr, None)
             if p is None:
                 continue
@@ -3119,6 +3301,21 @@ class TRITONSWMM_sim_post_processing:
         if verbose:
             print(f"[reclaim] removing {path}", flush=True)
         delete_and_account([path], scope_dir=scenario_dir, scope="scenario")
+
+    def _remove_series_stores(self, stores: list[Path], verbose: bool) -> None:
+        """Delete series stores with their completion flag, parts and NetCDF intermediate, through one tool call.
+
+        Reuses the consolidation's ``_delete_cleared_stores`` so the list of companions exists once: a flag left
+        beside a deleted store would assert a completion the directory no longer shows.
+        """
+        from types import SimpleNamespace
+
+        from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing as _PA
+
+        if verbose:
+            for store in stores:
+                print(f"[reclaim] removing {store} and its completion flag, parts and intermediate", flush=True)
+        _PA._delete_cleared_stores(SimpleNamespace(scen_paths=self.scen_paths), stores)
 
     @staticmethod
     def _capture_landed(path) -> bool:
@@ -3328,13 +3525,44 @@ class TRITONSWMM_sim_post_processing:
         if not classes:
             return
 
-        # D24 (b): the `timeseries` class is never applied here. Resolved from the persisted config (the
-        # runner is a subprocess) and passed down as an argument, so the static helpers never read it.
-        consolidation_on = bool(getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False))
-        _clearing = getattr(self._analysis.cfg_analysis, "toggle_clear_scenario_timeseries_after_consolidation", None)
+        # D24 (b): the `timeseries` class is not applied here under the default policy. Resolved from the persisted
+        # config (the runner is a subprocess) and passed down as arguments, so the static helpers never read it.
+        # One arm applies it: consolidation off, `clear_raw` covering every enabled model and the class NAMED in a
+        # `remove_after_processing` list (`timeseries_discard_arm`). The caller of this method has verified the
+        # summaries (log, existence, openability) before it runs, so the series are deleted only after that check.
+        cfg = self._analysis.cfg_analysis
+        consolidation_on = bool(getattr(cfg, "toggle_consolidate_timeseries", False))
+        _clearing = getattr(cfg, "toggle_clear_scenario_timeseries_after_consolidation", None)
         clearing_on = consolidation_on if _clearing is None else bool(_clearing)
+        _enabled = getattr(self._analysis, "_get_enabled_model_types", None)
+        enabled_models = list(_enabled()) if callable(_enabled) else [model_type]
+        # With observation points set the consolidation reads the per-scenario gridded store even with
+        # consolidation off (the observation groups are unconditional), so that store is kept until then.
+        cfg_system = getattr(getattr(self._analysis, "_system", None), "cfg_system", None)
+        observation_kept = getattr(cfg_system, "observation_points", None) is not None
+        discard_timeseries = timeseries_discard_arm(cfg, enabled_models)
+        if discard_timeseries and observation_kept:
+            print(
+                f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' is named with "
+                "consolidation off, but observation_points is set -- declining that class here. The observation "
+                "groups of the consolidation read the per-scenario gridded store, which is kept until they are "
+                "consolidated.",
+                flush=True,
+            )
+            classes = tuple(c for c in classes if c != "timeseries")
+            if not classes:
+                return
+            discard_timeseries = False
         if "timeseries" in classes:
-            if consolidation_on and not clearing_on:
+            if discard_timeseries:
+                print(
+                    f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' is named in "
+                    "a remove_after_processing list with toggle_consolidate_timeseries off and clear_raw covering "
+                    "every enabled model -- the per-scenario series are deleted now that the summaries are "
+                    "verified, and no consolidated copy is written.",
+                    flush=True,
+                )
+            elif consolidation_on and not clearing_on:
                 print(
                     f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' is elected "
                     "but toggle_clear_scenario_timeseries_after_consolidation is off -- declining that class. The "
@@ -3353,7 +3581,9 @@ class TRITONSWMM_sim_post_processing:
                 print(
                     f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' is elected "
                     "but toggle_consolidate_timeseries is off -- declining that class. With no consolidated "
-                    "copy the per-scenario series are the processed output and exist nowhere else.",
+                    "copy the per-scenario series are the processed output and exist nowhere else. Name "
+                    "'timeseries' in a remove_after_processing list, with clear_raw covering every enabled "
+                    "model, to delete them.",
                     flush=True,
                 )
 
@@ -3388,13 +3618,27 @@ class TRITONSWMM_sim_post_processing:
 
         effective_policy = list(classes)
         removed: set[str] = set()
+        series_stores: list[Path] = []
         for klass, path in self._reclaim_paths(
-            model_type, policy=effective_policy, consolidation_on=consolidation_on, which=which
+            model_type,
+            policy=effective_policy,
+            consolidation_on=consolidation_on,
+            discard_timeseries=discard_timeseries,
+            which=which,
         ):
+            if discard_timeseries and klass.startswith("timeseries_"):
+                # A series store goes with its completion flag, parts and intermediate (below), so it is not
+                # deleted here path by path.
+                series_stores.append(path)
+                if path.exists():
+                    removed.add(klass)
+                continue
             if not path.exists():
                 continue
             self._remove_reclaimed(path, self.scen_paths.sim_folder, verbose)
             removed.add(klass)
+        if series_stores:
+            self._remove_series_stores(series_stores, verbose)
 
         # Per-scenario disclosure ground truth, written by the ACTOR. analysis_validation's
         # CheckResult docstring (its `instrument` field) forbids deriving a provenance claim from
@@ -3423,6 +3667,27 @@ class TRITONSWMM_sim_post_processing:
         node_ok = self.log.SWMM_node_summary_written and bool(self.log.SWMM_node_summary_written.get())
         link_ok = self.log.SWMM_link_summary_written and bool(self.log.SWMM_link_summary_written.get())
         return node_ok and link_ok
+
+
+def timeseries_discard_arm(cfg_analysis, enabled_models) -> bool:
+    """True iff the process runner DELETES the per-scenario series stores of the ``timeseries`` class.
+
+    The arm is: consolidation off, ``clear_raw`` covering every enabled model, and ``remove_after_processing`` given as
+    a LIST that names ``timeseries``. The election is read from the VALUE: the persisted config cannot tell an
+    omitted field from a stated one, and the blanket ``all`` is the default, so only a list is an explicit election.
+    The default policy with consolidation off therefore keeps the series (D24 (b)): they are then the processed
+    output, and a user who wants them gone says so by naming the class. A config without a field is read as the
+    keeping value of that field.
+    """
+    if bool(getattr(cfg_analysis, "toggle_consolidate_timeseries", True)):
+        return False
+    remove = getattr(cfg_analysis, "remove_after_processing", "none")
+    if not isinstance(remove, (list, tuple)) or "timeseries" not in remove:
+        return False
+    clear_raw = getattr(cfg_analysis, "clear_raw", "none")
+    if clear_raw == "none":
+        return False
+    return clear_raw == "all" or set(enabled_models) <= set(clear_raw)
 
 
 def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> dict[str, bool]:
@@ -4601,7 +4866,14 @@ def summarize_swmm_simulation_results(ds, event_iloc, tstep_dimname="date_time")
     # per-interval path-3 account series of the coupling diagnostics are dropped likewise: a maximum or a last value
     # of a per-interval volume or count would be a named summary no one asked for, and the series themselves are
     # consolidated through the `timeseries` group.
-    ds = ds.drop_vars([v for v in ("coupling_exchange_flow", *COUPLING_NODE_DIAGNOSTIC_VARIABLES) if v in ds.data_vars])
+    # The two interval series a driven open-water outfall adds are dropped on the same ground.
+    ds = ds.drop_vars(
+        [
+            v
+            for v in ("coupling_exchange_flow", *COUPLING_NODE_DIAGNOSTIC_VARIABLES, *OPEN_WATER_OUTFALL_NODE_VARIABLES)
+            if v in ds.data_vars
+        ]
+    )
     lst_time_variant_vars = []
     for var in ds.data_vars:
         if var not in quality_series and tstep_dimname in ds[var].coords:

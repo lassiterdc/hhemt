@@ -5516,3 +5516,135 @@ non_breaking_allowlist:
     layout_signature: 20fed8c954aa446dc55e2a5cc048727c2739bd25bb11216cd20b78993e1a66b1
     justification: |-
       non-breaking: the append_zarr call is wrapped in deferred_consolidation, same arguments and same data written
+  - path: src/hhemt/config/analysis.py
+    layout_signature: efb0f0792296028d4b63553d3e4a23b782236fb3277cfcfae4d87d83b309aef4
+    justification: |-
+      open-water outfalls: adds the optional config fields swmm_open_water_outfalls (default empty list) and open_water_outfall_representation (default driven_stage, read only when the list is non-empty), and no on-disk layout change an existing analysis reads. An older config loads unchanged and an analysis with the list empty writes the bytes it wrote before. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 3dea1d9f57e5da2c8ed7d1e66c27c70e3d955f7f19cf7c298784296bab6d5053
+    justification: |-
+      open-water outfalls: classifies the two new analysis fields swmm_open_water_outfalls and open_water_outfall_representation as experiment in the reprex taxonomy, a static classifier table that holds no on-disk state. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/scenario.py
+    layout_signature: 0c40ca7a5a32be1362464c111bd0332b458997fa68486f3982ddc5e0eef81b9f
+    justification: |-
+      open-water outfalls: adds the optional cfg keys swmm_driven_outfalls and swmm_dem_rim_exempt_nodes with their build guards and setters, and the manhole-table fixed rows of a crown_rim node. Each key line is written only when swmm_open_water_outfalls is non-empty (the exemption key only while the DEM-rim key is written), and a crown_rim list writes manhole_table.txt although no manhole_table is set. A scenario prepared with the list empty is byte-identical, and an older scenario reads unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/scenario_inputs.py
+    layout_signature: 7328d51d4f8fb7a767791a8a48f4673b4b4cdf5dfbde82e09cd00149efe1fd6b
+    justification: |-
+      open-water outfalls: adds the optional per-scenario files driven_outfalls.txt, dem_rim_exempt_nodes.txt and crown_rim_outfalls.json beside coupling_nodes.txt, each written only when swmm_open_water_outfalls is non-empty, and the toolkit-sized rows of manhole_table.txt for a crown_rim node. No existing analysis carries them and no reader of an older scenario needs them, so a scenario prepared with the list empty is byte-identical. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/water_level_boundary.py
+    layout_signature: 023c24b74ce5ddc12deb9ff137ed2fc888d3cf7105e19e9ec7b69a865b2507ab
+    justification: |-
+      open-water outfalls: counts an outfall listed in swmm_open_water_outfalls as a decision in the outfall-decision pass and leaves such an outfall out of the nodes the DEM gives a depth; it changes no name of the swmm_model_series extraction directory, its COMPLETE marker or its {index}.dat files, which are the reason this file is layout-relevant. With the list empty the pass is unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/scenario_inputs.py
+    layout_signature: 397f7b326965f4d9c41c4a9f4b5046fdb9c46d7192f89713a6104546bca15246
+    justification: |-
+      open-water outfalls: adds the optional per-scenario files driven_outfalls.txt, dem_rim_exempt_nodes.txt and crown_rim_outfalls.json beside coupling_nodes.txt, each written only when swmm_open_water_outfalls is non-empty, and the toolkit-sized rows of manhole_table.txt for a crown_rim node. No existing analysis carries them and no reader of an older scenario needs them, so a scenario prepared with the list empty is byte-identical. Non-breaking, no LAYOUT_VERSION bump. Re-stamped after a docstring was added to one helper of the same change.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: cceda7848f8447768ec6a16f6b178be67c8f02c23db35403d45d4b44bceacc19
+    justification: |-
+      open-water outfalls, ingestion: adds to the coupled node store the flag is_open_water_outfall (on node_id, at each outfall swmm_open_water_outfalls lists) and, for a driven_stage outfall, the two interval series outfall_stage_m and outfall_discharge_m3s on (date_time, node_id), decoded from the solver outfall_stage.bin; the per-scenario summary drops the two series like the path-3 series. Each is added only when swmm_open_water_outfalls is non-empty, so a scenario processed with the list empty writes the bytes it wrote before and an older scenario or tree reads unchanged. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: b1bacfdb85af616052e033a5c7fff2d8f1b55b771e5d96fd938854e22ba9941a
+    justification: |-
+      open-water outfalls, CF entries: adds map and provenance entries for is_open_water_outfall, outfall_stage_m and outfall_discharge_m3s beside coupling_exchange_flow, and their sign comments in the coupled node mode. Map entries only: no existing entry, no attribute of an existing variable and no on-disk path changes, and the three names exist only in a node store of an analysis that lists open-water outfalls. Non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 1bf0b82924d65ac02a457cf4684cb942cc9078c9a798192edb24410f3a226bfc
+    justification: |-
+      description strings of swmm_open_water_outfalls and open_water_outfall_representation reworded for the docs style rules; they are published to docs/reference/config-schema.md at build time, a derived artifact; no path, filename, log field, zarr group or fingerprint changes
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 3bd7209286c60626569e73921a26feb3673044ad42641c0ad3eb3e02a85b69a8
+    justification: |-
+      the driver now injects the GPU pair through a system method that recomputes the system's build paths instead of assigning attributes after construction; no path, filename, log field, zarr group or fingerprint changes
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 4dd8e1511226faaf3160acc8ef6cf83891fcea51ac6eca706e94c1058fdf83b9
+    justification: |-
+      attach per-node path-3 account tolerates a missing last SWMM report period; non-breaking, no on-disk layout change
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 636f44ac404aa85f6c34caed423811659970b5cc14e341239f530d71cbd14fd6
+    justification: |-
+      adds a CF registry entry for the path-3 unattached-record count variable; non-breaking, no on-disk layout change
+  - path: src/hhemt/config/analysis.py
+    layout_signature: e9bca249671e36a19b0c6e968b9d35935ec67de8fe2e4a7d153a2238c607f2f9
+    justification: |-
+      sizes the per-member consolidation rule from an existing analysis config field; non-breaking, no on-disk layout change
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 87b0b9df70ae007e8842a2a9fd7142485ba3c3949154734de92637560651feae
+    justification: |-
+      consolidation verification compares per persisted span and writes coupling captures in chunks under the codec limit; no stored value or layout change, equal values shown over 255 variables
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 5051f30224c6fe2696f2c774a8f4eb1819b5fdb03fa03d14d6eef2814d86d5ac
+    justification: |-
+      series group copy into the experiment master is lazy and refuses a master written with another chunk layout; no stored value or layout change for new masters, equal decoded values measured
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: c7da5cd6a9a3c4fcd1d34a6bc7feeeb4413b1051f4a12c8401b9e58ef94c7cc1
+    justification: |-
+      series group copy into the experiment master is lazy and refuses a master written with another chunk layout; no stored value or layout change for new masters, equal decoded values measured
+  - path: src/hhemt/scenario.py
+    layout_signature: 3e61a0cad918b23aca7548278c332ce646dd800e04544ee7e0d21eb8dcc7b045
+    justification: |-
+      standalone-SWMM systems are gated on the SWMM build in scenario preparation; no stored value or on-disk layout change
+  - path: src/hhemt/cf_conventions.py
+    layout_signature: 036d3a6f2238a21c64a13cb773b8ffe33db34c01172273984eba9e7bdd5ef4ff
+    justification: |-
+      adds the unit of swmm_coupling_lag to the parameters unit table; metadata only, no stored value or layout change
+  - path: src/hhemt/scenario.py
+    layout_signature: c5183a6884bc54a07ea99b63424ce401d0da516b01eb0e25f8f428aca8765079
+    justification: |-
+      DEM rim check and swmm_node_rim_swmm_fallback; no stored-layout change
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 8863816316b63915a0b37e2965be7682469d208bbe676d49fdca3eec77062a38
+    justification: |-
+      DEM rim check and swmm_node_rim_swmm_fallback; no stored-layout change
+  - path: src/hhemt/config/reprex_taxonomy.py
+    layout_signature: 38339881cb840d8ea1fe92438ff9e950a9a643b21ddf5026a493790ecdf43691
+    justification: |-
+      DEM rim check; no stored-layout change
+  - path: src/hhemt/water_level_boundary.py
+    layout_signature: 1f75a9afa84a777e7c38880dc608656d5f391612db6f0d6f4604c39524a2f678
+    justification: |-
+      DEM rim check; no stored-layout change
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: a1b729d5e4d24c2e00f5be8996560c7aaf2357158216f15d1c3d8771a8885417
+    justification: |-
+      per-member system overlay; no stored-layout change (_generated is rewritten each construction)
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 94bfed692b89dd27f89c639574f909141041e63b11a2f851c4f0f2a45345d6fc
+    justification: |-
+      removed two unused helpers and validation check; no stored-layout change
+  - path: src/hhemt/scenario.py
+    layout_signature: e2f8089d5a3c21de23502f9cbedcd4c768cc022dcad259e2023592aef029ab08
+    justification: |-
+      SWMM-only systems skip the coupled cfg; no stored-layout change
+  - path: src/hhemt/process_simulation.py
+    layout_signature: c23299b17ce0fdc65b66c37dbb565189c651d985580dccb50f3e859087b51f34
+    justification: |-
+      adds a skip with a warning for the per-node path-3 account when the report step is finer than the capture interval; no persisted layout changes
+  - path: src/hhemt/swmm_runoff_modeling.py
+    layout_signature: 86a7774a38f50892b31b88d881dea61a626d8d47c553f131e948df72454983f0
+    justification: |-
+      writes the node inflow capture before the hydrograph flags and heals a capture-less prepared scenario; persisted file layouts unchanged
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 6d5262eedbfb50a52bf8108b97dff698fbd8b3efa384609880eac6ad21092155
+    justification: |-
+      1121-tk, reviewed non-breaking by an independent reviewer (reviewed tip bd66dfdf08): the discard of per-scenario series stores under an explicit remove_after_processing election changes no path, file name, zarr group, log field, schema or flag name, and an old tree needs no migration because the readers read the processing log, not the store; the companions removed with a store (completion flag, chapters directory, intermediate) are the ones the consolidation already removes with it.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 0a010fa9866435920b93321dcb0c298010d635fc368e572ccf532a563153c64f
+    justification: |-
+      1121-tk, reviewed non-breaking by an independent reviewer (reviewed tip bd66dfdf08): the discard of per-scenario series stores under an explicit remove_after_processing election changes no path, file name, zarr group, log field, schema or flag name, and an old tree needs no migration because the readers read the processing log, not the store; the companions removed with a store (completion flag, chapters directory, intermediate) are the ones the consolidation already removes with it.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 4509fcae6fa5bac36420e777af9c8264b5ef457d5962cd73e5e42f9747d6a7ab
+    justification: |-
+      1121-tk final content, reviewed non-breaking by an independent reviewer (tip bd66dfdf08, refusal added after in 06876d71): config/analysis.py now only changes a field description text (the preflight refusal of the series discard election with observation_points lives in validation.py); no path, file name, zarr group, log field, schema or flag name changes and an old tree needs no migration.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: c4ac4f38b3089462e255b87b3210cb18213e419d0053d41364afbfe6d10b5b72
+    justification: |-
+      1121-tk member refusal (commit 29f3d3e7): src/hhemt/sensitivity_analysis.py only extracts the analysis-overlay merge of _create_members into a helper (_member_analysis_overlay_cells) so the per-member preflight judges a member with the same merge that builds it; behaviour of member construction is unchanged, no path, file name, zarr group, log field, schema or flag name changes, and an old tree needs no migration. Reviewer verdict on this commit pending at stamp time; non-breaking ground as for the earlier rows.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 7843406ca1da1f3f7b4741d540db5a6de582f290f95c67e3b79e797c319103b3
+    justification: |-
+      1122-0004: the two fields toggle_consolidate_timeseries and timeseries_keep_triton_gridded lose their defaults in src/hhemt/config/analysis.py, so an analysis config must state both; no stored path, file name, zarr group, log field, schema or flag name changes. Every analysis config written by a run since 2026-11-07 carries both keys because model_dump writes them (2026-11-07 is the day timeseries_keep_triton_gridded was added; toggle_consolidate_timeseries dates from 2026-07-20). An older stored copy or an older bundle file lacks them and is refused at load naming the field, and no migration stamps them, by the developer's ruling G30.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: a886212f7b4df2ece22da4ff889ed4d2963c5fe06b20b3fbf3a8971fbeaac920
+    justification: |-
+      1122-0004 round 2: src/hhemt/config/analysis.py description text only (the no-default sentence moved to the start of toggle_consolidate_timeseries and three field descriptions reworded for the docs style rules); no stored path, file name, zarr group, log field, schema or flag name changes, and no default changes beyond round 1; the stored-config consequence of round 1 is stated in the row above (older copies are refused at load, no migration, ruling G30).

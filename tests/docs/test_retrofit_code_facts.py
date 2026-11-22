@@ -385,7 +385,7 @@ def test_control_another_set_with_its_own_order_is_refused(pages):
 
 
 def check_node_page(
-    page_text: str, tree_paths: set[str], timeseries_paths: set[str], timeseries_default: bool
+    page_text: str, tree_paths: set[str], timeseries_paths: set[str], timeseries_required: bool
 ) -> list[str]:
     problems = []
     body = block_from(page_text, "Every group of an analysis tree is written")
@@ -396,9 +396,9 @@ def check_node_page(
     ts = set(re.findall(r"`(tritonswmm/\w+/timeseries)`", " ".join(body.split())))
     if ts != timeseries_paths:
         problems.append(f"timeseries nodes {sorted(ts)} differ from the code {sorted(timeseries_paths)}")
-    m = re.search(r"defaults to `(true|false)`", sentence)
-    if m is None or (m.group(1) == "true") != timeseries_default:
-        problems.append("the default of toggle_consolidate_timeseries on the page differs from the code")
+    stated_without_default = re.search(r"has no default", sentence) is not None
+    if stated_without_default != timeseries_required:
+        problems.append("whether toggle_consolidate_timeseries has a default on the page differs from the code")
     unknown = {
         s
         for s in spans(page_text)
@@ -416,7 +416,7 @@ def node_facts() -> tuple[set[str], set[str], bool]:
     field = analysis_config.model_fields["toggle_consolidate_timeseries"]
     ts = set(re.findall(r"tritonswmm/\w+/timeseries", field.description or ""))
     # The page names each group once; its two branches are described in the prose beside the table.
-    return {p.removesuffix("/summary") for p in pp._MODE_TO_TREE_PATH.values()}, ts, bool(field.default)
+    return {p.removesuffix("/summary") for p in pp._MODE_TO_TREE_PATH.values()}, ts, field.is_required()
 
 
 def test_node_table_matches_the_tree_modes(pages):

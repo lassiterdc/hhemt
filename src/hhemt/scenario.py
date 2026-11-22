@@ -641,6 +641,57 @@ def set_swmm_manhole_table(cfg_content: str, table_file) -> str:
     return f'{text}{separator}{SWMM_MANHOLE_TABLE_KEY}="{table_file}"\n'
 
 
+#: The coupled-cfg key naming the file of open-water outfalls whose stage TRITON sets (``driven_stage``).
+SWMM_DRIVEN_OUTFALLS_KEY = "swmm_driven_outfalls"
+
+#: How a TRITON build reads ``swmm_driven_outfalls``, as the text appears in its ``src/config_utils.h``. A build
+#: whose file does not carry it ignores the line and runs each listed outfall as the model's own outfall.
+SWMM_DRIVEN_OUTFALLS_READ = 'argsd("swmm_driven_outfalls"'
+
+#: The coupled-cfg key naming the file of coupling nodes the DEM-rim route leaves at SWMM's crown-raised depth.
+SWMM_DEM_RIM_EXEMPT_KEY = "swmm_dem_rim_exempt_nodes"
+
+#: How a TRITON build reads ``swmm_dem_rim_exempt_nodes`` (``src/config_utils.h``). A build whose file does not
+#: carry it overrides the rim of a ``crown_rim`` node from the DEM, or refuses a cell at or below its invert.
+SWMM_DEM_RIM_EXEMPT_READ = 'argsd("swmm_dem_rim_exempt_nodes"'
+
+
+def driven_outfalls_file_for(hydraulics_inp) -> Path:
+    """Where a scenario's driven-outfall list is written: beside its ``coupling_nodes.txt``."""
+    return Path(hydraulics_inp).parent / "driven_outfalls.txt"
+
+
+def dem_rim_exempt_nodes_file_for(hydraulics_inp) -> Path:
+    """Where a scenario's DEM-rim exemption list is written: beside its ``coupling_nodes.txt``."""
+    return Path(hydraulics_inp).parent / "dem_rim_exempt_nodes.txt"
+
+
+def _set_swmm_path_key(cfg_content: str, key: str, file) -> str:
+    """Return ``cfg_content`` with exactly one active ``{key}="{file}"`` line, appended.
+
+    The shared body of ``set_swmm_driven_outfalls`` and ``set_swmm_dem_rim_exempt_nodes``, built like
+    ``set_swmm_manhole_table``: an active line already present (first non-blank text matching ``{key}\\s*=``; a ``#``
+    line is a comment and is kept) is removed first, so a re-prepared scenario's cfg is byte-identical to the first.
+    """
+    import re
+
+    pattern = re.compile(rf"{key}\s*=")
+    kept = [line for line in cfg_content.splitlines() if not pattern.match(line.lstrip())]
+    text = "\n".join(kept)
+    separator = "\n" if text else ""
+    return f'{text}{separator}{key}="{file}"\n'
+
+
+def set_swmm_driven_outfalls(cfg_content: str, outfalls_file) -> str:
+    """``cfg_content`` with exactly one active ``swmm_driven_outfalls="{outfalls_file}"`` line, appended."""
+    return _set_swmm_path_key(cfg_content, SWMM_DRIVEN_OUTFALLS_KEY, outfalls_file)
+
+
+def set_swmm_dem_rim_exempt_nodes(cfg_content: str, nodes_file) -> str:
+    """``cfg_content`` with exactly one active ``swmm_dem_rim_exempt_nodes="{nodes_file}"`` line, appended."""
+    return _set_swmm_path_key(cfg_content, SWMM_DEM_RIM_EXEMPT_KEY, nodes_file)
+
+
 #: How a TRITON build reads ``swmm_coupling_nodes``, as the text appears in its ``src/config_utils.h``.
 #: A build whose file carries it couples exactly the nodes the toolkit lists. A build whose file
 #: does not ignores the list and couples the nodes its own ``[INFLOWS]`` read names instead.
@@ -861,20 +912,92 @@ def require_dem_rim_capable_triton(
 
 
 def require_manhole_table_capable_triton(
-    *, execution_environment: str, software_directory, branch_key, recorded_sha
+    *,
+    execution_environment: str,
+    software_directory,
+    branch_key,
+    recorded_sha,
+    field: str = "manhole_table",
+    setting: str = "manhole_table is set",
+    remedy: str = "unset manhole_table",
 ) -> None:
     """Refuse ``manhole_table`` unless the TRITON build the run uses reads ``swmm_manhole_table``.
 
     A build that ignores the key runs every coupling node at the constants while the configuration
     names a table, with no error. A native clone passes when its ``src/config_utils.h`` carries
     ``SWMM_MANHOLE_TABLE_READ``. No container image carries the key, so a container run is refused.
+    ``field``, ``setting`` and ``remedy`` name the configuration that needs the table when it is not
+    ``manhole_table`` itself (a ``crown_rim`` open-water outfall list writes a row for each listed node).
     """
     require_triton_reading_key(
-        field="manhole_table",
-        setting="manhole_table is set",
+        field=field,
+        setting=setting,
         consequence="run every coupling node at the constants manhole_diameter and manhole_loss_coefficient",
-        remedy="unset manhole_table",
+        remedy=remedy,
         read_text=SWMM_MANHOLE_TABLE_READ,
+        execution_environment=execution_environment,
+        software_directory=software_directory,
+        branch_key=branch_key,
+        recorded_sha=recorded_sha,
+        required_sha=None,
+        container_shas=frozenset(),
+    )
+
+
+def require_driven_outfalls_capable_triton(
+    *, execution_environment: str, software_directory, branch_key, recorded_sha
+) -> None:
+    """Refuse the ``driven_stage`` open-water representation unless the TRITON build reads ``swmm_driven_outfalls``.
+
+    A build that ignores the key runs each listed outfall as the model's own outfall, with no stage from TRITON,
+    while the configuration names a driven stage, with no error. A native clone passes when its
+    ``src/config_utils.h`` carries ``SWMM_DRIVEN_OUTFALLS_READ``. No container image carries the key, so a container
+    run is refused.
+    """
+    require_triton_reading_key(
+        field="swmm_open_water_outfalls",
+        setting="swmm_open_water_outfalls lists outfalls under open_water_outfall_representation driven_stage",
+        consequence="run each listed outfall as the model's own outfall, with no stage from TRITON",
+        remedy="empty swmm_open_water_outfalls or use crown_rim",
+        read_text=SWMM_DRIVEN_OUTFALLS_READ,
+        execution_environment=execution_environment,
+        software_directory=software_directory,
+        branch_key=branch_key,
+        recorded_sha=recorded_sha,
+        required_sha=None,
+        container_shas=frozenset(),
+    )
+
+
+def require_dem_rim_exempt_capable_triton(
+    *, execution_environment: str, software_directory, branch_key, recorded_sha, swmm_fallback: bool = False
+) -> None:
+    """Refuse an exemption under the DEM-rim key unless the build reads ``swmm_dem_rim_exempt_nodes``.
+
+    A build that ignores the key overrides each listed node's rim from the DEM (or refuses a cell at or below its
+    invert), while the configuration names SWMM's depth: for a ``crown_rim`` list, the crown of the outlet conduit;
+    with ``swmm_fallback``, the depth SWMM assigns each node whose DEM rim fell short. A native clone passes when its
+    ``src/config_utils.h`` carries ``SWMM_DEM_RIM_EXEMPT_READ``; a container run is refused.
+    """
+    if swmm_fallback:
+        field = "swmm_node_rim_swmm_fallback"
+        setting = "swmm_node_rim_swmm_fallback is True and a coupled node's DEM rim is below SWMM's depth"
+        consequence = "take each such node's rim from the DEM, which the check found too low, instead of SWMM's depth"
+        remedy = "set swmm_node_rim_swmm_fallback to False, or use a TRITON build that reads swmm_dem_rim_exempt_nodes"
+    else:
+        field = "swmm_open_water_outfalls"
+        setting = (
+            "swmm_open_water_outfalls lists outfalls under open_water_outfall_representation crown_rim "
+            "while swmm_node_rim_from_dem is True"
+        )
+        consequence = "take each listed node's rim from the DEM instead of the crown of its outlet conduit"
+        remedy = "set swmm_node_rim_from_dem to False, empty swmm_open_water_outfalls or use driven_stage"
+    require_triton_reading_key(
+        field=field,
+        setting=setting,
+        consequence=consequence,
+        remedy=remedy,
+        read_text=SWMM_DEM_RIM_EXEMPT_READ,
         execution_environment=execution_environment,
         software_directory=software_directory,
         branch_key=branch_key,
@@ -1140,6 +1263,126 @@ def set_swmm_snapshot_failed_replay(cfg_path: Path, enabled: bool) -> bool:
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
+
+
+def check_dem_rim_against_swmm_depth(scenario, rim_key: bool) -> list[str]:
+    """Judge each coupled node's DEM rim against SWMM's crown floor; return the nodes left at SWMM's depth.
+
+    With ``rim_key`` False nothing is read and ``[]`` is returned, so a configuration that does not write
+    ``swmm_node_rim_from_dem=1`` is unchanged. Otherwise every node of ``coupling_nodes.txt`` that the solver's
+    DEM-rim loop would set (the ``crown_rim`` outfalls are exempt already) is judged by
+    ``swmm_utils.dem_rim_findings`` against the DEM the solver loads. With none failing the result is ``[]``.
+    Failing nodes stop preparation with a ``ConfigurationError`` naming each, unless
+    ``swmm_node_rim_swmm_fallback`` is set: then the nodes are added to ``dem_rim_exempt_nodes.txt``, the solver
+    keeps SWMM's depth for them, and ``dem_rim_swmm_fallback.json`` records the numbers. Runs before any cfg
+    write, so a refusal leaves the scenario's cfg as it was.
+    """
+    if not rim_key or not getattr(scenario._system.cfg_system, "toggle_tritonswmm_model", True):
+        return []
+    import json
+
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.swmm_utils import _read_model_text, crown_rim_outfalls, dem_rim_findings, processed_dem_grid
+
+    hydraulics_inp = scenario.scen_paths.swmm_hydraulics_inp
+    nodes_file = coupling_nodes_file_for(hydraulics_inp)
+    if not nodes_file.is_file():
+        return []
+    cfg_analysis = scenario._analysis.cfg_analysis
+    crown = {_swmm_fold(n) for n in crown_rim_outfalls(cfg_analysis)}
+    names = [n.strip() for n in nodes_file.read_text().splitlines() if n.strip() and _swmm_fold(n.strip()) not in crown]
+    rds_dem, _provisional = processed_dem_grid(scenario._system.cfg_system)
+    findings = dem_rim_findings(_read_model_text(hydraulics_inp), names, rds_dem)
+    exempt_file = dem_rim_exempt_nodes_file_for(hydraulics_inp)
+    record = exempt_file.parent / "dem_rim_swmm_fallback.json"
+    if not findings:
+        # An earlier prepare of this scenario may have overridden nodes: drop its record and the exemption entries it
+        # added, so no record claims an override this prepare did not make. Crown_rim entries are left as written.
+        if record.is_file():
+            import json
+
+            stale = {_swmm_fold(n["name"]) for n in json.loads(record.read_text()).get("nodes", [])}
+            # EXEMPT-DU: transient-intermediate
+            record.unlink()
+            if exempt_file.is_file():
+                kept = [
+                    n for n in exempt_file.read_text().splitlines() if n.strip() and _swmm_fold(n.strip()) not in stale
+                ]
+                if kept:
+                    exempt_file.write_text("".join(f"{n}\n" for n in kept))
+                else:
+                    # EXEMPT-DU: transient-intermediate
+                    exempt_file.unlink()
+        return []
+
+    def row(f) -> str:
+        numbers = ", ".join(
+            f"{label} {value:.4f} m"
+            for label, value in (
+                ("invert", f.invert_m),
+                ("SWMM depth", f.swmm_depth_m),
+                ("DEM cell", f.cell_m),
+                ("DEM rim", f.dem_rim_m),
+                ("shortfall", f.shortfall_m),
+            )
+            if value is not None
+        )
+        return f"{f.name}: {f.reason} ({numbers})"
+
+    if not getattr(cfg_analysis, "swmm_node_rim_swmm_fallback", False):
+        raise ConfigurationError(
+            field="swmm_node_rim_from_dem",
+            message=(
+                f"swmm_node_rim_from_dem is true but the DEM rim of {len(findings)} coupled node(s) is not at or "
+                "above the depth SWMM assigns (the node's MaxDepth raised to the crown of its highest conduit), "
+                "so the solver would set a rim shallower than the node's own pipe or refuse the cell:\n    - "
+                + "\n    - ".join(row(f) for f in findings)
+            ),
+            fix_hint=(
+                "1) set swmm_node_rim_swmm_fallback to true, which keeps SWMM's depth for these nodes and records "
+                "them; 2) set swmm_node_rim_from_dem to false; or 3) amend the DEM and/or the node properties "
+                "(invert, MaxDepth, conduit offsets and sizes) and prepare again"
+            ),
+        )
+    require_dem_rim_exempt_capable_triton(
+        execution_environment=cfg_analysis.execution_environment,
+        software_directory=scenario._system.cfg_system.TRITONSWMM_software_directory,
+        branch_key=scenario._system.cfg_system.TRITONSWMM_branch_key,
+        recorded_sha=scenario._system.log.triton_head_sha.get(),
+        swmm_fallback=True,
+    )
+    kept = [n.strip() for n in exempt_file.read_text().splitlines() if n.strip()] if exempt_file.is_file() else []
+    present = {_swmm_fold(n) for n in kept}
+    overridden = [f.name for f in findings]
+    exempt_file.write_text("".join(f"{n}\n" for n in [*kept, *(n for n in overridden if _swmm_fold(n) not in present)]))
+    record.write_text(
+        json.dumps(
+            {
+                "override": "swmm_node_rim_swmm_fallback",
+                "meaning": "these nodes keep the depth SWMM assigns; the solver does not set their rim from the DEM",
+                "nodes": [
+                    {
+                        "name": f.name,
+                        "invert_m": f.invert_m,
+                        "swmm_depth_m": f.swmm_depth_m,
+                        "dem_cell_elevation_m": f.cell_m,
+                        "dem_rim_m": f.dem_rim_m,
+                        "shortfall_m": f.shortfall_m,
+                        "reason": f.reason,
+                    }
+                    for f in findings
+                ],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    warnings.warn(
+        f"swmm_node_rim_swmm_fallback keeps SWMM's depth, not the DEM rim, for {len(findings)} coupled node(s) of "
+        f"{hydraulics_inp.parent}: {', '.join(overridden)} (numbers in {record.name})",
+        stacklevel=2,
+    )
+    return overridden
 
 
 class TRITONSWMM_scenario:
@@ -1546,6 +1789,22 @@ class TRITONSWMM_scenario:
         return Path(self.scen_paths.swmm_hydraulics_inp)
 
     def _generate_TRITON_SWMM_cfg(self):
+        """Write the coupled TRITON-SWMM cfg for this scenario, after judging the TRITON build and the DEM rim for it.
+
+        Does nothing, and judges nothing, for a system that runs no TRITON model at all (``toggle_triton_model`` and
+        ``toggle_tritonswmm_model`` both False, the standalone-SWMM system): such a bundle has no TRITON checkout
+        because nothing builds a solver for it, so the guards below that read that build (``driven_stage`` outfalls,
+        the manhole table, the DEM-rim keys) would refuse a system that never runs the solver, and every prepare job
+        of the bundle failed that way. A TRITON-only system keeps this cfg and every guard, because its cfg bytes must
+        not move, and a system that does not say it runs no TRITON model keeps them too.
+        """
+        if not getattr(self._system.cfg_system, "toggle_tritonswmm_model", True) and not getattr(
+            self._system.cfg_system, "toggle_triton_model", True
+        ):
+            return
+        # Judged first: a node whose DEM rim is too low stops preparation before any cfg line is written.
+        rim_key = swmm_node_rim_key_is_written(self._analysis.cfg_analysis)
+        fallback_nodes = check_dem_rim_against_swmm_depth(self, rim_key)
         use_constant_mannings = self._system.cfg_system.toggle_use_constant_mannings
         dem_processed = self._system.sys_paths.dem_processed
         manhole_diameter = self._analysis.cfg_analysis.manhole_diameter
@@ -1658,7 +1917,6 @@ class TRITONSWMM_scenario:
         # system has none of, so refusing it over the option would stop a run the option does
         # not touch. The line is still appended below whatever the system, so the cfg bytes do
         # not depend on this check; a system that does not say it is uncoupled keeps the check.
-        rim_key = swmm_node_rim_key_is_written(self._analysis.cfg_analysis)
         if rim_key and getattr(self._system.cfg_system, "toggle_tritonswmm_model", True):
             cfg_system = self._system.cfg_system
             require_dem_rim_capable_triton(
@@ -1673,16 +1931,60 @@ class TRITONSWMM_scenario:
         # names a table. With no table nothing is written, so the cfg bytes are the no-table bytes.
         # The read is tolerant for the same reason as in the table writer: the cfg stand-ins of
         # tests/test_scenario_boundary_guards.py carry no table field.
-        if getattr(self._analysis.cfg_analysis, "manhole_table", None) is not None:
+        # A crown_rim open-water outfall list also needs the table: the toolkit writes a row for each listed node,
+        # so the build must read the key even when the analysis sets no manhole_table of its own.
+        from hhemt.swmm_utils import crown_rim_outfalls, driven_stage_outfalls
+
+        cfg_analysis_ow = self._analysis.cfg_analysis
+        crown_rim_listed = crown_rim_outfalls(cfg_analysis_ow)
+        driven_listed = driven_stage_outfalls(cfg_analysis_ow)
+        if getattr(cfg_analysis_ow, "manhole_table", None) is not None or crown_rim_listed:
             cfg_system = self._system.cfg_system
+            own_table = getattr(cfg_analysis_ow, "manhole_table", None) is not None
             require_manhole_table_capable_triton(
-                execution_environment=self._analysis.cfg_analysis.execution_environment,
+                execution_environment=cfg_analysis_ow.execution_environment,
+                software_directory=cfg_system.TRITONSWMM_software_directory,
+                branch_key=cfg_system.TRITONSWMM_branch_key,
+                recorded_sha=self._system.log.triton_head_sha.get(),
+                **(
+                    {}
+                    if own_table
+                    else {
+                        "field": "swmm_open_water_outfalls",
+                        "setting": (
+                            "swmm_open_water_outfalls lists outfalls under open_water_outfall_representation "
+                            "crown_rim, which writes a manhole-table row for each"
+                        ),
+                        "remedy": "empty swmm_open_water_outfalls or use driven_stage",
+                    }
+                ),
+            )
+            cfg_content = set_swmm_manhole_table(
+                cfg_content, manhole_table_file_for(self.scen_paths.swmm_hydraulics_inp)
+            )
+        # The open-water outfall keys, on the same coupled surface and guarded the same way. With no listed
+        # outfall nothing is written, so the cfg bytes are the bytes of an analysis that never had the list.
+        if driven_listed:
+            cfg_system = self._system.cfg_system
+            require_driven_outfalls_capable_triton(
+                execution_environment=cfg_analysis_ow.execution_environment,
                 software_directory=cfg_system.TRITONSWMM_software_directory,
                 branch_key=cfg_system.TRITONSWMM_branch_key,
                 recorded_sha=self._system.log.triton_head_sha.get(),
             )
-            cfg_content = set_swmm_manhole_table(
-                cfg_content, manhole_table_file_for(self.scen_paths.swmm_hydraulics_inp)
+            cfg_content = set_swmm_driven_outfalls(
+                cfg_content, driven_outfalls_file_for(self.scen_paths.swmm_hydraulics_inp)
+            )
+        if (crown_rim_listed or fallback_nodes) and rim_key:
+            cfg_system = self._system.cfg_system
+            require_dem_rim_exempt_capable_triton(
+                execution_environment=cfg_analysis_ow.execution_environment,
+                software_directory=cfg_system.TRITONSWMM_software_directory,
+                branch_key=cfg_system.TRITONSWMM_branch_key,
+                recorded_sha=self._system.log.triton_head_sha.get(),
+            )
+            cfg_content = set_swmm_dem_rim_exempt_nodes(
+                cfg_content, dem_rim_exempt_nodes_file_for(self.scen_paths.swmm_hydraulics_inp)
             )
         # The coupling-node list this scenario wrote, judged against the filled hydraulics.inp
         # the solver reads: run entry judged the template, which a placeholder can leave open.
@@ -2173,7 +2475,8 @@ class TRITONSWMM_scenario:
 
     def _verify_native_build_or_skip_in_container(self) -> None:
         """Native mode: raise CompilationError if the backend build required by
-        self.backend is not compiled. Container mode: no-op.
+        self.backend is not compiled. Container mode: no-op. A standalone-SWMM
+        system (only ``toggle_swmm_model``) requires the SWMM build and no TRITON build.
 
         Mirrors setup_workflow.py's container compile-skip (_native_compile). In
         container mode setup skips the on-cluster compile (the SIF carries the
@@ -2185,10 +2488,16 @@ class TRITONSWMM_scenario:
             return
 
         # Validate backend is available. The compilation marker depends on
-        # whether the coupled TRITONSWMM model is enabled — TRITON-only mode
-        # compiles into build_triton_cpu/ (no swmm5 target) and must not be
-        # gated on the TRITONSWMM-coupled markers.
-        is_tritonswmm = self._system.cfg_system.toggle_tritonswmm_model
+        # which model the system runs — TRITON-only mode compiles into
+        # build_triton_cpu/ (no swmm5 target) and must not be gated on the
+        # TRITONSWMM-coupled markers, and a standalone-SWMM system compiles only
+        # the SWMM build, so it must not be gated on either TRITON build.
+        cfg_sys = self._system.cfg_system
+        if cfg_sys.toggle_swmm_model and not cfg_sys.toggle_tritonswmm_model and not cfg_sys.toggle_triton_model:
+            self._verify_swmm_only_build()
+            return
+
+        is_tritonswmm = cfg_sys.toggle_tritonswmm_model
         model_label = "tritonswmm" if is_tritonswmm else "triton_only"
         if self.backend == "gpu":
             gpu_ok = (
@@ -2240,6 +2549,55 @@ class TRITONSWMM_scenario:
                     logfile=_log,
                     return_code=1,
                 )
+
+    def _verify_swmm_only_build(self) -> None:
+        """Native mode, standalone-SWMM system: raise unless the SWMM build is compiled.
+
+        A system that runs only standalone SWMM compiles the SWMM build alone (setup's
+        ``--compile-swmm``), so demanding a TRITON-only or coupled build here refused
+        every scenario of such a system with "No triton_only CPU build is present".
+        Standalone SWMM has no GPU backend, so ``self.backend`` does not change the
+        requirement, and a failed gate always names ``backend="cpu"`` like ``compile_SWMM``.
+
+        Raises
+        ------
+        ConfigurationError
+            No SWMM compilation log exists, so no build was attempted here (CLI exit 2).
+        CompilationError
+            A SWMM compilation log exists but does not record a successful build (exit 3).
+        """
+        if self._system.compilation_swmm_successful:
+            return
+        swmm_build_dir = self._system.sys_paths.SWMM_build_dir
+        if swmm_build_dir is None:
+            raise ConfigurationError(
+                field="SWMM_software_directory",
+                message=(
+                    "The SWMM software directory is not configured, so there is no SWMM build "
+                    "to find. Set SWMM_software_directory in the system config to the SWMM "
+                    "source checkout, then run the setup phase with --compile-swmm; or set "
+                    "execution_environment='container' if the binary is supplied by a SIF."
+                ),
+                config_path=self._system.system_config_yaml,
+            )
+        logfile = swmm_build_dir / "compilation.log"
+        if not logfile.exists():
+            raise ConfigurationError(
+                field="SWMM_software_directory",
+                message=(
+                    f"No SWMM build is present: expected a compilation log at {logfile}, "
+                    "which does not exist. No build was attempted here (this is not a "
+                    "compile failure). Run the setup phase with --compile-swmm, or set "
+                    "execution_environment='container' if the binary is supplied by a SIF."
+                ),
+                config_path=self._system.system_config_yaml,
+            )
+        raise CompilationError(
+            model_type="swmm",
+            backend="cpu",
+            logfile=logfile,
+            return_code=1,
+        )
 
     def _link_native_builds_into_sim(self) -> None:
         """Native mode: symlink the compiled build folders into the sim dir,
@@ -2990,12 +3348,17 @@ class ManholeTableRow:
 
 @dataclass(frozen=True)
 class ManholeTableContext:
-    """What the refusals of a manhole table name: the file, the SWMM model, and the two constants a fill would use."""
+    """What the refusals of a manhole table name: the file, the SWMM model, and the two constants a fill would use.
+
+    ``crown_rim_nodes`` are the coupling nodes whose row the toolkit writes itself (the open-water outfalls of the
+    ``crown_rim`` representation): the table may not name them, and the missing-row rule does not ask for them.
+    """
 
     table: Path
     model: str
     diameter_constant: float
     loss_constant: float
+    crown_rim_nodes: tuple[str, ...] = ()
 
 
 def read_manhole_table(path) -> list[ManholeTableRow]:
@@ -3100,7 +3463,19 @@ def manhole_table_problems(rows, coupling_nodes, fill_with_constant: bool, conte
     if repeated:
         problems.append(f"it names a node more than once after SWMM's case fold: {', '.join(repeated)}")
     coupled_folds = {_swmm_fold(n) for n in coupling_nodes}
-    unknown = [name for group in by_fold.values() for name in group[:1] if _swmm_fold(name) not in coupled_folds]
+    crown_folds = {_swmm_fold(n) for n in context.crown_rim_nodes}
+    named_crown = [name for fold, group in by_fold.items() if fold in crown_folds for name in group[:1]]
+    if named_crown:
+        problems.append(
+            f"it has row(s) for open-water outfall(s) {', '.join(named_crown)}, listed in swmm_open_water_outfalls "
+            "under crown_rim, whose diameter and loss the toolkit writes itself from the outlet conduit"
+        )
+    unknown = [
+        name
+        for fold, group in by_fold.items()
+        for name in group[:1]
+        if fold not in coupled_folds and fold not in crown_folds
+    ]
     if unknown:
         problems.append(
             f"it has {len(unknown)} row(s) naming no coupling node of {context.model}: {', '.join(unknown)}. "
@@ -3108,7 +3483,7 @@ def manhole_table_problems(rows, coupling_nodes, fill_with_constant: bool, conte
             "is refused whether or not manhole_table_fill_with_constants is True"
         )
     if not fill_with_constant:
-        missing = [n for n in coupling_nodes if _swmm_fold(n) not in by_fold]
+        missing = [n for n in coupling_nodes if _swmm_fold(n) not in by_fold and _swmm_fold(n) not in crown_folds]
         if missing:
             named = ", ".join(missing[:_MANHOLE_TABLE_MAX_NAMED_NODES])
             more = (
@@ -3145,20 +3520,26 @@ def require_valid_manhole_table(path, coupling_nodes, fill_with_constant: bool, 
     return rows
 
 
-def manhole_table_text(rows, coupling_nodes, diameter_constant: float, loss_constant: float) -> str:
+def manhole_table_text(rows, coupling_nodes, diameter_constant: float, loss_constant: float, fixed=None) -> str:
     """The table file TRITON reads: one ``{name} {diameter} {loss}`` line per coupling node, in node order.
 
     ``rows`` are the rows of a table already judged by ``manhole_table_problems`` against ``coupling_nodes``. A
     node with a row takes the row's two values and a node without one takes the two constants, so the file
-    is always complete. Each value is written with ``repr`` of the float, which the solver reads back as the same
-    double.
+    is always complete. ``fixed`` maps a node name to the ``(diameter, loss)`` the toolkit writes for it (a
+    ``crown_rim`` open-water outfall) and takes precedence over a row and over the constants. Each value is
+    written with ``repr`` of the float, which the solver reads back as the same double.
     """
     by_fold = {_swmm_fold(row.node_id): row for row in rows}
+    fixed_by_fold = {_swmm_fold(k): v for k, v in (fixed or {}).items()}
     lines = []
     for name in coupling_nodes:
-        row = by_fold.get(_swmm_fold(name))
-        diameter = float(row.diameter) if row is not None else float(diameter_constant)
-        loss = float(row.loss) if row is not None else float(loss_constant)
+        key = _swmm_fold(name)
+        if key in fixed_by_fold:
+            diameter, loss = (float(v) for v in fixed_by_fold[key])
+        else:
+            row = by_fold.get(key)
+            diameter = float(row.diameter) if row is not None else float(diameter_constant)
+            loss = float(row.loss) if row is not None else float(loss_constant)
         lines.append(f"{name} {diameter!r} {loss!r}\n")
     return "".join(lines)
 

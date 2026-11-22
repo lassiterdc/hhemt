@@ -40,6 +40,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def expected_swmm_threads(swmm_threads, omp_threads) -> int:
+    """The thread count a SWMM run reports: ``swmm_threads`` bounded by the OpenMP count of its run mode.
+
+    The same bound ``analysis_validation.swmm_thread_issues`` applies (``min(swmm_threads, omp_thread_count)``).
+    ``omp_threads`` is the OpenMP count the row's run mode allows; a missing value of either is 1.
+    """
+    return min(int(swmm_threads or 1), int(omp_threads or 1))
+
+
 def validate_resource_usage(analysis, logger=None, *, df_status=None):
     """
     Validate that actual resource usage matches expected configuration.
@@ -122,6 +131,28 @@ def validate_resource_usage(analysis, logger=None, *, df_status=None):
             expected_nTasks = cfg.n_mpi_procs or 1
             expected_omp_threads = cfg.n_omp_threads or 1
             expected_gpus = cfg.n_gpus or 0
+
+        # A SWMM row measures the `Number of Threads` of its report, which is `swmm_threads` bounded by the OpenMP
+        # count (DR-36); the row's `n_omp_threads` is the OpenMP count itself and is what a TRITON row measures.
+        if row.get("model_type") == "swmm":
+            # A sensitivity member that varies `swmm_threads` carries it in the table's prefixed column; one that
+            # does not runs the analysis config's value.
+            _row_swmm_threads = next(
+                (
+                    row[k]
+                    for k in (f"{_prefix}swmm_threads", "analysis.swmm_threads")
+                    if k in row.index and pd.notna(row[k])
+                ),
+                None,
+            )
+            if _row_swmm_threads is None:
+                _row_swmm_threads = getattr(getattr(analysis, "cfg_analysis", None), "swmm_threads", 1)
+            from types import SimpleNamespace
+
+            from hhemt.run_simulation import omp_thread_count
+
+            _omp_bound = omp_thread_count(SimpleNamespace(run_mode=run_mode, n_omp_threads=expected_omp_threads))
+            expected_omp_threads = expected_swmm_threads(_row_swmm_threads, _omp_bound)
 
         # Determine expected GPU backend (Phase-4 4c, D2): gpu_compilation_backend
         # was retired off system_config. The downstream guard is binary

@@ -3,6 +3,7 @@
 import pytest
 
 import tests.utils_for_testing as tst_ut
+from tests.fixtures.outfall_tier import provision_outfall_tier
 
 # NO module-level scheduler gate, deliberately. This module carried
 # `skipif(is_scheduler_context(), reason="Only runs on non-HPC systems.")` from its
@@ -84,3 +85,20 @@ def test_compile_triton_only(synth_all_models_analysis):
     analysis = synth_all_models_analysis
     analysis._system.compile_TRITON_only(recompile_if_already_done_successfully=True, verbose=True)
     tst_ut.assert_triton_compiled(analysis)
+
+
+# The warm step of the suite harness runs THIS module outside a chunk, and a chunk never provisions a shared solver
+# tier. The open-water outfall tests (`tests/test_synth_open_water_outfall_review.py`) need a second tier, the
+# work-branch solver, so the warm provisions it here and every later chunk finds it PRESENT. The test provisions the
+# source tree only: the build inside it is made by the tests themselves, in whichever session runs them.
+@pytest.mark.compile_tier
+def test_provision_the_open_water_outfall_solver_tier():
+    import os
+
+    from tests.fixtures._triton_source_cache import _DISABLE_ENV, borrower_is_healthy
+    from tests.fixtures.outfall_tier import OUTFALL_SOLVER_SHA
+
+    if os.environ.get(_DISABLE_ENV) == "1" or os.environ.get("CI"):
+        pytest.skip("provisioning is disabled here (CI or the canonical opt-out), so no tier is made")
+    tier = provision_outfall_tier()
+    assert borrower_is_healthy(tier, OUTFALL_SOLVER_SHA), f"{tier} is not a checkout at {OUTFALL_SOLVER_SHA[:12]}"

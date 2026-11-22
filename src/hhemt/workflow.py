@@ -10339,7 +10339,7 @@ onerror:
 {
                 self._base_builder._build_resource_block(
                     partition=analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                    runtime_min=30,
+                    runtime_min=analysis.cfg_analysis.hpc_runtime_min_for_analysis_output_consolidation,
                     mem_mb=analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
                     nodes=1,
                     tasks=1,
@@ -10962,7 +10962,7 @@ onerror:
 {
                 self._base_builder._build_resource_block(
                     partition=analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                    runtime_min=30,
+                    runtime_min=analysis.cfg_analysis.hpc_runtime_min_for_analysis_output_consolidation,
                     mem_mb=analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
                     nodes=1,
                     tasks=1,

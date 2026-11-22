@@ -44,7 +44,11 @@ def _touch(p: Path) -> Path:
 
 
 def _cfg_dict(tmp_path: Path, **over) -> dict:
-    """A minimal analysis config carrying NONE of the four default-bearing keys unless ``over`` names one."""
+    """A minimal analysis config carrying NONE of the three default-bearing keys unless ``over`` names one.
+
+    ``toggle_consolidate_timeseries`` and ``timeseries_keep_triton_gridded`` have no default, so the dict states them
+    (consolidation on, every gridded variable kept) and ``over`` varies them like any other key.
+    """
     base = {
         "analysis_id": "analysis_01",
         "hhemt_sha": "0" * 40,  # schema-only; never compared to a running identity
@@ -66,6 +70,8 @@ def _cfg_dict(tmp_path: Path, **over) -> dict:
         "TRITON_reporting_timestep_s": 60,
         "open_boundaries": 1,
         "report": {},
+        "toggle_consolidate_timeseries": True,
+        "timeseries_keep_triton_gridded": None,
         "force_rerun": "none",
     }
     base.update(over)
@@ -88,7 +94,8 @@ def test_an_analysis_config_with_none_of_the_four_keys_resolves_the_clearing_sta
     Passes under a second correct implementation that resolves the clearing switch in a different validator.
     """
     for key in _FOUR_KEYS:
-        assert key not in _cfg_dict(tmp_path)
+        if key != "toggle_consolidate_timeseries":  # no default: the dict states it as True
+            assert key not in _cfg_dict(tmp_path)
     cfg = analysis_config.model_validate(_cfg_dict(tmp_path))
     assert cfg.toggle_consolidate_timeseries is True
     assert cfg.toggle_clear_scenario_timeseries_after_consolidation is True
@@ -133,7 +140,8 @@ def test_the_module_constant_for_the_retired_default_is_gone():
 def test_the_four_field_descriptions_state_the_defaults():
     """The descriptions carry the defaults and the three-switch conjunction."""
     fields = analysis_config.model_fields
-    assert "Defaults to True" in fields["toggle_consolidate_timeseries"].description
+    assert fields["toggle_consolidate_timeseries"].is_required()
+    assert "has no default" in fields["toggle_consolidate_timeseries"].description
     assert "Defaults to all" in fields["clear_raw"].description and "Set none" in fields["clear_raw"].description
     assert "Defaults to all" in fields["remove_after_processing"].description
     assert "directories" in fields["remove_after_processing"].description

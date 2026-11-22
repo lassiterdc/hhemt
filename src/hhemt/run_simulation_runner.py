@@ -992,6 +992,21 @@ def main():
         # Verify completion via log file check (no refresh needed - we'll check the log file directly)
         if not scenario.run.model_run_completed(model_type):
             logger.error(f"[{event_iloc}] Simulation did not complete successfully")
+            # A resume the solver refused because the exchange-replay side-file stops short of the
+            # checkpoint it was handed would be refused again by every retry: the picker returns the
+            # same newest cfg. Set aside the checkpoints the side-file does not cover HERE, while this
+            # attempt's model log still holds the refusal (it is reopened "w" by the next exec), so the
+            # next attempt resumes from one it does cover. Sited before the failure is counted and
+            # caught on its own: the attempt still fails and is counted exactly as before, so the
+            # budget is unchanged, and a defect in the repair must not turn into a second failure.
+            try:
+                _fallback = run.fall_back_from_exchange_replay_refusal(
+                    model_logfile, resumed_step=sim_start_reporting_tstep, model_type=model_type
+                )
+                if _fallback is not None:
+                    logger.warning(f"[{event_iloc}] {_fallback.message}")
+            except Exception as _fb_err:
+                logger.warning(f"[{event_iloc}] exchange-replay resume fallback failed (non-fatal): {_fb_err}")
             # Raised inside the try so the except arm below logs the PMIx cause and its remedy
             # and records the terminal failure once. Without this call a SLURM run, the only
             # path that runs MPI under PMIx, ends as a bare "did not complete" and a _failed_

@@ -42,10 +42,12 @@ from plotly.subplots import make_subplots
 
 from hhemt import swmm_schema as _ss
 from hhemt import units
+from hhemt.exceptions import ProcessingError
 from hhemt.report_renderers._map_bounds import (
     compute_padded_square_bounds,
 )
 from hhemt.scenario_records import all_members_for_reading_of
+from hhemt.swmm_runnable import without_injected_dummy_chain as _without_injected_dummy_chain
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
@@ -112,7 +114,6 @@ def render(
     from hhemt.report_renderers._provenance import ProvenanceLog
 
     cfg_ana = analysis.cfg_analysis
-    sys_paths = analysis._system.sys_paths
     map_cfg = report_cfg.system_map
     static_backend = getattr(
         getattr(report_cfg, "interactive", None),
@@ -141,6 +142,13 @@ def render(
     target_crs = resolve_target_crs(analysis, report_cfg)
     prov = ProvenanceLog()
 
+    # The system whose DEM and Manning's rasters exist on disk. For a sensitivity bundle whose rows all
+    # overlay `system.target_dem_resolution`, the master config names a resolution no row processed, so
+    # `analysis._system` can point at rasters that were never written; every DEM and Manning's read
+    # below goes through this system instead.
+    dem_system = _system_holding_present_dem(analysis)
+    sys_paths = dem_system.sys_paths
+
     # ---- Load the DEM up front so the figure can be sized to data aspect. (The
     # water-level BC is only resolved to a path below; the DEM panel reads it.)
     dem = rxr.open_rasterio(sys_paths.dem_processed)
@@ -155,10 +163,10 @@ def render(
     # `open_processed_mannings_as_rds` splices the DEM's header onto it (same system
     # grid) before opening — a plain open raises "Couldn't determine X spacing". The
     # spliced raster shares the DEM's grid/extent, so it reprojects identically.
-    mannings = analysis._system.mannings_rds
+    mannings = dem_system.mannings_rds
     if mannings.rio.crs is not None and mannings.rio.crs != target_crs:
         mannings = mannings.rio.reproject(target_crs)
-    mannings_res = analysis._system.cfg_system.target_dem_resolution
+    mannings_res = dem_system.cfg_system.target_dem_resolution
 
     bc_path: Path | None = None
     if cfg_ana.toggle_external_boundaries and cfg_ana.external_boundary_gis:
@@ -245,12 +253,12 @@ def render(
         # reflects ground elevations rather than the building-elevation plateau,
         # and uses both sentinels for its wall-overlay threshold.
         building_height = getattr(
-            analysis._system.cfg_system,
+            dem_system.cfg_system,
             "dem_building_height",
             None,
         )
         outside_watershed_height = getattr(
-            analysis._system.cfg_system,
+            dem_system.cfg_system,
             "dem_outside_watershed_height",
             None,
         )
@@ -277,7 +285,7 @@ def render(
             plotly_js_mode=report_cfg.interactive.plotly_js_mode,
             dem_building_height=building_height,
             dem_outside_watershed_height=outside_watershed_height,
-            vertical_crs_epsg=analysis._system.cfg_system.crs.vertical_epsg,
+            vertical_crs_epsg=dem_system.cfg_system.crs.vertical_epsg,
         )
 
     # Matplotlib branch: taken when static_cfg is set or static_backend is
@@ -334,7 +342,7 @@ def render(
         map_cfg,
         prov,
         dem_source=dem_rel,
-        vertical_crs_epsg=analysis._system.cfg_system.crs.vertical_epsg,
+        vertical_crs_epsg=dem_system.cfg_system.crs.vertical_epsg,
         dem_cmap_override=(static_cfg.dem_cmap if static_cfg is not None else None),
         dem_over_color_override=(static_cfg.dem_over_color if static_cfg is not None else None),
     )
@@ -342,8 +350,8 @@ def render(
     # overlay + "Mannings ({res}m)" title) — the SAME artist the publication path uses.
     from hhemt.plot_system import TRITONSWMM_system_plotting
 
-    TRITONSWMM_system_plotting(analysis._system).processed_mannings(ax=ax_mannings)
-    _label_static_mannings_panel(ax_mannings, analysis._system.cfg_system.target_dem_resolution)
+    TRITONSWMM_system_plotting(dem_system).processed_mannings(ax=ax_mannings)
+    _label_static_mannings_panel(ax_mannings, dem_system.cfg_system.target_dem_resolution)
     if _renders_swmm:
         # Bottom row (coupled only): Hydrology (col 0) + Hydraulics (col 1).
         ax_hydro, ax_hydraulics = _axes[1][0], _axes[1][1]
@@ -416,9 +424,9 @@ def _build_manifest_data(
                 "title": HYDRAULICS_PANEL_TITLE,
                 "axis_extents": panel_extents,
                 "element_counts": {
-                    "junctions": int(len(hydraulics_model.inp.junctions)),
-                    "outfalls": int(len(hydraulics_model.inp.outfalls)),
-                    "conduits": int(len(hydraulics_model.inp.conduits)),
+                    "junctions": int(len(_without_injected_dummy_chain(hydraulics_model.inp.junctions))),
+                    "outfalls": int(len(_without_injected_dummy_chain(hydraulics_model.inp.outfalls))),
+                    "conduits": int(len(_without_injected_dummy_chain(hydraulics_model.inp.conduits))),
                 },
                 "legend_labels": ["SWMM conduits", "SWMM junction"],
             }
@@ -623,9 +631,9 @@ def _draw_hydraulics_panel(
 
     hp = map_cfg.hydraulics_panel
     coords_df = hydraulics_model.inp.coordinates
-    junctions_df = hydraulics_model.inp.junctions
-    outfalls_df = hydraulics_model.inp.outfalls
-    conduits_df = hydraulics_model.inp.conduits
+    junctions_df = _without_injected_dummy_chain(hydraulics_model.inp.junctions)
+    outfalls_df = _without_injected_dummy_chain(hydraulics_model.inp.outfalls)
+    conduits_df = _without_injected_dummy_chain(hydraulics_model.inp.conduits)
 
     legend_handles: list = []
     connected_nodes = _collect_connected_nodes(conduits_df)
@@ -963,6 +971,51 @@ def _master_renders_swmm(analysis: TRITONSWMM_analysis) -> bool:
         types |= _enabled(analysis)
         return bool(types & {"tritonswmm", "swmm"})
     return bool(_enabled(analysis) & {"tritonswmm", "swmm"})
+
+
+def _system_holding_present_dem(analysis: TRITONSWMM_analysis):
+    """The system whose processed DEM and Manning's raster both exist on disk, chosen by a fixed rule.
+
+    The resolution rule: the master system (``analysis._system``) when its own pair exists, so a bundle whose
+    master resolution was built draws exactly what it drew before; otherwise the finest-resolution system among
+    those the run executes (``hhemt.analysis._systems_run_by``) whose pair exists. Every candidate is a grid the bundle
+    itself configured, so any one is a faithful picture of the inputs, and the finest is chosen because it is the
+    most detailed one and the only deterministic pick when several were built. A DEM without its Manning's
+    raster is skipped because the figure draws both. Deliberately NOT a glob of every ``elevation_*m.dem`` in the
+    system directory: that would also draw a stale raster left by an earlier configuration that no row of this
+    bundle runs.
+
+    Raises
+    ------
+    ProcessingError
+        When no candidate has both rasters. The message names every DEM file asked for and every DEM present in
+        the system directory, so the bundle's missing build step is visible from the report log alone.
+    """
+    from hhemt.analysis import _systems_run_by
+
+    master = analysis._system
+    run_systems = sorted(
+        (s for s in _systems_run_by(analysis) if s is not master),
+        key=lambda s: s.cfg_system.target_dem_resolution,
+    )
+    candidates = [master, *run_systems]
+    for system in candidates:
+        if Path(system.sys_paths.dem_processed).is_file() and Path(system.sys_paths.mannings_processed).is_file():
+            return system
+
+    asked = sorted({str(Path(s.sys_paths.dem_processed)) for s in candidates})
+    system_dirs = sorted({Path(s.sys_paths.dem_processed).parent for s in candidates})
+    present = sorted(str(p) for d in system_dirs for p in d.glob("elevation_*m.dem"))
+    raise ProcessingError(
+        operation="system overview: no DEM with its Manning's raster exists for a resolution this analysis runs",
+        filepath=Path(master.sys_paths.dem_processed),
+        reason=(
+            f"DEMs asked for: {', '.join(asked)}. "
+            f"DEMs present in the system directory: {', '.join(present) if present else 'none'}. "
+            "Run the system setup step that writes the processed DEM and Manning's raster for a resolution "
+            "the sensitivity rows use."
+        ),
+    )
 
 
 def _kept_inps(analysis) -> dict[str, Path]:
@@ -1608,9 +1661,9 @@ def _draw_hydraulics_panel_plotly(
     hp_node_size = _plotly_node_marker_size(map_cfg)
     hp_junction_size = _plotly_junction_marker_size(map_cfg)
     coords_df = hydraulics_model.inp.coordinates
-    junctions_df = hydraulics_model.inp.junctions
-    outfalls_df = hydraulics_model.inp.outfalls
-    conduits_df = hydraulics_model.inp.conduits
+    junctions_df = _without_injected_dummy_chain(hydraulics_model.inp.junctions)
+    outfalls_df = _without_injected_dummy_chain(hydraulics_model.inp.outfalls)
+    conduits_df = _without_injected_dummy_chain(hydraulics_model.inp.conduits)
 
     inverts: dict[str, float] = {}
     for name, row in junctions_df.iterrows():

@@ -538,14 +538,19 @@ def outfall_decision_problems(
     matched: Sequence[str],
     to_couple: Sequence[str],
     to_keep: Sequence[str],
+    open_water: Sequence[str] = (),
 ) -> list[Problem]:
     """V6, V9 and V13: every outfall of the coupled model is matched, coupled or kept, in exactly one place.
 
     ``matched`` are the outfalls the ``water_level`` records name, ``to_couple`` is ``swmm_outfalls_to_couple`` of
-    the system config and ``to_keep`` is ``swmm_outfalls_to_keep`` of the analysis config.
+    the system config and ``to_keep`` is ``swmm_outfalls_to_keep`` of the analysis config. ``open_water`` are the
+    outfalls ``swmm_open_water_outfalls`` lists: each is a decision of its own, so an outfall listed there needs no
+    other (a listed outfall that is also coupled or kept is refused by ``swmm_utils.open_water_outfall_problems``,
+    which owns the rules of that list).
     """
     problems: list[Problem] = []
     matched_f, couple_f, keep_f = ({_fold(n) for n in group} for group in (matched, to_couple, to_keep))
+    open_water_f = {_fold(n) for n in open_water}
     both = sorted(n for n in matched if _fold(n) in couple_f)
     if both:
         problems.append(
@@ -595,7 +600,7 @@ def outfall_decision_problems(
                 fix_hint="Remove the name from one of the places",
             )
         )
-    undecided = [o for k, o in outfalls.items() if k not in matched_f | couple_f | keep_f]
+    undecided = [o for k, o in outfalls.items() if k not in matched_f | couple_f | keep_f | open_water_f]
     variable = [o for o in undecided if o.kind in _VARIABLE_OUTFALL_KINDS]
     plain = [o for o in undecided if o.kind not in _VARIABLE_OUTFALL_KINDS]
     if variable:
@@ -953,30 +958,45 @@ def snap_segments(
     return snapped, problems
 
 
+def dem_cell_elevations(rds_dem, nodes: Mapping[str, tuple[float, float, float]]) -> dict[str, float | None]:
+    """The elevation of the DEM cell that holds each node, by TRITON's own cell rule, None off the grid.
+
+    ``nodes`` maps a name to ``(x, y, invert)``. The cell is TRITON's own: ``col = ceil((x - xll)/cell + 1e-16) - 1``
+    and ``row = ceil((nrows - (y - yll)/cell) + 1e-16) - 1`` (``nodes_outside_triton_grid``). The value is returned
+    as stored, so a no-data or non-finite cell is the caller's to classify. The one lookup both the converted-node
+    depths (V23) and the DEM-rim check of ``swmm_node_rim_from_dem`` read, so the two cannot place a node in
+    different cells.
+    """
+    left, bottom, right, top = rds_dem.rio.bounds()
+    nrows, ncols = int(rds_dem.sizes["y"]), int(rds_dem.sizes["x"])
+    cell = (right - left) / ncols
+    values = rds_dem.squeeze().values
+    cells: dict[str, float | None] = {}
+    for name, (x, y, _invert) in nodes.items():
+        col = math.ceil((x - left) / cell + 1e-16) - 1
+        row = math.ceil((nrows - (y - bottom) / cell) + 1e-16) - 1
+        cells[name] = float(values[row, col]) if 0 <= col < ncols and 0 <= row < nrows else None
+    return cells
+
+
 def converted_node_depths(
     rds_dem, nodes: Mapping[str, tuple[float, float, float]]
 ) -> tuple[dict[str, float], list[Problem]]:
     """The SWMM ``MaxDepth`` of each converted node: ground at its cell minus its invert (DR-35, V23).
 
-    ``nodes`` maps a name to ``(x, y, invert)``. The cell is TRITON's own: ``col = ceil((x - xll)/cell +
-    1e-16) - 1`` and ``row = ceil((nrows - (y - yll)/cell) + 1e-16) - 1`` (``nodes_outside_triton_grid``).
+    ``nodes`` maps a name to ``(x, y, invert)``. The cell is TRITON's own (``dem_cell_elevations``).
     A node whose cell is outside the grid, no-data, not finite or at or below the invert is refused with its
     invert and cell elevation.
     """
-    left, bottom, right, top = rds_dem.rio.bounds()
-    nrows, ncols = int(rds_dem.sizes["y"]), int(rds_dem.sizes["x"])
-    cell = (right - left) / ncols
     nodata = rds_dem.rio.nodata
-    values = rds_dem.squeeze().values
+    cells = dem_cell_elevations(rds_dem, nodes)
     depths: dict[str, float] = {}
     refused: list[tuple[str, float, float | None]] = []
-    for name, (x, y, invert) in nodes.items():
-        col = math.ceil((x - left) / cell + 1e-16) - 1
-        row = math.ceil((nrows - (y - bottom) / cell) + 1e-16) - 1
-        if not (0 <= col < ncols and 0 <= row < nrows):
+    for name, (_x, _y, invert) in nodes.items():
+        z = cells[name]
+        if z is None:
             refused.append((name, invert, None))
             continue
-        z = float(values[row, col])
         if not math.isfinite(z) or (nodata is not None and z == float(nodata)) or z <= invert:
             refused.append((name, invert, z))
             continue
@@ -1278,19 +1298,28 @@ def preflight_problems(cfg_system, cfg_analysis) -> PreflightReport:
             )
         )
 
+    from hhemt.swmm_utils import open_water_outfalls
+
     keep = list(cfg_analysis.swmm_outfalls_to_keep)
+    open_water = open_water_outfalls(cfg_analysis)
     coupled = bool(getattr(cfg_system, "toggle_tritonswmm_model", True))
     # V9 is asked of a coupled model only, because only a coupled model reads the disposition; V6 and V13 stay always.
     problems.extend(
         p
-        for p in outfall_decision_problems(outfalls, matched, list(cfg_system.swmm_outfalls_to_couple), keep)
+        for p in outfall_decision_problems(
+            outfalls, matched, list(cfg_system.swmm_outfalls_to_couple), keep, open_water=open_water
+        )
         if coupled or p.code != "V9"
     )
     if toggle and records:
         _, distances = matched_outfall_problems(records, outfalls, coordinates, None)
         lines.extend(distance_lines(distances))
 
-    converted = [*cfg_system.swmm_outfalls_to_couple, *matched]
+    # An outfall listed in swmm_open_water_outfalls takes no depth from the DEM whatever its representation: a
+    # driven_stage outfall stays an outfall, and a crown_rim node's depth is written as 0 and raised by SWMM to the
+    # crown of its outlet conduit. Both are therefore left out of the nodes the DEM gives a depth.
+    open_water_f = {_fold(n) for n in open_water}
+    converted = [*cfg_system.swmm_outfalls_to_couple, *(n for n in matched if _fold(n) not in open_water_f)]
     uses_dem = coupled and (bool(converted) or bool(cfg_analysis.swmm_node_rim_from_dem))
     if uses_dem and cfg_analysis.dem_rim_resolution is None:
         problems.append(
@@ -1310,6 +1339,21 @@ def preflight_problems(cfg_system, cfg_analysis) -> PreflightReport:
                 "no outfall is converted and swmm_node_rim_from_dem is false, so no depth is taken from the DEM",
                 cfg_analysis.dem_rim_resolution,
                 fix_hint="Remove dem_rim_resolution",
+            )
+        )
+    # The fallback keeps SWMM's depth for the nodes whose DEM rim the solver would take; with no such rim written a
+    # setting of it changes nothing, and a field that does nothing is refused as dem_rim_resolution is.
+    rim_key_written = bool(cfg_analysis.swmm_node_rim_from_dem) and cfg_analysis.dem_rim_resolution != "full"
+    if getattr(cfg_analysis, "swmm_node_rim_swmm_fallback", False) and not rim_key_written:
+        problems.append(
+            Problem(
+                "CFG",
+                "analysis.swmm_node_rim_swmm_fallback",
+                "swmm_node_rim_swmm_fallback is true but the TRITON cfg writes no DEM rim (swmm_node_rim_from_dem is "
+                "false, or dem_rim_resolution is full), so there is no DEM rim for the fallback to replace",
+                True,
+                fix_hint="Set swmm_node_rim_from_dem to true with dem_rim_resolution processed, or remove "
+                "swmm_node_rim_swmm_fallback",
             )
         )
     if cfg_analysis.dem_rim_resolution == "full" and (converted or cfg_analysis.swmm_node_rim_from_dem):

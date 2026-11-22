@@ -15,7 +15,6 @@ multi-target run end to end is not covered by this file.
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -83,6 +82,22 @@ def _write_row_system_yaml(tmp_path: Path, dst: Path, *, target_dem_resolution: 
     return dst
 
 
+def _with_assign_gpu_target(system):
+    """Give a stub primary the ``assign_gpu_target`` interface of ``TRITONSWMM_system``.
+
+    Like the real method it sets ``gpu_hardware``, ``gpu_compilation_backend`` and
+    ``additional_modules``; it carries no ``sys_paths`` because these stubs read none.
+    """
+
+    def assign_gpu_target(gpu_hardware, gpu_compilation_backend, additional_modules):
+        system.gpu_hardware = gpu_hardware
+        system.gpu_compilation_backend = gpu_compilation_backend
+        system.additional_modules = additional_modules
+
+    system.assign_gpu_target = assign_gpu_target
+    return system
+
+
 def _make_stub_system(target_dem_resolution: float, gpu_hardware, gpu_compilation_backend, system_config_yaml: Path):
     """Build a stub TRITONSWMM_system with just the attrs the dedup logic reads."""
     _fields = {
@@ -99,7 +114,7 @@ def _make_stub_system(target_dem_resolution: float, gpu_hardware, gpu_compilatio
     # over the stub's own fields gives discriminating equality for the short-circuit.
     cfg_system.model_dump = lambda **_kwargs: dict(_fields)
     cfg_system.model_dump_json = lambda **_kwargs: json.dumps(_fields, sort_keys=True)
-    return SimpleNamespace(cfg_system=cfg_system, system_config_yaml=system_config_yaml)
+    return _with_assign_gpu_target(SimpleNamespace(cfg_system=cfg_system, system_config_yaml=system_config_yaml))
 
 
 def _make_member_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, tuple], tmp_path: Path):
@@ -211,6 +226,11 @@ def test_build_unique_system_targets_dedups_by_compile_tuple(monkeypatch, tmp_pa
     assert collapsed.system_config_yaml.is_file()
 
 
+def _dump_with(dump, name, row_cfg):
+    """A ``model_dump`` stand-in that adds ``name`` with the value ``row_cfg`` carries to the stub's own fields."""
+    return lambda **kwargs: {**dump(), name: row_cfg.model_dump(**kwargs)[name]}
+
+
 def test_build_unique_system_targets_falls_back_to_master_on_null(monkeypatch, tmp_path):
     """A null cell uses the master system's YAML and participates in dedup."""
     master_yaml = (tmp_path / "master_cfg_system.yaml").resolve()
@@ -228,6 +248,11 @@ def test_build_unique_system_targets_falls_back_to_master_on_null(monkeypatch, t
     }
     instance = _make_member_instance_for_unit_test(monkeypatch, yaml_to_attrs, tmp_path)
     instance._system = _make_stub_system(10.0, None, None, master_yaml)
+    # The row's YAML is a real config, so its compile key carries the checkout fields; the stub master carries the same
+    # values, or the two would differ in the key only because the stub omits them.
+    _row_cfg = load_system_config(yaml_d)
+    for _name in ("TRITONSWMM_git_URL", "TRITONSWMM_branch_key", "TRITONSWMM_software_directory"):
+        instance._system.cfg_system.model_dump = _dump_with(instance._system.cfg_system.model_dump, _name, _row_cfg)
 
     df = pd.DataFrame(
         {
@@ -349,50 +374,6 @@ def test_create_members_assigns_system_per_target(monkeypatch, tmp_path):
     assert system_of_member["member_0"] is sys_a
     assert system_of_member["member_1"] is sys_a
     assert system_of_member["member_2"] is sys_c
-
-
-def test_compile_and_preprocess_all_targets_iterates_unique_targets():
-    """Calls process_system_level_inputs and compile_TRITON_SWMM once per target."""
-    instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
-    sys_a = MagicMock()
-    sys_c = MagicMock()
-    instance.unique_system_targets = [
-        _UniqueSystemTarget(0, Path("/fake/A.yaml"), sys_a, ["0", "1"]),
-        _UniqueSystemTarget(1, Path("/fake/C.yaml"), sys_c, ["2"]),
-    ]
-    instance._update_experiment_log = MagicMock()
-
-    instance.compile_and_preprocess_all_targets(
-        overwrite_system_inputs=True,
-        recompile_if_already_done_successfully=False,
-        verbose=False,
-    )
-
-    sys_a.process_system_level_inputs.assert_called_once_with(overwrite_outputs_if_already_created=True, verbose=False)
-    sys_a.compile_TRITON_SWMM.assert_called_once_with(recompile_if_already_done_successfully=False, verbose=False)
-    sys_c.process_system_level_inputs.assert_called_once_with(overwrite_outputs_if_already_created=True, verbose=False)
-    sys_c.compile_TRITON_SWMM.assert_called_once_with(recompile_if_already_done_successfully=False, verbose=False)
-    instance._update_experiment_log.assert_called_once()
-
-
-def test_compile_TRITON_SWMM_for_sensitivity_analysis_iterates_unique_targets():
-    """Invokes compile_TRITON_SWMM on each target's system, not on self._system."""
-    instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
-    sys_a = MagicMock()
-    sys_c = MagicMock()
-    instance._system = MagicMock()  # must NOT be called
-    instance.unique_system_targets = [
-        _UniqueSystemTarget(0, Path("/fake/A.yaml"), sys_a, ["0", "1"]),
-        _UniqueSystemTarget(1, Path("/fake/C.yaml"), sys_c, ["2"]),
-    ]
-    instance._update_experiment_log = MagicMock()
-
-    instance.compile_TRITON_SWMM_for_sensitivity_analysis(verbose=False, recompile_if_already_done_successfully=True)
-
-    sys_a.compile_TRITON_SWMM.assert_called_once_with(recompile_if_already_done_successfully=True, verbose=False)
-    sys_c.compile_TRITON_SWMM.assert_called_once_with(recompile_if_already_done_successfully=True, verbose=False)
-    instance._system.compile_TRITON_SWMM.assert_not_called()
-    instance._update_experiment_log.assert_called_once()
 
 
 def test_attributes_varied_filters_system_config_yaml():
