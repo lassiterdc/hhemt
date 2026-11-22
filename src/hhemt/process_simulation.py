@@ -3171,13 +3171,16 @@ class TRITONSWMM_sim_post_processing:
         "swmm": (
             "output_swmm_only_node_time_series",
             "output_swmm_only_link_time_series",
+            # The system series store has no summary store of its own: its reductions are the `system_*` variables
+            # of the node summary, so this model holds three series stores against two summary stores.
+            "output_swmm_only_system_time_series",
         ),
     }
 
     @staticmethod
     def _attr_is_swmm_side(attr: str) -> bool:
-        """True for the SWMM node/link artifacts; False for TRITON gridded + performance."""
-        return ("_node_" in attr) or ("_link_" in attr)
+        """True for the SWMM node/link/system artifacts; False for TRITON gridded + performance."""
+        return ("_node_" in attr) or ("_link_" in attr) or ("_system_" in attr)
 
     @staticmethod
     def _reclaim_classes(policy) -> tuple[str, ...]:
@@ -3210,10 +3213,9 @@ class TRITONSWMM_sim_post_processing:
     ) -> tuple[str, ...]:
         """ScenarioPaths attr names of the per-scenario time-series stores the ``timeseries`` class names.
 
-        This is the NAME set of the class, independent of whether the process runner applies it. It exists
-        separately from ``_reclaim_attrs`` because that method applies D24 (b) and returns nothing for the class
-        under either value of the consolidation toggle, which would make the disjointness guard in
-        tests/test_synth_remove_after_processing.py pass against an empty set. The guard reads this set instead.
+        This is the NAME set of the class, independent of whether the process runner applies it. The disjointness
+        guard in tests/test_synth_remove_after_processing.py reads this set, so it asserts against the class's
+        names and not against whatever one arm of ``_reclaim_attrs`` returns.
         """
         cls = TRITONSWMM_sim_post_processing
         attrs = cls._TIMESERIES_ATTRS_BY_MODEL.get(model_type, ())
@@ -3238,19 +3240,21 @@ class TRITONSWMM_sim_post_processing:
         ``consolidation_on`` is an ARGUMENT and is never read from a scenario or a config here: the caller
         resolves ``cfg_analysis.toggle_consolidate_timeseries`` and passes it.
 
-        D24 (b): the ``timeseries`` class is not applied by the process runner under either value.
-        With consolidation on it is DISCHARGED by the consolidation's verified clearing, which deletes the
+        D24 (b): under the default policy the ``timeseries`` class is not applied by the process runner under either
+        value. With consolidation on it is DISCHARGED by the consolidation's verified clearing, which deletes the
         per-scenario series only after the read-back, so a runner that deleted them first would leave the
-        consolidation nothing to copy. With consolidation off the per-scenario series ARE the processed
-        output and exist nowhere else, so the class is a no-op with a logged reason. The set returned is
-        therefore empty for the ``timeseries`` class either way, and the argument is what a caller states
-        about which of the two arms it is on; the name set itself is ``_timeseries_drop_names``.
+        consolidation nothing to copy. With consolidation off the per-scenario series ARE the processed output, so
+        the class is a no-op with a logged reason, UNLESS the user names ``timeseries`` in a
+        ``remove_after_processing`` list with ``clear_raw`` covering every enabled model: that explicit election is
+        the one arm that deletes them, and it is applied by ``_reclaim_paths`` through ``timeseries_discard_arm``,
+        not here. The set returned here is empty for the ``timeseries`` class either way, and the argument is what a
+        caller states about which of the two arms it is on; the name set itself is ``_timeseries_drop_names``.
         Resolving these names to concrete Paths needs self.scen_paths and is _reclaim_paths' job.
         """
         cls = TRITONSWMM_sim_post_processing
         if "timeseries" not in cls._reclaim_classes(policy):
             return ()
-        # Both arms of D24 (b) apply nothing; `consolidation_on` selects only which reason the caller logs.
+        # Both consolidation arms apply nothing here; `consolidation_on` selects only which reason the caller logs.
         _ = consolidation_on
         return ()
 
@@ -3260,6 +3264,7 @@ class TRITONSWMM_sim_post_processing:
         *,
         policy,
         consolidation_on: bool,
+        discard_timeseries: bool = False,
         which: Literal["TRITON", "SWMM", "both"] = "both",
     ) -> list[tuple[str, Path]]:
         """Resolve the drop set to ``(artifact_class, path)`` pairs for this scenario.
@@ -3267,9 +3272,14 @@ class TRITONSWMM_sim_post_processing:
         The class travels WITH the path rather than being re-derived from the filename at
         deletion time, so the per-class log record cannot drift from what was actually
         removed. Classes: ``timeseries_triton``, ``timeseries_swmm``, ``raw_swmm_binaries``.
+        ``discard_timeseries`` is the one arm that applies the ``timeseries`` class here
+        (``timeseries_discard_arm``); ``_reclaim_attrs`` stays the D24 (b) answer.
         """
         out: list[tuple[str, Path]] = []
-        for attr in self._reclaim_attrs(model_type, policy=policy, consolidation_on=consolidation_on, which=which):
+        attrs = self._reclaim_attrs(model_type, policy=policy, consolidation_on=consolidation_on, which=which)
+        if discard_timeseries and "timeseries" in self._reclaim_classes(policy):
+            attrs = self._timeseries_drop_names(model_type, which=which)
+        for attr in attrs:
             p = getattr(self.scen_paths, attr, None)
             if p is None:
                 continue
@@ -3291,6 +3301,21 @@ class TRITONSWMM_sim_post_processing:
         if verbose:
             print(f"[reclaim] removing {path}", flush=True)
         delete_and_account([path], scope_dir=scenario_dir, scope="scenario")
+
+    def _remove_series_stores(self, stores: list[Path], verbose: bool) -> None:
+        """Delete series stores with their completion flag, parts and NetCDF intermediate, through one tool call.
+
+        Reuses the consolidation's ``_delete_cleared_stores`` so the list of companions exists once: a flag left
+        beside a deleted store would assert a completion the directory no longer shows.
+        """
+        from types import SimpleNamespace
+
+        from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing as _PA
+
+        if verbose:
+            for store in stores:
+                print(f"[reclaim] removing {store} and its completion flag, parts and intermediate", flush=True)
+        _PA._delete_cleared_stores(SimpleNamespace(scen_paths=self.scen_paths), stores)
 
     @staticmethod
     def _capture_landed(path) -> bool:
@@ -3500,13 +3525,44 @@ class TRITONSWMM_sim_post_processing:
         if not classes:
             return
 
-        # D24 (b): the `timeseries` class is never applied here. Resolved from the persisted config (the
-        # runner is a subprocess) and passed down as an argument, so the static helpers never read it.
-        consolidation_on = bool(getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False))
-        _clearing = getattr(self._analysis.cfg_analysis, "toggle_clear_scenario_timeseries_after_consolidation", None)
+        # D24 (b): the `timeseries` class is not applied here under the default policy. Resolved from the persisted
+        # config (the runner is a subprocess) and passed down as arguments, so the static helpers never read it.
+        # One arm applies it: consolidation off, `clear_raw` covering every enabled model and the class NAMED in a
+        # `remove_after_processing` list (`timeseries_discard_arm`). The caller of this method has verified the
+        # summaries (log, existence, openability) before it runs, so the series are deleted only after that check.
+        cfg = self._analysis.cfg_analysis
+        consolidation_on = bool(getattr(cfg, "toggle_consolidate_timeseries", False))
+        _clearing = getattr(cfg, "toggle_clear_scenario_timeseries_after_consolidation", None)
         clearing_on = consolidation_on if _clearing is None else bool(_clearing)
+        _enabled = getattr(self._analysis, "_get_enabled_model_types", None)
+        enabled_models = list(_enabled()) if callable(_enabled) else [model_type]
+        # With observation points set the consolidation reads the per-scenario gridded store even with
+        # consolidation off (the observation groups are unconditional), so that store is kept until then.
+        cfg_system = getattr(getattr(self._analysis, "_system", None), "cfg_system", None)
+        observation_kept = getattr(cfg_system, "observation_points", None) is not None
+        discard_timeseries = timeseries_discard_arm(cfg, enabled_models)
+        if discard_timeseries and observation_kept:
+            print(
+                f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' is named with "
+                "consolidation off, but observation_points is set -- declining that class here. The observation "
+                "groups of the consolidation read the per-scenario gridded store, which is kept until they are "
+                "consolidated.",
+                flush=True,
+            )
+            classes = tuple(c for c in classes if c != "timeseries")
+            if not classes:
+                return
+            discard_timeseries = False
         if "timeseries" in classes:
-            if consolidation_on and not clearing_on:
+            if discard_timeseries:
+                print(
+                    f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' is named in "
+                    "a remove_after_processing list with toggle_consolidate_timeseries off and clear_raw covering "
+                    "every enabled model -- the per-scenario series are deleted now that the summaries are "
+                    "verified, and no consolidated copy is written.",
+                    flush=True,
+                )
+            elif consolidation_on and not clearing_on:
                 print(
                     f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' is elected "
                     "but toggle_clear_scenario_timeseries_after_consolidation is off -- declining that class. The "
@@ -3525,7 +3581,9 @@ class TRITONSWMM_sim_post_processing:
                 print(
                     f"[reclaim] scenario {self._scenario.event_iloc} model {model_type}: 'timeseries' is elected "
                     "but toggle_consolidate_timeseries is off -- declining that class. With no consolidated "
-                    "copy the per-scenario series are the processed output and exist nowhere else.",
+                    "copy the per-scenario series are the processed output and exist nowhere else. Name "
+                    "'timeseries' in a remove_after_processing list, with clear_raw covering every enabled "
+                    "model, to delete them.",
                     flush=True,
                 )
 
@@ -3560,13 +3618,27 @@ class TRITONSWMM_sim_post_processing:
 
         effective_policy = list(classes)
         removed: set[str] = set()
+        series_stores: list[Path] = []
         for klass, path in self._reclaim_paths(
-            model_type, policy=effective_policy, consolidation_on=consolidation_on, which=which
+            model_type,
+            policy=effective_policy,
+            consolidation_on=consolidation_on,
+            discard_timeseries=discard_timeseries,
+            which=which,
         ):
+            if discard_timeseries and klass.startswith("timeseries_"):
+                # A series store goes with its completion flag, parts and intermediate (below), so it is not
+                # deleted here path by path.
+                series_stores.append(path)
+                if path.exists():
+                    removed.add(klass)
+                continue
             if not path.exists():
                 continue
             self._remove_reclaimed(path, self.scen_paths.sim_folder, verbose)
             removed.add(klass)
+        if series_stores:
+            self._remove_series_stores(series_stores, verbose)
 
         # Per-scenario disclosure ground truth, written by the ACTOR. analysis_validation's
         # CheckResult docstring (its `instrument` field) forbids deriving a provenance claim from
@@ -3595,6 +3667,27 @@ class TRITONSWMM_sim_post_processing:
         node_ok = self.log.SWMM_node_summary_written and bool(self.log.SWMM_node_summary_written.get())
         link_ok = self.log.SWMM_link_summary_written and bool(self.log.SWMM_link_summary_written.get())
         return node_ok and link_ok
+
+
+def timeseries_discard_arm(cfg_analysis, enabled_models) -> bool:
+    """True iff the process runner DELETES the per-scenario series stores of the ``timeseries`` class.
+
+    The arm is: consolidation off, ``clear_raw`` covering every enabled model, and ``remove_after_processing`` given as
+    a LIST that names ``timeseries``. The election is read from the VALUE: the persisted config cannot tell an
+    omitted field from a stated one, and the blanket ``all`` is the default, so only a list is an explicit election.
+    The default policy with consolidation off therefore keeps the series (D24 (b)): they are then the processed
+    output, and a user who wants them gone says so by naming the class. A config without a field is read as the
+    keeping value of that field.
+    """
+    if bool(getattr(cfg_analysis, "toggle_consolidate_timeseries", True)):
+        return False
+    remove = getattr(cfg_analysis, "remove_after_processing", "none")
+    if not isinstance(remove, (list, tuple)) or "timeseries" not in remove:
+        return False
+    clear_raw = getattr(cfg_analysis, "clear_raw", "none")
+    if clear_raw == "none":
+        return False
+    return clear_raw == "all" or set(enabled_models) <= set(clear_raw)
 
 
 def reclaim_scenario_scoped_classes(scen, classes, *, verbose: bool = False) -> dict[str, bool]:

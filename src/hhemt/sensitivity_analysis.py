@@ -218,6 +218,31 @@ def _strip_analysis_prefix(col: str) -> str:
     return col[len(_ANALYSIS_COLUMN_PREFIX) :]
 
 
+def _member_analysis_overlay_cells(row) -> dict:
+    """The analysis-config overlay a sensitivity row states: ``analysis.*`` and ``hpc.*`` cells, by field name.
+
+    Shared by the member construction (``_create_members``) and the per-member preflight, so a member's analysis
+    config is merged the same way where it is built and where it is judged. Empty cells are skipped.
+    """
+    overlay_cells: dict = {}
+    for k, v in row.items():
+        if pd.isna(v):
+            continue
+        if _is_hpc_overlay_column(k):
+            overlay_cells[_resolve_hpc_alias_to_analysis_field(k)] = v
+        elif _is_analysis_overlay_column(k):
+            overlay_cells[_strip_analysis_prefix(k)] = v
+        else:
+            # Defensive — `_retrieve_df_setup`'s column allowlist plus the
+            # analysis-only `self.df_setup` projection should have filtered
+            # `member_id`/`system_config_yaml`/`system.*` already.
+            raise ConfigurationError(
+                field="sensitivity_analysis.unknown_column",
+                message=f"Column `{k}` is not a recognized analysis-config field.",
+            )
+    return overlay_cells
+
+
 def _resolve_row_ensemble_partition(row, primary_partition: str | None) -> str | None:
     """Per-row ensemble partition from the partition-overlay cell, else primary.
 
@@ -3518,22 +3543,7 @@ class TRITONSWMM_sensitivity_analysis:
                     member_id, member_id_to_system[member_id]
                 )
                 continue
-            overlay_cells: dict = {}
-            for k, v in row.items():
-                if pd.isna(v):
-                    continue
-                if _is_hpc_overlay_column(k):
-                    overlay_cells[_resolve_hpc_alias_to_analysis_field(k)] = v
-                elif _is_analysis_overlay_column(k):
-                    overlay_cells[_strip_analysis_prefix(k)] = v
-                else:
-                    # Defensive — `_retrieve_df_setup`'s column allowlist plus the
-                    # analysis-only `self.df_setup` projection should have filtered
-                    # `member_id`/`system_config_yaml`/`system.*` already.
-                    raise ConfigurationError(
-                        field="sensitivity_analysis.unknown_column",
-                        message=f"Column `{k}` is not a recognized analysis-config field.",
-                    )
+            overlay_cells = _member_analysis_overlay_cells(row)
             # A member inherits the master's RESOLVED clearing value, so an unset master value (resolved to the
             # master's own consolidation toggle) would be copied into a member whose swept cell turns consolidation
             # off, and preflight would refuse the pair. Leave the field unset when the master did not state it, so the

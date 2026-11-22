@@ -1196,9 +1196,14 @@ class analysis_config(cfgBaseModel):
             "reporting step, chunks of about 32 MB, a streamed write, and a read-back that compares the stored "
             "slice with the source block by block. The timeseries_keep_triton_gridded field selects the gridded "
             "variables kept. Defaults to True, so a run with no key set keeps the series in the consolidated "
-            "store, the durable processed product. Set False to keep summaries only. The per-scenario series "
-            "stores are cleared under the switch toggle_clear_scenario_timeseries_after_consolidation once the "
-            "slice of the scenario has passed the read-back."
+            "store, the durable processed product. Set False to keep summaries only: the per-scenario series "
+            "stores are kept, and no consolidated copy is written. The exception is an explicit election: when "
+            "remove_after_processing is a list that names timeseries and clear_raw covers every enabled model, the "
+            "per-scenario series stores are deleted after the summaries are verified, so the run keeps summaries "
+            "only. The value all of remove_after_processing, the default, does not do that. With consolidation on, "
+            "the per-scenario series stores are cleared under the switch "
+            "toggle_clear_scenario_timeseries_after_consolidation once the slice of the scenario has passed the "
+            "read-back."
         ),
     )
     toggle_coupling_exchange_flow: bool = Field(
@@ -1355,10 +1360,11 @@ class analysis_config(cfgBaseModel):
             "the model log of the scenario. Requires toggle_consolidate_timeseries, and preflight refuses True "
             "without the toggle. Left unset, the field takes the value of toggle_consolidate_timeseries, so a run "
             "with no key set clears the per-scenario copies after the verified read-back, and with consolidation "
-            "off the stores stay. An explicit False keeps the per-scenario copies. A written cfg_analysis.yaml "
-            "carries the resolved value and never None. The scenario and member directories are also removed "
-            "after a verified copy into the consolidated tree when clear_raw and remove_after_processing are at "
-            "their clearing settings."
+            "off the stores stay unless remove_after_processing, given as a list, names timeseries and clear_raw "
+            "covers every enabled model. An explicit False keeps the per-scenario copies. A written "
+            "cfg_analysis.yaml carries the resolved value and never None. The scenario and member directories are "
+            "also removed after a verified copy into the consolidated tree when clear_raw and "
+            "remove_after_processing are at their clearing settings."
         ),
         json_schema_extra=field_meta(applies_when=[when("toggle_consolidate_timeseries", True)]),
     )
@@ -1380,8 +1386,8 @@ class analysis_config(cfgBaseModel):
             "coupling-node flag, the per-node statistics, and the run-level variables. The kept names are the "
             "variables that the `timeseries` branches of analysis_datatree.zarr and the bundle carry. Preflight "
             "refuses a name outside the domain of every enabled model family. The field applies even when "
-            "toggle_consolidate_timeseries is off. A pruned variable is gone, and recovering the variable takes "
-            "a re-run."
+            "toggle_consolidate_timeseries is off, until the per-scenario store is deleted under "
+            "remove_after_processing. A pruned variable is gone, and recovering the variable takes a re-run."
         ),
     )
     timeseries_keep_swmm_link: str | list[str] | None = Field(
@@ -1396,8 +1402,9 @@ class analysis_config(cfgBaseModel):
             "statistics, and the run-level variables. The kept names are the variables that "
             "the `timeseries` branches of analysis_datatree.zarr and the bundle carry. Preflight refuses a name "
             "outside the domain of every "
-            "enabled model family. The field applies even when toggle_consolidate_timeseries is off. A pruned "
-            "variable is gone, and recovering the variable takes a re-run."
+            "enabled model family. The field applies even when toggle_consolidate_timeseries is off, until the "
+            "per-scenario store is deleted under remove_after_processing. A pruned variable is gone, and "
+            "recovering the variable takes a re-run."
         ),
     )
     timeseries_keep_triton_gridded: str | list[str] | None = Field(
@@ -1413,8 +1420,9 @@ class analysis_config(cfgBaseModel):
             "statistics, and the run-level variables. The kept names are the variables that "
             "the `timeseries` branches of analysis_datatree.zarr and the bundle carry. Preflight refuses a name "
             "outside the domain of every "
-            "enabled model family. The field applies even when toggle_consolidate_timeseries is off. A pruned "
-            "variable is gone, and recovering the variable takes a re-run."
+            "enabled model family. The field applies even when toggle_consolidate_timeseries is off, until the "
+            "per-scenario store is deleted under remove_after_processing. A pruned variable is gone, and "
+            "recovering the variable takes a re-run."
         ),
     )
     process_output_target_chunksize_mb: int = Field(
@@ -1998,11 +2006,19 @@ class analysis_config(cfgBaseModel):
             "Post-processing reclaim policy. The reclaim fires only after the per-model summary outputs are "
             "verified present and openable on disk. The value none reclaims no artifact, all reclaims every "
             "artifact class, and a list selects classes. The class timeseries names the per-scenario *_tseries "
-            "zarr or nc set, and the process runner never applies the class. With toggle_consolidate_timeseries "
-            "and the clearing switch on, the consolidation deletes the per-scenario series after the read-back "
+            "zarr or nc set. With toggle_consolidate_timeseries on, the process runner does not apply the class and "
+            "the consolidation deletes the per-scenario series after the read-back when the clearing switch is on, "
             "and the runner logs the discharge. With the clearing switch off, the series stay in the per-scenario "
-            "store and the runner logs that. With consolidation off, the series are the processed output and the "
-            "class is skipped with a logged reason. The class raw_swmm_binaries drops out_tritonswmm/swmm/*.out "
+            "store and the runner logs that. With toggle_consolidate_timeseries off, the per-scenario series are "
+            "the processed output and the runner declines the class with a logged reason, including under the "
+            "value all. The one exception is an explicit election: with toggle_consolidate_timeseries off, "
+            "clear_raw covering every enabled model, and this field given as a LIST that names timeseries, the "
+            "process runner deletes the per-scenario series stores of every enabled model after the summaries of "
+            "the scenario are verified present and openable, so no consolidated copy and no per-scenario series "
+            "remain. Preflight refuses this election when the system config sets observation_points, because the "
+            "observation groups of the consolidation read the per-scenario gridded store. The class "
+            "raw_swmm_binaries drops "
+            "out_tritonswmm/swmm/*.out "
             "and never the *.rpt files, because they are live completion predicates. The class is skipped with a "
             "logged reason when clear_raw is none, because eda.raw_byte_identity.compare_swmm_raw needs the raw "
             "binaries that clear_raw governs. The class coupled_rpt truncates out_tritonswmm/swmm/hydraulics.rpt "

@@ -78,18 +78,33 @@ def test_reclaim_drop_set_is_disjoint_from_preserve_set(model_type):
     )
 
 
+# Series stores with no summary store of their own: the standalone SWMM model's system series, whose reductions are
+# the ``system_*`` variables of its node summary. Hand-maintained here, like the table above, as the independent signal.
+_SERIES_WITHOUT_OWN_SUMMARY: dict[str, tuple[str, ...]] = {
+    "tritonswmm": (),
+    "triton": (),
+    "swmm": ("output_swmm_only_system_time_series",),
+}
+
+
 @pytest.mark.parametrize("model_type", _MODEL_TYPES)
 def test_preserve_and_drop_sets_are_one_to_one_paired(model_type):
-    """Every preserved summary has exactly one paired timeseries in the drop set.
+    """Every preserved summary has exactly one paired timeseries in the drop set, plus the named unpaired series.
 
     This is what makes the disjointness guard meaningful rather than vacuous: disjointness
-    alone is satisfied by an EMPTY drop set. Pairing pins the cardinality too.
+    alone is satisfied by an EMPTY drop set. Pairing pins the cardinality too. The unpaired series
+    (``_SERIES_WITHOUT_OWN_SUMMARY``) are named, so a series store the table omits is a red here and not a leftover
+    on disk: the omission of the system series is what left ``SWMM_only_system_tseries.zarr`` behind a run that
+    deleted every other series (tests/test_synth_timeseries_cleared_when_consolidation_off.py).
     """
     preserve = _SUMMARY_ATTRS_BY_MODEL[model_type]
+    unpaired = _SERIES_WITHOUT_OWN_SUMMARY[model_type]
     drop = _Proc._timeseries_drop_names(model_type)
-    assert len(drop) == len(preserve), (
-        f"{model_type}: {len(drop)} timeseries attr(s) paired against {len(preserve)} summary attr(s)"
+    assert len(drop) == len(preserve) + len(unpaired), (
+        f"{model_type}: {len(drop)} timeseries attr(s) paired against {len(preserve)} summary attr(s) "
+        f"and {len(unpaired)} unpaired series"
     )
+    assert set(unpaired) <= set(drop)
 
 
 @pytest.mark.parametrize("model_type", _MODEL_TYPES)

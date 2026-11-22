@@ -450,6 +450,49 @@ def _validate_observation_interval(cfg_system: system_config, cfg_analysis: anal
         )
 
 
+def _validate_timeseries_discard_observation_points(
+    cfg_system: system_config, cfg_analysis: analysis_config, result: ValidationResult
+):
+    """Refuse the series discard election together with observation points.
+
+    With ``toggle_consolidate_timeseries`` off, ``clear_raw`` covering every enabled model and
+    ``remove_after_processing`` a list naming ``timeseries``, the process runner deletes the per-scenario series
+    stores. The observation groups of the consolidation are unconditional and read the per-scenario gridded store,
+    and no step clears it afterwards, so the two cannot both hold: the discard would remove what the observation
+    groups read, or the run would leave a series artifact against the election. The predicate is the runner's own
+    (``process_simulation.timeseries_discard_arm``), so the refusal and the deletion cannot drift. The points belong
+    to the system config and the election to the analysis, so only the pair can be judged.
+    """
+    from hhemt.process_simulation import timeseries_discard_arm
+
+    if getattr(cfg_system, "observation_points", None) is None:
+        return
+    enabled = [
+        model
+        for model, toggle in (
+            ("triton", "toggle_triton_model"),
+            ("tritonswmm", "toggle_tritonswmm_model"),
+            ("swmm", "toggle_swmm_model"),
+        )
+        if getattr(cfg_system, toggle, False)
+    ]
+    if timeseries_discard_arm(cfg_analysis, enabled):
+        result.add_error(
+            field="analysis.remove_after_processing",
+            message=(
+                "observation_points (system config) is set together with toggle_consolidate_timeseries=False, "
+                "clear_raw covering every enabled model and a remove_after_processing list that names timeseries: "
+                "the series discard would delete the per-scenario gridded store the observation groups read, and "
+                "no step clears that store afterwards"
+            ),
+            current_value=getattr(cfg_analysis, "remove_after_processing", None),
+            fix_hint=(
+                "Set toggle_consolidate_timeseries=True, or drop timeseries from remove_after_processing, "
+                "or unset observation_points in the system config"
+            ),
+        )
+
+
 def _validate_toggle_exclusions_system(cfg: system_config, result: ValidationResult):
     """Validate toggle exclusions (forbid incompatible inputs) in system config."""
     # If constant manning's enabled, landuse fields should not be set
@@ -920,6 +963,56 @@ def _load_yaml_row_system_configs(df) -> dict[str, system_config]:
     return by_member
 
 
+def _validate_members_timeseries_discard_observation_points(
+    df, cfg_system: system_config, cfg_analysis: analysis_config, system_by_member: dict, result: ValidationResult
+) -> None:
+    """Run the series-discard / observation-points refusal once per sensitivity member.
+
+    A member's configs are built by plain ``model_validate`` and never pass ``preflight_validate``, so a row whose
+    swept cells make the refused combination would otherwise run. The system side is the row's effective system
+    config (``system_by_member``) and the analysis side is the master's config with the row's overlay merged the way
+    ``sensitivity_analysis._create_members`` builds a member (``_member_analysis_overlay_cells``). The check itself is
+    ``_validate_timeseries_discard_observation_points``, called with the member's configs. When the master's own
+    pair is already refused the members are not repeated: every member would carry the same error.
+    """
+    import pydantic
+
+    from hhemt.config.analysis import analysis_config as _analysis_config
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.sensitivity_analysis import (
+        _is_analysis_overlay_column,
+        _is_hpc_overlay_column,
+        _member_analysis_overlay_cells,
+    )
+
+    master = ValidationResult(context="master")
+    _validate_timeseries_discard_observation_points(cfg_system, cfg_analysis, master)
+    if master.errors or not callable(getattr(cfg_analysis, "model_dump", None)):
+        # (A stand-in config of an existing test has no model_dump: the real model always has it.)
+        return
+    overlay_columns = [c for c in df.columns if _is_hpc_overlay_column(c) or _is_analysis_overlay_column(c)]
+    for member_id, row in df.iterrows():
+        member_id_str = str(member_id)
+        member_system = system_by_member.get(member_id_str)
+        if member_system is None:
+            continue
+        try:
+            overlay = _member_analysis_overlay_cells(row[overlay_columns])
+            member_analysis = _analysis_config.model_validate({**cfg_analysis.model_dump(), **overlay})
+        except (ConfigurationError, pydantic.ValidationError):
+            # A cell that does not form a config is reported by the member's own validators, not here.
+            continue
+        member = ValidationResult(context=f"member {member_id_str}")
+        _validate_timeseries_discard_observation_points(member_system, member_analysis, member)
+        for issue in member.errors:
+            result.add_error(
+                field=f"sensitivity_analysis.row[{member_id_str}]",
+                message=f"member_id={member_id_str}: {issue.message}",
+                current_value=issue.current_value,
+                fix_hint=f"{issue.fix_hint}; or change the member row's cells",
+            )
+
+
 def _validate_per_member_system_configs(
     cfg_system: system_config,
     cfg_analysis: analysis_config,
@@ -1038,9 +1131,9 @@ def _validate_per_member_system_configs(
     # Every row is compared on the setup-shared fields, YAML rows included: a YAML row that shares a target with a
     # master or overlay row would otherwise have its setup-shared values discarded in favour of the first row's,
     # unreported. The checkout check below keeps its own population (rows with no YAML).
-    _validate_rows_do_not_diverge_on_setup_shared_fields(
-        df, cfg_analysis, {**effective_by_member, **_load_yaml_row_system_configs(df)}, result, cfg_hpc_system
-    )
+    system_by_member = {**effective_by_member, **_load_yaml_row_system_configs(df)}
+    _validate_rows_do_not_diverge_on_setup_shared_fields(df, cfg_analysis, system_by_member, result, cfg_hpc_system)
+    _validate_members_timeseries_discard_observation_points(df, cfg_system, cfg_analysis, system_by_member, result)
     _validate_distinct_checkouts_have_distinct_build_directories(
         df, cfg_analysis, effective_by_member, result, cfg_hpc_system
     )
@@ -2948,6 +3041,7 @@ def preflight_validate(
     _validate_clear_scenario_timeseries(cfg_analysis, result)
     _validate_timeseries_keep(cfg_system, cfg_analysis, result)
     _validate_observation_interval(cfg_system, cfg_analysis, result)
+    _validate_timeseries_discard_observation_points(cfg_system, cfg_analysis, result)
     _validate_swmm_threads(cfg_system, cfg_analysis, result)
     _validate_external_boundaries(cfg_system, cfg_analysis, result)
 

@@ -5624,3 +5624,19 @@ non_breaking_allowlist:
     layout_signature: 86a7774a38f50892b31b88d881dea61a626d8d47c553f131e948df72454983f0
     justification: |-
       writes the node inflow capture before the hydrograph flags and heals a capture-less prepared scenario; persisted file layouts unchanged
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 6d5262eedbfb50a52bf8108b97dff698fbd8b3efa384609880eac6ad21092155
+    justification: |-
+      1121-tk, reviewed non-breaking by an independent reviewer (reviewed tip bd66dfdf08): the discard of per-scenario series stores under an explicit remove_after_processing election changes no path, file name, zarr group, log field, schema or flag name, and an old tree needs no migration because the readers read the processing log, not the store; the companions removed with a store (completion flag, chapters directory, intermediate) are the ones the consolidation already removes with it.
+  - path: src/hhemt/process_simulation.py
+    layout_signature: 0a010fa9866435920b93321dcb0c298010d635fc368e572ccf532a563153c64f
+    justification: |-
+      1121-tk, reviewed non-breaking by an independent reviewer (reviewed tip bd66dfdf08): the discard of per-scenario series stores under an explicit remove_after_processing election changes no path, file name, zarr group, log field, schema or flag name, and an old tree needs no migration because the readers read the processing log, not the store; the companions removed with a store (completion flag, chapters directory, intermediate) are the ones the consolidation already removes with it.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 4509fcae6fa5bac36420e777af9c8264b5ef457d5962cd73e5e42f9747d6a7ab
+    justification: |-
+      1121-tk final content, reviewed non-breaking by an independent reviewer (tip bd66dfdf08, refusal added after in 06876d71): config/analysis.py now only changes a field description text (the preflight refusal of the series discard election with observation_points lives in validation.py); no path, file name, zarr group, log field, schema or flag name changes and an old tree needs no migration.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: c4ac4f38b3089462e255b87b3210cb18213e419d0053d41364afbfe6d10b5b72
+    justification: |-
+      1121-tk member refusal (commit 29f3d3e7): src/hhemt/sensitivity_analysis.py only extracts the analysis-overlay merge of _create_members into a helper (_member_analysis_overlay_cells) so the per-member preflight judges a member with the same merge that builds it; behaviour of member construction is unchanged, no path, file name, zarr group, log field, schema or flag name changes, and an old tree needs no migration. Reviewer verdict on this commit pending at stamp time; non-breaking ground as for the earlier rows.
