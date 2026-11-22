@@ -176,12 +176,14 @@ def test_unknown_names_and_impossible_pairs_are_refused_naming_the_domain():
 # ---------------------------------------------------------------------------
 # Configuration, taxonomy, preflight
 # ---------------------------------------------------------------------------
-def test_the_three_keep_fields_exist_default_none_and_are_experiment_bucketed():
-    """Property: the three ``timeseries_keep_*`` fields exist on ``analysis_config`` with default ``None``, and the
-    reproducer taxonomy buckets each ``experiment``.
+def test_the_keep_fields_exist_with_their_defaults_and_are_experiment_bucketed():
+    """Property: the three ``timeseries_keep_*`` fields exist on ``analysis_config``, the two SWMM ones default to
+    ``None`` and the gridded TRITON one has no default (a config states it), and the reproducer taxonomy buckets
+    each ``experiment``.
 
-    Class: NEW CAPABILITY. Plausible wrong implementation: a default other than ``None`` (today's behaviour keeps
-    everything), or a missing taxonomy row (``test_field_bucket_is_total`` then reds).
+    Class: NEW CAPABILITY. Plausible wrong implementation: a default other than ``None`` on a SWMM field (today's
+    behaviour keeps everything), a default restored on the gridded field, or a missing taxonomy row
+    (``test_field_bucket_is_total`` then reds).
     Reachability: the schema and the table. Both-states anchor: names, defaults and a table value.
     Killed by: either. A second correct implementation derives buckets from an annotation.
     """
@@ -191,7 +193,10 @@ def test_the_three_keep_fields_exist_default_none_and_are_experiment_bucketed():
     for kind in ("swmm_node", "swmm_link", "triton_gridded"):
         name = f"timeseries_keep_{kind}"
         assert name in analysis_config.model_fields, f"{name} is not an analysis field"
-        assert analysis_config.model_fields[name].default is None
+        if kind == "triton_gridded":
+            assert analysis_config.model_fields[name].is_required()
+        else:
+            assert analysis_config.model_fields[name].default is None
         assert _FIELD_BUCKET.get(name) == "experiment"
 
 

@@ -361,6 +361,8 @@ def analysis_config_dict(analysis_id: str, *, sensitivity: bool) -> dict[str, An
         "local_cpu_cores_for_workflow": 2,
         "report": {},
         "clear_raw": "none",
+        "toggle_consolidate_timeseries": True,
+        "timeseries_keep_triton_gridded": None,
         "force_rerun": "none",
     }
     if sensitivity:

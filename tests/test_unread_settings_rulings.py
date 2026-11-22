@@ -683,6 +683,7 @@ def test_preflight_validate_checks_the_analysis_request_against_its_partition_ca
         "_validate_coupling_exchange_flow",
         "_validate_clear_scenario_timeseries",
         "_validate_timeseries_keep",
+        "_validate_timeseries_discard_observation_points",
         "_validate_observation_interval",
         "_validate_swmm_threads",
         "_validate_external_boundaries",

@@ -47,6 +47,8 @@ def _minimum_valid_cfg_analysis_dict(stub_root: Path) -> dict:
         "TRITON_hextra_m": 0.001,
         "TRITON_reporting_timestep_s": 10.0,
         "open_boundaries": 1,
+        "toggle_consolidate_timeseries": True,
+        "timeseries_keep_triton_gridded": None,
         "analysis_dir": str(stub_root),
         "is_experiment_member": False,
         "hhemt_sha": "0" * 40,  # schema-only tests; never compared to a running identity

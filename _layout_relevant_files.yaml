@@ -5640,3 +5640,11 @@ non_breaking_allowlist:
     layout_signature: c4ac4f38b3089462e255b87b3210cb18213e419d0053d41364afbfe6d10b5b72
     justification: |-
       1121-tk member refusal (commit 29f3d3e7): src/hhemt/sensitivity_analysis.py only extracts the analysis-overlay merge of _create_members into a helper (_member_analysis_overlay_cells) so the per-member preflight judges a member with the same merge that builds it; behaviour of member construction is unchanged, no path, file name, zarr group, log field, schema or flag name changes, and an old tree needs no migration. Reviewer verdict on this commit pending at stamp time; non-breaking ground as for the earlier rows.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 7843406ca1da1f3f7b4741d540db5a6de582f290f95c67e3b79e797c319103b3
+    justification: |-
+      1122-0004: the two fields toggle_consolidate_timeseries and timeseries_keep_triton_gridded lose their defaults in src/hhemt/config/analysis.py, so an analysis config must state both; no stored path, file name, zarr group, log field, schema or flag name changes. Every analysis config written by a run since 2026-11-07 carries both keys because model_dump writes them (2026-11-07 is the day timeseries_keep_triton_gridded was added; toggle_consolidate_timeseries dates from 2026-07-20). An older stored copy or an older bundle file lacks them and is refused at load naming the field, and no migration stamps them, by the developer's ruling G30.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: a886212f7b4df2ece22da4ff889ed4d2963c5fe06b20b3fbf3a8971fbeaac920
+    justification: |-
+      1122-0004 round 2: src/hhemt/config/analysis.py description text only (the no-default sentence moved to the start of toggle_consolidate_timeseries and three field descriptions reworded for the docs style rules); no stored path, file name, zarr group, log field, schema or flag name changes, and no default changes beyond round 1; the stored-config consequence of round 1 is stated in the row above (older copies are refused at load, no migration, ruling G30).

@@ -176,7 +176,9 @@ def test_default_config_reclaims_nothing():
         "standalone_rpt",
     }
     assert analysis_config.model_fields["clear_raw"].default == "all"
-    assert analysis_config.model_fields["toggle_consolidate_timeseries"].default is True
+    toggle = analysis_config.model_fields["toggle_consolidate_timeseries"]
+    assert toggle.is_required()
+    assert "has no default" in toggle.description
 
 
 @pytest.mark.parametrize(

@@ -5,8 +5,9 @@ Three kinds of test:
     pipeline run. A replay marker is the line TRITON prints (``SWMM exchange history replayed to t=``) when a resumed
     coupled run replays SWMM's exchange history; its ``t`` is the simulation time, in seconds, at which the resumed
     run was positioned. One model log can hold several markers, and the LAST is the final resume boundary.
-  * Config only: ``test_default_is_on`` reads the toggle from ``synth_multi_sim_builder``, a configured analysis
-    that was not run (its docstring in ``tests/conftest.py`` says "no compile, no scenario prep").
+  * Config only: ``test_toggle_has_no_default`` reads the field of ``analysis_config`` and the toggle from
+    ``synth_multi_sim_builder``, a configured analysis that was not run (its docstring in ``tests/conftest.py`` says
+    "no compile, no scenario prep").
   * Golden: the two consolidation tests extract the committed multi-sim golden (``tests/fixtures/golden_trees.py``),
     which already carries the per-scenario SWMM node and link timeseries stores, set ``toggle_consolidate_timeseries``
     in the PERSISTED analysis config, and call ``consolidate_to_datatree`` in-process. No solver is compiled or run
@@ -66,21 +67,23 @@ def test_parse_replay_t_none_on_unparseable_value():
 _TS_NODES = ("swmm_node/timeseries", "swmm_link/timeseries")
 
 
-def test_default_is_on(synth_multi_sim_builder):
-    """The toggle's field default is True (D24 (a)): with nothing configured the consolidated store keeps the series.
+def test_toggle_has_no_default(synth_multi_sim_builder):
+    """The toggle has no default: a config states ``toggle_consolidate_timeseries``, and one that omits it is refused.
 
-    This is asserted on the field default, not on the built analysis, and that is deliberate: the synthetic config
+    This is asserted on the field, not on the built analysis, and that is deliberate: the synthetic config
     factory (``tests/fixtures/test_case_builder.py``) pins ``toggle_consolidate_timeseries: False`` into every
     synthetic config so that tests reading per-scenario stores keep their meaning, so the built analysis carries the
-    factory's value and says nothing about the default. The behaviour of a run with nothing configured is covered by
-    ``tests/test_defaults_clear_everything.py`` (no solver) and by the Rivanna nothing-configured row of the
-    definition of done (item 17). Must-fire control: an explicit False is False, so the True read is the field
-    default and not a constant. ``synth_multi_sim_builder`` is kept as the fixture so the node stays in the
-    Rivanna-tier file it was credited in.
+    factory's value and says nothing about the field. The refusal of a config that omits the key is covered by
+    ``tests/test_timeseries_keys_have_no_default.py`` (no solver), and the behaviour of a run with the key stated
+    as true by ``tests/test_defaults_clear_everything.py`` (no solver). Must-fire control: an explicit False is
+    False, so the stated value is read and not a constant. ``synth_multi_sim_builder`` is kept as the fixture so the
+    node stays in the Rivanna-tier file it was credited in.
     """
     from hhemt.config.analysis import analysis_config
 
-    assert analysis_config.model_fields["toggle_consolidate_timeseries"].default is True
+    field = analysis_config.model_fields["toggle_consolidate_timeseries"]
+    assert field.is_required()
+    assert "has no default" in field.description
     off = synth_multi_sim_builder.cfg_analysis.model_copy(update={"toggle_consolidate_timeseries": False})
     assert off.toggle_consolidate_timeseries is False
 
@@ -88,9 +91,9 @@ def test_default_is_on(synth_multi_sim_builder):
 def _golden_with_timeseries_toggle(golden_extractor, *, on: bool):
     """Extract the multi-sim golden and construct its analysis with the toggle written into the persisted config.
 
-    The line is appended, which adds the key exactly once only because the multi-sim golden's ``analysis_config.yaml``
-    does not already set ``toggle_consolidate_timeseries`` and ends with a newline (both read from the committed
-    ``multisim.zip``).
+    The line is appended. The multi-sim golden's ``analysis_config.yaml`` already states
+    ``toggle_consolidate_timeseries: true``, so the appended line is a second occurrence of the key and the later
+    value is the one YAML keeps. The file ends with a newline (read from the committed ``multisim.zip``).
     """
     system_dir = golden_extractor("multisim")
     cfg = system_dir / "analysis_config.yaml"

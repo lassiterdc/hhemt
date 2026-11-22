@@ -50,6 +50,8 @@ weather_time_series_timestep_dimension_name: timestep
 weather_time_series_spatial_mean_rainfall_datavar: mm_per_hr
 ```
 
+The analysis config requires both `toggle_consolidate_timeseries` and `timeseries_keep_triton_gridded`, so state both keys. The Norfolk template states `true` and `null`, a pair that consolidates every series and keeps every gridded variable.
+
 The water level of each external-boundary record comes from a weather variable that `water_level_boundary_outfall_variables` names for each outfall the record replaces. `water_level_boundary_variable_units` and `water_level_boundary_variable_datum_offsets` state the unit and the datum offset of each such variable.
 
 ```yaml

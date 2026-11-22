@@ -734,6 +734,8 @@ class retrieve_synth_TRITON_SWMM_test_case:
             # synthetic tier's tests read per-scenario stores and raw outputs after a run, so the OLD values are
             # written explicitly here once. The new defaults are covered by tests/test_defaults_clear_everything.py.
             "toggle_consolidate_timeseries": False,
+            # Neither key has a default, so the gridded-variable selection is stated beside the toggle (null keeps all).
+            "timeseries_keep_triton_gridded": None,
             "remove_after_processing": "none",
         }
         if kwargs["sensitivity_csv"] is not None:

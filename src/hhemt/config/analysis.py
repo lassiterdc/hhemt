@@ -1181,9 +1181,11 @@ class analysis_config(cfgBaseModel):
         ),
     )
     toggle_consolidate_timeseries: bool = Field(
-        default=True,
+        ...,
         description=(
-            "When True, the per-scenario time series of every model family that writes them are consolidated into "
+            "toggle_consolidate_timeseries has no default, so every config states the value, and a config that "
+            "omits the field is refused at load. When True, the per-scenario time series of every model family "
+            "that writes them are consolidated into "
             "the `timeseries` branch of their group inside analysis_datatree.zarr, beside the `summary` branch of "
             "the same group. A sensitivity master holds the series of each member in the `timeseries` branches of "
             "experiment_datatree.zarr. The coupled model writes the groups tritonswmm/swmm_node/timeseries, "
@@ -1195,12 +1197,13 @@ class analysis_config(cfgBaseModel):
             "link series holds `flow(t)`. Each gridded group has a separate elapsed_s axis at the TRITON "
             "reporting step, chunks of about 32 MB, a streamed write, and a read-back that compares the stored "
             "slice with the source block by block. The timeseries_keep_triton_gridded field selects the gridded "
-            "variables kept. Defaults to True, so a run with no key set keeps the series in the consolidated "
-            "store, the durable processed product. Set False to keep summaries only: the per-scenario series "
-            "stores are kept, and no consolidated copy is written. The exception is an explicit election: when "
+            "variables kept. True keeps the series in the consolidated store, the durable "
+            "processed product. Set False to keep summaries only, so the per-scenario series "
+            "stores are kept and no consolidated copy is written. The one exception is an explicit election. When "
             "remove_after_processing is a list that names timeseries and clear_raw covers every enabled model, the "
             "per-scenario series stores are deleted after the summaries are verified, so the run keeps summaries "
-            "only. The value all of remove_after_processing, the default, does not do that. With consolidation on, "
+            "only. The value all of remove_after_processing, the default, makes no such deletion. "
+            "With consolidation on, "
             "the per-scenario series stores are cleared under the switch "
             "toggle_clear_scenario_timeseries_after_consolidation once the slice of the scenario has passed the "
             "read-back."
@@ -1360,7 +1363,7 @@ class analysis_config(cfgBaseModel):
             "the model log of the scenario. Requires toggle_consolidate_timeseries, and preflight refuses True "
             "without the toggle. Left unset, the field takes the value of toggle_consolidate_timeseries, so a run "
             "with no key set clears the per-scenario copies after the verified read-back, and with consolidation "
-            "off the stores stay unless remove_after_processing, given as a list, names timeseries and clear_raw "
+            "off the stores stay unless remove_after_processing is a list that names timeseries and clear_raw "
             "covers every enabled model. An explicit False keeps the per-scenario copies. A written "
             "cfg_analysis.yaml carries the resolved value and never None. The scenario and member directories are "
             "also removed after a verified copy into the consolidated tree when clear_raw and "
@@ -1408,10 +1411,11 @@ class analysis_config(cfgBaseModel):
         ),
     )
     timeseries_keep_triton_gridded: str | list[str] | None = Field(
-        default=None,
+        ...,
         description=(
             "The gridded TRITON surface time-series variables to KEEP in the per-scenario store after the "
-            "summary is written. The store drops the rest, and the summary keeps every statistic. None or blank "
+            "summary is written. The field has no default, so every config states the value. "
+            "The store drops the rest, and the summary keeps every statistic. None or blank "
             "keeps everything. A string names a toolkit set. The set 'all' holds every variable of the class, "
             "and the set 'default' holds every variable except max_flood_depth, unit_discharge_x, and "
             "unit_discharge_y, and the summary keeps the peaks of the excluded variables. "
@@ -2006,12 +2010,12 @@ class analysis_config(cfgBaseModel):
             "Post-processing reclaim policy. The reclaim fires only after the per-model summary outputs are "
             "verified present and openable on disk. The value none reclaims no artifact, all reclaims every "
             "artifact class, and a list selects classes. The class timeseries names the per-scenario *_tseries "
-            "zarr or nc set. With toggle_consolidate_timeseries on, the process runner does not apply the class and "
+            "zarr or nc set. With toggle_consolidate_timeseries on, the process runner leaves the class unapplied and "
             "the consolidation deletes the per-scenario series after the read-back when the clearing switch is on, "
             "and the runner logs the discharge. With the clearing switch off, the series stay in the per-scenario "
             "store and the runner logs that. With toggle_consolidate_timeseries off, the per-scenario series are "
             "the processed output and the runner declines the class with a logged reason, including under the "
-            "value all. The one exception is an explicit election: with toggle_consolidate_timeseries off, "
+            "value all. The one exception is an explicit election. With toggle_consolidate_timeseries off, "
             "clear_raw covering every enabled model, and this field given as a LIST that names timeseries, the "
             "process runner deletes the per-scenario series stores of every enabled model after the summaries of "
             "the scenario are verified present and openable, so no consolidated copy and no per-scenario series "
