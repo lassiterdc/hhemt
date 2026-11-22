@@ -70,6 +70,7 @@ def _analysis_stand_in(*, sensitivity: bool, calls: list):
         hpc_system_config_yaml=None,
         analysis_paths=SimpleNamespace(analysis_dir=Path("/nonexistent/an_x")),
         _warn_resume_zero_progress=lambda _pickup: None,
+        _unlock_stale_snakemake_locks_when_no_driver_is_live=lambda **_k: [],
         # The submit-time refusals (undefined inflow nodes, coupling declarations) run before
         # anything is stamped or deleted and are orthogonal to the force-rerun count; the
         # stand-in has no SWMM template or coupling to refuse, so each is a no-op.

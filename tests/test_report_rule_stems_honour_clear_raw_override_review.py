@@ -169,6 +169,7 @@ def _submit_stand_in(*, sensitivity: bool, applied: list, reconciled: list) -> S
         hpc_system_config_yaml=None,
         analysis_paths=SimpleNamespace(analysis_dir=Path("/nonexistent/an_x")),
         _warn_resume_zero_progress=lambda _pickup: None,
+        _unlock_stale_snakemake_locks_when_no_driver_is_live=lambda **_k: [],
         _refuse_undefined_inflow_nodes=lambda: None,
         _refuse_invalid_coupling_declaration=lambda: None,
         _refuse_coupled_system_with_no_coupling_candidate=lambda: None,
