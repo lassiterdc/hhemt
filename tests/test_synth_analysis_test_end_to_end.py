@@ -7,10 +7,11 @@ no-``triton.exe`` early return included) are checked without a run in
 ``tests/test_analysis_test_representatives_battery.py``; the four per-combination run tests that used to sit here
 (all models, multi-sim, TRITON-only and SWMM-only sensitivity) were replaced by that battery.
 
-Deliberately carries NO ``skipif(on_scheduler_node())``. Its sibling run-proof
+Deliberately carries NO ``skipif(in_suite_array_chunk())``. Its sibling run-proof
 ``test_synth_09_from_doi_run_proof.py`` does, which is why that module cannot
-substitute for this one on a SLURM harness: ``on_scheduler_node()`` is True
-whenever ``SLURM_JOB_ID`` is set, so the sibling never runs there.
+substitute for this one inside an array chunk: ``in_suite_array_chunk()`` is True
+whenever ``HHEMT_SUITE_ROLE`` is ``chunk``, so the sibling never runs there and runs in the
+complement chunk instead. This module has no such gate and passes inside an array chunk.
 """
 
 import pytest

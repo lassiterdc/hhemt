@@ -30,7 +30,8 @@ from tests.fixtures.outfall_tier import provision_outfall_tier
 # that scoping. The dead-rationale finding was established for this module's gate
 # first, and was subsequently found to hold for the other tier-routing gates too,
 # which were removed with it. The safety guards on the two run-proof modules are a
-# DIFFERENT population and survive as `tst_ut.on_scheduler_node()`.
+# DIFFERENT population and survive as `tst_ut.in_suite_array_chunk()`, which is true
+# only in an array or tail chunk of the suite runner (role `chunk`).
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")

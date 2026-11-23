@@ -87,9 +87,10 @@ A release needs no `just`. The `just tag` row lists the commands of the recipe, 
 
 ## Tests carrying a structural gate
 
-A small set of tests declares a `skipif` on `on_scheduler_node()`, defined in `tests/utils_for_testing.py`.
-The function returns true whenever a scheduler job variable such as `SLURM_JOB_ID` is set. Every chunk of a
-harness array run is a SLURM job, so the gate fires inside the array. The array declines the test
+A small set of tests declares a `skipif` on `in_suite_array_chunk()`, defined in `tests/utils_for_testing.py`.
+The function returns true when the environment variable `HHEMT_SUITE_ROLE` is `chunk`. The suite runner sets that
+role in every array and tail chunk, so the gate fires inside the array and nowhere else. A SLURM job is not
+the hazard: a scheduler allocation that carries another role, or none, runs the test. The array declines the test
 and attempts no run of the test, and a declined test is not a passed test.
 
 Membership is fixed at plan
@@ -101,8 +102,15 @@ under the heading counts the tests of the set that the run did not attempt, and 
 listed by node id. Read the list in `summary.md` and skip any copy elsewhere, because a hand-maintained copy
 drifts and the generated list stays current.
 
-The gate is a declaration. Off a scheduler node, a test carrying the gate runs like any other test, provided the venue is one the project permits to build and
+The gate is a declaration. Outside an array chunk, a test carrying the gate runs like any other test, provided the venue is one the project permits to build and
 execute the solver. [Contributing](../contributing.md) covers `HHEMT_COMPILE_VENUE=toolchain`.
+
+The complement step runs the set. After the array has ended, `python -m hhemt.suite._runner --complement --run-dir {run directory}`
+appends one chunk to the run's manifest, with `covers` set to `complement` and the run's declared set as its tests, then runs that
+chunk under the role `complement`, which the gate does not decline. The step runs once per run on a Rivanna compute node, from
+the run's own toolkit tree, because the tests compile and run the solver. A second call on the same run exits non-zero and names
+the existing chunk and its `--chunk` re-run command. Aggregating the run with `--scope union` then reports `scope=union`
+once every test of the set reaches an evaluated outcome.
 
 **Fix any red that a test of the set produces. The obligation holds at any time and on any machine. The zero-red bar applies to a
 test that the array declines.** [`hhemt test toolkit`](../reference/cli.md#hhemt-test-toolkit) describes the reporting of a run's coverage of the set.
