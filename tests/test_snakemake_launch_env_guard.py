@@ -275,12 +275,14 @@ def test_detector_names_the_cause_and_the_fix_for_both_failure_forms_and_stays_s
     assert "pmix_gds: hash" in message and "--hpc-system-config" in message
     assert "toolkit that contains the pmix_gds field" in message and "hhemt_sha" in message
     assert caught.value.logfile == opened and caught.value.event_iloc == 3
+    assert "job-private /tmp" in message
 
     hit = tmp_path / "sim_run_4.log"
     hit.write_text(_PMIX_LOG)
     with pytest.raises(PMIxSharedMemoryError) as caught:
         raise_if_pmix_gds_failure(hit, event_iloc=4, model_type="tritonswmm")
     assert "OUT-OF-RESOURCE in file gds_shmem2.c at line 99" in str(caught.value)
+    assert "job-private" not in str(caught.value) and "could not allocate" in str(caught.value)
 
     miss = tmp_path / "other.log"
     miss.write_text(_OTHER_MPI_LOG)

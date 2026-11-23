@@ -593,14 +593,31 @@ def triton_launch_env(cfg_analysis, cfg_hpc_system, run_mode: str, *, cray: bool
     return env, triton_cfg_settings(cfg_analysis, cfg_hpc_system)
 
 
+def _pmix_cause(matched_line: str) -> str:
+    """The cause sentence for the matched ``gds/shmem2`` failure line, naming only what that line shows."""
+    if "PMIX_ERR_FILE_OPEN_FAILURE" in matched_line:
+        return (
+            "PMIx could not open the backing file of its shared-memory data store (gds/shmem2), which\n"
+            "         happens on a cluster whose job-private /tmp holds no file it can open."
+        )
+    if "OUT-OF-RESOURCE" in matched_line:
+        return (
+            "PMIx could not allocate the shared-memory segment of its data store (gds/shmem2),\n"
+            "         which the matched line reports as OUT-OF-RESOURCE."
+        )
+    return "PMIx could not start its shared-memory data store (gds/shmem2), as the matched line reports."
+
+
 class PMIxSharedMemoryError(SimulationError):
     """A solver launch failed because PMIx's ``gds/shmem2`` store could not start.
 
     Raised by ``raise_if_pmix_gds_failure`` when a failed solver's log carries
-    ``PMIX_GDS_FAILURE_TEXT``. Rivanna has hit it: a job-private ``/tmp`` leaves the store's backing file
-    unopenable, and the ranks die at startup. The toolkit exports ``PMIX_MCA_gds=hash`` only when the HPC
-    system config sets ``pmix_gds: hash``, so a profile that omits the field launches unchanged and meets
-    this error. The message names the log, the matched line, the cause and the edit that fixes it.
+    ``PMIX_GDS_FAILURE_TEXT``. Rivanna has hit the ``PMIX_ERR_FILE_OPEN_FAILURE`` form: a job-private ``/tmp``
+    leaves the store's backing file unopenable, and the ranks die at startup. The ``OUT-OF-RESOURCE`` form
+    is a segment that cannot allocate. The message states the cause the matched line shows and no other.
+    The toolkit exports ``PMIX_MCA_gds=hash`` only when the HPC system config sets ``pmix_gds: hash``, so a
+    profile that omits the field launches unchanged and meets this error. The message names the log, the
+    matched line, the cause and the edit that fixes it.
 
     Attributes
     ----------
@@ -614,12 +631,11 @@ class PMIxSharedMemoryError(SimulationError):
         self.args = (
             f"{self.args[0]}\n"
             f"  Matched log line: {matched_line}\n"
-            "  Cause: PMIx could not start its shared-memory data store (gds/shmem2), which fails on a\n"
-            "         cluster whose job-private /tmp holds no file it can open.\n"
+            f"  Cause: {_pmix_cause(matched_line)}\n"
             "  Fix: add 'pmix_gds: hash' to the HPC system config passed as --hpc-system-config, then rerun.\n"
-            "       'hash' makes PMIx use a store that needs no shared-memory file. The analysis must pin a\n"
-            "       toolkit that contains the pmix_gds field (set hhemt_sha to a commit that reads it);\n"
-            "       an older toolkit rejects the key as unknown.\n"
+            "       'hash' makes PMIx use a store that needs no shared-memory file or segment. The\n"
+            "       analysis must pin a toolkit that contains the pmix_gds field (set hhemt_sha to a\n"
+            "       commit that reads it); an older toolkit rejects the key as unknown.\n"
             "  See: docs/how-to/diagnosing-a-failed-run.md, 'The solver log names gds/shmem2'.",
         )
 
