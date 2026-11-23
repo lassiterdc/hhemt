@@ -527,11 +527,17 @@ def _unused_aside_path(path: Path, suffix: str) -> Path:
     return candidate
 
 
-#: The sentence PMIx 5.0.x prints when its shared-memory data store (``gds/shmem2``) cannot
-#: allocate, and the one the detector below matches. The same text names the remedy, which is
-#: why the toolkit matches on it rather than on a return code: a failed MPI launch exits
-#: with a generic nonzero status that says nothing about which component failed.
-PMIX_GDS_FAILURE_TEXT = "Disabling gds/shmem2 via PMIX_MCA_gds=hash"
+#: The text both known PMIx ``gds/shmem2`` startup failures print, and the one the detector below matches:
+#: ``PMIX_ERR_FILE_OPEN_FAILURE in file gds_shmem2.c at line ...`` (a job-private ``/tmp`` the store's backing
+#: file cannot be opened in) and ``OUT-OF-RESOURCE in file gds_shmem2.c at line ...`` (a segment that cannot
+#: allocate). The toolkit matches on the text rather than on a return code: a failed MPI launch exits with a
+#: generic nonzero status that says nothing about which component failed.
+PMIX_GDS_FAILURE_TEXT = "in file gds_shmem2.c"
+
+#: The short sha of the toolkit commit that landed the ``pmix_gds`` HPC-profile field, which is the first
+#: toolkit commit that reads it. ``PMIxSharedMemoryError`` names it so that a user whose analysis pins an
+#: older toolkit knows what to repin to. Set to the landing commit's short sha when that commit exists.
+PMIX_GDS_FIELD_FIRST_COMMIT = "UNSTAMPED"
 
 
 def omp_thread_count(cfg_analysis) -> int:
@@ -593,23 +599,33 @@ def triton_launch_env(cfg_analysis, cfg_hpc_system, run_mode: str, *, cray: bool
 
 
 class PMIxSharedMemoryError(SimulationError):
-    """A solver launch failed because PMIx's ``gds/shmem2`` store could not allocate.
+    """A solver launch failed because PMIx's ``gds/shmem2`` store could not start.
 
     Raised by ``raise_if_pmix_gds_failure`` when a failed solver's log carries
-    ``PMIX_GDS_FAILURE_TEXT``. The toolkit does not set ``PMIX_MCA_gds`` itself: no recorded
-    hhemt run has hit this failure, so the export would be an unmeasured change to every MPI
-    launch. The remedy is the user's to apply, and the message names it.
+    ``PMIX_GDS_FAILURE_TEXT``. Rivanna has hit it: a job-private ``/tmp`` leaves the store's backing file
+    unopenable, and the ranks die at startup. The toolkit exports ``PMIX_MCA_gds=hash`` only when the HPC
+    system config sets ``pmix_gds: hash``, so a profile that omits the field launches unchanged and meets
+    this error. The message names the log, the matched line, the cause and the edit that fixes it.
+
+    Attributes
+    ----------
+    matched_line : str
+        The solver-log line that carried ``PMIX_GDS_FAILURE_TEXT``, stripped.
     """
 
-    def __init__(self, event_iloc: int, model_type: str, logfile: Path | None = None):
+    def __init__(self, event_iloc: int, model_type: str, logfile: Path | None, matched_line: str):
         super().__init__(event_iloc, model_type, logfile)
+        self.matched_line = matched_line
         self.args = (
             f"{self.args[0]}\n"
-            "  Cause: PMIx could not allocate its shared-memory data store (gds/shmem2), and the\n"
-            f"         solver log says so ('{PMIX_GDS_FAILURE_TEXT}').\n"
-            "  Remedy: export PMIX_MCA_gds=hash in the job environment and rerun, or raise\n"
-            "          PMIX_MCA_gds_shmem2_segment_size_multiplier. See\n"
-            "          docs/how-to/diagnosing-a-failed-run.md, 'The solver log names gds/shmem2'.",
+            f"  Matched log line: {matched_line}\n"
+            "  Cause: PMIx could not start its shared-memory data store (gds/shmem2), which fails on a\n"
+            "         cluster whose job-private /tmp holds no file it can open.\n"
+            "  Fix: add 'pmix_gds: hash' to the HPC system config passed as --hpc-system-config, then rerun.\n"
+            "       'hash' makes PMIx use a store that needs no shared-memory file. The analysis must pin a\n"
+            f"       toolkit at or after {PMIX_GDS_FIELD_FIRST_COMMIT}, the first that reads the field; set\n"
+            "       hhemt_sha to that commit if it pins an older one.\n"
+            "  See: docs/how-to/diagnosing-a-failed-run.md, 'The solver log names gds/shmem2'.",
         )
 
 
@@ -619,14 +635,15 @@ def raise_if_pmix_gds_failure(logfile: Path | None, *, event_iloc: int, model_ty
     Call it for a solver that already failed. It returns silently when the log is missing,
     unreadable or free of the text, so a failure with any other cause keeps its own handling.
     The log is streamed line by line and the scan stops at the first match, because a solver
-    log can be large.
+    log can be large. The error carries that matched line.
     """
     if logfile is None or not logfile.is_file():
         return
     try:
         with open(logfile, errors="replace") as handle:
-            if any(PMIX_GDS_FAILURE_TEXT in line for line in handle):
-                raise PMIxSharedMemoryError(event_iloc, model_type, logfile)
+            for line in handle:
+                if PMIX_GDS_FAILURE_TEXT in line:
+                    raise PMIxSharedMemoryError(event_iloc, model_type, logfile, line.strip())
     except OSError:
         return
 

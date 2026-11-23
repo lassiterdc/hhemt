@@ -23,7 +23,7 @@ Start from the symptom you have. When no entry matches or the information to pic
 | [The analysis produced no output](#the-analysis-produced-no-output) | A phase never started, so find the missing flag |
 | [Setup says a model is enabled but not compiled](#setup-says-a-model-is-enabled-but-not-compiled) | Native mode needs a one-time compile, and the machine has no build |
 | [The job died at walltime](#the-job-died-at-walltime) | Expected, and the job resumes from the last checkpoint |
-| [The solver log names gds/shmem2](#the-solver-log-names-gdsshmem2) | An MPI launch failed inside PMIx. An environment variable is the remedy |
+| [The solver log names gds/shmem2](#the-solver-log-names-gdsshmem2) | An MPI launch failed inside PMIx. The remedy is `pmix_gds: hash` in the HPC system config |
 | [The report is wrong but the results are fine](#the-report-is-wrong-but-the-results-are-fine) | The simulations are sound, and the stages after them need rebuilding |
 | [A resumed analysis that I expected to be a no-op re-executed everything](#a-resumed-analysis-that-i-expected-to-be-a-no-op-re-executed-everything) | A rerun trigger fired and no failure occurred |
 | [Results look wrong and the cause is unknown](#results-look-wrong-and-the-cause-is-unknown) | Possibly a known bug and no configuration error |
@@ -110,18 +110,20 @@ Raise the simulation retry count in place of the walltime when checkpoints are f
 
 ### The solver log names gds/shmem2
 
-An MPI launch failed, and the solver log carries this text.
+An MPI launch failed, and the solver log carries one of these lines.
 
 ```text
-Disabling gds/shmem2 via PMIX_MCA_gds=hash
+PMIX ERROR: PMIX_ERR_FILE_OPEN_FAILURE in file gds_shmem2.c at line 1056
+PMIX ERROR: OUT-OF-RESOURCE in file gds_shmem2.c at line 99
 ```
 
-PMIx could not allocate the shared-memory store that ranks use to exchange job data. The toolkit leaves `PMIX_MCA_gds` unset, because no recorded run has hit the failure and the setting would change every MPI launch without a measurement. The remedy is yours to apply.
+PMIx could not start the shared-memory store that ranks use to exchange job data. The first form occurred on Rivanna, where a job-private `/tmp` leaves the store's backing file unopenable. The toolkit exports `PMIX_MCA_gds=hash` only when the HPC system config sets `pmix_gds: hash`, so a profile that omits the field launches unchanged and meets the failure.
 
-1. Export `PMIX_MCA_gds=hash` in the job environment and rerun. The `hash` store keeps one copy of the job data per process and has no shared-memory segment to allocate.
-2. Alternatively, raise `PMIX_MCA_gds_shmem2_segment_size_multiplier` to enlarge the segment.
+1. Add `pmix_gds: hash` to the HPC system config you pass as `--hpc-system-config`, then rerun. The `hash` store keeps one copy of the job data per process and has no shared-memory file to open.
+2. Confirm the analysis pins a toolkit that reads the field. An older `hhemt_sha` rejects `pmix_gds` as an unknown profile key, so repin to the toolkit commit the error message names.
+3. Do not set `PMIX_MCA_gds` in `TRITON_extra_env`. The toolkit refuses it and names `pmix_gds: hash` as the replacement.
 
-When a simulation fails and the solver log carries the text, the toolkit raises `PMIxSharedMemoryError`. The error names the log and the remedy, and maps to exit code 4, the simulation failure code.
+When a simulation fails and the solver log carries the text, the toolkit raises `PMIxSharedMemoryError`. The error names the log, the matched line, the cause and the edit above, and maps to exit code 4, the simulation failure code.
 
 ### The report is wrong but the results are fine
 
