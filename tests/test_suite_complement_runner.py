@@ -22,6 +22,17 @@ import hhemt.suite._runner as R
 import tests.utils_for_testing as tst_ut
 from hhemt.suite import aggregate as A
 from hhemt.suite import chunk_site, missing_conformance_sites
+from tests.test_suite_tail_element import (
+    _ARRAY_END,
+    _ARRAY_OK,
+    _TREE,
+    _entry,
+    _fixture_run,
+    _junit,
+    _race,
+    _status,
+    _times,
+)
 from tests.test_suite_tier_selection import _CONFTEST, _env, _git, _project
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -296,3 +307,40 @@ def test_the_runner_derives_the_role_from_the_chunk_covers_field():
 
     assert R.SUITE_ROLE_ENV == _SUITE_ROLE_ENV == "HHEMT_SUITE_ROLE"
     assert (R.CHUNK_ROLE, R.COMPLEMENT_ROLE, R.COMPLEMENT_COVERS) == ("chunk", "complement", "complement")
+
+
+def _with_complement(root: Path, *, written: bool) -> None:
+    """Append a complement chunk (id 3, run after the tail) to the tail suite's fixture run directory."""
+    node = "tests/test_c.py::test_c0"
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    manifest["collected"].append(node)
+    manifest["chunk_count"] = 4
+    manifest["chunks"].append(
+        {"chunk_id": 3, "kind": "cheap", "node_ids": [node], "workers": 1, "covers": "complement"}
+    )
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    times = _times("2026-11-03T10:40:00.000+00:00", "2026-11-03T10:50:00.000+00:00")
+    status = _status(3, times=times, entries={_TREE: _entry(written=written)})
+    (root / "chunk-03.status.json").write_text(json.dumps(status), encoding="utf-8")
+    (root / "chunk-03.junit.xml").write_text(_junit([node]), encoding="utf-8")
+
+
+@pytest.mark.parametrize("complement_writes", [False, True], ids=["complement-reads", "complement-writes"])
+def test_a_complement_chunk_run_after_the_tail_does_not_withdraw_the_tail_exemption(tmp_path, complement_writes):
+    """Input class: a run with array chunks, a tail and a complement chunk that started after the tail ended.
+
+    Required: the complement chunk is not an array chunk, so the tail, which ran after every array chunk, keeps its
+    exemption from the shared-tree joins (its write is reported as ``tail_writes``, not as a race). The complement chunk
+    stays IN the joins: when it writes a tree the array chunks read, that race is still reported, naming chunk 3 alone.
+    Killed by a ``_tail_ran_after`` that counts the complement chunk (the tail's own write would read as a race
+    ``writers [2]``), and by an exemption that lets the complement chunk's own write through.
+    """
+    _fixture_run(tmp_path, tail_times=_times(_ARRAY_END, "2026-11-03T10:30:00.000+00:00"), array_times=_ARRAY_OK)
+    _with_complement(tmp_path, written=complement_writes)
+    r = A.aggregate(tmp_path, scope="array")
+    assert _TREE in r["tail_writes"], r["problems"]
+    races = _race(r["problems"])
+    if complement_writes:
+        assert len(races) == 1 and "writers [3]" in races[0], races
+    else:
+        assert races == [], races

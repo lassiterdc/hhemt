@@ -297,14 +297,16 @@ def _tail_ran_after(manifest: dict, statuses: dict, tail_cid: int) -> bool:
     skew that inverts the order keeps the tail in the joins, the loud direction), so equal instants exempt the tail.
     An array chunk re-run after the tail has overwritten its status with a later `ended_at`, which reads as an
     overlap: conservative and loud, and the operator re-runs the tail afterwards. A chunk with no status, or a status
-    lacking either time, gives the tail no exemption.
+    lacking either time, gives the tail no exemption. The complement chunk (`covers: "complement"`) is not an array
+    chunk: it is appended and run AFTER the tail, by design, so counting it would withdraw the exemption from every
+    run that has one.
     """
     tail_status = statuses.get(tail_cid) or {}
     tail_start = _parse_instant(tail_status.get("started_at"))
     if tail_start is None or _parse_instant(tail_status.get("ended_at")) is None:
         return False
     for c in manifest["chunks"]:
-        if c["chunk_id"] == tail_cid:
+        if c["chunk_id"] == tail_cid or c.get("covers") == "complement":
             continue
         st = statuses.get(c["chunk_id"]) or {}
         ended = _parse_instant(st.get("ended_at"))
