@@ -34,6 +34,7 @@ gpu_aware_mpi: false                   # true only when the cluster's MPI can pa
 mpich_ofi_nic_policy: null             # null keeps the toolkit's default (BLOCK for MPI and hybrid runs)
 hsa_xnack: null                        # AMD unified-memory setting; null exports nothing
 cuda_managed_force_device_alloc: null  # NVIDIA managed-memory setting; null exports nothing
+pmix_gds: null                         # set hash on a cluster whose job-private /tmp breaks PMIx; null exports nothing
 
 partitions:
   standard:                            # CPU partition
@@ -144,6 +145,7 @@ The fields in the following list describe the MPI build and the GPU memory behav
 - `mpich_ofi_nic_policy` exports `MPICH_OFI_NIC_POLICY`. Left unset, the field gives MPI runs and hybrid runs the value `BLOCK`. The default keeps Cray MPICH from aborting when the CPUs of a rank span several NUMA domains.
 - `hsa_xnack` exports `HSA_XNACK` as `1` when `true` and as `0` when `false`. Leave the field unset unless the cluster needs a value.
 - `cuda_managed_force_device_alloc` sets `CUDA_MANAGED_FORCE_DEVICE_ALLOC` the same way.
+- `pmix_gds` exports `PMIX_MCA_gds`. The only value is `hash`. The value makes PMIx use a data store that needs no shared-memory file. Set the field on a cluster where a multi-rank launch dies in `MPI_Init` with `PMIX_ERR_FILE_OPEN_FAILURE in file gds_shmem2.c`. The job-private `/tmp` of such a cluster lacks the file the PMIx server names. Leave the field unset elsewhere. Never set `PMIX_MCA_gds` in `TRITON_extra_env`, because the analysis config refuses that name. The field is the one channel.
 
 ## Differences on an AMD-GPU cluster
 

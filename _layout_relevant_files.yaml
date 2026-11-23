@@ -5648,3 +5648,11 @@ non_breaking_allowlist:
     layout_signature: a886212f7b4df2ece22da4ff889ed4d2963c5fe06b20b3fbf3a8971fbeaac920
     justification: |-
       1122-0004 round 2: src/hhemt/config/analysis.py description text only (the no-default sentence moved to the start of toggle_consolidate_timeseries and three field descriptions reworded for the docs style rules); no stored path, file name, zarr group, log field, schema or flag name changes, and no default changes beyond round 1; the stored-config consequence of round 1 is stated in the row above (older copies are refused at load, no migration, ruling G30).
+  - path: src/hhemt/config/hpc_system.py
+    layout_signature: 8ee082619bad2a7df104322ea5a56c64f9ee9c8ae3019c8e1da03efe7a45586b
+    justification: |-
+      NON-BREAKING. Adds ONE optional field to hpc_system_config, pmix_gds (Literal hash or None, default None), plus a before-validator that refuses any other value with a message, and a TRITON launch export of PMIX_MCA_gds when set. INPUT-config schema only: an unset field exports nothing and a profile written before the field loads unchanged. No on-disk analysis-tree path, file name, zarr group, log field or flag name changes, so no migration has anything to act on.
+  - path: src/hhemt/config/analysis.py
+    layout_signature: 2f7915785b64f36eea7c958e8fc1cce0f89a3b7122a5eeea888d014e537ea6bd
+    justification: |-
+      NON-BREAKING. One row is added to the _TOOLKIT_OWNED_ENV mapping (PMIX_MCA_gds), so TRITON_extra_env refuses that name with a message naming the pmix_gds profile field. A refusal of an input value; no field, default, persisted key, path, file name, zarr group or log field changes, and a config that did not set the name loads unchanged.

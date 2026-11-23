@@ -34,6 +34,7 @@ def _launch(run_mode="serial", analysis=None, hpc=None):
         "mpich_ofi_nic_policy": None,
         "hsa_xnack": None,
         "cuda_managed_force_device_alloc": None,
+        "pmix_gds": None,
         **(hpc or {}),
     }.items():
         setattr(run._analysis.cfg_hpc_system, key, value)
@@ -69,6 +70,7 @@ def test_an_analysis_environment_field_arrives_in_the_launch_environment(analysi
         ({"hsa_xnack": False}, ("HSA_XNACK", "0")),
         ({"cuda_managed_force_device_alloc": True}, ("CUDA_MANAGED_FORCE_DEVICE_ALLOC", "1")),
         ({"mpich_ofi_nic_policy": "NUMA"}, ("MPICH_OFI_NIC_POLICY", "NUMA")),
+        ({"pmix_gds": "hash"}, ("PMIX_MCA_gds", "hash")),
     ],
 )
 def test_an_hpc_environment_field_arrives_in_the_launch_environment(hpc, exported):
@@ -79,7 +81,7 @@ def test_an_hpc_environment_field_arrives_in_the_launch_environment(hpc, exporte
 
 def test_every_default_adds_no_variable_and_the_nic_policy_keeps_todays_value():
     _cmd, env = _launch("serial")
-    owned = {k for k in env if k.startswith(("KOKKOS_", "HSA_", "CUDA_MANAGED", "MPICH_"))}
+    owned = {k for k in env if k.startswith(("KOKKOS_", "HSA_", "CUDA_MANAGED", "MPICH_", "PMIX_"))}
     assert owned == set()
     _cmd, env = _launch("mpi")
     assert env["MPICH_OFI_NIC_POLICY"] == "BLOCK"
@@ -109,7 +111,14 @@ _FULL_ANALYSIS = SimpleNamespace(
 
 def _full_hpc(**over):
     return SimpleNamespace(
-        gpu_aware_mpi=False, mpich_ofi_nic_policy=None, hsa_xnack=None, cuda_managed_force_device_alloc=None, **over
+        **{
+            "gpu_aware_mpi": False,
+            "mpich_ofi_nic_policy": None,
+            "hsa_xnack": None,
+            "cuda_managed_force_device_alloc": None,
+            "pmix_gds": None,
+            **over,
+        }
     )
 
 
@@ -187,3 +196,55 @@ def test_the_resolved_settings_and_the_extra_environment_are_recorded_in_the_mod
     (entry,) = recorded
     assert entry["cfg"]["COURANT"] == 0.45 and entry["cfg"]["HEXTRA"] == 0.002
     assert entry["env"]["KOKKOS_PRINT_CONFIGURATION"] == "1" and entry["env"]["MY_VAR"] == "7"
+
+
+def test_pmix_gds_set_exports_the_hash_store_and_unset_exports_nothing():
+    """Input class: the field set to its one value, unset, and absent (no HPC config); only the set case exports."""
+    env, _settings = triton_launch_env(_FULL_ANALYSIS, _full_hpc(pmix_gds=None), "mpi")
+    assert "PMIX_MCA_gds" not in env
+    env, _settings = triton_launch_env(_FULL_ANALYSIS, None, "mpi")
+    assert "PMIX_MCA_gds" not in env
+    env, _settings = triton_launch_env(_FULL_ANALYSIS, _full_hpc(pmix_gds="hash"), "mpi")
+    assert env["PMIX_MCA_gds"] == "hash"
+
+
+def _profile_yaml(tmp_path, **extra):
+    import yaml
+
+    body = {"hpc_name": "t", "partitions": {"standard": {"max_runtime": 60}}, **extra}
+    path = tmp_path / "hpc_profile_for_message_test.yaml"
+    path.write_text(yaml.safe_dump(body))
+    return path
+
+
+def test_the_pmix_gds_hash_value_loads_from_a_profile_file(tmp_path):
+    from hhemt.config.loaders import load_hpc_system_config
+
+    assert load_hpc_system_config(_profile_yaml(tmp_path, pmix_gds="hash")).pmix_gds == "hash"
+    assert load_hpc_system_config(_profile_yaml(tmp_path)).pmix_gds is None
+
+
+def test_a_pmix_gds_value_other_than_hash_is_refused_with_a_message_naming_the_file_the_field_and_the_fix(tmp_path):
+    """The refusal names the profile file, the field, the one allowed value and the failure it fixes (CS-1 ruling)."""
+    from hhemt.config.loaders import load_hpc_system_config
+    from hhemt.exceptions import ConfigurationError
+
+    path = _profile_yaml(tmp_path, pmix_gds="shmem2")
+    with pytest.raises(ConfigurationError) as raised:
+        load_hpc_system_config(path)
+    text = str(raised.value)
+    for needle in (path.name, "pmix_gds", "hash", "gds_shmem2", "shmem2", "pmix_gds: hash"):
+        assert needle in text, (needle, text)
+
+
+def test_pmix_mca_gds_in_the_extra_environment_is_refused_with_a_message_naming_the_key_and_the_fix(tmp_path):
+    """The refusal names the key, the field it sits in and the literal profile edit that replaces it (CS-1 ruling)."""
+    from pydantic import ValidationError
+
+    from tests.test_triton_cfg_render import _analysis
+
+    with pytest.raises(ValidationError) as raised:
+        _analysis(tmp_path, TRITON_extra_env={"PMIX_MCA_gds": "hash"})
+    text = str(raised.value)
+    for needle in ("PMIX_MCA_gds", "TRITON_extra_env", "pmix_gds: hash"):
+        assert needle in text, (needle, text)
