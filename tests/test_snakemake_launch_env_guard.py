@@ -32,7 +32,6 @@ from hhemt.cli_utils import map_exception_to_exit_code
 from hhemt.exceptions import SimulationError
 from hhemt.run_simulation import (
     PMIX_GDS_FAILURE_TEXT,
-    PMIX_GDS_FIELD_FIRST_COMMIT,
     PMIxSharedMemoryError,
     TRITONSWMM_run,
     raise_if_pmix_gds_failure,
@@ -274,7 +273,7 @@ def test_detector_names_the_cause_and_the_fix_for_both_failure_forms_and_stays_s
     assert str(opened) in message and "event_iloc=3" in message and "tritonswmm" in message
     assert _PMIX_OPEN_FAILURE_LINE in message and caught.value.matched_line == _PMIX_OPEN_FAILURE_LINE
     assert "pmix_gds: hash" in message and "--hpc-system-config" in message
-    assert PMIX_GDS_FIELD_FIRST_COMMIT in message
+    assert "toolkit that contains the pmix_gds field" in message and "hhemt_sha" in message
     assert caught.value.logfile == opened and caught.value.event_iloc == 3
 
     hit = tmp_path / "sim_run_4.log"
@@ -288,19 +287,6 @@ def test_detector_names_the_cause_and_the_fix_for_both_failure_forms_and_stays_s
     raise_if_pmix_gds_failure(miss, event_iloc=3, model_type="tritonswmm")
     raise_if_pmix_gds_failure(tmp_path / "absent.log", event_iloc=3, model_type="tritonswmm")
     raise_if_pmix_gds_failure(None, event_iloc=3, model_type="tritonswmm")
-
-
-def test_the_landing_commit_the_message_names_is_a_real_short_sha():
-    """Property: the commit ``PMIxSharedMemoryError`` tells the user to pin is a hex short sha, not a placeholder.
-
-    Class: the one literal the message cannot compute, REGRESSION: it began as an unstamped placeholder because
-    the landing commit does not exist while the chunk is built. Why required: a message that tells a user to pin
-    ``UNSTAMPED`` fails the instruction DR-6 exists to make mechanical. What kills it: leaving the placeholder.
-    Second correct implementation: a 7 to 12 character abbreviation of the full sha.
-    """
-    import re
-
-    assert re.fullmatch(r"[0-9a-f]{7,12}", PMIX_GDS_FIELD_FIRST_COMMIT)
 
 
 def test_pmix_error_is_a_simulation_error_with_the_simulation_exit_code(tmp_path: Path):

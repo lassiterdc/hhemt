@@ -120,7 +120,7 @@ PMIX ERROR: OUT-OF-RESOURCE in file gds_shmem2.c at line 99
 PMIx could not start the shared-memory store that ranks use to exchange job data. The first form occurred on Rivanna, where a job-private `/tmp` leaves the store's backing file unopenable. The toolkit exports `PMIX_MCA_gds=hash` only when the HPC system config sets `pmix_gds: hash`, so a profile that omits the field launches unchanged and meets the failure.
 
 1. Add `pmix_gds: hash` to the HPC system config you pass as `--hpc-system-config`, then rerun. The `hash` store keeps one copy of the job data per process and has no shared-memory file to open.
-2. Confirm the analysis pins a toolkit that reads the field. An older `hhemt_sha` rejects `pmix_gds` as an unknown profile key, so repin to the toolkit commit the error message names.
+2. Confirm the analysis pins a toolkit that contains the `pmix_gds` field. An older `hhemt_sha` rejects `pmix_gds` as an unknown profile key, so set `hhemt_sha` to a toolkit commit that reads the field.
 3. Do not set `PMIX_MCA_gds` in `TRITON_extra_env`. The toolkit refuses it and names `pmix_gds: hash` as the replacement.
 
 When a simulation fails and the solver log carries the text, the toolkit raises `PMIxSharedMemoryError`. The error names the log, the matched line, the cause and the edit above, and maps to exit code 4, the simulation failure code.

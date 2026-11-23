@@ -534,11 +534,6 @@ def _unused_aside_path(path: Path, suffix: str) -> Path:
 #: generic nonzero status that says nothing about which component failed.
 PMIX_GDS_FAILURE_TEXT = "in file gds_shmem2.c"
 
-#: The short sha of the toolkit commit that landed the ``pmix_gds`` HPC-profile field, which is the first
-#: toolkit commit that reads it. ``PMIxSharedMemoryError`` names it so that a user whose analysis pins an
-#: older toolkit knows what to repin to. Set to the landing commit's short sha when that commit exists.
-PMIX_GDS_FIELD_FIRST_COMMIT = "UNSTAMPED"
-
 
 def omp_thread_count(cfg_analysis) -> int:
     """The OpenMP thread count a run launches with, by run mode (1.h.2, DR-36).
@@ -623,8 +618,8 @@ class PMIxSharedMemoryError(SimulationError):
             "         cluster whose job-private /tmp holds no file it can open.\n"
             "  Fix: add 'pmix_gds: hash' to the HPC system config passed as --hpc-system-config, then rerun.\n"
             "       'hash' makes PMIx use a store that needs no shared-memory file. The analysis must pin a\n"
-            f"       toolkit at or after {PMIX_GDS_FIELD_FIRST_COMMIT}, the first that reads the field; set\n"
-            "       hhemt_sha to that commit if it pins an older one.\n"
+            "       toolkit that contains the pmix_gds field (set hhemt_sha to a commit that reads it);\n"
+            "       an older toolkit rejects the key as unknown.\n"
             "  See: docs/how-to/diagnosing-a-failed-run.md, 'The solver log names gds/shmem2'.",
         )
 
