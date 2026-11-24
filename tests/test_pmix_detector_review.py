@@ -1,4 +1,4 @@
-"""Reviewer tests for chunk 1b.1 (AC-1.2, DR-2, DR-6 message 3): the PMIx gds/shmem2 detector and its message."""
+"""Tests for the PMIx gds/shmem2 detector and the message it raises."""
 
 from __future__ import annotations
 
@@ -23,9 +23,9 @@ _OOR_LINE = "[node1:1] PMIX ERROR: OUT-OF-RESOURCE in file gds_shmem2.c at line 
 def test_each_observed_form_raises_with_a_complete_instruction(tmp_path: Path, line: str):
     """Property: each observed failure line raises with the log, matched line, cause, field, flag and pin named.
 
-    Class: the two observed forms, each with leading and trailing noise lines. Why required: DR-6 message 3 says
-    what failed, why, and the literal edit. What kills it: a message missing any named part, or a detector that
-    keys on one form only.
+    Class: the two observed forms, each with leading and trailing noise lines. Why required: the message must say
+    what failed, why, and the literal edit that fixes it. What kills it: a message missing any named part, or a
+    detector that keys on one form only.
     """
     log = tmp_path / "sim_run_7.log"
     log.write_text("launching\n" + line + "\nrank 0 aborted\n")
@@ -82,7 +82,7 @@ def test_message_does_not_misattribute_one_form_to_the_other_forms_cause(tmp_pat
 
 
 def test_docstring_and_howto_no_longer_claim_no_recorded_failure():
-    """Property: AC-1.2 - neither the class docstring nor the how-to contains ``no recorded``."""
+    """Property: neither the class docstring nor the how-to claims that no failure was recorded."""
     assert "no recorded" not in (PMIxSharedMemoryError.__doc__ or "").lower()
     howto = (_REPO / "docs" / "how-to" / "diagnosing-a-failed-run.md").read_text()
     assert "no recorded" not in howto.lower()
