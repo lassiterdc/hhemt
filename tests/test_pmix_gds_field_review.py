@@ -1,7 +1,7 @@
-"""Reviewer tests for chunk 1a.1: the ``pmix_gds`` profile field and its two instructive messages (DR-1, DR-6 1-2).
+"""Tests for the ``pmix_gds`` profile field and the two instructive messages that guard it.
 
-Each test grades an acceptance criterion at the entry point a user meets, which is the YAML file loader:
-AC-1.1 (the export), AC-1.1m (the two refusals name the file, the field, the value and the literal fix).
+Each test checks behaviour at the entry point a user meets, which is the YAML file loader: the field exports
+``PMIX_MCA_gds`` only when set, and the two refusals name the file, the field, the value and the literal fix.
 """
 
 from __future__ import annotations
