@@ -239,8 +239,10 @@ _PMIX_LOG = (
     "A memory allocation backed by shared-memory failed in the gds/shmem2 component.\n"
     "Resolve this issue by either:\n"
     "  1.) Increasing the value of PMIX_MCA_gds_shmem2_segment_size_multiplier\n"
-    f"  2.) {PMIX_GDS_FAILURE_TEXT}\n"
+    "  2.) Disabling gds/shmem2 via PMIX_MCA_gds=hash\n"
 )
+_PMIX_OPEN_FAILURE_LINE = "[udc-ba26-34:22481] PMIX ERROR: PMIX_ERR_FILE_OPEN_FAILURE in file gds_shmem2.c at line 1056"
+_PMIX_OPEN_FAILURE_LOG = "launching 4 ranks\n" + _PMIX_OPEN_FAILURE_LINE + "\nrank 0 aborted\n"
 _OTHER_MPI_LOG = (
     "There are not enough slots available in the system to satisfy the 2 slots that were requested.\n"
     "gds: hash selected as the data store\n"
@@ -248,24 +250,39 @@ _OTHER_MPI_LOG = (
 )
 
 
-def test_detector_names_the_remedy_for_the_pmix_text_and_stays_silent_otherwise(tmp_path: Path):
-    """Property: the PMIx sentence raises ``PMIxSharedMemoryError`` with the remedy, and nothing else does.
+def test_detector_names_the_cause_and_the_fix_for_both_failure_forms_and_stays_silent_otherwise(tmp_path: Path):
+    """Property: either gds/shmem2 failure line raises ``PMIxSharedMemoryError`` with a complete instruction.
 
-    Class: a positive log, two negative logs that share words with the sentence (the PRRTE slots refusal and
-    near-miss ``gds`` lines), a missing file and ``None``. REGRESSION: the detector did not exist. Why required:
-    the toolkit refuses to emit the variable, so this error text is the only place the remedy reaches a user at
-    failure time; a detector that fires on a near-miss would misdirect a different failure. What kills it:
-    matching ``gds`` or ``shmem2`` alone, or raising for a missing log. Second correct implementation: matching
-    the sentence with a regex that tolerates whitespace, with the same two negative logs.
+    Class: the two observed failure forms (``OUT-OF-RESOURCE`` and ``PMIX_ERR_FILE_OPEN_FAILURE``, both printing
+    ``in file gds_shmem2.c``), two negative logs that share words with the text (the PRRTE slots refusal and
+    near-miss ``gds`` lines), a missing file and ``None``. REGRESSION: the detector keyed on a sentence only the
+    OUT-OF-RESOURCE form prints, so the Rivanna ``PMIX_ERR_FILE_OPEN_FAILURE`` failure passed through undetected.
+    Why required: a user resubmitting an experiment reads this message to learn which log failed, which line
+    matched, and the literal edit that fixes it; a detector that fires on a near-miss would misdirect a different
+    failure. What kills it: matching ``gds`` or ``shmem2`` alone, matching the old advice sentence, raising for a
+    missing log, or dropping any of the named parts from the message. Second correct implementation: matching
+    ``in file gds_shmem2.c`` with a regex that tolerates whitespace, with the same negative logs.
     """
-    hit = tmp_path / "sim_run_3.log"
+    assert PMIX_GDS_FAILURE_TEXT in _PMIX_OPEN_FAILURE_LINE and PMIX_GDS_FAILURE_TEXT in _PMIX_LOG
+
+    opened = tmp_path / "sim_run_3.log"
+    opened.write_text(_PMIX_OPEN_FAILURE_LOG)
+    with pytest.raises(PMIxSharedMemoryError) as caught:
+        raise_if_pmix_gds_failure(opened, event_iloc=3, model_type="tritonswmm")
+    message = str(caught.value)
+    assert str(opened) in message and "event_iloc=3" in message and "tritonswmm" in message
+    assert _PMIX_OPEN_FAILURE_LINE in message and caught.value.matched_line == _PMIX_OPEN_FAILURE_LINE
+    assert "pmix_gds: hash" in message and "--hpc-system-config" in message
+    assert "toolkit that contains the pmix_gds field" in message and "hhemt_sha" in message
+    assert caught.value.logfile == opened and caught.value.event_iloc == 3
+    assert "job-private /tmp" in message
+
+    hit = tmp_path / "sim_run_4.log"
     hit.write_text(_PMIX_LOG)
     with pytest.raises(PMIxSharedMemoryError) as caught:
-        raise_if_pmix_gds_failure(hit, event_iloc=3, model_type="tritonswmm")
-    message = str(caught.value)
-    assert "PMIX_MCA_gds=hash" in message and "PMIX_MCA_gds_shmem2_segment_size_multiplier" in message
-    assert str(hit) in message and "event_iloc=3" in message and "tritonswmm" in message
-    assert caught.value.logfile == hit and caught.value.event_iloc == 3
+        raise_if_pmix_gds_failure(hit, event_iloc=4, model_type="tritonswmm")
+    assert "OUT-OF-RESOURCE in file gds_shmem2.c at line 99" in str(caught.value)
+    assert "job-private" not in str(caught.value) and "could not allocate" in str(caught.value)
 
     miss = tmp_path / "other.log"
     miss.write_text(_OTHER_MPI_LOG)
@@ -282,7 +299,7 @@ def test_pmix_error_is_a_simulation_error_with_the_simulation_exit_code(tmp_path
     this is a simulation failure. What kills it: subclassing ``RuntimeError`` or ``TRITONSWMMError`` directly.
     Second correct implementation: a ``SimulationError`` carrying the remedy in an extra attribute.
     """
-    err = PMIxSharedMemoryError(1, "triton", tmp_path / "x.log")
+    err = PMIxSharedMemoryError(1, "triton", tmp_path / "x.log", "PMIX ERROR: OUT-OF-RESOURCE in file gds_shmem2.c")
     assert isinstance(err, SimulationError)
     assert map_exception_to_exit_code(err) == 4
 
@@ -413,10 +430,10 @@ def test_runner_failure_with_the_pmix_text_logs_the_remedy_and_without_it_does_n
     """
     rc, out, bumps = _drive_runner_to_failure(monkeypatch, tmp_path / "hit", _PMIX_LOG)
     assert rc == 1
-    assert "PMIX_MCA_gds=hash" in out and "Exception occurred during simulation execution" in out
+    assert "pmix_gds: hash" in out and "Exception occurred during simulation execution" in out
     assert bumps == ["tritonswmm"]
 
     rc, out, bumps = _drive_runner_to_failure(monkeypatch, tmp_path / "miss", _OTHER_MPI_LOG)
     assert rc == 1
-    assert "PMIX_MCA_gds=hash" not in out and "Simulation did not complete successfully" in out
+    assert "pmix_gds: hash" not in out and "Simulation did not complete successfully" in out
     assert bumps == ["tritonswmm"]
