@@ -5,6 +5,7 @@ default_account: "{your-allocation}"          # NATIVE -> slurm_account (UVA: yo
 login_node: login1.hpc.virginia.edu           # EXTENSION (tmux orchestration; batch_job mode) — public
 gpu_allocation_flavor: gres                   # EXTENSION (UVA uses --gres=gpu:N)
 max_concurrent_jobs: 1000                     # EXTENSION (D-D: cluster-throughput cap; new home for the retired analysis_config.hpc_max_simultaneous_sims)
+pmix_gds: hash                               # EXTENSION (exports PMIX_MCA_gds=hash; Rivanna's job-private /tmp lacks the gds_shmem2 backing file)
 additional_modules:                           # EXTENSION (public module names)
   - gcc/12.4.0
 partitions:

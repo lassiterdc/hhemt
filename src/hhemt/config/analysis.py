@@ -352,6 +352,8 @@ _TOOLKIT_OWNED_ENV = {
     "KOKKOS_TOOLS_ARGS": "set TRITON_kokkos_tools_args",
     "HSA_XNACK": "set hsa_xnack in the HPC system config",
     "CUDA_MANAGED_FORCE_DEVICE_ALLOC": "set cuda_managed_force_device_alloc in the HPC system config",
+    "PMIX_MCA_gds": "remove `PMIX_MCA_gds` from `TRITON_extra_env` and set `pmix_gds: hash` in the HPC system "
+    "config; the toolkit exports the variable from that field, so a second source could disagree with it",
 }
 
 

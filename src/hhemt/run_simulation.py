@@ -557,12 +557,13 @@ def triton_launch_env(cfg_analysis, cfg_hpc_system, run_mode: str, *, cray: bool
     """
     env: dict[str, str] = {}
     if cfg_hpc_system is None:
-        gpu_aware_mpi, nic, hsa_xnack, cuda_managed_force_device_alloc = False, None, None, None
+        gpu_aware_mpi, nic, hsa_xnack, cuda_managed_force_device_alloc, pmix_gds = False, None, None, None, None
     else:
         gpu_aware_mpi = cfg_hpc_system.gpu_aware_mpi
         nic = cfg_hpc_system.mpich_ofi_nic_policy
         hsa_xnack = cfg_hpc_system.hsa_xnack
         cuda_managed_force_device_alloc = cfg_hpc_system.cuda_managed_force_device_alloc
+        pmix_gds = cfg_hpc_system.pmix_gds
     if gpu_aware_mpi and cray:
         env["MPICH_GPU_SUPPORT_ENABLED"] = "1"
     if nic is not None:
@@ -575,6 +576,8 @@ def triton_launch_env(cfg_analysis, cfg_hpc_system, run_mode: str, *, cray: bool
     ):
         if value is not None:
             env[name] = "1" if value else "0"
+    if pmix_gds is not None:
+        env["PMIX_MCA_gds"] = pmix_gds
     for name, flag in (
         ("KOKKOS_PRINT_CONFIGURATION", cfg_analysis.TRITON_kokkos_print_configuration),
         ("KOKKOS_DISABLE_WARNINGS", cfg_analysis.TRITON_kokkos_disable_warnings),

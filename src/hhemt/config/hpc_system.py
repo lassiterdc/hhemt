@@ -23,7 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hhemt.config.base import field_meta
 from hhemt.exceptions import ConfigurationError
@@ -217,6 +217,13 @@ class hpc_system_config(BaseModel):
         description="Value of CUDA_MANAGED_FORCE_DEVICE_ALLOC exported to TRITON runs on this machine. True "
         "exports 1 and false exports 0. Unset exports no variable.",
     )
+    pmix_gds: Literal["hash"] | None = Field(
+        None,
+        description="Value of PMIX_MCA_gds exported to TRITON runs on this machine. The only value is hash. The "
+        "value makes PMIx use a data store that needs no shared-memory file. Set the field when a multi-rank launch "
+        "fails with PMIX_ERR_FILE_OPEN_FAILURE in file gds_shmem2.c, as on a cluster whose job-private /tmp lacks "
+        "the file the server names. Unset exports no variable.",
+    )
     max_concurrent_jobs: int | None = Field(
         None,
         description="Caps how many jobs the workflow keeps in flight at once, bounding queue pressure on a shared "
@@ -312,6 +319,18 @@ class hpc_system_config(BaseModel):
         # verbatim — raise ConfigurationError on a clobber attempt at config-load.
         _guard_executor_profile_extras(self.executor_profile_extras)
         return self
+
+    @field_validator("pmix_gds", mode="before")
+    @classmethod
+    def _pmix_gds_accepts_only_hash(cls, value: object) -> object:
+        if value is not None and value != "hash":
+            raise ValueError(
+                f"pmix_gds is {value!r}, but pmix_gds accepts only 'hash'. 'hash' makes PMIx use a data store that "
+                "needs no shared-memory file, which fixes the gds_shmem2 startup failure on clusters with a "
+                "job-private /tmp. Fix: set `pmix_gds: hash` in this HPC system config, or delete the line to "
+                "export nothing."
+            )
+        return value
 
     def check_runtime_within_cap(self, partition: str, requested_runtime_min: int) -> None:
         """Raise ConfigurationError if a requested wall-clock runtime exceeds the
