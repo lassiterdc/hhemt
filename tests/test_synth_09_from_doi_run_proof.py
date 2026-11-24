@@ -33,13 +33,14 @@ import pytest
 
 import tests.utils_for_testing as tst_ut
 from hhemt.experiments import TRITON_SWMM_experiment
+from hhemt.suite.aggregate import LOCAL_RUN_PROOF_SKIP_REASON
 
 pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
     pytest.mark.slow,
     pytest.mark.skipif(
-        tst_ut.on_scheduler_node(),
-        reason="Local coupled run-proof; do not launch on an HPC scheduler node.",
+        tst_ut.in_suite_array_chunk(),
+        reason=LOCAL_RUN_PROOF_SKIP_REASON,
     ),
 ]
 

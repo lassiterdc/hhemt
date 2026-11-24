@@ -28,7 +28,7 @@ TEST outcome
     FAILED               the body ran and asserted false
     UNEVALUATED          setup or teardown raised, so the body never ran
     SKIPPED_STRUCTURAL   the environment forbids the assertion, so this site can never
-                         evaluate it -- a scheduler-gated test inside a SLURM allocation
+                         evaluate it -- an array-chunk-gated test inside an array chunk
                          is the standing case. NOT benign: it is the complement the run
                          did not cover, and it is reported by node id.
     SKIPPED_INCIDENTAL   not on STRUCTURAL_SKIP_REASONS -- an ABSENCE of evidence, not
@@ -49,7 +49,7 @@ TEST outcome
     ABSENT               the manifest collected it and no junit entry mentions it
 
 A run reports a SCOPE and never a bare verdict. `scope=array` means the run covered only
-what a scheduler context can evaluate; `scope=union` is the only form that supports a
+what an array chunk can evaluate; `scope=union` is the only form that supports a
 suite-level claim. Collapsing structural and incidental skips into one `skipped` count is
 the same error as collapsing VOID into FAIL: it hides that two runs did not attempt the
 same work.
@@ -81,32 +81,32 @@ IMPORT_GUARD_EXIT = 99
 #: local, incidental absence. Exact-match on the junit skip message. Adding a pattern
 #: widens the declared complement; it must never be widened to silence a real skip.
 #:
-#: EXACT-MATCH IS A COUPLING TO THE `skipif` REASON STRINGS IN THIS REPO'S OWN TESTS, AND IT
-#: HAS ALREADY BROKEN ONCE. A RETIRED entry, "Only runs on non-HPC systems.", matched 17
-#: tests until every mark carrying it was removed (see
-#: `tests/utils_for_testing.py::on_scheduler_node`, whose docstring records the removal).
-#: From 2026-08-25 this tuple matched ZERO tests, so `structurally_excluded`
-#: read 0 and `summary.md` printed "None -- every collected test was evaluable at this
-#: scope" while a scheduler-gated test sat in the INCIDENTAL bucket. The failure is
-#: silent in the reassuring direction: a narrowed pattern makes the run look MORE
-#: complete, not less. No test currently compares this tuple against those reason strings
-#: (they sit in `tests/test_doi_roundtrip_e2e.py` and
-#: `tests/test_synth_09_from_doi_run_proof.py`), so the next rename goes unnoticed; when
-#: such a `skipif` reason changes, this tuple must change with it.
+#: THE GATE THEY NAME is `skipif(in_suite_array_chunk())` (`tests/utils_for_testing.py`), true when the
+#: process role `HHEMT_SUITE_ROLE` is `chunk`, which every array and tail chunk runs under. The two test
+#: modules that carry it (`tests/test_doi_roundtrip_e2e.py` and `tests/test_synth_09_from_doi_run_proof.py`)
+#: import the two constants below, so a reason has ONE site. The complement chunk, which
+#: `python -m hhemt.suite._runner --complement` appends and runs under the role `complement`, is where
+#: those tests run, and its evidence is what lets a run report `scope=union`.
 #:
-#: RUNTIME SHADOWING, a SECOND way this tuple silently under-matches: the entry
-#: "live-deposit run-proof; do not launch on an HPC scheduler node." is never PRODUCED on
-#: a scheduler node, because the three tests in tests/test_doi_roundtrip_e2e.py declare an
-#: operator env gate AHEAD of their scheduler gate and pytest's first truthy skipif wins.
-#: They skip with the OPERATOR reason, land in SKIPPED_INCIDENTAL, and never reach
-#: `structural`. The tuple can therefore match zero (the rename case above) AND, with both
-#: entries current, match only one of the four tests that declare an entry: those three,
-#: plus the one in tests/test_synth_09_from_doi_run_proof.py that carries the "Local
-#: coupled run-proof" reason. Both failures are silent in the reassuring direction.
-STRUCTURAL_SKIP_REASONS: tuple[str, ...] = (
-    "Local coupled run-proof; do not launch on an HPC scheduler node.",
-    "live-deposit run-proof; do not launch on an HPC scheduler node.",
-)
+#: EXACT-MATCH IS A COUPLING TO THE `skipif` REASON STRINGS, AND IT HAS ALREADY BROKEN ONCE. A RETIRED
+#: entry, "Only runs on non-HPC systems.", matched 17 tests until every mark carrying it was removed.
+#: From 2026-08-25 this tuple matched ZERO tests, so `structurally_excluded` read 0 and `summary.md`
+#: printed "None -- every collected test was evaluable at this scope" while a gated test sat in
+#: the INCIDENTAL bucket. The failure is silent in the reassuring direction: a narrowed pattern makes the
+#: run look MORE complete, not less. The two reasons are now one named constant each, imported by the
+#: gated modules, and `tests/test_suite_complement_runner.py` asserts that this tuple equals them and that
+#: each gated module's `skipif` reason is one of them.
+#:
+#: RUNTIME SHADOWING, a SECOND way this tuple silently under-matches: the live-deposit reason is never
+#: PRODUCED where the operator env gate fails, because the three tests in tests/test_doi_roundtrip_e2e.py
+#: declare that gate AHEAD of the array-chunk gate and pytest's first truthy skipif wins. Without the
+#: operator variables they skip with the OPERATOR reason, land in SKIPPED_INCIDENTAL, and never reach
+#: `structural`. The tuple can therefore match only the one test of tests/test_synth_09_from_doi_run_proof.py
+#: that carries the "Local coupled run-proof" reason where the operator gate fails, though four tests
+#: declare an entry. That failure is silent in the reassuring direction too.
+LOCAL_RUN_PROOF_SKIP_REASON = "Local coupled run-proof; runs in the suite's complement chunk, never in an array chunk."
+LIVE_DEPOSIT_SKIP_REASON = "live-deposit run-proof; runs in the suite's complement chunk, never in an array chunk."
+STRUCTURAL_SKIP_REASONS: tuple[str, ...] = (LOCAL_RUN_PROOF_SKIP_REASON, LIVE_DEPOSIT_SKIP_REASON)
 
 #: SLURM states that invalidate a chunk regardless of what its junit says.
 KILLED_STATES = {"TIMEOUT", "PREEMPTED", "CANCELLED", "NODE_FAIL", "OUT_OF_MEMORY"}
@@ -297,14 +297,16 @@ def _tail_ran_after(manifest: dict, statuses: dict, tail_cid: int) -> bool:
     skew that inverts the order keeps the tail in the joins, the loud direction), so equal instants exempt the tail.
     An array chunk re-run after the tail has overwritten its status with a later `ended_at`, which reads as an
     overlap: conservative and loud, and the operator re-runs the tail afterwards. A chunk with no status, or a status
-    lacking either time, gives the tail no exemption.
+    lacking either time, gives the tail no exemption. The complement chunk (`covers: "complement"`) is not an array
+    chunk: it is appended and run AFTER the tail, by design, so counting it would withdraw the exemption from every
+    run that has one.
     """
     tail_status = statuses.get(tail_cid) or {}
     tail_start = _parse_instant(tail_status.get("started_at"))
     if tail_start is None or _parse_instant(tail_status.get("ended_at")) is None:
         return False
     for c in manifest["chunks"]:
-        if c["chunk_id"] == tail_cid:
+        if c["chunk_id"] == tail_cid or c.get("covers") == "complement":
             continue
         st = statuses.get(c["chunk_id"]) or {}
         ended = _parse_instant(st.get("ended_at"))
@@ -430,7 +432,7 @@ def merge_outcomes(existing: dict[str, str], incoming: dict[str, str], *, proble
     SKIPPED_INCIDENTAL -- so the rule is stated over the whole partition and no ordered
     pair is left undefined. An undefined pair is not academic: a test may be skipped for a
     structural reason in one context and an INCIDENTAL one in another (an operator env
-    gate that shadows a scheduler gate is live in this corpus), so the evaluated-versus-
+    gate that shadows the array-chunk gate is live in this corpus), so the evaluated-versus-
     INCIDENTAL cell is the one a first real complement run hits.
 
     Rule, over the two-class partition {evaluated} vs {SKIPPED_STRUCTURAL,
@@ -933,8 +935,9 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
         # `covers: "array" | "complement"`, absent-meaning "array" -- NEVER a fourth `kind`
         # value, whose vocabulary already spends the words "heavy" and "cheap" on cost.
         # Its consumer is the union guard below, which needs to know whether any chunk
-        # reported complement evidence at all; its PRODUCER is the complement runner, which
-        # does not exist yet, so today every chunk reads through the default.
+        # reported complement evidence at all; its PRODUCER is `python -m hhemt.suite._runner
+        # --complement`, which appends the one `covers: "complement"` chunk, so every other
+        # chunk reads through the default.
         chunk_rows.append(
             {
                 "chunk_id": cid,
@@ -976,7 +979,7 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     # (a) `structural` is what SURVIVED the skip-reason match at runtime, and a test can
     # carry several skipif gates of which the first truthy one wins. Measured: the three
     # tests in tests/test_doi_roundtrip_e2e.py declare an operator env gate AHEAD of their
-    # scheduler gate, so on a scheduler node they skip with the OPERATOR reason and land in
+    # array-chunk gate, so in an array chunk they skip with the OPERATOR reason and land in
     # SKIPPED_INCIDENTAL -- structurally excluded in fact, invisible to `structural`.
     # The DECLARED complement (every node id whose declared skipif reasons include a
     # STRUCTURAL_SKIP_REASONS member) is computed at plan time, where every gate is visible.
@@ -1903,8 +1906,8 @@ def render_summary_md(result: dict) -> str:
     # what the gate did not cover, so it is written in full and never summarized to a
     # count: a count cannot be re-run, and a marker expression is not the same set.
     # NAMED FOR WHAT IT IS. "test(s) this scope cannot evaluate" was FALSE on the hand
-    # re-invocation of run_chunk that _runner.py calls a legitimate operator action: off a
-    # scheduler node the gate does not fire, the test RUNS AND PASSES, and the declared set
+    # re-invocation of run_chunk that _runner.py calls a legitimate operator action: outside an
+    # array chunk the gate does not fire, the test RUNS AND PASSES, and the declared set
     # still contains it. "carrying a structural gate" is true on every input, because
     # carrying a gate is declared at plan time and does not depend on where the run happened.
     _declared = sorted(result.get("declared_complement") or [])

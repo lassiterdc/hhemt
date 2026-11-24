@@ -9,6 +9,7 @@ import pytest
 
 from hhemt._compile_venue import compile_tier_required
 from hhemt.analysis import TRITONSWMM_analysis
+from tests.fixtures._triton_source_cache import _SUITE_ROLE_ENV
 
 if TYPE_CHECKING:
     import xarray as xr
@@ -27,25 +28,18 @@ def uses_slurm() -> bool:
     return "SLURM_JOB_ID" in os.environ
 
 
-def on_scheduler_node() -> bool:
-    """Return True when any known HPC scheduler env var is present.
+def in_suite_array_chunk() -> bool:
+    """Return True inside an array or tail chunk of the suite runner.
 
-    SAFETY GUARD, not tier routing. Its 17 tier-routing callers -- the
-    `skipif(..., reason="Only runs on non-HPC systems.")` marks inherited from the
-    deleted `test_PC_*` / `test_UVA_*` / `test_frontier_*` / `test_PILOT_*` scheme --
-    were removed, because they routed traffic away from a tier that no longer
-    exists. What survives is a different population: the two run-proof modules whose
-    marks already read "do not launch on an HPC scheduler node", where the guard is
-    a deliberate choice about a live-deposit test and a local coupled run-proof.
-    The name now says which of the two it is.
+    SAFETY GUARD, not tier routing. The suite runner (``hhemt.suite._runner.run_chunk``) sets
+    ``HHEMT_SUITE_ROLE`` in a chunk's pytest process: ``chunk`` for every array and tail chunk, ``complement`` for
+    the one chunk that ``python -m hhemt.suite._runner --complement`` appends. The two run-proof modules
+    (``test_synth_09_from_doi_run_proof.py`` and ``test_doi_roundtrip_e2e.py``) decline to run inside an array chunk
+    and run in the complement chunk, so a SLURM job is NOT the hazard: any other process, a scheduler allocation
+    included, has the variable unset or ``complement`` and runs them. The variable's name is read from
+    ``tests/fixtures/_triton_source_cache.py::_SUITE_ROLE_ENV``, the tests-side statement of the role.
     """
-    scheduler_vars = (
-        "SLURM_JOB_ID",  # SLURM
-        "PBS_JOBID",  # PBS
-        "LSB_JOBID",  # LSF
-        "COBALT_JOBID",  # Cobalt
-    )
-    return any(v in os.environ for v in scheduler_vars)
+    return os.environ.get(_SUITE_ROLE_ENV) == "chunk"
 
 
 def compile_toolchain_unavailable() -> bool:

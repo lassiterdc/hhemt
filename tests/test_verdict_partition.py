@@ -339,7 +339,7 @@ def test_complement_reports_declared_and_not_attempted(tmp_path):
     m["declared_complement"] = [observed, shadowed]
     (tmp_path / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
 
-    structural_msg = "Local coupled run-proof; do not launch on an HPC scheduler node."
+    structural_msg = A.LOCAL_RUN_PROOF_SKIP_REASON
     cases = (
         f'<testcase classname="tests.test_x" file="tests/test_x.py" name="{observed.split("::")[1]}">'
         f'<skipped message="{structural_msg}"/></testcase>'

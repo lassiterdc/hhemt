@@ -16,6 +16,10 @@ resolution record it writes is the whole reason this harness exists.
                     status sidecar recording, among other things, the resolved
                     hhemt.__file__ of BOTH the pytest session and a sibling
                     process that did not load the repo-root conftest.
+  --complement      On a Rivanna compute node, after the array has ended: append ONE
+                    chunk (`covers: "complement"`) carrying the manifest's
+                    `declared_complement` to an existing run's manifest, then run it
+                    through the chunk path under the suite role `complement`.
 
 Why the two resolutions. The toolkit's repo-root conftest prepends its own src to
 sys.path BEFORE it imports hhemt to check the resolution, so inside pytest the
@@ -50,6 +54,17 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+
+#: The suite role a chunk's pytest process runs under, handed over in this variable. `tests/fixtures/
+#: _triton_source_cache.py::_SUITE_ROLE_ENV` is the tests-side statement of the name (`src/hhemt/**` may not import
+#: `tests/**`). `chunk` is every array and tail chunk; `complement` is the one chunk whose manifest `covers` is
+#: `complement`.
+SUITE_ROLE_ENV = "HHEMT_SUITE_ROLE"
+CHUNK_ROLE = "chunk"
+COMPLEMENT_ROLE = "complement"
+
+#: The manifest chunk `covers` value of the complement chunk (the others are absent/"array" and "tail").
+COMPLEMENT_COVERS = "complement"
 
 #: xunit1 is required: xunit2 (the pytest default) omits the `file` attribute, and
 #: without it a junit entry cannot be mapped back to a collected node id.
@@ -1636,7 +1651,14 @@ def run_chunk(args: argparse.Namespace) -> int:
     # rate limit whose threshold is unknown and whose 403 is sticky for at least 20s.
     # Warm and local are unmarked and keep today's rebuild behaviour; that is a decision,
     # and it makes the ad-hoc local session a second unsupervised rebuild site.
-    env["HHEMT_SUITE_ROLE"] = "chunk"
+    #
+    # The role is DERIVED from the manifest chunk's `covers` field: the complement chunk
+    # (one job, `workers: 1`, submitted after the array has ended) runs as `complement`,
+    # which the tier-provisioning gate does not refuse, and every other chunk (array and
+    # tail) runs as `chunk`. The same value is what `tests/utils_for_testing.py::
+    # in_suite_array_chunk` reads to decline the run-proof tests inside an array chunk.
+    own_chunk = next((c for c in manifest.get("chunks") or [] if c["chunk_id"] == cid), None)
+    env[SUITE_ROLE_ENV] = COMPLEMENT_ROLE if (own_chunk or {}).get("covers") == COMPLEMENT_COVERS else CHUNK_ROLE
     env["PYTHONUNBUFFERED"] = "1"
     # THE LEVER THE README NAMES AND THE HARNESS DID NOT PULL. rerun.sh:242 and :389 unset
     # HHEMT_TEST_RUNS_ROOT_OVERRIDE, and a repo-wide grep finds no site that ever set it --
@@ -1687,8 +1709,9 @@ def run_chunk(args: argparse.Namespace) -> int:
     sibling = _sibling_resolution(repo, args.python)
 
     basetemp = _chunk_basetemp(manifest["run_id"], cid)
-    # A chunk that carries its own `workers` (the tail: 1) runs at that; every other chunk at the manifest's.
-    own_workers = next((c.get("workers") for c in manifest.get("chunks") or [] if c["chunk_id"] == cid), None)
+    # A chunk that carries its own `workers` (the tail, the complement: 1) runs at that; every other chunk at the
+    # manifest's.
+    own_workers = (own_chunk or {}).get("workers")
     cmd = _chunk_pytest_cmd(
         args.python, junit, basetemp, node_ids, int(own_workers or manifest.get("chunk_workers") or 1)
     )
@@ -1820,6 +1843,49 @@ def run_chunk(args: argparse.Namespace) -> int:
     return rc
 
 
+def complement(args: argparse.Namespace) -> int:
+    """Append the complement chunk to an existing run's manifest, then run it as that chunk.
+
+    The chunk carries the manifest's `declared_complement` (the plan-time node ids that hold a structural gate),
+    `kind: "cheap"`, `workers: 1` and `covers: "complement"`. It takes the next chunk id, so `chunk_count` rises by
+    one in the manifest and in the run directory's `chunk_count` file, and `run_chunk` then writes the path-keyed
+    conformance record and every per-chunk artifact for it. A run holds at most one complement chunk: a second append
+    would double-count it in `chunk_count` and in the conformance roster, so a run that has one is refused.
+    """
+    run_dir = Path(args.run_dir).resolve()
+    manifest_path = run_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise SystemExit(f"refusing --complement: {run_dir} has no manifest.json; --run-dir must name a planned run.")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    held = next((c for c in manifest["chunks"] if c.get("covers") == COMPLEMENT_COVERS), None)
+    if held is not None:
+        rid, held_id = manifest["run_id"], held["chunk_id"]
+        raise SystemExit(
+            f"run {rid} already has its complement chunk {held_id}; "
+            f"re-run it with `rerun.sh uva --run-id {rid} --chunk {held_id}`"
+        )
+    declared = list(manifest.get("declared_complement") or [])
+    if not declared:
+        # An empty chunk would hand pytest no node ids, and pytest then collects the whole suite.
+        raise SystemExit(
+            f"refusing --complement: run {manifest['run_id']} declares an empty complement, "
+            "so there is nothing to append."
+        )
+    cid = manifest["chunk_count"]
+    manifest["chunks"].append(
+        {"chunk_id": cid, "covers": COMPLEMENT_COVERS, "kind": "cheap", "node_ids": declared, "workers": 1}
+    )
+    manifest["chunk_count"] = cid + 1
+    (run_dir / "chunks").mkdir(exist_ok=True)
+    (run_dir / "chunks" / f"{cid:02d}.txt").write_text("\n".join(declared) + "\n", encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (run_dir / "chunk_count").write_text(f"{cid + 1}\n", encoding="utf-8")
+    print(f"complement_chunk={cid}")
+    print(f"chunk_count={cid + 1}")
+    args.chunk = cid
+    return run_chunk(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument(
@@ -1920,6 +1986,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="build a run from the prior run's failed+unevaluated tests; NOT a suite result",
     )
     p.add_argument(
+        "--complement",
+        action="store_true",
+        help="append the run's complement chunk (covers=complement) to --run-dir's manifest and run it; "
+        "one per run, on a compute node after the array has ended",
+    )
+    p.add_argument(
         "--from-run",
         default="",
         help="triage source run id; default is the newest non-triage run carrying a summary.json",
@@ -1932,6 +2004,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.triage:
         return triage(args)
+    if args.complement:
+        if not args.run_dir:
+            raise SystemExit("--complement requires --run-dir")
+        return complement(args)
     if args.chunk is not None:
         if not args.run_dir:
             raise SystemExit("--chunk requires --run-dir")

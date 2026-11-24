@@ -121,10 +121,12 @@ separate output, and the last chunk skips the aggregation on the way out.
 The harness records the coverage of a run in a `scope` token, and results from different scopes
 support different claims.
 
-- `scope=array` is the array alone. A set of tests structurally has no way to evaluate inside a
-  scheduler allocation, so an array run covers that complement not at all.
+- `scope=array` is the array alone. A set of tests declines to run inside an array chunk, so an array run
+  covers that complement not at all.
 - `scope=union` is the array plus the complement, and only that scope supports a claim
-  about the suite.
+  about the suite. The complement mode of the suite runner earns it: `python -m hhemt.suite._runner --complement`
+  appends the complement chunk to an array run and runs it as its own job, and `--scope union` then reads the
+  array and the complement together.
 
 A triage run is narrower than both scopes. The triage reruns the failing and unevaluated
 set of the previous run, so a green triage covers only the selected tests and the tests the

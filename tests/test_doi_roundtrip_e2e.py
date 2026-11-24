@@ -91,9 +91,9 @@ WHEN THIS TEST FAILS — the likely causes, in order
       used against the sandbox, or vice-versa). Mint a fresh one on the site
       ``HHEMT_ZENODO_BASE_URL`` points at, with scopes ``deposit:write`` + ``deposit:actions``.
 3. The ``rendered_synth_multi_sim`` fixture errors or skips
-   -> This is the compile-tier synth infrastructure, not a credential problem. It skips on a
-      scheduler node or when the C++ toolchain is unavailable; run it on a workstation with a
-      working compiler in the ``hhemt`` env. See ``test_synth_09_from_doi_run_proof.py`` — if
+   -> This is the compile-tier synth infrastructure, not a credential problem. The module skips
+      inside a suite array chunk, and the fixture skips when the C++ toolchain is unavailable; run it on a machine
+      with a working compiler in the ``hhemt`` env. See ``test_synth_09_from_doi_run_proof.py`` — if
       that green-passes locally, this fixture is healthy.
 
 ===============================================================================
@@ -144,6 +144,7 @@ import pytest
 
 import tests.utils_for_testing as tst_ut
 from hhemt.experiments import TRITON_SWMM_experiment
+from hhemt.suite.aggregate import LIVE_DEPOSIT_SKIP_REASON
 
 E2E_ENV_FILE = "~/.config/hhemt/e2e.env"
 
@@ -159,8 +160,8 @@ pytestmark = [
         ),
     ),
     pytest.mark.skipif(
-        tst_ut.on_scheduler_node(),
-        reason="live-deposit run-proof; do not launch on an HPC scheduler node.",
+        tst_ut.in_suite_array_chunk(),
+        reason=LIVE_DEPOSIT_SKIP_REASON,
     ),
 ]
 
