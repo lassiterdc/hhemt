@@ -131,3 +131,11 @@ set of the previous run, so a green triage covers only the selected tests and th
 triage left out stay unevaluated. The toolkit enforces the distinction in the
 filenames the toolkit writes and trusts no reader to remember the distinction. The
 [CLI reference](../reference/cli.md#hhemt-test-toolkit) states both rules precisely.
+
+A file-list selection is narrower than both scopes. A plan given a list of test files covers exactly those
+files, so a green selection says only that the listed files passed. The aggregator binds `scope=selection`
+whenever the manifest carries the list, refuses a request for `scope=union` and names the manifest key in the
+problem it prints, writes no ledger line, and writes the summary to `summary.selection.json` and
+`summary.selection.md`, so a reader that looks for the newest `summary.json` never takes the selection for a
+suite run. The summary carries the digest of the list file, so a reader can tie the verdict to the input. The
+[CLI reference](../reference/cli.md#hhemt-test-toolkit) states the rules the planner enforces on the list.
