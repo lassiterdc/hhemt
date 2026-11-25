@@ -720,8 +720,7 @@ def _validate_select_files(repo: Path, list_path: Path, paths: list[str], select
             ids = [n for n in tail_ids if n.split("::", 1)[0] == tail_file]
             raise SystemExit(
                 f"refusing to plan: {list_path} does not list {tail_file}, which holds the tail node ids {ids}; "
-                f"add {tail_file} to the list, or opt out of the tail by pointing "
-                f"{_policy.TAIL_NODE_IDS_FILE_ENV} at an empty file"
+                f"add {tail_file} to {list_path}"
             )
 
 
