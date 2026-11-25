@@ -38,7 +38,7 @@ _EPSG = 32618
 
 
 def _write_raster(path: Path, resolution: float) -> None:
-    """Write a 4x5 north-up GeoTIFF of ``resolution``-metre cells under a ``.dem`` name, as TRITON's rasters are."""
+    """Write a 4x5 north-up GeoTIFF of ``resolution``-meter cells under a ``.dem`` name, as TRITON's rasters are."""
     xs = 500000.0 + resolution / 2 + resolution * np.arange(5)
     ys = 4100000.0 - resolution / 2 - resolution * np.arange(4)
     da = xr.DataArray(

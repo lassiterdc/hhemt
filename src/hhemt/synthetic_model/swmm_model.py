@@ -45,6 +45,7 @@ Topology (iteration-2 mid-iteration revision 2026-04-26 — 5 junctions + 1 dumm
 
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 
@@ -296,7 +297,8 @@ _MATCHED_OUTFALL_SERIES = "SYNTH_LEVEL"
 _OUTFALL_NAMES = {"dummy_outfall", MATCHED_OUTFALL}
 
 # Node depths. Every node takes the one fallback depth below (`_NODE_DEPTHS_M` is empty),
-# and its invert is placed at rim - depth, so rim = invert + MaxDepth lands on the DEM at the
+# and its invert is `floor(round((cell - depth) * 1000, 6)) / 1000` (`_invert_elev`), placed at rim - depth and
+# rounded DOWN to the millimeter, so rim = invert + MaxDepth lands on the DEM at the
 # node's cell. The fallback EQUALS the conduit crown: every link the generator writes is a
 # CIRCULAR conduit of Geom1 = `_CONDUIT_DIAMETER_M` at offset 0 under LINK_OFFSETS DEPTH, so
 # its crown is 1.0 m at both ends. SWMM raises a node's full depth to the crown of its highest
@@ -313,6 +315,16 @@ _JUNCTION_DEPTH_M = 1.0
 
 def _node_depth(name: str) -> float:
     return _NODE_DEPTHS_M.get(name, _JUNCTION_DEPTH_M)
+
+
+def _invert_elev(cell: float, depth: float) -> float:
+    """The invert of a node whose DEM cell is ``cell`` and whose depth is ``depth``, floored to the millimeter.
+
+    ``floor(round((cell - depth) * 1000, 6)) / 1000``. The inner ``round`` snaps the product to the micrometer, so
+    floating-point error in the multiplication cannot drop a whole millimeter; the floor then keeps the node's rim,
+    ``cell - invert``, in ``[depth, depth + 0.001)``, which is at or above the depth SWMM assigns the node.
+    """
+    return math.floor(round((cell - depth) * 1000, 6)) / 1000
 
 
 def max_node_rim_elev(params) -> float:
@@ -497,7 +509,7 @@ def _junctions_df(params) -> pd.DataFrame:
 
     rows = [(n, c, r) for n, c, r in _nodes(params) if n not in _OUTFALL_NAMES]
     depths = [_node_depth(n) for n, _, _ in rows]
-    inverts = [round(dem_elev_at(params, c, r) - d, 3) for (_, c, r), d in zip(rows, depths, strict=True)]
+    inverts = [_invert_elev(dem_elev_at(params, c, r), d) for (_, c, r), d in zip(rows, depths, strict=True)]
     names = [n for n, _, _ in rows]
     return pd.DataFrame(
         {
@@ -521,7 +533,7 @@ def _outfalls_df(params) -> pd.DataFrame:
     inverts = []
     for name, c, r in rows:
         rim = dem_elev_at(params, c, r)
-        inverts.append(round(rim - _node_depth(name), 3))
+        inverts.append(_invert_elev(rim, _node_depth(name)))
     return pd.DataFrame(
         {
             "InvertElev": inverts,
