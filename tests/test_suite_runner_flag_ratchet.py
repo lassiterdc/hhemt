@@ -68,6 +68,10 @@ UNREACHABLE: dict[str, str] = {
     "--warm-result": "rerun.sh",
     "--expect-triton-pin": "rerun.sh",
     "--n-chunks": "no caller located: a cross-check against the manifest that no script or test passes",
+    "--complement": (
+        "harness/pytest_suite/submit_suite_uva.sh under HHEMT_COMPLEMENT=1, submitted by rerun.sh --complement; "
+        "tests/test_suite_complement_runner.py, docs/reference/cli.md (states the CLI exposes no flag for the step)"
+    ),
 }
 
 
