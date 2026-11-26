@@ -31,7 +31,9 @@ import datetime
 import json
 import logging
 import os
+import subprocess
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -192,6 +194,153 @@ def _record_queue_time(
     except OSError:
         return "write-failed"
     return "recorded"
+
+
+#: Name of the per-scenario lock record, written in the scenario's simulation directory.
+_ATTEMPT_LOCK_NAME = "attempt_lock.json"
+
+#: SLURM job states from which a job can no longer write. Anything else (RUNNING, PENDING,
+#: COMPLETING, SUSPENDED, REQUEUED, an unreadable state ...) counts as the holder still
+#: being there. COMPLETING is deliberately non-terminal: the job's processes are still
+#: being torn down.
+_SLURM_TERMINAL_STATES = frozenset(
+    {
+        "BOOT_FAIL",
+        "CANCELLED",
+        "COMPLETED",
+        "DEADLINE",
+        "FAILED",
+        "NODE_FAIL",
+        "OUT_OF_MEMORY",
+        "PREEMPTED",
+        "REVOKED",
+        "TIMEOUT",
+    }
+)
+
+#: Bound, in seconds, on how long a new attempt waits for a cancelled previous holder to
+#: leave the non-terminal states, and the pause between polls.
+_ATTEMPT_GUARD_WAIT_S = 180.0
+_ATTEMPT_GUARD_POLL_S = 5.0
+
+
+def _run_slurm_command(cmd: list[str]) -> tuple[int, str]:
+    """Run a short Slurm client command; return (returncode, stdout). Never raises."""
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return 127, ""
+    return done.returncode, done.stdout
+
+
+def _slurm_job_state(jobid: str, run_cmd=_run_slurm_command) -> str | None:
+    """Slurm state of `jobid`: an upper-case state token, None when Slurm no longer knows
+    the job, or "UNKNOWN" when neither query could answer.
+
+    `squeue` answers for jobs still in the controller's memory; `sacct` covers the ones
+    that have aged out of it. `run_cmd(cmd) -> (returncode, stdout)` is the seam a test
+    replaces with recorded command output.
+    """
+    rc, out = run_cmd(["squeue", "-h", "-j", jobid, "-o", "%T"])
+    if rc == 0 and out.strip():
+        return out.split()[0].rstrip("+").upper()
+    rc, out = run_cmd(["sacct", "-X", "-n", "-j", jobid, "-o", "State"])
+    if rc != 0:
+        return "UNKNOWN"
+    for line in out.splitlines():
+        if line.strip():
+            return line.split()[0].rstrip("+").upper()
+    return None
+
+
+def _read_attempt_lock(lock: Path) -> dict | None:
+    """The lock record, or None when absent or unreadable (an unreadable record names no holder)."""
+    try:
+        record = json.loads(lock.read_text())
+    except (OSError, ValueError):
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def _acquire_scenario_attempt(
+    sim_folder: Path,
+    jobid: str | None,
+    node: str | None,
+    *,
+    scenario_label: str,
+    run_cmd=_run_slurm_command,
+    sleep=time.sleep,
+    clock=time.monotonic,
+    wait_s: float = _ATTEMPT_GUARD_WAIT_S,
+    poll_s: float = _ATTEMPT_GUARD_POLL_S,
+) -> str | None:
+    """Take the per-scenario attempt lock for SLURM job `jobid`; return a refusal message or None.
+
+    Why: Snakemake's Slurm executor resubmits a job it saw end as NODE_FAIL while that job's
+    process can still be alive on the failed node, so two jobs wrote one scenario's output
+    directory at once (measured: interleaved steps in outfall_stage.bin). The record in the
+    simulation directory names the job holding the scenario. A record naming a DIFFERENT job
+    that is still non-terminal gets that job `scancel`led and polled until it leaves the
+    non-terminal states, for at most `wait_s`; a holder that never leaves yields a refusal and
+    the directory is left untouched (the lock is NOT written). A record naming a terminal
+    job never blocks. A NODE_FAIL holder is terminal to Slurm yet may still have a live
+    process, so it is sent a best-effort `scancel` and not waited for: its node is out of
+    the controller's reach, which is the limit of what a guard on this side can do.
+    """
+    if not jobid:
+        return None  # local / serial run: no Slurm, no second job to guard against
+    lock = sim_folder / _ATTEMPT_LOCK_NAME
+    record = _read_attempt_lock(lock)
+    holder = str(record.get("slurm_jobid")) if record and record.get("slurm_jobid") else None
+    if holder is not None and holder != jobid:
+        state = _slurm_job_state(holder, run_cmd)
+        if state == "NODE_FAIL":
+            run_cmd(["scancel", holder])
+            logger.warning(f"Holder job {holder} of {scenario_label} is NODE_FAIL; sent a best-effort scancel.")
+        elif state is not None and state not in _SLURM_TERMINAL_STATES:
+            logger.warning(
+                f"Scenario {scenario_label} is held by job {holder} (state {state}); cancelling it before this attempt."
+            )
+            run_cmd(["scancel", holder])
+            deadline = clock() + wait_s
+            while True:
+                sleep(poll_s)
+                state = _slurm_job_state(holder, run_cmd)
+                if state is None or state in _SLURM_TERMINAL_STATES:
+                    break
+                if clock() >= deadline:
+                    return (
+                        f"Refusing to run scenario {scenario_label}: job {holder} (node "
+                        f"{record.get('node')}) still holds it in state {state} after scancel and "
+                        f"{wait_s:.0f} s of waiting, so a second writer would corrupt its output. "
+                        f"Nothing was written. Check `squeue -j {holder}` and `scontrol show job {holder}`; "
+                        f"once the job is gone (or the node is drained), resubmit."
+                    )
+    sim_folder.mkdir(parents=True, exist_ok=True)
+    tmp = lock.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps(
+            {
+                "slurm_jobid": jobid,
+                "node": node,
+                "acquired_at": datetime.datetime.now().isoformat(),
+            }
+        )
+    )
+    os.replace(tmp, lock)
+    return None
+
+
+def _release_scenario_attempt(sim_folder: Path, jobid: str | None) -> None:
+    """Remove the lock record if it still names `jobid`. Never raises: release is bookkeeping."""
+    lock = sim_folder / _ATTEMPT_LOCK_NAME
+    record = _read_attempt_lock(lock)
+    if record is None or str(record.get("slurm_jobid")) != str(jobid):
+        return
+    try:
+        lock.unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+    except OSError as err:
+        logger.warning(f"Could not release attempt lock {lock}: {err}")
 
 
 #: SLURM step names that are never the solver. `.batch` and `.extern` are SLURM's own
@@ -454,6 +603,10 @@ def main():
     # during setup reaches the handler with the in-block name unbound, and `locals()`
     # probing for it is a reflection trick where a declared None is a plain read.
     _scenario_for_budget = None
+    # Set only once THIS job holds the per-scenario attempt lock; the finally releases it.
+    # Declared here for the same reason as the names above.
+    _attempt_lock_sim_folder: Path | None = None
+    _attempt_lock_jobid: str | None = None
 
     try:
         # Import here to avoid import errors if dependencies are missing
@@ -625,6 +778,26 @@ def main():
             _write_failed_marker(_marker_ctx)
             return 1
 
+        # PER-SCENARIO ATTEMPT GUARD. Sited after the budget gate and BEFORE the deterministic
+        # prune and prepare_simulation_command, which both mutate the scenario's output
+        # directory: a second job on the same scenario (Snakemake resubmits a job it saw end
+        # as NODE_FAIL while the first process is still alive on the failed node) must be
+        # cancelled, or refused, before this attempt touches anything. Like the budget
+        # refusal, a guard refusal does not count as a solver failure: nothing was launched.
+        _guard_refusal = _acquire_scenario_attempt(
+            scenario.scen_paths.sim_folder,
+            _jobid,
+            os.environ.get("SLURMD_NODENAME") or os.environ.get("SLURM_NODELIST"),
+            scenario_label=f"{scenario.event_id}/{model_type} (event_iloc={event_iloc})",
+        )
+        if _guard_refusal is not None:
+            logger.error(f"[{event_iloc}] {_guard_refusal}")
+            _write_failed_marker(_marker_ctx)
+            return 1
+        if _jobid:
+            _attempt_lock_sim_folder = scenario.scen_paths.sim_folder
+            _attempt_lock_jobid = _jobid
+
         # Get the run object and prepare the simulation command
         run = scenario.run
         logger.info(f"[{event_iloc}] Preparing {model_type} simulation...")
@@ -715,9 +888,6 @@ def main():
         logger.info(f"[{event_iloc}] Running {model_type} simulation...")
         logger.info(f"[{event_iloc}] Command: {' '.join(cmd)}")
         logger.info(f"[{event_iloc}] Log file: {model_logfile}")
-
-        import subprocess
-        import time
 
         # Multi-resume deterministic interruption harness (synthetic resume arm
         # ONLY). Armed iff the analysis config opts in via
@@ -1071,6 +1241,8 @@ def main():
         if _sentinel is not None and not _defer:
             # EXEMPT-DU: status-flag
             _sentinel.unlink(missing_ok=True)
+        if _attempt_lock_sim_folder is not None:
+            _release_scenario_attempt(_attempt_lock_sim_folder, _attempt_lock_jobid)
 
 
 if __name__ == "__main__":
