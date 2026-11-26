@@ -677,18 +677,66 @@ def _tier_args(select_tier: str) -> list[str]:
     return [] if select_tier == "all" else ["-m", select_tier]
 
 
+def _read_select_files(list_path: Path) -> tuple[list[str], str]:
+    """(sorted unique paths, sha256 of the list file's bytes) for a `--select-files` list.
+
+    The list is newline-separated repository-relative test-file paths; blank lines are ignored. The digest is of
+    the file's bytes as given, so it names exactly the input the operator holds.
+    """
+    if not list_path.is_file():
+        raise SystemExit(f"refusing to plan: --select-files {list_path} is not a file")
+    raw = list_path.read_bytes()
+    paths = sorted({ln.strip() for ln in raw.decode("utf-8").splitlines() if ln.strip()})
+    if not paths:
+        raise SystemExit(f"refusing to plan: --select-files {list_path} lists no test files")
+    return paths, hashlib.sha256(raw).hexdigest()
+
+
+def _validate_select_files(repo: Path, list_path: Path, paths: list[str], select_tier: str) -> None:
+    """Refuse a selection that would silently drop a test or break the tail, before anything is collected.
+
+    Every path must be a file tracked in the toolkit tree under test whose name matches `test_*.py`: a silently
+    dropped path would be a test that never ran. The selection keeps the full-suite shape, so the file holding each
+    tail node id must be listed (the tail runs as the harness's last chunk), unless the tail is opted out with an
+    empty `HHEMT_SUITE_TAIL_NODE_IDS_FILE`.
+    """
+    if select_tier != "all":
+        raise SystemExit(
+            f"refusing to plan: --select-files and --select-tier {select_tier} are both given; a plan covers a "
+            "tier or a file list, not both. Drop one of the two flags."
+        )
+    tracked = set(_git(repo, "ls-files").splitlines())
+    for path in paths:
+        if path not in tracked or not fnmatch.fnmatchcase(Path(path).name, "test_*.py"):
+            raise SystemExit(
+                f"refusing to plan: {path} in {list_path} is not a tracked test file of {repo}; remove it or correct it"
+            )
+    from hhemt.suite import policy as _policy
+
+    tail_ids, _source = _policy.tail_node_ids()
+    listed = set(paths)
+    for tail_file in sorted({n.split("::", 1)[0] for n in tail_ids}):
+        if tail_file not in listed:
+            ids = [n for n in tail_ids if n.split("::", 1)[0] == tail_file]
+            raise SystemExit(
+                f"refusing to plan: {list_path} does not list {tail_file}, which holds the tail node ids {ids}; "
+                f"add {tail_file} to {list_path}"
+            )
+
+
 # --------------------------------------------------------------------------
 # drive mode
 # --------------------------------------------------------------------------
 def collect(
-    repo: Path, python: str, select_tier: str = "all"
+    repo: Path, python: str, select_tier: str = "all", select_files: list[str] | None = None
 ) -> tuple[list[str], dict[str, list[str]], dict[str, list[str]], list[str]]:
     """Return (node ids, fixture closures, per-test marks, declared complement).
 
     ``select_tier`` ``"compile_tier"`` adds ``-m compile_tier`` to the collection, so the plan covers only the
-    solver-bearing tier; the closures, marks and declared complement are then filtered to the collected node
-    ids (the collect-time plugin may see tests that pytest's own marker deselection drops afterwards). At the
-    default ``"all"`` the collection command is unchanged.
+    solver-bearing tier; ``select_files`` passes the listed test files to pytest in place of the tier marker, so
+    the plan covers exactly those files. The closures, marks and declared complement are then filtered to the
+    collected node ids (the collect-time plugin may see tests that pytest's own marker deselection drops afterwards).
+    At the default ``"all"`` with no file list the collection command is unchanged.
 
     The DECLARED COMPLEMENT is the set of node ids whose DECLARED skipif reasons include
     a STRUCTURAL_SKIP_REASONS member -- every gate, not the one that wins at runtime.
@@ -708,7 +756,15 @@ def collect(
     _harness = str(Path(__file__).resolve().parent)
     env["PYTHONPATH"] = f"{_harness}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else _harness
     proc = subprocess.run(
-        [*_pytest_cmd(python), "--collect-only", "-q", "-p", "_runner", *(_tier_args(select_tier))],
+        [
+            *_pytest_cmd(python),
+            "--collect-only",
+            "-q",
+            "-p",
+            "_runner",
+            *(_tier_args(select_tier)),
+            *(select_files or []),
+        ],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -737,7 +793,7 @@ def collect(
     from hhemt.suite.aggregate import STRUCTURAL_SKIP_REASONS
 
     declared_complement = sorted(n for n, rs in reasons.items() if any(r in STRUCTURAL_SKIP_REASONS for r in rs))
-    if select_tier != "all":
+    if select_tier != "all" or select_files:
         keep = set(node_ids)
         closures = {n: v for n, v in closures.items() if n in keep}
         marks = {n: v for n, v in marks.items() if n in keep}
@@ -989,6 +1045,14 @@ def kept_whole_lines(manifest: dict) -> list[str]:
 
 def plan(args: argparse.Namespace) -> int:
     repo = Path(args.toolkit).resolve()
+    # A FILE-LIST SELECTION is read and validated first, before the warm and before any collection: a refused list
+    # must cost nothing, and a path dropped silently would be a test that never ran.
+    select_files: list[str] | None = None
+    select_files_sha256 = ""
+    if getattr(args, "select_files", None):
+        list_path = Path(args.select_files)
+        select_files, select_files_sha256 = _read_select_files(list_path)
+        _validate_select_files(repo, list_path, select_files, getattr(args, "select_tier", "all") or "all")
     sha, dirty = _sha_and_dirty(repo)
     if dirty and not args.allow_dirty:
         raise SystemExit(f"refusing to submit: {repo} is dirty; pass --allow-dirty to override")
@@ -1044,7 +1108,9 @@ def plan(args: argparse.Namespace) -> int:
         )
 
     select_tier = getattr(args, "select_tier", "all") or "all"
-    node_ids, closures, marks, declared_complement = collect(repo, args.python, select_tier)
+    # The file list is passed by keyword and only when given, so a plan without one calls `collect` as it always did.
+    collect_kw = {} if select_files is None else {"select_files": select_files}
+    node_ids, closures, marks, declared_complement = collect(repo, args.python, select_tier, **collect_kw)
     compile_precondition = _compile_precondition(args, node_ids, marks)
     # LAZY, and load-bearing. This module is loaded as a pytest PLUGIN in the child
     # (`-p _runner`), and a plugin module is imported BEFORE the toolkit's repo-root
@@ -1077,6 +1143,9 @@ def plan(args: argparse.Namespace) -> int:
     manifest["tail_source"] = tail_source
     manifest["warm"] = warm_provenance
     manifest["select_tier"] = select_tier
+    if select_files is not None:
+        manifest["select_files"] = select_files
+        manifest["select_files_sha256"] = select_files_sha256
     if int(getattr(args, "chunk_workers", 1) or 1) < 1:
         raise SystemExit("--chunk-workers must be at least 1")
     manifest["chunk_workers"] = int(getattr(args, "chunk_workers", 1) or 1)
@@ -1863,6 +1932,14 @@ def build_parser() -> argparse.ArgumentParser:
         default="all",
         help="which tests the plan covers: the whole suite (default) or only the solver-bearing `compile_tier` "
         "tests; recorded in the manifest, and a run that is not `all` can never report scope=union",
+    )
+    p.add_argument(
+        "--select-files",
+        default=None,
+        help="path of a file of newline-separated repository-relative test-file paths; the plan then covers exactly "
+        "those files. Every path must be a tracked `test_*.py` file, the file holding the tail node ids must be "
+        "listed, and the flag cannot be combined with --select-tier. Recorded in the manifest, and a run that "
+        "carries it can never report scope=union or be ledgered (it reports scope=selection)",
     )
     p.add_argument(
         "--chunk-workers",
