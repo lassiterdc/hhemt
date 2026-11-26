@@ -179,6 +179,20 @@ def _compile_tier_message(
     )
 
 
+def _build_requested(flag_passed: bool, toggle_on: bool, model_label: str, toggle_name: str) -> bool:
+    """Whether a requested build of one model should run.
+
+    A build requested for a model whose toggle is off in the system configuration is skipped,
+    not attempted: a skipped build is the configured outcome there, so the verification that
+    follows a real build must not read its absence as a failure. A toggle-on model is
+    unchanged: the request stands and its verification still fails closed.
+    """
+    if flag_passed and not toggle_on:
+        logger.info(f"Skipping the {model_label} build: {toggle_name} is off in the system configuration.")
+        return False
+    return flag_passed
+
+
 def main() -> int:
     """Main entry point for workflow setup."""
     parser = argparse.ArgumentParser(description="Setup TRITON-SWMM workflow: process system inputs and compile")
@@ -614,7 +628,13 @@ def main() -> int:
                 logger.warning(f"Container-mode TRITON provenance capture failed: {_prov_exc}")
 
         # Phase 1b: Compile TRITON-SWMM (coupled model)
-        if _native_compile and args.compile_triton_swmm:
+        _build_tritonswmm = _build_requested(
+            args.compile_triton_swmm,
+            system.cfg_system.toggle_tritonswmm_model,
+            "TRITON-SWMM (coupled model)",
+            "toggle_tritonswmm_model",
+        )
+        if _native_compile and _build_tritonswmm:
             logger.info("Compiling TRITON-SWMM (coupled model)...")
             try:
                 system.compile_TRITON_SWMM(
@@ -649,7 +669,13 @@ def main() -> int:
                 return 1
 
         # Phase 1c: Compile TRITON-only (no SWMM coupling)
-        if _native_compile and args.compile_triton_only:
+        _build_triton_only = _build_requested(
+            args.compile_triton_only,
+            system.cfg_system.toggle_triton_model,
+            "TRITON-only",
+            "toggle_triton_model",
+        )
+        if _native_compile and _build_triton_only:
             logger.info("Compiling TRITON-only (no SWMM coupling)...")
             try:
                 backends = []
@@ -691,7 +717,13 @@ def main() -> int:
                 return 1
 
         # Phase 1d: Compile standalone SWMM
-        if _native_compile and args.compile_swmm:
+        _build_swmm = _build_requested(
+            args.compile_swmm,
+            system.cfg_system.toggle_swmm_model,
+            "standalone SWMM",
+            "toggle_swmm_model",
+        )
+        if _native_compile and _build_swmm:
             logger.info("Compiling standalone SWMM...")
             try:
                 system.compile_SWMM(
