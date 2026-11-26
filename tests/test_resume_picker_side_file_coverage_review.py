@@ -112,8 +112,8 @@ def test_coverage_past_every_checkpoint_returns_the_newest(tmp_path):
 @pytest.mark.parametrize(
     ("page", "sentence"),
     [
-        ("docs/explanation/limitations.md", "newest checkpoint its exchange-replay side-file covers"),
-        ("docs/how-to/diagnosing-a-failed-run.md", "newest checkpoint its exchange-replay side-file covers"),
+        ("docs/explanation/limitations.md", "newest checkpoint that the exchange-replay side-file covers"),
+        ("docs/how-to/diagnosing-a-failed-run.md", "newest checkpoint that the exchange-replay side-file covers"),
     ],
 )
 def test_the_docs_state_the_covered_checkpoint_rule(page, sentence):
