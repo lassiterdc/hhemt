@@ -84,7 +84,7 @@ def test_the_floor_is_the_crown_whatever_the_authored_maxdepth(max_depth):
     """
     depth = swmm_assigned_node_depths(_one_pipe(1.0, 0.5, max_depth=max_depth), ["A"])["A"]
     assert depth.reason is None
-    assert depth.depth_m == pytest.approx(0.5)
+    assert depth.crown_depth == pytest.approx(0.5)
 
 
 def test_a_dem_rim_below_an_authored_maxdepth_but_at_the_crown_does_not_fail():
@@ -132,9 +132,9 @@ def test_the_highest_connecting_conduit_sets_the_floor_over_both_ends_and_an_off
         conduits="cOut C OUT 10 0.013 0.2 0\ncIn X C 10 0.013 0 0.1\ncBig Y C 10 0.013 0 0",
         xsections="cOut CIRCULAR 0.6 0 0 0 1\ncIn CIRCULAR 0.3 0 0 0 1\ncBig CIRCULAR 0.9 0 0 0 1",
     )
-    assert swmm_assigned_node_depths(text, ["C"])["C"].depth_m == pytest.approx(0.9)
+    assert swmm_assigned_node_depths(text, ["C"])["C"].crown_depth == pytest.approx(0.9)
     lower = text.replace("cBig CIRCULAR 0.9", "cBig CIRCULAR 0.5")
-    assert swmm_assigned_node_depths(lower, ["C"])["C"].depth_m == pytest.approx(0.8)
+    assert swmm_assigned_node_depths(lower, ["C"])["C"].crown_depth == pytest.approx(0.8)
 
 
 def test_an_elevation_offset_below_the_invert_adds_nothing_and_a_star_offset_is_zero():
@@ -150,11 +150,11 @@ def test_an_elevation_offset_below_the_invert_adds_nothing_and_a_star_offset_is_
         conduits="cA A OUT 10 0.013 0.5 0",
         xsections="cA CIRCULAR 0.4 0 0 0 1",
     )
-    assert swmm_assigned_node_depths(elev, ["A"])["A"].depth_m == pytest.approx(0.4)
-    assert swmm_assigned_node_depths(elev.replace(" 0.013 0.5 0", " 0.013 1.3 0"), ["A"])["A"].depth_m == (
+    assert swmm_assigned_node_depths(elev, ["A"])["A"].crown_depth == pytest.approx(0.4)
+    assert swmm_assigned_node_depths(elev.replace(" 0.013 0.5 0", " 0.013 1.3 0"), ["A"])["A"].crown_depth == (
         pytest.approx(0.7)
     )
-    assert swmm_assigned_node_depths(elev.replace(" 0.013 0.5 0", " 0.013 * 0"), ["A"])["A"].depth_m == (
+    assert swmm_assigned_node_depths(elev.replace(" 0.013 0.5 0", " 0.013 * 0"), ["A"])["A"].crown_depth == (
         pytest.approx(0.4)
     )
 
