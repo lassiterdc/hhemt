@@ -1090,7 +1090,7 @@ class TRITONSWMM_analysis_post_processing:
                     else d.assign_coords({PERF_COLUMN_SET_COORD: ("event_iloc", [NAME_SET_UNKNOWN])})
                     for d in lst_ds
                 ]
-            ds = xr.concat(lst_ds, dim="event_iloc", combine_attrs="drop_conflicts")
+            ds = xr.concat(lst_ds, dim="event_iloc", combine_attrs="drop_conflicts", join="outer")
             ds = ds.assign_coords(event_id=("event_iloc", [self._event_slug(ei) for ei in event_ilocs]))
             apply_cf_attributes(ds, f"{mode}_by_rank")
             prepared = ds.chunk({d: max(int(ds.sizes[d]), 1) for d in ds.dims})

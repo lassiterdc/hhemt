@@ -5677,6 +5677,6 @@ non_breaking_allowlist:
     justification: |-
       DR-19: every TRITON-bearing family holds a {family}/performance/summary_by_rank group (the performance columns summed over timestep, dims (event_iloc, Rank)) beside the unchanged performance/summary; its per-scenario store sits in processed/performance_summary_by_rank/, written beside the summary. Additive; no existing group, variable or key moves; an existing tree reads unchanged. It shares CONSOLIDATION_VERSION 6 with DR-18.
   - path: src/hhemt/processing_analysis.py
-    layout_signature: a21d886c750002d57e3d644eec8de967af2c6e4595d8bdfd71c1e7e962c16308
+    layout_signature: b3dd0b33c16b607b774bc55a108039540e060cf50e1a9a0529dca7275ff28c1c
     justification: |-
       DR-19: every TRITON-bearing family holds a {family}/performance/summary_by_rank group (the performance columns summed over timestep, dims (event_iloc, Rank)) beside the unchanged performance/summary; its per-scenario store sits in processed/performance_summary_by_rank/, written beside the summary. Additive; no existing group, variable or key moves; an existing tree reads unchanged. It shares CONSOLIDATION_VERSION 6 with DR-18.
