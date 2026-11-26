@@ -498,7 +498,7 @@ def _peak_copying_members(tmp_path: Path, members: int, steps: int, monkeypatch,
 
 
 def test_the_peak_of_copying_n_members_one_after_another_does_not_grow_with_n(tmp_path, monkeypatch):
-    """Property: copying 8 members' gridded groups one after another into one master peaks within a tenth of one
+    """Property: copying 8 members' gridded groups one after another into one master peaks within a fifth of one
     member's slice of copying 1, and under half of one member's slice, so the peak is set by one block span and
     not by the member count.
 
@@ -506,21 +506,24 @@ def test_the_peak_of_copying_n_members_one_after_another_does_not_grow_with_n(tm
     state per member: peak would grow with N; red on the pre-change tree for the second assertion, whose slice-sized
     peak is 3 times the slice). Reachability: the real function, members as separate groups of one master, as
     ``_write_master_in_place`` calls it. Both-states anchor: traced bytes, a property of the copy. Must-fire control:
-    the 8-member run's master holds 8 groups (asserted) and its peak is nonzero. Killed by: a module-level cache of
-    pieces, or a ``.load()`` of the slice. Passes under a second correct implementation with a different span.
+    the 8-member run's master holds 8 groups (asserted) and its peak is nonzero. Killed by: holding every span across
+    members (eight-member peak 464 MB, eight-minus-one 403 MB, red on both bounds), or a whole slice loaded per call
+    (eight-member peak 46.6 MB, red on the second bound only; its eight-minus-one of 2.4 to 4.9 MB is inside the
+    correct code's range). Passes under a second correct implementation with a different span.
     Not established: tracemalloc sees Python and numpy allocations, not the page cache or a codec's C buffers (see the
     page-cache finding in the review file).
     """
-    # The one-member peak is the baseline the 8-member peak is compared with, so it is the smaller of two samples: a
-    # transient allocation of the interpreter or the codec raises one sample and never the other.
+    # Each peak is the smaller of two samples: a transient allocation of the interpreter or the codec raises one sample
+    # and not the other (single eight-member samples of correct code reached 14.4 MB against a usual 6 MB).
     one, slice_bytes = min(
         (_peak_copying_members(tmp_path, 1, 384, monkeypatch, tag=tag) for tag in ("a", "b")), key=lambda r: r[0]
     )
-    eight, _ = _peak_copying_members(tmp_path, 8, 384, monkeypatch)
-    master = zarr.open_group(tmp_path / "master_8_384.zarr", mode="r")
+    eight = min(_peak_copying_members(tmp_path, 8, 384, monkeypatch, tag=tag)[0] for tag in ("a", "b"))
+    master = zarr.open_group(tmp_path / "master_8_384a.zarr", mode="r")
     assert len([n for n, _ in master.groups()]) == 8 and one > 0 and eight > 0
-    # Per added member the peak grows by the metadata of its group (measured 0.26 MB), never by its data (28 MB slice).
-    assert eight - one <= 0.1 * slice_bytes, f"peak {one} -> {eight} bytes from 1 to 8 members"
+    # Over 20 samples of correct code eight-minus-one was 1.0 to 2.5 MB (mean 1.7) and the eight-member peak 5.5 to
+    # 6.8 MB, against a 28.3 MB slice: a member's group metadata, never its data. Each bound exceeds twice that maximum.
+    assert eight - one <= 0.2 * slice_bytes, f"peak {one} -> {eight} bytes from 1 to 8 members"
     assert eight < 0.5 * slice_bytes, f"peak {eight} bytes against a {slice_bytes}-byte one-event slice"
 
 
