@@ -117,7 +117,7 @@ PMIX ERROR: PMIX_ERR_FILE_OPEN_FAILURE in file gds_shmem2.c at line 1056
 PMIX ERROR: OUT-OF-RESOURCE in file gds_shmem2.c at line 99
 ```
 
-PMIx could not start the shared-memory store that ranks use to exchange job data. The first form occurred on Rivanna, where a job-private `/tmp` leaves the store's backing file unopenable. The toolkit exports `PMIX_MCA_gds=hash` only when the HPC system config sets `pmix_gds: hash`, so a profile that omits the field launches unchanged and meets the failure.
+PMIx could not start the shared-memory store that ranks use to exchange job data. The first form occurred on a cluster whose job-private `/tmp` directory leaves the store's backing file unopenable. The toolkit exports `PMIX_MCA_gds=hash` only when the HPC system config sets `pmix_gds: hash`, so a profile that omits the field launches unchanged and meets the failure.
 
 1. Add `pmix_gds: hash` to the HPC system config you pass as `--hpc-system-config`, then rerun. The `hash` store keeps one copy of the job data per process and has no shared-memory file to open.
 2. Confirm the analysis pins a toolkit that contains the `pmix_gds` field. An older `hhemt_sha` rejects `pmix_gds` as an unknown profile key, so set `hhemt_sha` to a toolkit commit that reads the field.
