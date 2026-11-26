@@ -70,11 +70,20 @@ def _argv(**kw: object) -> list[str]:
 
 
 @toolkit_app.command("plan")
-def _plan(toolkit: str = typer.Option(..., "--toolkit"), runs_root: str = typer.Option(..., "--runs-root")) -> None:
+def _plan(
+    toolkit: str = typer.Option(..., "--toolkit"),
+    runs_root: str = typer.Option(..., "--runs-root"),
+    select_files: str | None = typer.Option(
+        None,
+        "--select-files",
+        help="File of newline-separated repository-relative test-file paths; plan only those files. A run planned "
+        "this way reports scope=selection and never supports a suite-level claim.",
+    ),
+) -> None:
     """Warm the shared borrow+compile, collect, derive chunks, write manifest.json."""
     from hhemt.suite._runner import main
 
-    raise typer.Exit(code=main(_argv(toolkit=toolkit, runs_root=runs_root)))
+    raise typer.Exit(code=main(_argv(toolkit=toolkit, runs_root=runs_root, select_files=select_files)))
 
 
 @toolkit_app.command("chunk")

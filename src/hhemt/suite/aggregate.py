@@ -889,6 +889,18 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
                 "claim. Scope forced to tier."
             )
         scope = "tier"
+    # A FILE-LIST SELECTION is bound the same way: a plan that collected only the listed files covers a subset of
+    # the suite, so no invocation can turn it into scope=union, and `selection` is not a LEDGERED_SCOPES member, so
+    # no ledger line is written for it either.
+    select_files = manifest.get("select_files")
+    if select_files is not None and scope != "selection":
+        if scope == "union":
+            scope_problems.append(
+                "caller asked for scope=union on a manifest declaring select_files; a run restricted to a "
+                "file list covers only part of the suite and can never support a suite-level claim. "
+                "Scope forced to selection."
+            )
+        scope = "selection"
     collected = set(manifest["collected"])
 
     chunk_rows = []
@@ -1548,6 +1560,12 @@ def aggregate(run_dir: Path, scope: str = "array") -> dict:
     return {
         "scope": scope,
         "tier": select_tier,
+        # Present only for a file-list selection, so every other run's result keeps its key set.
+        **(
+            {"select_files": select_files, "select_files_sha256": manifest.get("select_files_sha256", "")}
+            if select_files is not None
+            else {}
+        ),
         "disclosure": disclosure,
         "verdict_line": (
             f"verdict={verdict} scope={scope} tier={select_tier} run_id={manifest['run_id']} "
@@ -1663,16 +1681,28 @@ def render_verdict_line(result: dict) -> str:
 
 def render_summary_md(result: dict) -> str:
     triage = result["scope"] == "triage"
+    heading = (
+        "TRIAGE run (NOT a suite result)"
+        if triage
+        else "SELECTION run (NOT a suite result)"
+        if result["scope"] == "selection"
+        else "suite run"
+    )
     lines = [
         # The heading is part of the verdict surface. "suite run" over a 29-test triage
         # is the same misreading the scope token exists to prevent, one line higher up.
-        f"# hhemt {'TRIAGE run (NOT a suite result)' if triage else 'suite run'} {result['run_id']}",
+        f"# hhemt {heading} {result['run_id']}",
         "",
         "```text",
         result["verdict_line"],
         "```",
         "",
         f"- source sha: `{result['source_sha']}`",
+        *(
+            [f"- select_files_sha256: `{result['select_files_sha256']}` ({len(result['select_files'])} files)"]
+            if result.get("select_files_sha256")
+            else []
+        ),
         f"- counts: {result['counts']}",
         "",
     ]
@@ -2116,8 +2146,10 @@ def main(argv: list[str] | None = None) -> int:
     # file that any later reader -- including `_runner.py`'s own --from-run default
     # selection (`_select_source_run`) -- picks up as a suite summary. The split makes that
     # impossible rather than unlikely, and it is the second of the two independent arms
-    # guarding that path (the first is the `.triage` run-dir suffix).
-    stem = "summary.triage" if result["scope"] == "triage" else "summary"
+    # guarding that path (the first is the `.triage` run-dir suffix). A file-list selection
+    # run is split the same way, to `summary.selection.*`, for the same reason: it covers a
+    # subset of the suite and must not be picked up as the newest run carrying a summary.json.
+    stem = {"triage": "summary.triage", "selection": "summary.selection"}.get(result["scope"], "summary")
     (run_dir / f"{stem}.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (run_dir / f"{stem}.md").write_text(render_summary_md(result), encoding="utf-8")
 
