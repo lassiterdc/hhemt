@@ -2,4 +2,14 @@
 # One entry per pair of paragraphs on different pages that share a run of words. An entry matches every identical pair of its two pages.
 # status: baseline = present when the test was added; permitted = a reviewer concurred (a summary sentence of README.md or docs/index.md that links to the page that owns the item, or a pair that the census and the review class as not a duplicate of an item).
 # The reason of a baseline entry names the census row (single-source-census.md in the run directory) that the pair belongs to.
-entries: []
+entries:
+  - page_a: docs/explanation/limitations.md
+    page_b: docs/how-to/diagnosing-a-failed-run.md
+    run: the newest checkpoint that the exchange replay side file covers
+    status: permitted
+    reason: >-
+      The phrase "newest checkpoint that the exchange-replay side-file covers" is nine words, one more than
+      MIN_RUN (8), and tests/test_resume_picker_side_file_coverage_review.py asserts it verbatim on both pages, so
+      no rewording keeps it and breaks the run. The how-to page names the resume rule only as the answer to a
+      walltime death and links to the limitations page, which owns the rule; it does not restate the rule's other
+      cases.
