@@ -61,9 +61,14 @@ Standalone SWMM models are outside that refusal. SWMM itself shortens a longer n
 without an error.
 
 **Walltime bounds a simulation.** A killed coupled simulation resumes from the newest
-checkpoint its exchange-replay side-file covers. When no checkpoint is covered it restarts
-clean. The solver's checkpoint cadence sets the resumption point, and the toolkit has no
-control over that cadence. Size allocations accordingly.
+checkpoint that the exchange-replay side-file covers. When no checkpoint is covered, the
+simulation restarts clean. A TRITON-only simulation resumes from the newest complete
+checkpoint, and so does a coupled simulation whose side-file has a layout that is
+unknown to the toolkit. If the solver then refuses a checkpoint that the side-file leaves
+uncovered, the toolkit renames the uncovered checkpoints, and the next attempt resumes from
+the newest covered checkpoint or starts clean. The solver's checkpoint cadence sets the
+resumption point, and the toolkit has no control over that cadence. Size allocations
+accordingly.
 
 ## Reproducibility boundaries
 

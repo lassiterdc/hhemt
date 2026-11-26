@@ -62,6 +62,16 @@ documents the record that a run leaves of the exports.
 
 **A release head's compile context may be a reuse of an identical compile-relevant tree.** When the commits since the last full run changed only inert paths, the pass record of that earlier run is the gate result for the release head. The earlier run was a full run on a fresh runner with both exports set, over a tree identical in every compile-relevant path, and the `Reuse pass record` step names the earlier run. The release walk cites that run in the release record.
 
+### Reading a compile-gate run
+
+A pass of `compile-synth-render-gate` certifies the named subset of the compile tier that `compile-tests.yml` runs. Only the release gate, Gate B, certifies the whole tier.
+
+**A reused pass.** The `Reuse pass record` step succeeds only on an exact key match. The key needs the same runner operating system, the same ISO week, and a byte-identical set of compile-relevant paths. A push that changed only `docs/`, `.vale/`, or the 6 root-level files keeps the key, so the push reuses the record of an earlier full run.
+
+Read the job summary of such a push. The summary names the commit, the run id, and the date of the full run, and no compile step ran in the job. Confirm that the named run passed in full and that the run belongs to the ISO week of the push. A push on any other path runs in full and writes a record after a pass.
+
+**A run on a MANA host.** Some hosted runners expose a MANA network device. On such a runner Open MPI 5 selects a transport that aborts the first message between 2 ranks. The job sets `OMPI_MCA_pml=ob1` and `OMPI_MCA_btl=self,sm` for every step, and the setting suffices on a single-node runner. The setting belongs to the CI host. The toolkit's launch on a cluster keeps the selection that Open MPI makes. To learn whether a run used a MANA host, read the `Host fingerprint` section of the job summary. A `mana_0` entry under the `infiniband` heading marks the host, and `mpirun_np2_rc=0` shows that a launch of 2 ranks succeeded. A non-zero `mpirun_np2_rc` points at the MPI launch of the host before a solver change.
+
 ### Release step venues
 
 Each command of the release walk has a venue and a tool. A machine without the documentation dependencies or a compiler runs only some of the steps, so the other steps run in CI or in a compiling venue. A named result stands in for a step on a machine that runs the step elsewhere.
@@ -90,7 +100,7 @@ A release needs no `just`. The `just tag` row lists the commands of the recipe, 
 A small set of tests declares a `skipif` on `in_suite_array_chunk()`, defined in `tests/utils_for_testing.py`.
 The function returns true when the environment variable `HHEMT_SUITE_ROLE` is `chunk`. The suite runner sets that
 role in every array and tail chunk, so the gate fires inside the array and nowhere else. A SLURM job is not
-the hazard: a scheduler allocation that carries another role, or none, runs the test. The array declines the test
+the hazard, because a scheduler allocation that carries another role, or none, runs the test. The array declines the test
 and attempts no run of the test, and a declined test is not a passed test.
 
 Membership is fixed at plan
@@ -106,10 +116,10 @@ The gate is a declaration. Outside an array chunk, a test carrying the gate runs
 execute the solver. [Contributing](../contributing.md) covers `HHEMT_COMPILE_VENUE=toolchain`.
 
 The complement step runs the set. After the array has ended, `python -m hhemt.suite._runner --complement --run-dir {run directory}`
-appends one chunk to the run's manifest, with `covers` set to `complement` and the run's declared set as its tests, then runs that
-chunk under the role `complement`, which the gate does not decline. The step runs once per run on a Rivanna compute node, from
-the run's own toolkit tree, because the tests compile and run the solver. A second call on the same run exits non-zero and names
-the existing chunk and its `--chunk` re-run command. Aggregating the run with `--scope union` then reports `scope=union`
+appends one chunk to the manifest of the run. The chunk sets `covers` to `complement` and takes the declared set as the tests of the chunk.
+The step then runs the chunk under the role `complement`, and the gate lets that role run. The step runs once per run on a compute node of
+the cluster, from the toolkit tree of the run, because the tests compile and run the solver. A second call on the same run exits non-zero and
+names the existing chunk and the `--chunk` command that reruns the chunk. Aggregating the run with `--scope union` then reports `scope=union`
 once every test of the set reaches an evaluated outcome.
 
 **Fix any red that a test of the set produces. The obligation holds at any time and on any machine. The zero-red bar applies to a
