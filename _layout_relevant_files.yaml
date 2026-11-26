@@ -5683,4 +5683,4 @@ non_breaking_allowlist:
   - path: src/hhemt/sensitivity_analysis.py
     layout_signature: c74534c86d3dae39a6bd43a9497a2583d33cab1da5036a1f8136bf4c6fc353f5
     justification: |-
-      Non-breaking: the experiment master copies every member data group, and the copy of a group without a time axis writes inside a deferred consolidation block, so the store's consolidated metadata is written once when the block closes and not after the write.
+      Non-breaking: the experiment master copies every member data group. A group without an event_iloc dimension is written by one whole-group append inside a deferred consolidation block on the master store; the only caller already holds that block, and a nested block only yields, so what the master consolidation writes is unchanged, and a call made without an outer block rebuilds the store's consolidated index once when its block closes where it was refused. No path, file name, zarr group, log field, schema or flag name changes, and an existing tree reads unchanged.
