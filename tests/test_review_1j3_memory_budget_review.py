@@ -1,5 +1,5 @@
-"""Reviewer tests for chunk 1j.3: the memory-bound tests must pass on the correct verification and fail on each
-wrong one.
+"""Reviewer tests of the memory-bound tests: each must pass on the correct verification and fail on each wrong
+one.
 
 Each test runs the coder's own test function on a patched ``_stored_slice_equals`` (the correct source plus one
 retention line), so the bounds under review are the bounds actually in the repo and not a copy of them.
