@@ -1,4 +1,4 @@
-"""Reviewer tests for the per-scenario attempt guard (chunk 1g.1 repair, G39).
+"""Reviewer tests for the per-scenario attempt guard.
 
 Real Slurm command output, not the coder's stub's idealised output:
 - `sacct -o State` is 10 columns wide and ends a longer name with `+` (OUT_OF_MEMORY -> `OUT_OF_ME+`).

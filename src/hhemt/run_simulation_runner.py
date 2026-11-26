@@ -619,6 +619,8 @@ def main():
     # Declared here for the same reason as the names above.
     _attempt_lock_sim_folder: Path | None = None
     _attempt_lock_jobid: str | None = None
+    # Set when the attempt guard refuses this job; the finally then writes no terminal marker.
+    _attempt_refused = False
 
     try:
         # Import here to avoid import errors if dependencies are missing
@@ -804,7 +806,11 @@ def main():
         )
         if _guard_refusal is not None:
             logger.error(f"[{event_iloc}] {_guard_refusal}")
-            _write_failed_marker(_marker_ctx)
+            # Another attempt still holds this scenario, so this job concludes nothing about
+            # the scenario: no failed marker (it would latch the scenario failed under the
+            # live attempt, whose own completed marker the finally then skips) and no
+            # completed marker either; `_attempt_refused` suppresses the finally's.
+            _attempt_refused = True
             return 1
         if _jobid:
             _attempt_lock_sim_folder = scenario.scen_paths.sim_folder
@@ -1238,7 +1244,7 @@ def main():
         # failure path above writes _failed_ before returning so this branch
         # is a no-op there.
         _defer = bool(getattr(args, "defer_terminal_markers", False))
-        if _marker_ctx is not None and _marker_ctx.jobid and not _defer:
+        if _marker_ctx is not None and _marker_ctx.jobid and not _defer and not _attempt_refused:
             _completed_marker = _marker_ctx.completed_dir / f"{_marker_ctx.rule_token}.json"
             _failed_marker = _marker_ctx.failed_dir / f"{_marker_ctx.rule_token}.json"
             if not _completed_marker.exists() and not _failed_marker.exists():
