@@ -1,6 +1,6 @@
 """The experiment master copies every data group of a member tree, and refuses to remove a tree it does not hold.
 
-Design DR-18 (chunk 1.8). The master used to copy a member's ``summary`` groups (merged) and its ``timeseries``
+The master used to copy a member's ``summary`` groups (merged) and its ``timeseries``
 groups, chosen by the last path component, so the seven ``coupling_diagnostics`` capture groups never reached
 ``experiment_datatree.zarr`` and, with clearing on, were deleted with the member's tree. The rule is now: every data
 node of the member tree that the summary merge does not already carry is copied, whatever its name, and the move
