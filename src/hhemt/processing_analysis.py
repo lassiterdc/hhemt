@@ -8,6 +8,7 @@ differ, and stamps provenance and resume evidence on the tree root.
 
 import re
 import time
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -402,7 +403,9 @@ class TRITONSWMM_analysis_post_processing:
     # of it had observation points, so the bump records that the group set changed and no group is added to such a tree.
     # 6: the experiment master carries every data group of a member tree, so the seven `coupling_diagnostics`
     # captures and any group added later reach experiment_datatree.zarr (the master had copied only `summary` and
-    # `timeseries` groups by name). Every tree consolidated at version 5 rebuilds once; a member whose per-scenario
+    # `timeseries` groups by name), and every TRITON-bearing family holds a `performance/summary_by_rank` group (the
+    # performance columns summed over `timestep`, dims `(event_iloc, Rank)`, beside the maximum-over-ranks
+    # `performance/summary`). Every tree consolidated at version 5 rebuilds once; a member whose per-scenario
     # capture stores were removed and whose tree is gone has no source and is refused by name, as at version 4.
     CONSOLIDATION_VERSION = 6
 
@@ -847,6 +850,7 @@ class TRITONSWMM_analysis_post_processing:
                 # consolidated in the analysis-level zarr, and the toggle names the gridded and SWMM series.
                 self.consolidate_timeseries(verbose=verbose, observation_only=True)
             self._consolidate_coupling_diagnostics(Path(store), compression_level=compression_level, verbose=verbose)
+            self._consolidate_performance_by_rank(Path(store), compression_level=compression_level, verbose=verbose)
             if clear:
                 self._clear_summary_stores(Path(store), drop_flag=self._exclude_coupling_flag())
             update_zarr_root_attrs(store, dict(tree.attrs))
@@ -958,6 +962,141 @@ class TRITONSWMM_analysis_post_processing:
             # The caller's block already holds this store open, and a block opened on a held store leaves the one
             # index rebuild to the outer block; stating the block here keeps the `consolidate=False` write inside
             # its own, which is what the write discipline checks.
+            with deferred_consolidation(store):
+                append_zarr(
+                    prepared,
+                    store,
+                    group=group,
+                    consolidate=False,
+                    mode="w",
+                    encoding=return_dic_zarr_encodings(prepared, compression_level),
+                )
+            written.append(group)
+        return written
+
+    # ------------------------------------------------------------------------------------------------
+    # The per-rank performance summary groups
+    # ------------------------------------------------------------------------------------------------
+
+    #: Mode -> (the group, the per-scenario performance summary path attribute whose store names the per-rank store,
+    #: the per-scenario performance series path attribute). The group is `{family}/performance/summary_by_rank`, beside
+    #: the family's `performance/summary` (DR-19). Not a `_MODE_CONFIG` key and not a `_MODE_TO_TREE_PATH` value: its
+    #: per-scenario store is never cleared by the summary clearing record and the group is never append-only.
+    _PERFORMANCE_BY_RANK_GROUPS = {
+        "tritonswmm_performance": (
+            "tritonswmm/performance/summary_by_rank",
+            "output_tritonswmm_performance_summary",
+            "output_tritonswmm_performance_timeseries",
+        ),
+        "triton_only_performance": (
+            "triton_only/performance/summary_by_rank",
+            "output_triton_only_performance_summary",
+            "output_triton_only_performance_timeseries",
+        ),
+    }
+
+    def _event_performance_by_rank(self, scen, mode: str, summary_attr: str, series_attr: str) -> xr.Dataset | None:
+        """One scenario's per-rank performance summary, or None when the scenario holds no source for it.
+
+        The source is the scenario's own per-rank store when its processing log records the write as returned, else
+        the scenario's per-rank performance series store reduced by ``performance_summary_by_rank`` (a scenario
+        processed before the per-rank store existed), else none. A scenario whose directory was removed holds none.
+        """
+        from hhemt.process_simulation import performance_summary_by_rank, performance_summary_by_rank_store_path
+        from hhemt.scenario_records import event_is_removed
+
+        summary_path = getattr(scen.scen_paths, summary_attr)
+        if summary_path is None or event_is_removed(
+            self._analysis.analysis_paths.analysis_dir, self._event_slug(int(scen.event_iloc))
+        ):
+            return None
+        outputs = scen.get_log(self._mode_model(mode)).processing_log.outputs
+        engine = self._open_engine()
+
+        def recorded(path) -> bool:
+            if path is None or not Path(path).exists():
+                return False
+            entry = outputs.get(Path(path).name)
+            return entry is not None and bool(entry.success)
+
+        def load(path) -> xr.Dataset:
+            open_kwargs = {"chunks": None, "engine": engine, "decode_timedelta": False}
+            if engine == "zarr":
+                open_kwargs["consolidated"] = zarr_store_has_index(path)
+            with xr.open_dataset(path, **open_kwargs) as opened:
+                return opened.load()
+
+        by_rank_path = performance_summary_by_rank_store_path(summary_path)
+        if recorded(by_rank_path):
+            return load(by_rank_path)
+        series_path = getattr(scen.scen_paths, series_attr)
+        if recorded(series_path):
+            return performance_summary_by_rank(load(series_path))
+        return None
+
+    def _consolidate_performance_by_rank(
+        self, store: Path, *, compression_level: int = 5, verbose: bool = False
+    ) -> list[str]:
+        """Write each TRITON-bearing family's ``performance/summary_by_rank`` group, every scenario on ``event_iloc``.
+
+        Must be called inside ``deferred_consolidation(store)``. The group is rewritten whole when every scenario
+        holds a source for it (``_event_performance_by_rank``). When some scenario holds none and the group already
+        exists, the group is left as it is: it was written while every source existed and a removed scenario's slice
+        is only there. When some scenario holds none and the group does not exist, the group is not written and the
+        scenarios are named in a warning, because a group with rows for some events only would pass for the whole
+        analysis. Dims are ``(event_iloc, Rank)``; ``Rank`` is the union over the scenarios and a scenario with fewer
+        ranks is NaN at the others. Returns the groups written.
+        """
+        from hhemt.process_simulation import NAME_SET_UNKNOWN, PERF_COLUMN_SET_COORD
+
+        event_ilocs = [int(i) for i in self._analysis.df_sims.index]
+        first = TRITONSWMM_scenario(event_ilocs[0], self._analysis)
+        written: list[str] = []
+        for mode, (group, summary_attr, series_attr) in self._PERFORMANCE_BY_RANK_GROUPS.items():
+            if getattr(first.scen_paths, summary_attr, None) is None:
+                continue
+            scens = {ei: TRITONSWMM_scenario(ei, self._analysis) for ei in event_ilocs}
+            pieces = {
+                ei: self._event_performance_by_rank(scens[ei], mode, summary_attr, series_attr) for ei in event_ilocs
+            }
+            absent = [self._event_slug(ei) for ei, piece in pieces.items() if piece is None]
+            if absent:
+                if self._timeseries_group_state(store, group) is not None:
+                    if verbose:
+                        print(f"{group}: scenario source(s) {absent} are gone and the group exists; leaving it.")
+                else:
+                    warnings.warn(
+                        f"{group} was not written: scenario(s) {absent} hold neither a per-rank performance summary "
+                        "store nor a per-rank performance series store to build it from. Reprocess them "
+                        "(hhemt reprocess) and consolidate again.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                continue
+            lst_ds = []
+            for ei in event_ilocs:
+                piece = pieces[ei].assign_coords(event_iloc=[ei])
+                # The producing-stamp and column-set coordinates are normalized exactly as `_retrieve_combined_output`
+                # normalizes them, so a store written before either existed joins a stamped one.
+                if "hhemt_producing_sha" not in piece.coords:
+                    piece = piece.assign_coords(hhemt_producing_sha=("event_iloc", ["unknown"]))
+                if "hhemt_producing_version" not in piece.coords:
+                    piece = piece.assign_coords(hhemt_producing_version=("event_iloc", ["unknown"]))
+                lst_ds.append(piece)
+            if any(PERF_COLUMN_SET_COORD in d.coords for d in lst_ds):
+                lst_ds = [
+                    d
+                    if PERF_COLUMN_SET_COORD in d.coords
+                    else d.assign_coords({PERF_COLUMN_SET_COORD: ("event_iloc", [NAME_SET_UNKNOWN])})
+                    for d in lst_ds
+                ]
+            ds = xr.concat(lst_ds, dim="event_iloc", combine_attrs="drop_conflicts", join="outer")
+            ds = ds.assign_coords(event_id=("event_iloc", [self._event_slug(ei) for ei in event_ilocs]))
+            apply_cf_attributes(ds, f"{mode}_by_rank")
+            prepared = ds.chunk({d: max(int(ds.sizes[d]), 1) for d in ds.dims})
+            for variable in prepared.variables.values():
+                variable.encoding.pop("chunks", None)
+                variable.encoding.pop("preferred_chunks", None)
             with deferred_consolidation(store):
                 append_zarr(
                     prepared,
