@@ -17,6 +17,7 @@ import tracemalloc
 from pathlib import Path
 from types import SimpleNamespace
 
+import dask
 import numpy as np
 import pandas as pd
 import pytest
@@ -472,24 +473,27 @@ def _gridded_member(path: Path, steps: int, events: int = 1, seed: int = 0) -> s
     return "fam/timeseries"
 
 
-def _peak_copying_members(tmp_path: Path, members: int, steps: int, monkeypatch) -> tuple[int, int]:
+def _peak_copying_members(tmp_path: Path, members: int, steps: int, monkeypatch, tag: str = "") -> tuple[int, int]:
     """Peak traced bytes while ``members`` members' gridded groups are copied in turn into one master, and the bytes
     of one member's one-event slice."""
     monkeypatch.setattr(Post, "_TIMESERIES_BLOCK_BYTES", 1 << 18)
     monkeypatch.setattr(Post, "_TIMESERIES_VERIFY_SPAN_BYTES", 1 << 20)
-    src = tmp_path / f"src_{members}_{steps}.zarr"
+    src = tmp_path / f"src_{members}_{steps}{tag}.zarr"
     group = _gridded_member(src, steps)
-    master = tmp_path / f"master_{members}_{steps}.zarr"
+    master = tmp_path / f"master_{members}_{steps}{tag}.zarr"
     slice_bytes = 2 * steps * EDGE * EDGE * 4
-    tracemalloc.start()
-    try:
-        with deferred_consolidation(master):
-            tracemalloc.reset_peak()
-            for i in range(members):
-                sa._copy_series_group(src, group, master, f"member_{i}/{group}", 5, member_id=str(i))
-            peak = tracemalloc.get_traced_memory()[1]
-    finally:
-        tracemalloc.stop()
+    # One dask worker: the threaded scheduler's worker count follows os.cpu_count(), which a cgroup does not limit, so
+    # on a many-core node more chunks decompress at once and the traced peak rises with the host and not with the code.
+    with dask.config.set(scheduler="single-threaded"):
+        tracemalloc.start()
+        try:
+            with deferred_consolidation(master):
+                tracemalloc.reset_peak()
+                for i in range(members):
+                    sa._copy_series_group(src, group, master, f"member_{i}/{group}", 5, member_id=str(i))
+                peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
     return peak, slice_bytes
 
 
@@ -507,7 +511,11 @@ def test_the_peak_of_copying_n_members_one_after_another_does_not_grow_with_n(tm
     Not established: tracemalloc sees Python and numpy allocations, not the page cache or a codec's C buffers (see the
     page-cache finding in the review file).
     """
-    one, slice_bytes = _peak_copying_members(tmp_path, 1, 384, monkeypatch)
+    # The one-member peak is the baseline the 8-member peak is compared with, so it is the smaller of two samples: a
+    # transient allocation of the interpreter or the codec raises one sample and never the other.
+    one, slice_bytes = min(
+        (_peak_copying_members(tmp_path, 1, 384, monkeypatch, tag=tag) for tag in ("a", "b")), key=lambda r: r[0]
+    )
     eight, _ = _peak_copying_members(tmp_path, 8, 384, monkeypatch)
     master = zarr.open_group(tmp_path / "master_8_384.zarr", mode="r")
     assert len([n for n, _ in master.groups()]) == 8 and one > 0 and eight > 0

@@ -16,6 +16,7 @@ from __future__ import annotations
 import tracemalloc
 from types import SimpleNamespace
 
+import dask
 import numpy as np
 import pytest
 import xarray as xr
@@ -194,12 +195,16 @@ def test_the_event_id_of_the_stored_slice_is_part_of_the_comparison(tmp_path, mo
 
 
 def _peak_bytes(expected, store) -> int:
-    tracemalloc.start()
-    try:
-        assert _equal(expected, store)
-        return tracemalloc.get_traced_memory()[1]
-    finally:
-        tracemalloc.stop()
+    # The threaded scheduler's worker count follows os.cpu_count(), which a cgroup does not limit, so on a many-core
+    # node more chunks decompress at once and the traced peak rises with the host and not with the code. One worker
+    # makes the peak a property of the allocations alone.
+    with dask.config.set(scheduler="single-threaded"):
+        tracemalloc.start()
+        try:
+            assert _equal(expected, store)
+            return tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
 
 
 def test_resident_memory_of_the_verification_grows_with_the_span_and_not_with_the_slice(tmp_path, monkeypatch):
@@ -211,14 +216,16 @@ def test_resident_memory_of_the_verification_grows_with_the_span_and_not_with_th
     span arm (the plausible wrong implementation persists the whole lazy variable once, red under the slice-length
     and span-growth arms). Reachability: the real member is about 1 GB per variable and per_step 12 MB against a
     1 GiB span, so it holds one span per variable; this test shrinks slice, span and chunk by the same factor
-    (measured on the repaired tree: 22.5 / 24.3 / 29.2 MB at spans of 2.0 / 4.1 / 8.2 MB, and 100.5 MB when the span is
-    the whole 61 MB slice; the pre-change per-block verification is flat at 20.2 to 20.5 MB). Why required: the Phase A
+    (measured on the repaired tree with the single-threaded scheduler: 10.6 / 22.4 / 126.2 MB at spans of 2.0 / 8.2 /
+    61 MB, where the pre-change per-block verification is flat; the threaded scheduler gave 22.5 / 29.2 / 100.5 MB on
+    the laptop and a higher peak on a node with more cores). Why required: the Phase A
     run peaked at 55.8 GB of 64 GB, and a verification whose peak grew with the slice would exceed the allocation on a
     longer event. Both-states anchor: tracemalloc peak, a property of the allocations. Must-fire control: the
     whole-slice span peaks well above the small span, so the instrument sees span-sized allocations; on the
     pre-change tree, which has no span constant, that control is red. Killed by: persisting the whole variable, or
-    holding two spans at once. Passes under a second correct implementation that holds fewer bytes than one span.
-    Not established: the scheduler's transient task memory at a different thread count, and the floor of source-chunk
+    holding three spans at once. Passes under a second correct implementation that holds fewer bytes than two spans.
+    Not established: the scheduler's transient task memory at a different thread count (the measurement is made on the
+    single-threaded scheduler, because the threaded one adds a per-host amount), and the floor of source-chunk
     reads at the real 837 MB chunk rows, which this scaled slice does not reproduce.
     """
     ny = nx = 160
@@ -255,8 +262,12 @@ def test_resident_memory_of_the_verification_grows_with_the_span_and_not_with_th
         cases[tag] = _peak_bytes(*build(tmp_path / tag, n_rows))
     small = cases["s20"]
     assert cases["whole"] - small > 0.8 * 580 * per_step, f"control: whole-slice span did not peak higher: {cases}"
-    assert cases["s80"] - small <= 1.6 * 60 * per_step, f"peak grew by more than the extra span bytes: {cases}"
-    assert cases["long40"] <= 1.1 * cases["s40"], f"peak grew with the slice length at a fixed span: {cases}"
+    # The verification persists the expected side and the stored side of one span, so a span of extra rows costs two
+    # copies of its bytes (measured 1.9 times); a third copy held per span (2.9 times) fails this bound.
+    assert cases["s80"] - small <= 2.5 * 60 * per_step, f"peak grew by more than the extra span bytes: {cases}"
+    # Doubling the slice adds only the metadata and graph of its extra chunks (measured 1.11 to 1.12 times); an
+    # implementation holding the slice would peak near 2 times the 126 MB whole-slice peak, about 18 times.
+    assert cases["long40"] <= 1.25 * cases["s40"], f"peak grew with the slice length at a fixed span: {cases}"
 
 
 def _consolidate_coupling(tmp_path, monkeypatch, sources, *, group_chunk, chunk_bytes):
