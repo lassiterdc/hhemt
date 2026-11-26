@@ -124,9 +124,10 @@ support different claims.
 - `scope=array` is the array alone. A set of tests declines to run inside an array chunk, so an array run
   covers that complement not at all.
 - `scope=union` is the array plus the complement, and only that scope supports a claim
-  about the suite. The complement mode of the suite runner earns it: `python -m hhemt.suite._runner --complement`
-  appends the complement chunk to an array run and runs it as its own job, and `--scope union` then reads the
-  array and the complement together.
+  about the suite. The complement step of the suite runner earns the scope.
+  `python -m hhemt.suite._runner --complement --run-dir {run directory}` appends the complement chunk to the
+  manifest of the run and runs the chunk as a separate job, and `--scope union` then reads the array and the
+  complement together.
 
 A triage run is narrower than both scopes. The triage reruns the failing and unevaluated
 set of the previous run, so a green triage covers only the selected tests and the tests the
@@ -134,10 +135,11 @@ triage left out stay unevaluated. The toolkit enforces the distinction in the
 filenames the toolkit writes and trusts no reader to remember the distinction. The
 [CLI reference](../reference/cli.md#hhemt-test-toolkit) states both rules precisely.
 
-A file-list selection is narrower than both scopes. A plan given a list of test files covers exactly those
+A file-list selection is narrower than both scopes. A plan given a list of test files covers only the listed
 files, so a green selection says only that the listed files passed. The aggregator binds `scope=selection`
-whenever the manifest carries the list, refuses a request for `scope=union` and names the manifest key in the
-problem it prints, writes no ledger line, and writes the summary to `summary.selection.json` and
-`summary.selection.md`, so a reader that looks for the newest `summary.json` never takes the selection for a
-suite run. The summary carries the digest of the list file, so a reader can tie the verdict to the input. The
-[CLI reference](../reference/cli.md#hhemt-test-toolkit) states the rules the planner enforces on the list.
+whenever the manifest carries the list. The aggregator refuses a request for `scope=union` and names the manifest
+key in the problem that the aggregator prints. The aggregator writes no ledger line and writes the summary to
+`summary.selection.json` and `summary.selection.md`, so a reader that looks for the newest `summary.json` never
+takes the selection for a suite run. The summary carries the digest of the list file, so a reader can tie the
+verdict to the input. The [CLI reference](../reference/cli.md#hhemt-test-toolkit) states the rules that the
+planner enforces on the list.

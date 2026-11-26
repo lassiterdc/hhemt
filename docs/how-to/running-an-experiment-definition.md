@@ -72,7 +72,7 @@ Compile the solver for the partition that the experiment targets before the firs
 
 | `--mode` | Behaviour |
 |----------|-----------|
-| `resume`, the default | Continue from the last checkpoint and keep completed simulations. |
+| `resume`, the default | Continue from the newest usable checkpoint and keep completed simulations. |
 | `fresh` | Delete the whole analysis directory first and rebuild everything. The wipe guard applies. |
 
 The parser refuses any other value with exit 2, and `hhemt run-experiment --help` lists the accepted values.

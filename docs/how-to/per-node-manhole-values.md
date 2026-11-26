@@ -17,7 +17,7 @@ Give individual coupling nodes their own manhole diameter and loss coefficient w
 
 ## 1. Write the table
 
-The table is a CSV file. The first row is the header as shown below. Each later row names a coupling node.
+The table is a CSV file. The first row is the header `node_id,manhole_diameter_m,manhole_loss_coefficient`. Each later row names a coupling node.
 
 ```text
 node_id,manhole_diameter_m,manhole_loss_coefficient
@@ -43,7 +43,7 @@ A node with a row takes both values of the row. The solver ignores `manhole_diam
 
 ## 3. Cover every coupling node, or fill the rest
 
-By default the table matches the coupling nodes 1 to 1. A coupling node with no row refuses the run. The run-entry check applies the rule before the toolkit queues a job, except for a node whose name holds a placeholder and for the legacy mode that couples 1 node per DEM cell. The check leaves both cases to scenario preparation. Scenario preparation applies the rule to the exact set of coupling nodes. The error lists up to 10 nodes without a row and then counts the rest.
+By default the table matches the coupling nodes 1 to 1. A coupling node with no row refuses the run. The run-entry check applies the rule before the toolkit queues a job, except for a node whose name holds a placeholder and for the mode that couples 1 node per DEM cell. The check leaves both cases to scenario preparation. Scenario preparation applies the rule to the exact set of coupling nodes. The error lists up to 10 nodes without a row and then counts the rest.
 
 ```text
 manhole_table /path/to/manhole_table.csv is refused:
@@ -59,7 +59,7 @@ Resolve the error in 1 of 2 ways.
 manhole_table_fill_with_constants: true
 ```
 
-The toggle defaults to `false`, and the config check refuses the toggle when `manhole_table` is unset. The toggle never excuses a misspelt name. A row that names no coupling node is refused whatever the toggle says, because a wrong name would leave the intended node at the constants without a message.
+The toggle defaults to `false`, and the config check refuses the toggle when `manhole_table` is unset. The toggle never excuses a misspelled name. A row that names no coupling node is refused whatever the toggle says, because a wrong name would leave the intended node at the constants without a message.
 
 ## 4. Check the file the solver reads
 
