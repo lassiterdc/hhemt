@@ -636,6 +636,10 @@ def _repo_root(start: Path) -> Path:
     return Path(out)
 
 
+#: Repo-root directory of the machine-generated wiki; see `_scanned_markdown`.
+GENERATED_WIKI_DIR = "openwiki"
+
+
 def _scanned_markdown(docs_dir: Path) -> list[Path]:
     """Every markdown file this repository SHIPS or BUILDS, sorted and ABSOLUTE.
 
@@ -693,7 +697,11 @@ def _scanned_markdown(docs_dir: Path) -> list[Path]:
             f"the derivation exists to remove."
         ) from exc
     tracked = {repo_root / rel for rel in out.split("\0") if rel}
-    tracked = {path for path in tracked if path.exists()}
+    # `openwiki/` is machine-written by the daily wiki refresh, which overwrites any
+    # edit made to a page there, so a finding in it can only be fixed by the next
+    # regeneration and never by this repo. It is not prose this project authors.
+    wiki_root = repo_root / GENERATED_WIKI_DIR
+    tracked = {path for path in tracked if path.exists() and wiki_root not in path.parents}
     return sorted(tracked | set(docs_dir.resolve().rglob("*.md")))
 
 
