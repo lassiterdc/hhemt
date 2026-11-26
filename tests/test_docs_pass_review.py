@@ -1,4 +1,4 @@
-"""Reviewer test for chunk 1i.1: every page the documentation pass edited passes `scripts/check_vale.py`."""
+"""Reviewer test: every page the documentation pass edited passes `scripts/check_vale.py`."""
 
 from __future__ import annotations
 
