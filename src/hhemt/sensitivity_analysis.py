@@ -341,6 +341,17 @@ def _open_stored_group(store, group: str) -> xr.Dataset:
     )
 
 
+def _stored_group_is_empty(store, group: str) -> bool:
+    """Whether ``group`` of ``store`` holds neither a data variable nor a coordinate.
+
+    The copy rule selects every node xarray reports as holding data, which includes a node with only coordinates, so
+    the question "does the master hold this group" must count a coordinate as content or it refuses a group the copy
+    step wrote.
+    """
+    ds = _open_stored_group(store, group)
+    return not (ds.data_vars or ds.coords)
+
+
 def _set_group_attrs(store, group: str, attrs: dict) -> None:
     """Merge ``attrs`` into the group document of ``{store}/{group}`` in place, creating a plain group when absent.
 
@@ -571,7 +582,7 @@ def _refuse_move_without_master_copy(master, member_id: str, analysis) -> None:
         for group in _member_tree_data_groups(tree)
         if store is None
         or not (Path(store) / node_name / group / "zarr.json").is_file()
-        or not _open_stored_group(store, f"{node_name}/{group}").data_vars
+        or _stored_group_is_empty(store, f"{node_name}/{group}")
     ]
     if absent:
         raise ProcessingError(
@@ -2709,7 +2720,7 @@ class TRITONSWMM_sensitivity_analysis:
             )
         for group in _recorded_move_groups(analysis, member_id):
             doc = Path(store) / node_name / group / "zarr.json"
-            if not doc.is_file() or not _open_stored_group(store, f"{node_name}/{group}").data_vars:
+            if not doc.is_file() or _stored_group_is_empty(store, f"{node_name}/{group}"):
                 raise ProcessingError(
                     "confirm a member's groups in the sensitivity master",
                     str(store),
