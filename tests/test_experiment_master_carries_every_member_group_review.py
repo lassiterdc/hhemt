@@ -36,7 +36,7 @@ def _refusal(master: _Master, member_id: str, sources: dict, copied: dict) -> st
 
 
 def test_the_refusal_names_every_absent_group_not_only_the_first(tmp_path):
-    """Property: the refusal text lists EVERY data group the master lacks (the shape's text is "the master holds no
+    """Property: the refusal text lists EVERY data group the master lacks (the text reads "the master holds no
     copy of {groups}"), the member tree stays, and nothing is recorded. Input class: three absent groups of three
     kinds: a merged ``summary``, a group with ``event_iloc``, a group without it."""
     master = _Master(tmp_path)

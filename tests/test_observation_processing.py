@@ -346,10 +346,10 @@ def test_consolidation_stamps_the_cf_attributes_and_creates_no_store(consolidate
     assert _zarr_paths(consolidated.analysis) == consolidated.zarr_before
 
 
-def test_the_consolidation_version_is_five():
+def test_the_consolidation_version_is_six():
     from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing
 
-    assert TRITONSWMM_analysis_post_processing.CONSOLIDATION_VERSION == 5
+    assert TRITONSWMM_analysis_post_processing.CONSOLIDATION_VERSION == 6
 
 
 def test_the_zarr_path_set_check_fires_when_a_store_is_added(processed):
