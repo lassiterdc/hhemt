@@ -24,6 +24,17 @@ from hhemt.run_simulation_runner import (
 LABEL = "year.0/tritonswmm (event_iloc=0)"
 
 
+def _width(cmd):
+    """Column width `sacct -o State[%N]` prints: 10 by default."""
+    spec = cmd[cmd.index("-o") + 1]
+    return int(spec.split("%")[1]) if "%" in spec else 10
+
+
+def _truncate(state, width):
+    """What the real tool does to a name wider than the column: cut, end with `+`."""
+    return state if len(state) <= width else state[: width - 1] + "+"
+
+
 class RecordingSlurm:
     """Recording stub for squeue/sacct/scancel.
 
@@ -48,7 +59,7 @@ class RecordingSlurm:
         if tool == "squeue":
             return 0, (f"{state}\n" if state in ("RUNNING", "PENDING", "COMPLETING") else "")
         if tool == "sacct":
-            return 0, (f"{state:>10}\n" if state else "")
+            return 0, (f"{_truncate(state, _width(cmd))}\n" if state else "")
         raise AssertionError(f"unexpected command {cmd}")
 
     def of(self, tool):
@@ -167,14 +178,39 @@ def test_refusal_adds_no_sibling_file(tmp_path):
     assert sorted(p.name for p in sim.iterdir()) == [_ATTEMPT_LOCK_NAME]
 
 
-def test_node_fail_holder_gets_a_best_effort_scancel_and_is_not_waited_for(tmp_path):
+def test_node_fail_holder_is_scancelled_waited_for_and_refused(tmp_path):
     sim = tmp_path / "sim"
     _write_lock(sim, "100")
     slurm = RecordingSlurm({"100": ["NODE_FAIL"]})
     ft = FakeTime()
-    assert _acquire(sim, "200", slurm, ft) is None
+    message = _acquire(sim, "200", slurm, ft)
+    assert message is not None
+    for needle in (LABEL, "100", "NODE_FAIL", str(sim / _ATTEMPT_LOCK_NAME), "node must be back"):
+        assert needle in message, needle
     assert slurm.of("scancel") == [["scancel", "100"]]
-    assert ft.sleeps == []
+    assert ft.now >= 30.0
+    assert _holder_of(sim) == "100"
+
+
+def test_node_fail_holder_that_reports_a_final_state_later_proceeds(tmp_path):
+    sim = tmp_path / "sim"
+    _write_lock(sim, "100")
+    slurm = RecordingSlurm({"100": ["NODE_FAIL", "NODE_FAIL", "FAILED"]})
+    assert _acquire(sim, "200", slurm) is None
+    assert _holder_of(sim) == "200"
+
+
+def test_out_of_memory_holder_survives_sacct_column_truncation(tmp_path):
+    sim = tmp_path / "sim"
+    _write_lock(sim, "100")
+    slurm = RecordingSlurm({"100": ["OUT_OF_MEMORY"]})
+    assert _acquire(sim, "200", slurm) is None
+    assert slurm.of("scancel") == []
+    sacct_cmd = slurm.of("sacct")[0]
+    assert _width(sacct_cmd) >= len("OUT_OF_MEMORY"), "the State column must be wide enough for the longest state name"
+    assert _truncate("OUT_OF_MEMORY", 10) == "OUT_OF_ME+", (
+        "the stub must truncate like the real tool at its default width"
+    )
     assert _holder_of(sim) == "200"
 
 
@@ -219,7 +255,7 @@ def test_state_query_prefers_squeue_then_falls_back_to_sacct():
     assert _slurm_job_state("7", slurm) == "RUNNING"
     assert slurm.of("sacct") == []
     assert _slurm_job_state("8", slurm) == "COMPLETED"
-    assert slurm.of("sacct") == [["sacct", "-X", "-n", "-j", "8", "-o", "State"]]
+    assert slurm.of("sacct") == [["sacct", "-X", "-n", "-j", "8", "-o", "State%20"]]
     assert _slurm_job_state("9", slurm) is None
 
 

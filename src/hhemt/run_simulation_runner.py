@@ -210,7 +210,7 @@ _SLURM_TERMINAL_STATES = frozenset(
         "COMPLETED",
         "DEADLINE",
         "FAILED",
-        "NODE_FAIL",
+        # NODE_FAIL is absent on purpose: the job is listed so while its process can still run.
         "OUT_OF_MEMORY",
         "PREEMPTED",
         "REVOKED",
@@ -233,6 +233,18 @@ def _run_slurm_command(cmd: list[str]) -> tuple[int, str]:
     return done.returncode, done.stdout
 
 
+def _full_state_name(token: str) -> str:
+    """Normalise a `sacct` State token: upper-case, and undo the `+` it appends to a name cut
+    at the column width (`CANCELLED+` is Slurm's own marker for a cancelled job; `OUT_OF_ME+`
+    is a cut name). A cut name resolves to the one terminal state it starts with, else to the stem."""
+    token = token.upper()
+    if not token.endswith("+"):
+        return token
+    stem = token.rstrip("+")
+    matches = [s for s in _SLURM_TERMINAL_STATES if s.startswith(stem)]
+    return matches[0] if len(matches) == 1 else stem
+
+
 def _slurm_job_state(jobid: str, run_cmd=_run_slurm_command) -> str | None:
     """Slurm state of `jobid`: an upper-case state token, None when Slurm no longer knows
     the job, or "UNKNOWN" when neither query could answer.
@@ -244,12 +256,12 @@ def _slurm_job_state(jobid: str, run_cmd=_run_slurm_command) -> str | None:
     rc, out = run_cmd(["squeue", "-h", "-j", jobid, "-o", "%T"])
     if rc == 0 and out.strip():
         return out.split()[0].rstrip("+").upper()
-    rc, out = run_cmd(["sacct", "-X", "-n", "-j", jobid, "-o", "State"])
+    rc, out = run_cmd(["sacct", "-X", "-n", "-j", jobid, "-o", "State%20"])
     if rc != 0:
         return "UNKNOWN"
     for line in out.splitlines():
         if line.strip():
-            return line.split()[0].rstrip("+").upper()
+            return _full_state_name(line.split()[0])
     return None
 
 
@@ -280,12 +292,12 @@ def _acquire_scenario_attempt(
     process can still be alive on the failed node, so two jobs wrote one scenario's output
     directory at once (measured: interleaved steps in outfall_stage.bin). The record in the
     simulation directory names the job holding the scenario. A record naming a DIFFERENT job
-    that is still non-terminal gets that job `scancel`led and polled until it leaves the
-    non-terminal states, for at most `wait_s`; a holder that never leaves yields a refusal and
-    the directory is left untouched (the lock is NOT written). A record naming a terminal
-    job never blocks. A NODE_FAIL holder is terminal to Slurm yet may still have a live
-    process, so it is sent a best-effort `scancel` and not waited for: its node is out of
-    the controller's reach, which is the limit of what a guard on this side can do.
+    in any state but a final one gets that job `scancel`led and polled until it reaches a final
+    state, for at most `wait_s`; a holder that never does yields a refusal and the directory is
+    left untouched (the lock is NOT written). NODE_FAIL is deliberately NOT final: Slurm lists
+    the incident's holder that way while its process kept writing on the lost node, so it is
+    shown gone only once the node is back and the job reports a final state. A record naming a
+    job in a final state never blocks.
     """
     if not jobid:
         return None  # local / serial run: no Slurm, no second job to guard against
@@ -294,10 +306,7 @@ def _acquire_scenario_attempt(
     holder = str(record.get("slurm_jobid")) if record and record.get("slurm_jobid") else None
     if holder is not None and holder != jobid:
         state = _slurm_job_state(holder, run_cmd)
-        if state == "NODE_FAIL":
-            run_cmd(["scancel", holder])
-            logger.warning(f"Holder job {holder} of {scenario_label} is NODE_FAIL; sent a best-effort scancel.")
-        elif state is not None and state not in _SLURM_TERMINAL_STATES:
+        if state is not None and state not in _SLURM_TERMINAL_STATES:
             logger.warning(
                 f"Scenario {scenario_label} is held by job {holder} (state {state}); cancelling it before this attempt."
             )
@@ -312,9 +321,12 @@ def _acquire_scenario_attempt(
                     return (
                         f"Refusing to run scenario {scenario_label}: job {holder} (node "
                         f"{record.get('node')}) still holds it in state {state} after scancel and "
-                        f"{wait_s:.0f} s of waiting, so a second writer would corrupt its output. "
-                        f"Nothing was written. Check `squeue -j {holder}` and `scontrol show job {holder}`; "
-                        f"once the job is gone (or the node is drained), resubmit."
+                        f"{wait_s:.0f} s of waiting, so a second writer could corrupt its output. "
+                        f"Nothing was written. The holder's record is {lock}. A node that is down or "
+                        f"lost keeps its job in NODE_FAIL or COMPLETING while the process may still "
+                        f"write: the node must be back (the job then reports a final state) before the "
+                        f"record can be cleared or the attempt rerun. Check `squeue -j {holder}` and "
+                        f"`scontrol show job {holder}`."
                     )
     sim_folder.mkdir(parents=True, exist_ok=True)
     tmp = lock.with_suffix(".json.tmp")
