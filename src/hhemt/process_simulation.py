@@ -350,6 +350,62 @@ def coupling_capture_store_path(scen_paths, name: str, out_type: str) -> Path:
     return Path(node_store).parent / COUPLING_DIAGNOSTICS_DIRNAME / f"{name}.{out_type}"
 
 
+#: The folder of ``processed/`` that holds the per-rank performance summary store of a scenario. A subfolder and not a
+#: sibling of the summary store, because ``_remove_cleared_scenario_directories`` holds a scenario's directory while
+#: any ``*.zarr`` or ``*.nc`` file sits directly under ``processed/``, and the store here is carried by the
+#: consolidated tree's ``{family}/performance/summary_by_rank`` group (DR-19) as the coupling captures are.
+PERFORMANCE_BY_RANK_DIRNAME = "performance_summary_by_rank"
+
+
+def performance_summary_by_rank_store_path(summary_store: Path) -> Path:
+    """Where a scenario's per-rank performance summary lives, from its performance summary store's path.
+
+    ``processed/{stem}.{ext}`` maps to ``processed/performance_summary_by_rank/{stem}_by_rank.{ext}``, so no
+    ``ScenarioPaths`` field is needed and the coupled and TRITON-only models, whose summary stems differ, get two
+    different names (DR-19).
+    """
+    store = Path(summary_store)
+    return store.parent / PERFORMANCE_BY_RANK_DIRNAME / f"{store.stem}_by_rank{store.suffix}"
+
+
+def performance_summary_by_rank(ds_tseries: xr.Dataset) -> xr.Dataset:
+    """Every column of the per-rank performance series summed over ``timestep``, keeping ``Rank`` (DR-19).
+
+    ``skipna=False`` for the reason the inline reduction of ``_export_performance_summary`` gives for the time
+    sum of the maximum-over-ranks summary: a column that only some allocations emitted reads NaN and never a finite,
+    understated total. The one function serves the per-scenario export and the consolidation's read of a scenario
+    whose per-rank store was never written, so the two cannot differ.
+    """
+    return ds_tseries.sum(dim="timestep", skipna=False)
+
+
+def _write_performance_summary_by_rank(
+    proc, ds: xr.Dataset, fname_out: Path, compression_level: int, verbose: bool, mode: str
+) -> None:
+    """Write the per-rank performance summary of ``ds``, dims ``(event_iloc, Rank)``, through ``proc``.
+
+    ``proc`` is the scenario's post-processing object (it supplies ``_write_output`` and the model log). ``mode`` is
+    the summary's own mode; the store is stamped with ``f"{mode}_by_rank"``, whose descriptors carry ``cell_methods``
+    ``"time: sum"``. A module function and not a method, so the export's callers that stand in for ``proc`` need no
+    second member.
+    """
+    start_time = time.time()
+    fname_out.parent.mkdir(parents=True, exist_ok=True)
+    by_rank = performance_summary_by_rank(ds)
+    by_rank.attrs["units"] = "seconds"
+    by_rank.attrs["notes"] = (
+        "Per-rank cumulative cost: every performance column summed over the reported timesteps, one value per "
+        "rank. It is the per-rank record beside the maximum-over-ranks summary, whose 'max' discards which rank "
+        "paid. On a hotstart-resumed member the values are CUMULATIVE across every allocation, as in that "
+        "summary. A column this member emitted for only SOME of its reporting steps reads NaN here, never a "
+        "partial sum (the time reduction runs with skipna=False). The Rank axis is the union across the "
+        "member's allocations, so a rank absent from an allocation is NaN for the steps it did not exist in."
+    )
+    proc._write_output(by_rank, fname_out, compression_level, verbose, mode=f"{mode}_by_rank")
+    elapsed_s = time.time() - start_time
+    proc.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
+
+
 # Content-addressed truncation boundary for out_tritonswmm/**/swmm/hydraulics.rpt.
 #
 # MEASURED, on two independently produced real coupled rpts (2026-08-17): every line
@@ -1191,6 +1247,8 @@ class TRITONSWMM_sim_post_processing:
         verify_present: bool,
     ):
         start_time = time.time()
+        by_rank_out = performance_summary_by_rank_store_path(fname_out)
+        by_rank_written = self._already_written(by_rank_out) and self._summary_usable(by_rank_out)
         # KEYWORD-ONLY WITH NO DEFAULT, deliberately: `fname_out` is a PARAMETER, so this
         # function cannot self-identify its artifact class, and a default in EITHER
         # direction relocates the hazard instead of closing it. Omission is a TypeError at
@@ -1210,7 +1268,18 @@ class TRITONSWMM_sim_post_processing:
             # __bool__ would silently block.
             if log_field is not None:
                 log_field.set(True)
+            if not by_rank_written:
+                # The summary was written before the per-rank summary existed (or by a run that stopped between the
+                # two); the series it reduces is passed in, so the per-rank store is written on this pass too.
+                _write_performance_summary_by_rank(self, ds, by_rank_out, compression_level, verbose, mode)
             return
+
+        # The per-rank summary is written for every TRITON-bearing model and has no option (DR-19): under
+        # `remove_after_processing` naming `timeseries` the per-rank series exists nowhere once it is cleared, and
+        # this store is then the only per-rank record. Written before the maximum-over-ranks summary, which is
+        # unchanged.
+        if not by_rank_written:
+            _write_performance_summary_by_rank(self, ds, by_rank_out, compression_level, verbose, mode)
 
         # `skipna=False` ON THE TIME SUM IS THE WHOLE OF THE FIX, and its ASYMMETRY with the
         # Rank max is load-bearing rather than an oversight.

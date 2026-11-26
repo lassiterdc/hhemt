@@ -1074,6 +1074,12 @@ _CF_PERFORMANCE_VARIABLES: dict[str, dict[str, str | None]] = {
 # and not the domain. `n_ranks` carries the extent as an ordinary variable instead.
 _PERF_SUMMARY_CELL_METHODS = "time: sum Rank: maximum"
 
+# The per-rank performance summary's reduction (DR-19): every column summed over `timestep` and NOT reduced over `Rank`,
+# which the store keeps as a full axis. Only the `time` pair is stated, because nothing is collapsed over `Rank`, and
+# the pair is admitted by CF-1.13 section 7.3.4's standard-name class for the reason `_PERF_SUMMARY_CELL_METHODS`
+# gives: the time axis the sum removed is absent from the artifact.
+_PERF_SUMMARY_BY_RANK_CELL_METHODS = "time: sum"
+
 
 # The performance SUMMARY's variable descriptions: the timeseries entries above plus the
 # reduction. DERIVED rather than a second literal dict, so `long_name` and `units` cannot
@@ -1252,6 +1258,20 @@ _CF_PERFORMANCE_RANK_AXIS_VARIABLES: dict[str, dict[str, str | None]] = {
 }
 
 
+# The per-rank performance summary's variable descriptions (DR-19), DERIVED from the series entries as the summary's
+# are, so `units` cannot drift between the artifacts that share it. The parent `long_name` ends in the slowest-rank
+# attribution that is true of `max(dim="Rank")` and false of a per-rank value, so it is stripped through
+# `_perf_quantity_phrase` and the per-rank form is stated in its place.
+_CF_PERFORMANCE_SUMMARY_BY_RANK_VARIABLES: dict[str, dict[str, str | None]] = {
+    _name: {
+        **_entry,
+        "long_name": f"{_perf_quantity_phrase(_entry['long_name'])}, summed over the reported timesteps for each rank",
+        "cell_methods": _PERF_SUMMARY_BY_RANK_CELL_METHODS,
+    }
+    for _name, _entry in _CF_PERFORMANCE_VARIABLES.items()
+}
+
+
 # The two SWMM link-mode overrides of `max_velocity` are byte-identical to the base entry. Until the
 # TRITON tier stopped writing a variable of that name the base described a grid-cell flood velocity and
 # these overrides were load-bearing (they differed in `long_name`); the base now describes the conduit, so
@@ -1270,6 +1290,11 @@ _CF_VARIABLE_OVERRIDES_BY_MODE: dict[str, dict[str, dict[str, str | None]]] = {
     # the summary entries below without any mode remapping at that site.
     "tritonswmm_performance": {**_CF_PERFORMANCE_SUMMARY_VARIABLES, **_CF_PERFORMANCE_RANK_AXIS_VARIABLES},
     "triton_only_performance": {**_CF_PERFORMANCE_SUMMARY_VARIABLES, **_CF_PERFORMANCE_RANK_AXIS_VARIABLES},
+    # The per-rank performance summary (DR-19) is stamped with the summary's mode and `_by_rank`. These are
+    # write-path-only and consolidation-path-only modes, like the `_tseries` modes below: neither is a
+    # `_MODE_CONFIG` key, because the group is written through `_consolidate_performance_by_rank`.
+    "tritonswmm_performance_by_rank": _CF_PERFORMANCE_SUMMARY_BY_RANK_VARIABLES,
+    "triton_only_performance_by_rank": _CF_PERFORMANCE_SUMMARY_BY_RANK_VARIABLES,
     # The `_tseries` modes are write-path-only: they are passed by
     # `_export_performance_tseries` and are NOT `_MODE_CONFIG` keys, because `_MODE_CONFIG` names the
     # summary stores; the per-rank series is consolidated through `_TIMESERIES_MODE_CONFIG` instead.
