@@ -5683,4 +5683,4 @@ non_breaking_allowlist:
   - path: src/hhemt/sensitivity_analysis.py
     layout_signature: c74534c86d3dae39a6bd43a9497a2583d33cab1da5036a1f8136bf4c6fc353f5
     justification: |-
-      Non-breaking: the experiment master copies every member data group; the row signs the blob after the whole-group copy was wrapped in a deferred consolidation block.
+      Non-breaking: the experiment master copies every member data group, and the copy of a group without a time axis writes inside a deferred consolidation block, so the store's consolidated metadata is written once when the block closes and not after the write.

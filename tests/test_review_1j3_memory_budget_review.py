@@ -1,14 +1,18 @@
 """Reviewer tests of the memory-bound tests: each must pass on the correct verification and fail on each wrong
 one.
 
-Each test runs the coder's own test function on a patched ``_stored_slice_equals`` (the correct source plus one
-retention line), so the bounds under review are the bounds actually in the repo and not a copy of them.
+``_verification_with`` builds a wrong ``_stored_slice_equals`` from the correct source plus one retention line.
+Three tests run a repo test function on it, so the bounds under test are the bounds in the repo and not a copy:
+the member-count test (green on the correct verification; red on a verification that keeps every span across
+members, on the eight-minus-one bound; red on one that keeps a whole slice during a call, on the absolute
+bound only) and the linear-work test (red on a verification that keeps the previous span, which grows 4.51 times
+the extra span bytes against the bound of 2.5).
 
-Measured by the reviewer on the single-threaded scheduler (see the review scratch for the sample tables):
-- linear-work test: a verification holding the previous span grows 4.51 times the extra span bytes against 2.5.
-- member-count test: holding every span across members gives eight-minus-one about 403 MB and eight-member about
-  463 MB (red on both bounds); holding a whole slice during one call gives an eight-member peak of about 47 to 62 MB,
-  red on the 0.5 * slice bound only.
+A fourth test measures a different quantity, the traced bytes still live after a member is copied, because no peak
+bound separates a verification that keeps one span of the previous member from correct code: that mutant adds
+2.8 to 3.9 MB to the eight-minus-one difference against a correct-code range of 1.1 to 2.8 MB. Live bytes are
+under 1 MB on correct code and over 1 MB on a verification that keeps the last span, the last two spans or
+every span.
 """
 
 from __future__ import annotations
