@@ -536,7 +536,7 @@ def _copy_data_group(
     ``deferred_consolidation(dst_store)``.
     """
     from hhemt.exceptions import ProcessingError
-    from hhemt.utils import append_zarr, return_dic_zarr_encodings
+    from hhemt.utils import append_zarr, deferred_consolidation, return_dic_zarr_encodings
 
     src = xr.open_zarr(
         src_store, group=src_group, consolidated=zarr_store_has_index(src_store), chunks={}, decode_timedelta=True
@@ -545,14 +545,15 @@ def _copy_data_group(
         _copy_series_group(src_store, src_group, dst_store, dst_group, compression_level, member_id=member_id)
         return
     whole = src.load().drop_encoding()
-    append_zarr(
-        whole,
-        dst_store,
-        group=dst_group,
-        consolidate=False,
-        mode="w",
-        encoding=return_dic_zarr_encodings(whole, compression_level),
-    )
+    with deferred_consolidation(dst_store):
+        append_zarr(
+            whole,
+            dst_store,
+            group=dst_group,
+            consolidate=False,
+            mode="w",
+            encoding=return_dic_zarr_encodings(whole, compression_level),
+        )
     if not _datasets_equal(whole, _open_stored_group(dst_store, dst_group).load()):
         raise ProcessingError(
             "read back a group copied into the sensitivity master",
