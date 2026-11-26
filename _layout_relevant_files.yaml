@@ -5656,3 +5656,15 @@ non_breaking_allowlist:
     layout_signature: 2f7915785b64f36eea7c958e8fc1cce0f89a3b7122a5eeea888d014e537ea6bd
     justification: |-
       NON-BREAKING. One row is added to the _TOOLKIT_OWNED_ENV mapping (PMIX_MCA_gds), so TRITON_extra_env refuses that name with a message naming the pmix_gds profile field. A refusal of an input value; no field, default, persisted key, path, file name, zarr group or log field changes, and a config that did not set the name loads unchanged.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: b85c45cc7609c9d0e14df3c91e800a1eb62c9f84e49073ff07b573310fd5bd20
+    justification: |-
+      DR-18: the experiment master copies every data group of a member tree (every data node the summary merge does not already carry), and the move refuses to delete a member tree whose data groups the master lacks. Additive; no existing group, variable or key moves; an existing tree reads unchanged.
+  - path: src/hhemt/processing_analysis.py
+    layout_signature: 9f432025567c2f36de59d1101339f7607b0c31aa5903f875cc8e7ce005c1f61a
+    justification: |-
+      DR-18: CONSOLIDATION_VERSION 5 to 6 with its history entry, so every tree stamped 5 rebuilds once. Additive; no existing group, variable or key moves; an existing tree reads unchanged.
+  - path: src/hhemt/sensitivity_analysis.py
+    layout_signature: 013ec3b71df25386a2c9f48bc147be2d3b8ade62c51cc62de877bc9073e60500
+    justification: |-
+      DR-18: the experiment master copies every data group of a member tree (every data node the summary merge does not already carry), and the move refuses to delete a member tree whose data groups the master lacks; a group holding only coordinates counts as held. Additive; no existing group, variable or key moves; an existing tree reads unchanged.
