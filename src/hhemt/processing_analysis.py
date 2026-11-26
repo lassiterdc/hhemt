@@ -400,7 +400,11 @@ class TRITONSWMM_analysis_post_processing:
     # 5: an analysis whose system config sets `observation_points` holds `{family}/triton_observation/timeseries` and
     # `{family}/triton_observation/summary` groups. A tree consolidated at version 4 holds none, because no scenario
     # of it had observation points, so the bump records that the group set changed and no group is added to such a tree.
-    CONSOLIDATION_VERSION = 5
+    # 6: the experiment master carries every data group of a member tree, so the seven `coupling_diagnostics`
+    # captures and any group added later reach experiment_datatree.zarr (the master had copied only `summary` and
+    # `timeseries` groups by name). Every tree consolidated at version 5 rebuilds once; a member whose per-scenario
+    # capture stores were removed and whose tree is gone has no source and is refused by name, as at version 4.
+    CONSOLIDATION_VERSION = 6
 
     def _consolidation_inputs_fingerprint(self) -> str:
         """Hash of every input that determines the SHAPE of the consolidated tree.

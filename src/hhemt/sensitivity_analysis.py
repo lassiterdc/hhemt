@@ -499,14 +499,86 @@ def _copy_series_group(
             )
 
 
-def _member_tree_series_groups(tree_path) -> list[str]:
-    """The ``timeseries`` groups of a member tree that hold data, as member-tree-relative paths, sorted."""
+def _member_tree_data_groups(tree_path, *, exclude=()) -> list[str]:
+    """Every group of a member tree that holds data, as member-tree-relative paths, sorted, minus ``exclude``.
+
+    The rule tests what the member holds and not a list of names, so a group added later (as the seven
+    ``coupling_diagnostics`` captures were) is copied without a change here. ``exclude`` is the set of groups the
+    ``summary`` merge already writes, so no group is copied twice.
+    """
+    skip = set(exclude)
     tree = xr.open_datatree(tree_path, engine="zarr", consolidated=zarr_store_has_index(tree_path))
     return sorted(
-        path.lstrip("/")
-        for path, node in tree.subtree_with_keys
-        if node.has_data and path.lstrip("/").rsplit("/", 1)[-1] == "timeseries"
+        rel
+        for rel, node in ((path.lstrip("/"), node) for path, node in tree.subtree_with_keys)
+        if node.has_data and rel and rel not in skip
     )
+
+
+def _copy_data_group(
+    src_store, src_group: str, dst_store, dst_group: str, compression_level: int, *, member_id: str
+) -> None:
+    """Copy one member data group into the master: by ``event_iloc`` slice when it has that dimension, else whole.
+
+    A group with no ``event_iloc`` is written once and read back equal; one that does not read back equal raises
+    ``ProcessingError`` naming the member and the group, and the member's own tree is kept. Must run inside
+    ``deferred_consolidation(dst_store)``.
+    """
+    from hhemt.exceptions import ProcessingError
+    from hhemt.utils import append_zarr, return_dic_zarr_encodings
+
+    src = xr.open_zarr(
+        src_store, group=src_group, consolidated=zarr_store_has_index(src_store), chunks={}, decode_timedelta=True
+    )
+    if "event_iloc" in src.dims:
+        _copy_series_group(src_store, src_group, dst_store, dst_group, compression_level, member_id=member_id)
+        return
+    whole = src.load().drop_encoding()
+    append_zarr(
+        whole,
+        dst_store,
+        group=dst_group,
+        consolidate=False,
+        mode="w",
+        encoding=return_dic_zarr_encodings(whole, compression_level),
+    )
+    if not _datasets_equal(whole, _open_stored_group(dst_store, dst_group).load()):
+        raise ProcessingError(
+            "read back a group copied into the sensitivity master",
+            str(dst_store),
+            f"member {member_id}: {dst_group} does not read back equal to the data it was copied from; the member's "
+            "own tree was kept",
+        )
+
+
+def _refuse_move_without_master_copy(master, member_id: str, analysis) -> None:
+    """Raise ``ProcessingError`` unless the master holds every data group of the member's tree about to be removed.
+
+    Compares the member tree's data-group set with what the master's store holds, group by group (the group
+    document is present and the group has variables), so clearing can never delete the only copy of a group the
+    copy step missed. Called before the move is recorded and before anything is deleted; the member's tree is
+    untouched when it raises.
+    """
+    from hhemt.exceptions import ProcessingError
+
+    tree = analysis.analysis_paths.analysis_datatree_zarr
+    if tree is None or not Path(tree).exists():
+        return
+    store = master.analysis_paths.experiment_datatree_zarr
+    node_name = f"{master.member_prefix}{member_id}"
+    absent = [
+        group
+        for group in _member_tree_data_groups(tree)
+        if store is None
+        or not (Path(store) / node_name / group / "zarr.json").is_file()
+        or not _open_stored_group(store, f"{node_name}/{group}").data_vars
+    ]
+    if absent:
+        raise ProcessingError(
+            "remove a member's tree after moving it into the sensitivity master",
+            str(tree),
+            f"refusing to remove member {member_id}'s tree: the master holds no copy of {', '.join(absent)}",
+        )
 
 
 def _recorded_move_groups(analysis, member_id: str) -> list[str]:
@@ -2544,15 +2616,16 @@ class TRITONSWMM_sensitivity_analysis:
         copied: dict | None = None,
         after_member=None,
     ) -> dict[str, list[str]]:
-        """Write the master's ``parameters``, member nodes, ``summary`` groups and ``timeseries`` copies IN PLACE.
+        """Write the master's ``parameters``, member nodes, ``summary`` groups and every other data group IN PLACE.
 
         The store is never replaced as a whole: it holds the members' ``timeseries`` branches, which are append-only
         and which, with a member's tree removed, are the only copy. Each step runs inside its own
         ``deferred_consolidation`` block, so the index is rebuilt at the end of every member and a kill inside a block
         leaves a store with no index and no current stamp, which the next call reads as incomplete. Order: (1) the root
         stamp is removed and the ``parameters`` dataset is written; (2) per member, each ``summary`` group from a
-        member tree or a rebuild is written and read back equal, each of the member tree's ``timeseries`` groups is
-        copied one event at a time and read back, the member node's attributes are set, the block ends (index
+        member tree or a rebuild is written and read back equal, every other data group of the member tree (the
+        ``timeseries`` and ``coupling_diagnostics`` groups, whatever their names) is copied and read back, the
+        member node's attributes are set, the block ends (index
         rebuilt), and ``after_member(member_id)`` is called, which is where the member's tree is removed, BEFORE the
         next member's copy begins; (3) the root attributes, stamp included, are written last. A member whose
         summaries came from the master itself is not rewritten. Returns, per member id whose tree was the source, the
@@ -2599,12 +2672,12 @@ class TRITONSWMM_sensitivity_analysis:
                         )
                 if source == "member_tree":
                     member_tree = Path(analysis.analysis_paths.analysis_datatree_zarr)
-                    series = _member_tree_series_groups(member_tree)
-                    for rel in series:
-                        _copy_series_group(
+                    others = _member_tree_data_groups(member_tree, exclude=nodes)
+                    for rel in others:
+                        _copy_data_group(
                             member_tree, rel, store, f"{node_name}/{rel}", compression_level, member_id=member_id
                         )
-                    copied[member_id] = sorted([*nodes, *series])
+                    copied[member_id] = sorted([*nodes, *others])
                 _set_group_attrs(store, node_name, dict(tree[node_name].attrs))
                 if source == "rebuilt":
                     # The rebuilt groups answer the member's current inputs, so the member's stamp now matches them
@@ -2676,6 +2749,7 @@ class TRITONSWMM_sensitivity_analysis:
         if state is None:
             if not (_member_clearing_on(analysis) and sources.get(member_id, (None, None))[1] == "member_tree"):
                 return
+            _refuse_move_without_master_copy(self, member_id, analysis)
             analysis.log.member_tree_moved_groups.set(json.dumps(copied[member_id]))
             analysis.log.member_tree_moved_to_master.set(MOVE_PENDING)
         else:
