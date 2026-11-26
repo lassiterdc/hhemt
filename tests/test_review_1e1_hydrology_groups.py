@@ -121,11 +121,12 @@ def _record(a, event_iloc: int):
     return None if field is None else field.get()
 
 
-def test_full_consolidation_writes_the_hydrology_groups_stamps_version_4_and_upgrades_a_tree_stamped_3(
+def test_full_consolidation_writes_the_hydrology_groups_stamps_the_current_version_and_upgrades_a_tree_stamped_3(
     golden_extractor,
 ):
     """Property: the public ``consolidate_to_datatree`` (not only ``consolidate_hydrology``) writes the three hydrology
-    groups, leaves the root stamp at 4, and on a tree stamped 3 that lacks the groups appends them again.
+    groups, leaves the root stamp at the current ``CONSOLIDATION_VERSION``, and on a tree stamped 3 that lacks the
+    groups appends them again.
 
     Class: INTEGRATION WIRING. Plausible wrong implementation: ``consolidate_hydrology`` correct in isolation and not
     reached from the tree builder, or reached only on the first build; or a version-3 tree whose stamp-3 rebuild path
@@ -139,7 +140,10 @@ def test_full_consolidation_writes_the_hydrology_groups_stamps_version_4_and_upg
         public entry point, if the groups and the stamp are the same.
     Why required: the property is a consequence of D25 (c)/(d)/(e) as the code reads them (cited in the body above).
     """
+    from hhemt.processing_analysis import TRITONSWMM_analysis_post_processing
     from hhemt.utils import deferred_consolidation, update_zarr_root_attrs, zarr_root_attrs
+
+    current_version = TRITONSWMM_analysis_post_processing.CONSOLIDATION_VERSION
 
     a = _ready(golden_extractor, clear=False, full_tree=True)
     for event_iloc in range(3):
@@ -150,7 +154,7 @@ def test_full_consolidation_writes_the_hydrology_groups_stamps_version_4_and_upg
     a.process.consolidate_to_datatree()
     for group in (_TS, _NODE, _SUB):
         assert (store / group).is_dir(), f"{group} is not reached from the public consolidation"
-    assert zarr_root_attrs(store).get("consolidation_version") == 5
+    assert zarr_root_attrs(store).get("consolidation_version") == current_version
     shutil.rmtree(store / _FAMILY / "swmm_node_hydro")
     shutil.rmtree(store / _FAMILY / "swmm_subcatchment_hydro")
     with deferred_consolidation(store):
@@ -158,7 +162,7 @@ def test_full_consolidation_writes_the_hydrology_groups_stamps_version_4_and_upg
     a.process.consolidate_to_datatree()
     for group in (_TS, _NODE, _SUB):
         assert (store / group).is_dir(), f"{group} is not appended again on a tree stamped 3"
-    assert zarr_root_attrs(store).get("consolidation_version") == 5
+    assert zarr_root_attrs(store).get("consolidation_version") == current_version
     assert _group(a, _TS)["event_iloc"].values.tolist() == [0, 1, 2]
 
 
