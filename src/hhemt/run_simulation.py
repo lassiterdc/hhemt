@@ -24,9 +24,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import numpy as np
 import pandas as pd
 
 from hhemt.config.hpc_system import resolve_container_spec, system_directory_bind
+from hhemt.coupling_exchange import EXCHANGE_LOG_MAGIC_V2
 from hhemt.exceptions import ConfigurationError, SimulationError
 from hhemt.resource_management import _parse_slurm_allocated_gpus
 from hhemt.scenario import TRITONSWMM_scenario, compute_event_id_slug
@@ -479,6 +481,55 @@ def parse_exchange_replay_refusal(text: str) -> tuple[float, float] | None:
         return float(match.group(1)), float(match.group(2))
     except ValueError:
         return None
+
+
+#: The solver's own ``EPS`` for the exchange-replay coverage test (``swmm_triton.h`` line 3109 at the
+#: pinned build). Its refusal is ``cum < up_to_time - EPS`` (line 3243), so a checkpoint at ``t`` is
+#: accepted exactly when ``t <= cum + EPS``. The picker copies the tolerance; it does not choose one.
+_EXCHANGE_REPLAY_EPS_S = 1e-6
+
+#: Bytes one block of side-file records copies while the coverage is summed: the memory use is this and
+#: not the file's size, which grows with the simulated length.
+_EXCHANGE_REPLAY_COVERAGE_BLOCK_BYTES = 32 * 1024 * 1024
+
+
+def exchange_replay_coverage_s(path: Path | str) -> float | None:
+    """How far the exchange-replay side-file's whole records run, in simulated seconds, or None.
+
+    The coverage is the sum of ``dt`` over the whole records, accumulated one record at a time in the
+    file's value width (``float32`` for width 4, ``float64`` for width 8). That is how the solver's
+    ``position_exchange_log`` accumulates ``cum`` in ``value_t`` (``swmm_triton.h`` lines 3103 to 3224
+    at ``7ef072f4``), so the figure is the solver's own and a pairwise or widened sum would differ from
+    it at rounding level. A trailing partial record is not counted.
+
+    Returns None, and the resume picker then behaves as it did before this reader existed, for a path
+    that is not a readable file, a header shorter than 12 bytes, a magic that is not
+    ``EXCHANGE_LOG_MAGIC_V2``, a value width other than 4 or 8, or a negative node count. A layout the
+    toolkit does not know is never guessed at.
+    """
+    path = Path(path)
+    try:
+        size = path.stat().st_size
+        if size < 12:
+            return None
+        magic, num_nodes, value_width = (int(v) for v in np.fromfile(path, dtype="<i4", count=3))
+    except OSError:
+        return None
+    if magic != EXCHANGE_LOG_MAGIC_V2 or value_width not in (4, 8) or num_nodes < 0:
+        return None
+    dtype = np.dtype("<f4") if value_width == 4 else np.dtype("<f8")
+    n_records = (size - 12) // (value_width * (1 + num_nodes))
+    if n_records == 0:
+        return 0.0
+    records = np.memmap(path, dtype=dtype, mode="r", offset=12, shape=(n_records, 1 + num_nodes))
+    block_records = max(1, _EXCHANGE_REPLAY_COVERAGE_BLOCK_BYTES // (value_width * (1 + num_nodes)))
+    cum = dtype.type(0)
+    for start in range(0, n_records, block_records):
+        dts = np.array(records[start : start + block_records, 0], dtype=dtype)
+        dts[0] = dtype.type(cum + dts[0])  # carry the running sum in value_t into this block
+        cum = np.cumsum(dts, dtype=dtype)[-1]  # cumsum adds one element at a time, as the solver does
+    del records
+    return float(cum)
 
 
 @dataclass(frozen=True)
@@ -1111,7 +1162,19 @@ class TRITONSWMM_run:
     ) -> Path | None:
         """Find latest hotstart CFG file for resuming incomplete TRITON/TRITON-SWMM simulation.
 
-        Returns None if no hotstart files found (simulation never started or CFGs cleared).
+        Returns None if no hotstart files found (simulation never started or CFGs cleared), and for a
+        coupled run also when its exchange-replay side-file covers no checkpoint (the next launch then
+        starts clean).
+
+        For ``tritonswmm`` the picker reads the exchange-replay side-file's coverage
+        (``exchange_replay_coverage_s``) and walks the complete checkpoints newest first, returning the
+        first the solver would accept: the first whose ``sim_start_time`` ``t`` satisfies
+        ``t <= coverage + 1e-6``. That tolerance is the solver's own ``EPS`` in ``swmm_triton.h``; its
+        acceptance rule is the negation of the refusal ``cum < up_to_time - EPS``, so the tolerance is
+        copied and not chosen. A cfg whose ``sim_start_time`` cannot be read is not provably uncovered
+        and is accepted, as the refusal fallback does. Where coverage is unknown (``None``: no
+        side-file, or one in a layout this toolkit does not read, or more than one side-file) and for
+        ``triton`` the newest complete cfg is returned, whatever a side-file holds.
 
         Parameters
         ----------
@@ -1121,12 +1184,23 @@ class TRITONSWMM_run:
         Returns
         -------
         Path | None
-            Path to latest complete CFG checkpoint, or None if not available
+            Path to the newest complete CFG checkpoint the side-file covers, or None if not available
         """
         complete = self._complete_hotstart_cfgs(model_type)
         if not complete:
             return None
-        return complete[-1][1]
+        if model_type != "tritonswmm":
+            return complete[-1][1]
+        out_dir = self._scenario.scen_paths.out_tritonswmm
+        side_files = sorted(out_dir.glob("**/swmm/*_exchange_replay.bin")) if out_dir is not None else []
+        coverage_s = exchange_replay_coverage_s(side_files[0]) if len(side_files) == 1 else None
+        if coverage_s is None:
+            return complete[-1][1]
+        for _, cfg in reversed(complete):
+            t = _checkpoint_time_s(cfg)
+            if t is None or t <= coverage_s + _EXCHANGE_REPLAY_EPS_S:
+                return cfg
+        return None
 
     def _complete_hotstart_cfgs(self, model_type: Literal["triton", "tritonswmm"]) -> list[tuple[int, Path]]:
         """Every COMPLETE ``config_NNNN.cfg`` checkpoint, as ``(reporting_step, path)`` oldest first.
@@ -1383,12 +1457,15 @@ class TRITONSWMM_run:
         """Repair the checkpoint tree after the solver refused a resume over a short exchange-replay side-file.
 
         THE PROBLEM. A coupled simulation killed at its wall limit or by a node loss can leave a
-        checkpoint ``config_N.cfg`` whose exchange-replay side-file stops short of it. Every resume
-        then launches at N and the solver aborts with ``Exchange-replay side-file is incomplete for
-        this checkpoint: reached t=X s but checkpoint_id requires Y s``. The resume picker returns
-        the newest complete cfg whatever the side-file holds, so every retry repeats the abort until
-        the failure budget is spent. The refusal is the solver's and is not changed; this is the
-        toolkit's side of it.
+        checkpoint ``config_N.cfg`` whose exchange-replay side-file stops short of it. A resume
+        launched at N then makes the solver abort with ``Exchange-replay side-file is incomplete for
+        this checkpoint: reached t=X s but checkpoint_id requires Y s``. The resume picker reads the
+        side-file's own coverage before it launches (``exchange_replay_coverage_s``) and skips every
+        checkpoint it does not cover, so this refusal reaches the log only for a side-file whose bytes
+        and the solver's verdict disagree, or one in a layout the picker does not read (it then picks
+        the newest complete cfg whatever the side-file holds and every retry repeats the abort until
+        the failure budget is spent). This method is the backstop for those cases. The refusal is the
+        solver's and is not changed; this is the toolkit's side of it.
 
         THE RULE, applied to the model log of a resume that just ran (the log is opened ``"w"`` on
         every exec, so its text is this attempt's alone):

@@ -60,9 +60,10 @@ most 259 characters. Keep the analysis directory shallow enough that a simulatio
 Standalone SWMM models are outside that refusal. SWMM itself shortens a longer name
 without an error.
 
-**Walltime bounds a simulation.** A simulation killed at walltime resumes from the most
-recent checkpoint. The solver's checkpoint cadence sets the resumption point, and the
-toolkit has no control over that cadence. Size allocations accordingly.
+**Walltime bounds a simulation.** A killed coupled simulation resumes from the newest
+checkpoint its exchange-replay side-file covers. When no checkpoint is covered it restarts
+clean. The solver's checkpoint cadence sets the resumption point, and the toolkit has no
+control over that cadence. Size allocations accordingly.
 
 ## Reproducibility boundaries
 
