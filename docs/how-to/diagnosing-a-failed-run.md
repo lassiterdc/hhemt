@@ -103,7 +103,7 @@ The TRITON-only and SWMM checks write the same line with their own names and fla
 
 ### The job died at walltime
 
-Raise the simulation retry count in place of the walltime when checkpoints are frequent enough. [Scale and hardware](../explanation/limitations.md#scale-and-hardware) states that a killed simulation resumes from the latest checkpoint.
+Raise the simulation retry count in place of the walltime when checkpoints are frequent enough. [Scale and hardware](../explanation/limitations.md#scale-and-hardware) states that a killed coupled simulation resumes from the newest checkpoint its exchange-replay side-file covers, and restarts clean when none is covered.
 
 ??? note "`perf_*` exceeding the scheduler's elapsed time on a resumed analysis"
     [A caveat on performance columns](../reference/output-data-model.md#a-caveat-on-performance-columns) explains the excess and why the excess is correct.
