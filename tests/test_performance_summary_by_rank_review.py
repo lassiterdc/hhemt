@@ -1,4 +1,4 @@
-"""Reviewer tests for chunk 1h.2 (DR-19): the per-rank performance summary beside the maximum-over-ranks one.
+"""Reviewer tests: the per-rank performance summary beside the maximum-over-ranks one.
 
 Written by the reviewing seat, against the criterion and not against the coder's tests. Each test names the defect it
 catches. The coder greens them without weakening, deleting, skipping or rewriting any of them.

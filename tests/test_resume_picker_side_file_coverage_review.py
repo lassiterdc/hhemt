@@ -1,4 +1,4 @@
-"""Reviewer tests for chunk 1g.1: the side-file-aware resume picker (DR-17, AC-1.7).
+"""Reviewer tests: the side-file-aware resume picker.
 
 Each test states a property of ``exchange_replay_coverage_s`` or of the picker that the coder's own file
 does not pin: a header-only V2 file, a negative node count, a node-less layout, a nested side-file, a cfg

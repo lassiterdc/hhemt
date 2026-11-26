@@ -202,10 +202,10 @@ def test_the_maximum_over_ranks_summary_is_unchanged_by_the_per_rank_export(tmp_
     _export(proc, three_rank_series, tmp_path / "processed")
     (_, summary, _mode) = next(w for w in proc.writes if w[0].name == _SUMMARY_NAME)
 
-    legacy = three_rank_series.sum(dim="timestep", skipna=False).max(dim="Rank", keepdims=True)
+    maxima = three_rank_series.sum(dim="timestep", skipna=False).max(dim="Rank", keepdims=True)
     for col in _BASE_COLS:
-        assert summary[col].dims == legacy[col].dims
-        assert summary[col].values.tobytes() == legacy[col].values.tobytes(), f"{col} moved"
+        assert summary[col].dims == maxima[col].dims
+        assert summary[col].values.tobytes() == maxima[col].values.tobytes(), f"{col} moved"
     assert summary.sizes["Rank"] == 1, "the summary keeps its retained size-one Rank"
 
 
