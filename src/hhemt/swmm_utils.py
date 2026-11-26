@@ -672,15 +672,15 @@ DEM_RIM_TOLERANCE_M = 1e-5
 class SwmmNodeDepth:
     """The minimum depth SWMM allows one node, in meters, or the reason the toolkit cannot compute it.
 
-    ``depth_m`` is the crown floor: the highest ``offset + yFull`` over the link ends that SWMM extends the node to
+    ``crown_depth`` is the crown floor: the highest ``offset + yFull`` over the link ends that SWMM extends the node to
     (``link_validate``, link.c). The authored ``[JUNCTIONS]`` ``MaxDepth`` is not part of it.
-    ``depth_m`` is None, and ``reason`` set, when a link
+    ``crown_depth`` is None, and ``reason`` set, when a link
     end that counts has a cross-section or offset the toolkit does not read.
     """
 
     name: str
     invert_m: float | None
-    depth_m: float | None
+    crown_depth: float | None
     reason: str | None
 
 
@@ -831,33 +831,33 @@ def dem_rim_findings(text: str, names, rds_dem) -> list[DemRimFinding]:
         invert = depth.invert_m
         if name not in located:
             findings.append(
-                DemRimFinding(name, invert, depth.depth_m, None, None, None, f"{name} has no [COORDINATES] row")
+                DemRimFinding(name, invert, depth.crown_depth, None, None, None, f"{name} has no [COORDINATES] row")
             )
             continue
         z = cells[name]
         if z is None:
             findings.append(
-                DemRimFinding(name, invert, depth.depth_m, None, None, None, "its coordinates fall outside the DEM")
+                DemRimFinding(name, invert, depth.crown_depth, None, None, None, "its coordinates fall outside the DEM")
             )
         elif not math.isfinite(z) or (nodata is not None and z == float(nodata)):
-            findings.append(DemRimFinding(name, invert, depth.depth_m, z, None, None, "its DEM cell has no value"))
+            findings.append(DemRimFinding(name, invert, depth.crown_depth, z, None, None, "its DEM cell has no value"))
         elif invert is None or z <= invert:
             findings.append(
-                DemRimFinding(name, invert, depth.depth_m, z, None, None, "its DEM cell is at or below the invert")
+                DemRimFinding(name, invert, depth.crown_depth, z, None, None, "its DEM cell is at or below the invert")
             )
-        elif depth.depth_m is None:
+        elif depth.crown_depth is None:
             findings.append(
                 DemRimFinding(
                     name, invert, None, z, z - invert, None, f"SWMM's depth is not computable: {depth.reason}"
                 )
             )
-        elif (z - invert) < depth.depth_m - DEM_RIM_TOLERANCE_M:
-            short = depth.depth_m - (z - invert)
+        elif (z - invert) < depth.crown_depth - DEM_RIM_TOLERANCE_M:
+            short = depth.crown_depth - (z - invert)
             findings.append(
                 DemRimFinding(
                     name,
                     invert,
-                    depth.depth_m,
+                    depth.crown_depth,
                     z,
                     z - invert,
                     short,

@@ -91,7 +91,7 @@ def test_every_outfall_rim_reaches_the_crown_of_the_links_that_end_on_it(case):
     located = {n: (*coords[_fold(n)], inverts[n]) for n in names}
     cells = dem_cell_elevations(dem, located)
     for name in swmm_model._OUTFALL_NAMES:
-        crown = depths[name].depth_m
+        crown = depths[name].crown_depth
         assert crown is not None and crown >= 0, (name, depths[name])
         assert cells[name] - inverts[name] >= crown - DEM_RIM_TOLERANCE_M, (name, cells[name], inverts[name], crown)
 
@@ -110,7 +110,7 @@ def test_every_invert_rim_is_within_one_millimeter_above_the_depth_on_other_para
     for name in names:
         rim = cells[name] - inverts[name]
         depth = swmm_model._node_depth(name)
-        assert depth >= depths[name].depth_m - 1e-12, (name, depth, depths[name])
+        assert depth >= depths[name].crown_depth - 1e-12, (name, depth, depths[name])
         assert depth - DEM_RIM_TOLERANCE_M <= rim < depth + 1e-3 + DEM_RIM_TOLERANCE_M, (name, rim, depth)
         assert abs(inverts[name] * 1000 - round(inverts[name] * 1000)) < 1e-6, (name, inverts[name])
 
