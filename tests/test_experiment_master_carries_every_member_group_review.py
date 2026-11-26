@@ -1,4 +1,4 @@
-"""Reviewer tests for chunk 1h.1 (DR-18): the master copies every data group and the move refuses to lose one.
+"""Reviewer tests: the master copies every data group and the move refuses to lose one.
 
 The coder's stand-ins (``_Master``, ``_Member``) are reused so these tests exercise the same code path. Each test names
 the property it holds and the input class it varies; none weakens a coder test.

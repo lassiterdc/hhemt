@@ -81,21 +81,17 @@ IMPORT_GUARD_EXIT = 99
 #: local, incidental absence. Exact-match on the junit skip message. Adding a pattern
 #: widens the declared complement; it must never be widened to silence a real skip.
 #:
-#: THE GATE THEY NAME is `skipif(in_suite_array_chunk())` (`tests/utils_for_testing.py`), true when the
-#: process role `HHEMT_SUITE_ROLE` is `chunk`, which every array and tail chunk runs under. The two test
-#: modules that carry it (`tests/test_doi_roundtrip_e2e.py` and `tests/test_synth_09_from_doi_run_proof.py`)
-#: import the two constants below, so a reason has ONE site. The complement chunk, which
-#: `python -m hhemt.suite._runner --complement` appends and runs under the role `complement`, is where
-#: those tests run, and its evidence is what lets a run report `scope=union`.
+#: THE GATE THEY NAME is `skipif(in_suite_array_chunk())` from `tests/utils_for_testing.py`, true when the
+#: process role `HHEMT_SUITE_ROLE` is `chunk`, which every array and tail chunk runs under. The two skip
+#: reasons are one named constant each (the two below), imported by the gated modules
+#: (`tests/test_doi_roundtrip_e2e.py` and `tests/test_synth_09_from_doi_run_proof.py`), so a reason has ONE
+#: site. The complement chunk, which `python -m hhemt.suite._runner --complement` appends and runs under the
+#: role `complement`, is where those tests run, and its evidence is what lets a run report `scope=union`.
 #:
-#: EXACT-MATCH IS A COUPLING TO THE `skipif` REASON STRINGS, AND IT HAS ALREADY BROKEN ONCE. A RETIRED
-#: entry, "Only runs on non-HPC systems.", matched 17 tests until every mark carrying it was removed.
-#: From 2026-08-25 this tuple matched ZERO tests, so `structurally_excluded` read 0 and `summary.md`
-#: printed "None -- every collected test was evaluable at this scope" while a gated test sat in
-#: the INCIDENTAL bucket. The failure is silent in the reassuring direction: a narrowed pattern makes the
-#: run look MORE complete, not less. The two reasons are now one named constant each, imported by the
-#: gated modules, and `tests/test_suite_complement_runner.py` asserts that this tuple equals them and that
-#: each gated module's `skipif` reason is one of them.
+#: EXACT-MATCH IS A COUPLING TO THE `skipif` REASON STRINGS. A reason that stops matching makes
+#: `structurally_excluded` read 0 and moves a gated test into the INCIDENTAL bucket, which looks MORE
+#: complete, not less. `tests/test_suite_complement_runner.py` therefore asserts that this tuple equals the
+#: two constants and that each gated module's `skipif` reason is one of them.
 #:
 #: RUNTIME SHADOWING, a SECOND way this tuple silently under-matches: the live-deposit reason is never
 #: PRODUCED where the operator env gate fails, because the three tests in tests/test_doi_roundtrip_e2e.py
