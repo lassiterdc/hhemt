@@ -51,7 +51,9 @@ _PRE_CHANGE_INP_SHA256 = {
     # Re-taken again when the synthetic model gained its matched water-level outfall (`SYNTH_OUTFALL`, a TIMESERIES
     # outfall at the end of the `C_out` reach from `sewer_outflow`): the added [OUTFALLS] row and its link and node
     # rows change the default emission by design.
-    "swmm_model.inp": "233cd5802374dff8ff8e8e5cd0e145b5ef6558799489224f4e46fe7009721328",
+    # Re-taken a third time when synthetic inverts were floored to the millimeter (24677685): the only changed lines
+    # are the invert column of J1, J3, J5, J7, B1_2, B2_2 and dummy_outfall, each one millimeter lower.
+    "swmm_model.inp": "01ccb4e68145dec56b2c96ce09f3a8d0351f2481b815115a260713c390e160a0",
 }
 
 # Scoped to the `.inp` variants deliberately. The knob reaches no other artifact,
