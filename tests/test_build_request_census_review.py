@@ -134,7 +134,12 @@ def _tree_files(root: Path) -> list[str]:
 
 
 def _copy_tree(dest: Path) -> None:
-    """Copy the working-tree content of every file `_tree_files` names into ``dest``."""
+    """Copy the working-tree content of every file `_tree_files` names into ``dest``.
+
+    The copy is made a git repository with every copied file indexed, because test modules in
+    ``tests/`` list tracked files with ``git ls-files`` at collection time and a copy with no
+    ``.git`` makes that listing exit 128, so the census child collects nothing and prints no banner.
+    """
     for rel in _tree_files(_REPO_ROOT):
         src = _REPO_ROOT / rel
         if not src.is_file():
@@ -142,6 +147,8 @@ def _copy_tree(dest: Path) -> None:
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, target)
+    subprocess.run(["git", "init", "-q"], cwd=dest, check=True)
+    subprocess.run(["git", "add", "-A", "-f"], cwd=dest, check=True)
 
 
 def _listed(output: str, name: str) -> bool:
