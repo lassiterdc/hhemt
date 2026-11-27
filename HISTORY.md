@@ -1,6 +1,6 @@
 # Release history
 
-## v0.3.0 (2026-11-15)
+## v0.3.0 (2026-11-27)
 
 hhemt now runs a regular, runnable SWMM model as a coupled TRITON-SWMM model. Set
 `SWMM_model` in the system config to a plain SWMM 5.2 `.inp` file. The toolkit derives the
