@@ -270,6 +270,9 @@ def test_leg1_self_contained_roundtrip_runs(licensed_synth_multi_sim, prebuilt_s
     The primary contract (ADR-9): a DOI-downloaded bundle runs from scratch. The assertion
     that matters is not merely that the fetch succeeded — it is that NO input_deposit fetch
     fired, i.e. every input was CARRIED.
+
+    This leg compiles and simulates, so it is the slow check for a machine that can build the solver, and it is not
+    the quick check of the round trip. ``tests/test_zenodo_roundtrip_light_e2e.py`` is the quick check.
     """
     _require_token()
 
