@@ -1479,7 +1479,9 @@ class TRITON_SWMM_experiment:
 
         The md5 that HydroShare lists for the file is checked against the downloaded bytes. HydroShare lists
         a multipart etag instead of an md5 for a file above 5 MiB, and an etag checks nothing, so such a file
-        is refused unless ``pinned`` is true, meaning the caller checks a sha256 of the zip itself.
+        is refused unless ``pinned`` is true, meaning the caller checks a sha256 of the zip itself. A pinned
+        multipart-etag zip is accepted here, where the bag path refuses it, because the sha256 of the whole zip is a
+        stronger check than the md5 of the bag manifest.
         """
         if not res_identifier:
             return None

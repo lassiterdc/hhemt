@@ -35,7 +35,6 @@ OVERRIDE_ISOLATED_NODE_IDS: tuple[str, ...] = (
     "tests/test_cleanup_orphans_on_run.py::test_run_dry_run_preserves_all_orphans",
     "tests/test_doi_roundtrip_e2e.py::test_leg1_self_contained_roundtrip_runs",
     "tests/test_doi_roundtrip_e2e.py::test_leg2_exclude_config_roundtrip_fetches_by_reference",
-    "tests/test_doi_roundtrip_e2e.py::test_leg3_hydroshare_authenticated_private_retrieval",
     "tests/test_experiments_from_doi.py::test_from_doi_happy_path_is_runnable_and_self_contained",
     "tests/test_experiments_from_doi.py::test_from_doi_missing_input_fails_closed",
     "tests/test_experiments_from_doi.py::test_from_doi_no_main_entity_fails_closed",

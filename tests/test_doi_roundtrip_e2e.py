@@ -11,12 +11,13 @@ It is skipped by default and never runs in CI.
 NO DIRECTORY CONFIG NEEDED — the experiment is the synthetic test corpus
 ===============================================================================
 
-The analysis this test deposits is the synth-corpus ``rendered_synth_multi_sim`` fixture —
-the SAME completed, rendered analysis the rest of the compile-tier suite uses. Its package /
-data / scratch directories are derived deterministically from inside the toolkit
-(``Local_TestCases.retrieve_synth_multi_sim_test_case``); there is nothing for an operator to
-point at. The run leg reuses the pre-compiled ``tritonswmm_cpu_compiled`` toolchain via
-symlink, so no git-clone and no recompile fire (the same trick ``test_synth_09`` uses).
+Leg 1 deposits the analysis of the ``licensed_synth_multi_sim`` fixture, the synth-corpus multi-sim analysis built
+with ``dataset_license`` set before its first run, because a deposit needs the license in the archived results. Leg 2
+deposits the analysis of the shared ``rendered_synth_multi_sim`` fixture, the completed, rendered analysis the rest of
+the compile-tier suite uses. Both derive their package / data / scratch directories deterministically from inside the
+toolkit (``Local_TestCases.retrieve_synth_multi_sim_test_case``); there is nothing for an operator to point at. The run
+leg reuses the pre-compiled ``tritonswmm_cpu_compiled`` toolchain via symlink, so no git-clone and no recompile fire
+(the same trick ``test_synth_09`` uses).
 
 Consequence: the ONLY thing this test needs from the operator is Zenodo credentials.
 
@@ -90,7 +91,7 @@ WHEN THIS TEST FAILS — the likely causes, in order
    -> The token expired, was revoked, or was minted on the WRONG SITE (a production token
       used against the sandbox, or vice-versa). Mint a fresh one on the site
       ``HHEMT_ZENODO_BASE_URL`` points at, with scopes ``deposit:write`` + ``deposit:actions``.
-3. The ``rendered_synth_multi_sim`` fixture errors or skips
+3. The ``rendered_synth_multi_sim`` or ``licensed_synth_multi_sim`` fixture errors or skips
    -> This is the compile-tier synth infrastructure, not a credential problem. The module skips
       inside a suite array chunk, and the fixture skips when the C++ toolchain is unavailable; run it on a machine
       with a working compiler in the ``hhemt`` env. See ``test_synth_09_from_doi_run_proof.py`` — if

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import inspect
-import time
 
 import pytest
 
@@ -35,21 +34,43 @@ def _connect_to(monkeypatch, fake) -> None:
     monkeypatch.setattr(TRITON_SWMM_experiment, "_connect_to_hydroshare", classmethod(lambda cls, _key: fake))
 
 
-def test_a_bag_that_is_never_ready_raises_at_the_deadline_with_the_server_status(tmp_path, monkeypatch):
-    """The deadline fires, fast, and the message names what an operator needs.
+class _FakeClock:
+    """A clock whose ``sleep`` advances ``monotonic``, and whose ``monotonic`` fails the test after ``max_reads`` reads.
 
-    Input class: a server that answers "Not ready" to every poll. A wait with no limit would hang this test, and an
-    error that names none of the resource, the status and the task id sends the operator to the library source.
+    A deadline that never fires reads the clock without end, so the read cap turns that hang into an assertion.
     """
+
+    def __init__(self, max_reads: int = 200):
+        self.now = 0.0
+        self.reads = 0
+        self.max_reads = max_reads
+
+    def monotonic(self) -> float:
+        self.reads += 1
+        assert self.reads <= self.max_reads, f"the deadline never fired in {self.max_reads} clock reads"
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        assert seconds >= 0, f"slept a negative length: {seconds}"
+        self.now += seconds
+
+
+def test_a_bag_that_is_never_ready_raises_at_the_deadline_with_the_server_status(tmp_path, monkeypatch):
+    """The deadline fires after a bounded number of polls, and the message names what an operator needs.
+
+    Input class: a server that answers "Not ready" to every poll, on a fake clock that sleep advances and that fails
+    the test after 200 reads. A wait with no limit trips the read cap, and an error that names none of the resource,
+    the status and the task id sends the operator to the library source.
+    """
+    clock = _FakeClock()
+    monkeypatch.setattr("hhemt.experiments.time", clock)
     monkeypatch.setenv("HHEMT_HYDROSHARE_BAG_TIMEOUT_S", "1")
     monkeypatch.setattr(TRITON_SWMM_experiment, "_HYDROSHARE_BAG_POLL_INTERVAL_S", 0.1)
     fake = FakeBagHS(None)
-    started = time.monotonic()
     with pytest.raises(ProcessingError) as ei:
         TRITON_SWMM_experiment._fetch_deposit_files(
             "hydroshare", res_identifier=_RID, dest=tmp_path / "out" / "case", hs=fake, validate=False
         )
-    assert time.monotonic() - started < 5
     assert ei.value.operation == "hydroshare_bag_wait"
     reason = str(ei.value.reason)
     assert _RID in reason
@@ -58,6 +79,7 @@ def test_a_bag_that_is_never_ready_raises_at_the_deadline_with_the_server_status
     assert "1 s" in reason
     assert "HHEMT_HYDROSHARE_BAG_TIMEOUT_S" in reason
     assert len(fake.session.get_calls) > 1, "the fetch must poll more than once before it gives up"
+    assert clock.now == pytest.approx(1.0), "the wait must end at the deadline, not before or after"
 
 
 @pytest.mark.parametrize("bad", ["0", "-5", "soon", "inf", "nan"])
