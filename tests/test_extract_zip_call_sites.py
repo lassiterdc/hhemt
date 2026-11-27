@@ -22,6 +22,7 @@ import pytest
 from hhemt.bundle._reprex import extract_reprex_bundle
 from hhemt.exceptions import ProcessingError
 from hhemt.experiments import TRITON_SWMM_experiment
+from tests.hydroshare_fakes import FakeBagHS as _FakeHS
 
 
 def _refuse_extractall(monkeypatch) -> None:
@@ -100,26 +101,6 @@ def test_reprex_extract_replaces_a_stale_destination(tmp_path):
     dest = extract_reprex_bundle(zip_path)
     assert not (dest / "stale.txt").exists()
     assert (dest / "bundle_manifest.json").read_bytes() == _BUNDLE_FILES["bundle_manifest.json"]
-
-
-class _FakeResource:
-    """A stand-in for an hsclient resource whose ``download`` writes a prepared zip into the target."""
-
-    def __init__(self, zip_bytes_source: Path):
-        self._source = zip_bytes_source
-
-    def download(self, target: Path) -> str:
-        out = Path(target) / "resource.zip"
-        out.write_bytes(self._source.read_bytes())
-        return str(out)
-
-
-class _FakeHS:
-    def __init__(self, zip_source: Path):
-        self._resource = _FakeResource(zip_source)
-
-    def resource(self, _key: str) -> _FakeResource:
-        return self._resource
 
 
 _BAG_FILES = {

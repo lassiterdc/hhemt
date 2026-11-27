@@ -23,6 +23,7 @@ import pytest
 from hhemt.bundle._reprex import extract_reprex_bundle
 from hhemt.experiments import TRITON_SWMM_experiment
 from hhemt.publishing import _resolve_upload
+from tests.hydroshare_fakes import FakeBagHS as _FakeHS
 
 
 def _tree(root: Path) -> dict[str, bytes | None]:
@@ -32,28 +33,6 @@ def _tree(root: Path) -> dict[str, bytes | None]:
         rel = p.relative_to(root).as_posix()
         out[rel + "/" if p.is_dir() else rel] = None if p.is_dir() else p.read_bytes()
     return out
-
-
-class _FakeResource:
-    """A hsclient resource stand-in whose ``download`` copies a prepared zip into the target."""
-
-    def __init__(self, source: Path):
-        self._source = source
-
-    def download(self, target: Path) -> str:
-        out = Path(target) / "resource.zip"
-        out.write_bytes(self._source.read_bytes())
-        return str(out)
-
-
-class _FakeHS:
-    """A hsclient stand-in that hands out the one prepared resource whatever key is asked."""
-
-    def __init__(self, source: Path):
-        self._resource = _FakeResource(source)
-
-    def resource(self, _key: str) -> _FakeResource:
-        return self._resource
 
 
 def _hydroshare_fetch(src_zip: Path, work: Path) -> Path:
