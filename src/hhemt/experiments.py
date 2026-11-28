@@ -64,6 +64,7 @@ tests/fixtures/.
 """
 
 import sys
+import time
 import warnings
 from importlib.resources import files
 from pathlib import Path
@@ -783,7 +784,22 @@ class TRITON_SWMM_experiment:
     ) -> Path:
         """Fetch a deposit and locate the single reprex-bundle ``.zip`` within its
         payload root. Raises ``ProcessingError`` when zero or more than one candidate
-        zip is present."""
+        zip is present.
+
+        A HydroShare resource that holds exactly one zip is fetched as that file alone, through
+        ``_fetch_single_hydroshare_zip``, so the server builds no BagIt archive. Any other HydroShare resource
+        goes through the bounded bag download of ``_fetch_deposit_files``."""
+        hs = None
+        key = res_identifier or pid
+        if host == "hydroshare" and key:
+            hs = cls._connect_to_hydroshare(key)
+            direct_zip = cls._fetch_single_hydroshare_zip(
+                key, dest=Path(dest), hs=hs, pinned=expected_sha256 is not None
+            )
+            if direct_zip is not None:
+                if expected_sha256 is not None:
+                    cls._verify_sha256(direct_zip, expected_sha256)
+                return direct_zip
         payload_root = cls._fetch_deposit_files(
             host,
             doi=doi,
@@ -791,6 +807,7 @@ class TRITON_SWMM_experiment:
             res_identifier=res_identifier,
             dest=Path(dest),
             download_if_exists=True,
+            hs=hs,
         )
         candidates = sorted(payload_root.rglob("*.zip"))
         if len(candidates) != 1:
@@ -1342,7 +1359,7 @@ class TRITON_SWMM_experiment:
             if hs is None:
                 hs = cls._connect_to_hydroshare(key)
             hs_resource = hs.resource(key)
-            zip_path = Path(hs_resource.download(dest.parent))
+            zip_path = cls._download_hydroshare_bag(hs_resource, key, dest.parent)
             # Threaded extract (same files and bytes as extractall) because a Bag holds many
             # small files and creating them serially is the cost on a shared file system.
             extract_zip(zip_path, dest.parent)
@@ -1368,6 +1385,144 @@ class TRITON_SWMM_experiment:
             filepath=None,
             reason=f"unknown deposit host {host!r} (expected 'zenodo' or 'hydroshare')",
         )
+
+    #: The environment variable that sets how many seconds a HydroShare fetch waits for the server to
+    #: build the BagIt archive of a resource.
+    _HYDROSHARE_BAG_TIMEOUT_ENV = "HHEMT_HYDROSHARE_BAG_TIMEOUT_S"
+    _HYDROSHARE_BAG_TIMEOUT_DEFAULT_S = 600.0
+    _HYDROSHARE_BAG_POLL_INTERVAL_S = 10.0
+
+    @classmethod
+    def _hydroshare_bag_timeout_s(cls) -> float:
+        """Return the seconds a HydroShare fetch waits for a bag, read from ``HHEMT_HYDROSHARE_BAG_TIMEOUT_S``.
+
+        An unset or blank variable gives ``_HYDROSHARE_BAG_TIMEOUT_DEFAULT_S``. A value that is not a finite
+        number above zero raises ``ConfigurationError``.
+        """
+        import os
+
+        raw = os.environ.get(cls._HYDROSHARE_BAG_TIMEOUT_ENV, "").strip()
+        if not raw:
+            return cls._HYDROSHARE_BAG_TIMEOUT_DEFAULT_S
+        try:
+            value = float(raw)
+        except ValueError:
+            value = float("nan")
+        if not 0 < value < float("inf"):
+            raise ConfigurationError(
+                field=cls._HYDROSHARE_BAG_TIMEOUT_ENV,
+                message=f"must be a finite number of seconds above zero, got {raw!r}.",
+                config_path=None,
+            )
+        return value
+
+    @staticmethod
+    def _hydroshare_session_and_bag_path(hs_resource):
+        """Return the HTTP session and the bag endpoint path of an ``hsclient`` resource.
+
+        This is the only place that reads the private ``_hs_session`` and ``_hsapi_path`` attributes. They are
+        needed because ``Resource.download`` calls itself again until the server has built the archive, with no
+        limit, so the wait cannot be bounded from outside it. A test pins that the installed ``hsclient`` still
+        exposes both attributes and the session calls that ``_download_hydroshare_bag`` makes.
+        """
+        return hs_resource._hs_session, hs_resource._hsapi_path
+
+    @classmethod
+    def _download_hydroshare_bag(cls, hs_resource, res_identifier: str, save_dir: Path) -> Path:
+        """Download the BagIt archive of a HydroShare resource, waiting at most a bounded time for the server.
+
+        HydroShare builds the archive asynchronously. Until the archive exists, a GET of the resource answers
+        HTTP 200 with a JSON body that carries ``bag_status``, ``status`` and ``task_id``, and ``hsclient``'s
+        own ``Resource.download`` answers by sleeping and calling itself again with no limit. This method polls
+        the same endpoint through the same session and stops at the deadline that
+        ``HHEMT_HYDROSHARE_BAG_TIMEOUT_S`` sets (``_HYDROSHARE_BAG_TIMEOUT_DEFAULT_S`` when unset), and then raises
+        ``ProcessingError`` that names the resource, the last status and task id the server reported, and the
+        deadline. Returns the path of the saved zip.
+        """
+        timeout_s = cls._hydroshare_bag_timeout_s()
+        session, path = cls._hydroshare_session_and_bag_path(hs_resource)
+        started = time.monotonic()
+        while True:
+            response = session.get(path, status_code=200, allow_redirects=True, timeout=60)
+            if response.headers.get("Content-Type") in ("application/zip", "binary/octet-stream"):
+                zip_name = path if path.endswith(".zip") else f"{path}.zip"
+                return Path(session.write_file(zip_name, response.content, str(save_dir)))
+            remaining = timeout_s - (time.monotonic() - started)
+            if remaining <= 0:
+                try:
+                    body = response.json()
+                except ValueError:
+                    body = {}
+                if not isinstance(body, dict):
+                    body = {}
+                raise ProcessingError(
+                    operation="hydroshare_bag_wait",
+                    filepath=None,
+                    reason=(
+                        f"HydroShare resource {res_identifier} was still building its BagIt archive after "
+                        f"{timeout_s:g} s (the server last reported bag_status={body.get('bag_status')!r}, "
+                        f"status={body.get('status')!r}, task_id={body.get('task_id')!r}). The server builds the "
+                        f"archive asynchronously and a large resource takes longer. Fetch again later, or set "
+                        f"{cls._HYDROSHARE_BAG_TIMEOUT_ENV} to a larger number of seconds."
+                    ),
+                )
+            time.sleep(min(cls._HYDROSHARE_BAG_POLL_INTERVAL_S, remaining))
+
+    @classmethod
+    def _fetch_single_hydroshare_zip(cls, res_identifier: str | None, *, dest: Path, hs, pinned: bool) -> Path | None:
+        """Download the one zip of a HydroShare resource directly, with no BagIt archive, or return None.
+
+        A resource that holds exactly one ``.zip`` file serves that file through a single GET, so the server
+        builds no archive and the fetch needs no wait. ``None`` means the resource does not have that shape
+        (no zip, several zips, no resource id, or a file listing that lacks a checksum), and the caller falls
+        back to the bounded bag download.
+
+        The md5 that HydroShare lists for the file is checked against the downloaded bytes. HydroShare lists
+        a multipart etag instead of an md5 for a file above 5 MiB, and an etag checks nothing, so such a file
+        is refused unless ``pinned`` is true, meaning the caller checks a sha256 of the zip itself. A pinned
+        multipart-etag zip is accepted here, where the bag path refuses it, because the sha256 of the whole zip is a
+        stronger check than the md5 of the bag manifest.
+        """
+        if not res_identifier:
+            return None
+        resource = hs.resource(res_identifier)
+        try:
+            zips = [f for f in resource.files() if str(f).lower().endswith(".zip")]
+        except KeyError:
+            return None
+        if len(zips) != 1:
+            return None
+        listed = zips[0]
+        checksum = str(listed.checksum)
+        plain_md5 = re.fullmatch(r"[0-9a-f]{32}", checksum) is not None
+        if not plain_md5 and not pinned:
+            raise ProcessingError(
+                operation="hydroshare_file_verification",
+                filepath=None,
+                reason=(
+                    f"HydroShare lists {str(listed)!r} of resource {res_identifier} with the checksum {checksum!r}, "
+                    "which is not an md5 (HydroShare records a multipart etag for a file above 5 MiB). With no "
+                    "sha256 of the zip there is no integrity check for it, so the fetch is refused. Supply the "
+                    "sha256 of the bundle zip and fetch again."
+                ),
+            )
+        dest.mkdir(parents=True, exist_ok=True)
+        zip_path = Path(resource.file_download(str(listed), save_path=str(dest)))
+        if plain_md5:
+            digest = hashlib.md5()  # noqa: S324 — HydroShare lists md5 as the checksum of a file
+            with zip_path.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() != checksum:
+                raise ProcessingError(
+                    operation="hydroshare_file_verification",
+                    filepath=str(zip_path),
+                    reason=(
+                        f"md5 mismatch on {str(listed)!r} of resource {res_identifier}: HydroShare lists "
+                        f"{checksum}, the download has {digest.hexdigest()}."
+                    ),
+                )
+        return zip_path
 
     # A multipart-upload etag: HydroShare records the S3 etag of a multi-part object (any file
     # above 5 MiB) in the bag's manifest-md5 where bagit expects a plain md5, so no md5 of such a

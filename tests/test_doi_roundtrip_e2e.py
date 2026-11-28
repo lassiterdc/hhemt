@@ -11,12 +11,13 @@ It is skipped by default and never runs in CI.
 NO DIRECTORY CONFIG NEEDED — the experiment is the synthetic test corpus
 ===============================================================================
 
-The analysis this test deposits is the synth-corpus ``rendered_synth_multi_sim`` fixture —
-the SAME completed, rendered analysis the rest of the compile-tier suite uses. Its package /
-data / scratch directories are derived deterministically from inside the toolkit
-(``Local_TestCases.retrieve_synth_multi_sim_test_case``); there is nothing for an operator to
-point at. The run leg reuses the pre-compiled ``tritonswmm_cpu_compiled`` toolchain via
-symlink, so no git-clone and no recompile fire (the same trick ``test_synth_09`` uses).
+Leg 1 deposits the analysis of the ``licensed_synth_multi_sim`` fixture, the synth-corpus multi-sim analysis built
+with ``dataset_license`` set before its first run, because a deposit needs the license in the archived results. Leg 2
+deposits the analysis of the shared ``rendered_synth_multi_sim`` fixture, the completed, rendered analysis the rest of
+the compile-tier suite uses. Both derive their package / data / scratch directories deterministically from inside the
+toolkit (``Local_TestCases.retrieve_synth_multi_sim_test_case``); there is nothing for an operator to point at. The run
+leg reuses the pre-compiled ``tritonswmm_cpu_compiled`` toolchain via symlink, so no git-clone and no recompile fire
+(the same trick ``test_synth_09`` uses).
 
 Consequence: the ONLY thing this test needs from the operator is Zenodo credentials.
 
@@ -90,7 +91,7 @@ WHEN THIS TEST FAILS — the likely causes, in order
    -> The token expired, was revoked, or was minted on the WRONG SITE (a production token
       used against the sandbox, or vice-versa). Mint a fresh one on the site
       ``HHEMT_ZENODO_BASE_URL`` points at, with scopes ``deposit:write`` + ``deposit:actions``.
-3. The ``rendered_synth_multi_sim`` fixture errors or skips
+3. The ``rendered_synth_multi_sim`` or ``licensed_synth_multi_sim`` fixture errors or skips
    -> This is the compile-tier synth infrastructure, not a credential problem. The module skips
       inside a suite array chunk, and the fixture skips when the C++ toolchain is unavailable; run it on a machine
       with a working compiler in the ``hhemt`` env. See ``test_synth_09_from_doi_run_proof.py`` — if
@@ -116,22 +117,17 @@ deposit helper). Put that url in ``HHEMT_E2E_INPUT_URL``; leave it blank and leg
 while leg 1 still runs.
 
 ===============================================================================
-LEG 3 (optional) — HydroShare authenticated PRIVATE retrieval
+HYDROSHARE — the round trip has its own short test
 ===============================================================================
 
 HydroShare's DOI mint is a MANUAL, PERMANENT web-UI "Publish" action that hsclient cannot
-perform, so there is no automatable deposit -> DOI -> public-fetch loop like Zenodo's. But
-retrieval of a PRIVATE resource works with the OWNER's credentials by resource id — no DOI,
-no publication. Leg 3 tests exactly that: it stages a bundle into your existing private
-resource (test-side, authenticated), then runs the real ``from_doi(host='hydroshare')``
-retrieval + reconstitute + run, and clears the file afterward. The resource is never made
-public and never published. Needs::
-
-    HHEMT_HYDROSHARE_USERNAME     # bare id OR institutional email — try the other if auth fails
-    HHEMT_HYDROSHARE_PASSWORD     # hsclient v1.1.6 has no token support — this is your password
-    HHEMT_E2E_HYDROSHARE_RESOURCE # the 32-hex id of a resource you own (may be empty)
-
-Leave any of the three blank and leg 3 skips while the Zenodo legs still run.
+perform, so there is no automatable deposit -> DOI -> public-fetch loop like Zenodo's. Retrieval of a
+PRIVATE resource works with the OWNER's credentials by resource id, with no DOI and no publication, and
+``tests/test_hydroshare_roundtrip_light_e2e.py`` tests exactly that: it stages a tiny zip into your private
+resource, fetches it back through the toolkit, compares the bytes and clears the file. It runs no simulation. The
+reconstitute-and-run half of the round trip is covered without a network by
+``tests/test_synth_09_from_doi_run_proof.py``. The variables the HydroShare test needs are in the docstring of
+its own module.
 """
 
 from __future__ import annotations
@@ -229,6 +225,31 @@ def prebuilt_software_dir(tritonswmm_cpu_compiled, tmp_path) -> Path:
     return software_dir
 
 
+@pytest.fixture(scope="module")
+def licensed_synth_multi_sim(tritonswmm_cpu_compiled, triton_only_cpu_compiled, tmp_path_factory):
+    """The synth multi-sim analysis built, run and rendered with ``dataset_license`` set from the start.
+
+    A deposit needs the license in the ARCHIVED results: consolidation writes it into the sidecar that publish reads,
+    so setting the field on a finished analysis changes nothing until the analysis is consolidated again. This fixture
+    sets the field in the analysis configuration before the first run, so the results carry the license. It builds in a
+    private runs root, so the shared ``rendered_synth_multi_sim`` tree that other tests snapshot stays untouched.
+    """
+    from tests.conftest import _runs_root_override_env
+    from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
+
+    with _runs_root_override_env(tmp_path_factory.mktemp("licensed_synth_multi_sim")):
+        case = retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_multi_sim",
+            n_events=3,
+            start_from_scratch=True,
+            additional_analysis_configs={"dataset_license": "CC0-1.0"},
+        )
+        case.analysis.run()
+        case.analysis.render_report(format="html")
+        case.analysis.render_report(format="zip")
+    return case.analysis
+
+
 def _assert_reconstituted_run(exp, prebuilt_software_dir: Path) -> None:
     """Guard the network-free precondition, then RUN the reconstituted analysis end to end
     and assert real consolidated outputs (a --dry-run could not satisfy these)."""
@@ -243,16 +264,19 @@ def _assert_reconstituted_run(exp, prebuilt_software_dir: Path) -> None:
         tst_ut.assert_analysis_workflow_completed_successfully(sub.analysis)
 
 
-def test_leg1_self_contained_roundtrip_runs(rendered_synth_multi_sim, prebuilt_software_dir, tmp_path) -> None:
+def test_leg1_self_contained_roundtrip_runs(licensed_synth_multi_sim, prebuilt_software_dir, tmp_path) -> None:
     """Leg 1 (R8) — SELF-CONTAINED: deposit -> fetch by DOI -> RUN, no exclusions.
 
     The primary contract (ADR-9): a DOI-downloaded bundle runs from scratch. The assertion
     that matters is not merely that the fetch succeeded — it is that NO input_deposit fetch
     fired, i.e. every input was CARRIED.
+
+    This leg compiles and simulates, so it is the slow check for a machine that can build the solver, and it is not
+    the quick check of the round trip. ``tests/test_zenodo_roundtrip_light_e2e.py`` is the quick check.
     """
     _require_token()
 
-    result = rendered_synth_multi_sim.publish_reprex_bundle(target="zenodo")
+    result = licensed_synth_multi_sim.publish_reprex_bundle(target="zenodo")
     doi = result.get("data_doi")
     assert doi, f"no DOI minted; publish returned {result}"
 
@@ -315,89 +339,3 @@ def test_leg2_exclude_config_roundtrip_fetches_by_reference(
         )
 
     _assert_reconstituted_run(exp, prebuilt_software_dir)
-
-
-def _require_hydroshare() -> str:
-    """Skip the HydroShare leg unless credentials + a resource id are all present.
-
-    Returns the resource id. The username may be a bare id or a full institutional email —
-    if auth fails, try the other form in ``HHEMT_HYDROSHARE_USERNAME``.
-    """
-    missing = [
-        v
-        for v in (
-            "HHEMT_HYDROSHARE_USERNAME",
-            "HHEMT_HYDROSHARE_PASSWORD",
-            "HHEMT_E2E_HYDROSHARE_RESOURCE",
-        )
-        if not os.environ.get(v)
-    ]
-    if missing:
-        pytest.skip(
-            f"HydroShare leg needs {', '.join(missing)} — set them in {E2E_ENV_FILE}. "
-            "This leg tests authenticated retrieval of your PRIVATE resource; it never "
-            "publishes or mints a DOI."
-        )
-    return os.environ["HHEMT_E2E_HYDROSHARE_RESOURCE"]
-
-
-def _clear_resource_files(resource) -> None:
-    """Best-effort: remove every file from a HydroShare resource so the 'exactly one bundle
-    zip' contract holds on the next run. Idempotent — a resource with no files is fine."""
-    for f in resource.files():
-        try:
-            resource.file_delete(path=f.path)
-        except Exception:  # noqa: BLE001 — cleanup is best-effort; a stuck file is not fatal
-            pass
-
-
-def test_leg3_hydroshare_authenticated_private_retrieval(
-    rendered_synth_multi_sim, prebuilt_software_dir, tmp_path
-) -> None:
-    """HydroShare — authenticated round-trip against a PRIVATE (non-published) resource.
-
-    HydroShare DOI minting is a manual, permanent web-UI 'Publish' action that hsclient
-    cannot perform, so there is NO automatable deposit -> DOI -> public-fetch loop the way
-    there is on Zenodo. But retrieval of a PRIVATE resource works with the OWNER's
-    credentials by resource id — no DOI, no publication needed (this is what the tier-2
-    credentialed path in ``_connect_to_hydroshare`` enables). This test exercises exactly
-    that path:
-
-      setup     : emit a bundle locally and stage the single zip into the operator's
-                  existing PRIVATE resource (test-side arrangement, via authenticated
-                  hsclient — NOT the code under test);
-      under test: ``from_doi(pid=resource_id, host='hydroshare')`` authenticates with the
-                  env credentials, downloads the resource, reconstitutes, and RUNS;
-      teardown  : clear the staged file so the resource stays clean and reusable.
-
-    The resource is never made public and never published. If authentication fails, check
-    that HHEMT_HYDROSHARE_USERNAME is the right form (bare id vs institutional email).
-    """
-    resource_id = _require_hydroshare()
-
-    bundle_zip = rendered_synth_multi_sim.bundle_report_data(tmp_path / "emit" / "bundle.zip")
-
-    # Authenticated staging (test-side setup, not the code under test). Reuse the toolkit's
-    # own connection helper so this uses the exact tier-2 credentialed path.
-    hs = TRITON_SWMM_experiment._connect_to_hydroshare(resource_id)
-    resource = hs.resource(resource_id)
-    _clear_resource_files(resource)  # ensure exactly one zip after upload
-    resource.file_upload(str(bundle_zip))
-
-    try:
-        exp = TRITON_SWMM_experiment.from_doi(
-            pid=resource_id,
-            host="hydroshare",
-            target_dir=tmp_path / "ingest_hs",
-            software_dir=prebuilt_software_dir,
-        )
-        # Self-contained by default: the staged bundle carried every input (no by-reference
-        # fetch), so the retrieval proves the full HydroShare consume path.
-        manifest = exp.bundle_root / "bundle_manifest.json"
-        if manifest.exists():
-            assert not json.loads(manifest.read_text()).get("input_deposit"), (
-                "the staged bundle was self-contained; an input_deposit block is unexpected"
-            )
-        _assert_reconstituted_run(exp, prebuilt_software_dir)
-    finally:
-        _clear_resource_files(resource)  # leave the private resource clean for the next run

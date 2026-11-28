@@ -34,6 +34,7 @@ import yaml
 
 from hhemt.exceptions import ProcessingError
 from hhemt.experiments import NorfolkIreneExperiment, NorfolkObservedExperiment, TRITON_SWMM_experiment
+from tests.hydroshare_fakes import FakeBagHS as _FakeHS
 
 _BIG = b"big-dem-bytes" * 500
 _SMALL = b"small-csv\n" * 20
@@ -80,24 +81,6 @@ def _make_bag_zip(
             if p.is_file():
                 zf.write(p, p.relative_to(bag_dir.parent).as_posix())
     return zip_path
-
-
-class _Res:
-    def __init__(self, zip_path: Path):
-        self._zip = zip_path
-
-    def download(self, dest_dir):
-        out = Path(dest_dir) / "served_bag.zip"
-        out.write_bytes(self._zip.read_bytes())
-        return str(out)
-
-
-class _FakeHS:
-    def __init__(self, zip_path: Path):
-        self._zip = zip_path
-
-    def resource(self, rid, validate=True):
-        return _Res(self._zip)
 
 
 _MANIFEST = {f"{_REL}/fullres_dem_m.tif": _sha(_BIG), f"{_REL}/table.csv": _sha(_SMALL)}
